@@ -140,7 +140,7 @@ NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, con
    {
     m_rib_nhg_table = new RIBNHGTable(pipeline, nexthopTableName, isStateTable);
     m_sonic_pic_table = new SonicPICContentTable(pipeline, picTableName, isStateTable);
-    m_sonic_id_manager.init({SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, SONIC_NHG_OBJ_TYPE_NHG_NORMAL});
+    m_sonic_id_manager.init({SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT, SONIC_NHG_OBJ_TYPE_NHG_NORMAL});
     m_rib_nhg_table->setSonicIDManager(&m_sonic_id_manager);
 
     // register SWSS logger as the callback for sonic_fib logs
@@ -156,7 +156,7 @@ int NHGMgr::addNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
     dumpNHGGroupFull(nhg);
 
     int ret = 0;
-    if (m_rib_nhg_table->isNHGExist(nhg.id)) {
+    if (m_rib_nhg_table->isNHGExist(ribID(nhg.id))) {
         SWSS_LOG_DEBUG("NHG %d already exists, need to update", nhg.id);
         ret = updateExistingNHGFull(nhg, af);
         if (ret != 0){
@@ -180,6 +180,7 @@ int NHGMgr::addNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
 int NHGMgr::addNewNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
 
     int ret = 0;
+    ribID id=ribID(nhg.id);
     RIBNHGEntry *entry;
     ret = m_rib_nhg_table->addEntry(nhg, af);
     if (ret != 0) {
@@ -187,7 +188,7 @@ int NHGMgr::addNewNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
         return ret;
     }
 
-    entry = m_rib_nhg_table->getEntry(nhg.id);
+    entry = m_rib_nhg_table->getEntry(id);
     if (entry == nullptr) {
         SWSS_LOG_ERROR("Failed to get NHG entry after add for %d", nhg.id);
         return -1;
@@ -200,7 +201,7 @@ int NHGMgr::addNewNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
 
         // no sonic nhg object created, allocate a new id
         sonicObjectID sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
-        if (sonicId == 0) {
+        if (sonicId.id == 0) {
             SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
             m_rib_nhg_table->delEntry(nhg.id);
             return -1;
@@ -220,9 +221,9 @@ int NHGMgr::addNewNHGFull(const NextHopGroupFull &nhg, uint8_t af) {
             SonicNHGObjectKey key;
             SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
             m_rib_nhg_table->insertCreatedSharedNHGObject(key, sonicId);
-            SWSS_LOG_DEBUG("Create shared sonic NHG for %d, sonic id %d", nhg.id, sonicId);
+            SWSS_LOG_DEBUG("Create shared sonic NHG for %d, sonic id %d", nhg.id, sonicId.id);
         }else{
-            SWSS_LOG_DEBUG("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId);
+            SWSS_LOG_DEBUG("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId.id);
         }
     }
 
@@ -254,7 +255,8 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
 
     RIBNHGEntry *entry;
     int ret = 0;
-    entry = m_rib_nhg_table->getEntry(nhg.id);
+    ribID ribId = ribID(nhg.id);
+    entry = m_rib_nhg_table->getEntry(ribId);
     if (entry == nullptr) {
         SWSS_LOG_ERROR("Failed to get NHG %d when updateNHGFull", nhg.id);
         return -1;
@@ -277,7 +279,7 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
     }
 
     // entry fields changed, update into the table
-    entry = m_rib_nhg_table->getEntry(nhg.id);
+    entry = m_rib_nhg_table->getEntry(ribId);
     if (entry == nullptr) {
         SWSS_LOG_ERROR("Failed to get NHG after update %d", nhg.id);
         return -1;
@@ -286,11 +288,11 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
     // sonic NHG fields changed, update into DB
     if(previousKey != entry->getSonicNHGObjectKey() && entry->needCreateSonicObject()){
 
-        uint32_t sonicId = 0;
+        sonicObjectID sonicId = sonicObjectID(0);
         if (!entry->isSharedSonicNHG()) {
             // For the non shared NHG, we reuse the previous sonic id. If no previous sonic NHG object, allocate a new id
             sonicId = entry->getSonicObjID();
-            if (sonicId == 0){
+            if (sonicId.id == 0){
                 sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
             }
         }else{
@@ -299,7 +301,7 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
             sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
         }
 
-        if (sonicId == 0) {
+        if (sonicId.id == 0) {
             SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
             return -1;
         }
@@ -308,7 +310,7 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
         if (ret != 0) {
             m_rib_nhg_table->delEntry(nhg.id);
             // This sonic nhg id is reused or new allocated, so free it
-            m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicId);
+            m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicId.id);
             SWSS_LOG_ERROR("Failed to write to DB for %d", nhg.id);
             return ret;
         }
@@ -320,10 +322,10 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
             m_rib_nhg_table->insertCreatedSharedNHGObject(key, sonicId);
         }else{
             // non shared NHG track by sonic nhg id, map the sonic id to rib nhg id
-            m_rib_nhg_table->insertCreatedNhgObject(sonicId, nhg.id);
+            m_rib_nhg_table->insertCreatedNhgObject(sonicId, ribId);
         }
 
-        SWSS_LOG_NOTICE("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId);
+        SWSS_LOG_NOTICE("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId.id);
     } else if(previousKey != entry->getSonicNHGObjectKey()){
 
         // For the shared NHG, maybe changed to another existing shared NHG, sub the previous ref
@@ -341,7 +343,7 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
 int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
 
     sonicNhgObjType sType = entry->getSonicObjType();
-    if (entry->getSonicObjType() != SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC){
+    if (entry->getSonicObjType() != SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT){
         SWSS_LOG_ERROR("Unsupported sonic nhg type %d", sType);
         return -1;
     }
@@ -353,25 +355,25 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
 
     // allocate sonic pic object id
     sonicPICContentID = m_sonic_id_manager.allocateID(sType);
-    if (sonicPICContentID == 0) {
+    if (sonicPICContentID.id == 0) {
         SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
         return -1;
     }
 
     entry->createSRv6PICObjFromRIBEntry(sonicObj);
-    sonicObj.id = sonicPICContentID;
+    sonicObj.sonicID = sonicPICContentID;
 
     // add the SonicPICContentEntry
     ret = m_sonic_pic_table->addEntry(sonicObj);
     if (ret != 0) {
-        SWSS_LOG_ERROR("Failed to add sonic PIC obj for %d", entry->getRIBID());
+        SWSS_LOG_ERROR("Failed to add sonic PIC obj for %d", entry->getRIBIDNum());
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
         return ret;
     }
 
     SonicPICContentEntry *sonicEntry = m_sonic_pic_table->getEntry(sType, sonicPICContentID);
     if (sonicEntry == nullptr) {
-        SWSS_LOG_ERROR("Failed to get sonic PIC entry for %d", entry->getRIBID());
+        SWSS_LOG_ERROR("Failed to get sonic PIC entry for %d", entry->getRIBIDNum());
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
         return ret;
     }
@@ -379,7 +381,7 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
     // write to DB
     ret = m_sonic_pic_table->writeToDB(sonicEntry);
     if (ret != 0) {
-        SWSS_LOG_ERROR("Failed to write to DB for %d", sonicPICContentID);
+        SWSS_LOG_ERROR("Failed to write to DB for %d", sonicPICContentID.id);
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
         m_sonic_pic_table->delEntry(sType, sonicPICContentID);
         return ret;
@@ -387,7 +389,7 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
 
     // set the sonic PIC Content id of rib entry
     entry->setSonicPICObjId(sonicPICContentID);
-    SWSS_LOG_NOTICE("Create sonic PIC Content object for NHG %d, sonic pic id: %d, type: %d", entry->getRIBID(), sonicPICContentID, entry->getSonicObjType());
+    SWSS_LOG_NOTICE("Create sonic PIC Content object for NHG %d, sonic pic id: %d, type: %d", entry->getRIBID().id, sonicPICContentID.id, entry->getSonicObjType());
     return 0;
 }
 
@@ -397,13 +399,14 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
 int NHGMgr::delNHGFull(uint32_t id) {
 
     SWSS_LOG_NOTICE("Del NextHop group id %d", id);
+    ribID ribId = ribID(id);
 
-    if (!m_rib_nhg_table->isNHGExist(id)) {
+    if (!m_rib_nhg_table->isNHGExist(ribId)) {
         SWSS_LOG_ERROR("NextHop group id %d not found.", id);
         return 0;
     }
 
-    RIBNHGEntry *entry = m_rib_nhg_table->getEntry(id);
+    RIBNHGEntry *entry = m_rib_nhg_table->getEntry(ribId);
     if (entry == nullptr) {
         return 0;
     }
@@ -418,7 +421,7 @@ int NHGMgr::delNHGFull(uint32_t id) {
         }
     }
 
-    m_rib_nhg_table->delEntry(id);
+    m_rib_nhg_table->delEntry(ribId);
     return 0;
 }
 
@@ -459,21 +462,21 @@ void NHGMgr::dumpNHGGroupFull(const fib::NextHopGroupFull &nhg) {
  * get RIB NHG entry by RIB ID
  */
 RIBNHGEntry *NHGMgr::getRIBNHGEntryByRIBID(uint32_t id) {
-    return m_rib_nhg_table->getEntry(id);
+    return m_rib_nhg_table->getEntry(ribID(id));
 }
 
 /*
  * get Sonic PIC Content entry by Sonic PIC Content ID and type
  */
 SonicPICContentEntry *NHGMgr::getSonicPICByID(sonicNhgObjType type, uint32_t id) {
-    return m_sonic_pic_table->getEntry(type, id);
+    return m_sonic_pic_table->getEntry(type, sonicObjectID(id));
 }
 
 /*
  * check if the sonic NHG id is in used
  */
 bool NHGMgr::isSonicNHGIDInUsed(uint32_t id) {
-    return m_sonic_id_manager.isSonicObjIDUsed(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, id);
+    return m_sonic_id_manager.isSonicObjIDUsed(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicObjectID(id));
 }
 
 /*
@@ -487,14 +490,14 @@ SonicPICContentEntry *NHGMgr::getSonicPICByRIBID(uint32_t id) {
     if (!ribnhgEntry->hasSonicPICObj()) {
         return nullptr;
     }
-    return getSonicPICByID(ribnhgEntry->getSonicObjType(), ribnhgEntry->getSonicPICObjID());;
+    return getSonicPICByID(ribnhgEntry->getSonicObjType(), ribnhgEntry->getSonicPICObjIDNum());;
 }
 
 /*
  * check if the sonic PIC Content object id is in used
  */
 bool NHGMgr::isSonicPICIDInUsed(sonicNhgObjType type, uint32_t id) {
-    return m_sonic_id_manager.isSonicObjIDUsed(type, id);
+    return m_sonic_id_manager.isSonicObjIDUsed(type, sonicObjectID(id));
 }
 
 /*
@@ -579,13 +582,13 @@ bool RIBNHGEntry::checkNeedUpdate(const NextHopGroupFull &newNhg, uint8_t afNew)
 /*
  * delete RIB NHG entry by RIB ID
  */
-void RIBNHGTable::delEntry(ribID id) {
-    if (m_nhg_map.find(id) == m_nhg_map.end()) {
-        SWSS_LOG_ERROR("NextHop group id %d not found.", id);
+void RIBNHGTable::delEntry(ribID ribId) {
+    if (m_nhg_map.find(ribId) == m_nhg_map.end()) {
+        SWSS_LOG_ERROR("NextHop group id %d not found.", ribId.id);
         return;
     }
 
-    RIBNHGEntry *entry = m_nhg_map[id];
+    RIBNHGEntry *entry = m_nhg_map[ribId];
     sonicObjectID sonicNHGID = entry->getSonicObjID();
 
     if (entry->isSharedSonicNHG()){
@@ -596,7 +599,7 @@ void RIBNHGTable::delEntry(ribID id) {
         m_sonic_nhg_id_2_rib_nhg_id_map.erase(sonicNHGID);
     }
     delete entry;
-    m_nhg_map.erase(id);
+    m_nhg_map.erase(ribId);
     return;
 }
 
@@ -674,14 +677,14 @@ int RIBNHGTable::writeToDB(RIBNHGEntry *entry) {
 
     std::vector<FieldValueTuple> fvVector = entry->getFvVector();
     if (fvVector.size() == 0) {
-        SWSS_LOG_ERROR("Failed to sync fvVector for %d, empty fvVector", entry->getNHG().id);
+        SWSS_LOG_ERROR("Failed to sync fvVector for %d, empty fvVector", entry->getRIBIDNum());
         return -1;
     }
 
-    m_nexthop_groupTable.set(std::to_string(entry->getSonicObjID()), fvVector);
+    m_nexthop_groupTable.set(std::to_string(entry->getSonicObjID().id), fvVector);
 
     SWSS_LOG_DEBUG("writeToDB NEXTHOP_GROUP_TABLE : RIB_id %d sonic_id %d",
-                    entry->getRIBID(), entry->getSonicObjID());
+                    entry->getRIBIDNum(), entry->getSonicObjIDNum());
     for (auto it = fvVector.begin(); it != fvVector.end(); it++) {
         SWSS_LOG_DEBUG("  %s %s", fvField(*it).c_str(), fvValue(*it).c_str());
     }
@@ -693,7 +696,7 @@ int RIBNHGTable::writeToDB(RIBNHGEntry *entry) {
  * remove Sonic NHG Object from APP_DB by ID
  */
 void RIBNHGTable::removeFromDB(sonicObjectID id) {
-    m_nexthop_groupTable.del(std::to_string(id));
+    m_nexthop_groupTable.del(std::to_string(id.id));
     return;
 }
 
@@ -722,8 +725,8 @@ void RIBNHGTable::subSonicNHGObjectRef(SonicNHGObjectKey key) {
         return ;
     }
     if (m_created_shared_nhg_map[key].refCount == 0) {
-        this->removeFromDB(m_created_shared_nhg_map[key].id);
-        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].id);
+        this->removeFromDB(m_created_shared_nhg_map[key].sonicID.id);
+        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].sonicID.id);
         m_created_shared_nhg_map.erase(key);
         SWSS_LOG_ERROR("Reference count underflow for shared NHG object");
         return;
@@ -734,8 +737,8 @@ void RIBNHGTable::subSonicNHGObjectRef(SonicNHGObjectKey key) {
      * if refCount is 0, then remove the sonic nhg object
      */
     if(m_created_shared_nhg_map[key].refCount == 0){
-        this->removeFromDB(m_created_shared_nhg_map[key].id);
-        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].id);
+        this->removeFromDB(m_created_shared_nhg_map[key].sonicID.id);
+        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].sonicID.id);
         m_created_shared_nhg_map.erase(key);
     }
 }
@@ -744,7 +747,7 @@ int RIBNHGTable::getCreatedSharedNHGObjectID(SonicNHGObjectKey key) {
     if (m_created_shared_nhg_map.find(key) == m_created_shared_nhg_map.end()){
         return 0;
     }
-    return m_created_shared_nhg_map[key].id;
+    return m_created_shared_nhg_map[key].sonicID.id;
 }
 
 void RIBNHGTable::insertCreatedNhgObject(sonicObjectID sonicNhgId, ribID ribNhgId) {
@@ -769,7 +772,7 @@ RIBNHGEntry *RIBNHGEntry::createNHGEntry(RIBNHGTable *mTable) {
  */
 int RIBNHGEntry::createSonicPICContentObjectFromRIBEntry(SonicPICContentObject &sonicNhgOut) {
     switch (getSonicObjType()) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC:
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT:
             return createSRv6PICObjFromRIBEntry(sonicNhgOut);
         default:
             SWSS_LOG_ERROR("Unsupported SonicPICContentObject type: %d", getSonicObjType());
@@ -782,8 +785,8 @@ int RIBNHGEntry::createSonicPICContentObjectFromRIBEntry(SonicPICContentObject &
  */
 int RIBNHGEntry::createSRv6PICObjFromRIBEntry(SonicPICContentObject &sonicNhgOut) {
     sonicNhgOut.groupMember.clear();
-    sonicNhgOut.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
-    sonicNhgOut.id = getSonicPICObjID();
+    sonicNhgOut.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT;
+    sonicNhgOut.sonicID = getSonicPICObjID();
 
     // single hop: Use SRv6 VPN fields, use them directly.
     if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr) {
@@ -796,13 +799,13 @@ int RIBNHGEntry::createSRv6PICObjFromRIBEntry(SonicPICContentObject &sonicNhgOut
 
     // Multi-hop: Use weight from m_group map.
     for (auto member: m_resolvedGroup) {
-        RIBNHGEntry *memberEntry = m_table->getEntry(member.first);
+        RIBNHGEntry *memberEntry = m_table->getEntry(member.first.id);
         if (memberEntry == nullptr) {
-            SWSS_LOG_ERROR("RIBNHGEntry is not exist: %d", member.first);
+            SWSS_LOG_ERROR("RIBNHGEntry is not exist: %d", member.first.id);
             return -1;
         }
-        if (memberEntry->hasSonicPICObj() && memberEntry->getSonicObjType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
-            if (memberEntry->getSonicPICObjID() != 0) {
+        if (memberEntry->hasSonicPICObj() && memberEntry->getSonicObjType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
+            if (memberEntry->getSonicPICObjIDNum() != 0) {
                 sonicNhgOut.groupMember.insert(std::make_pair(memberEntry->getSonicPICObjID(), member.second));
             }
         }
@@ -829,13 +832,13 @@ int RIBNHGEntry::setEntry(const NextHopGroupFull &nhg, uint8_t af) {
     // update m_depends set
     for (auto it = nhg.depends.begin(); it != nhg.depends.end(); it++) {
         m_depends.insert(*it);
-        SWSS_LOG_DEBUG("NextHop id %d add depends %d.", m_rib_id, *it);
+        SWSS_LOG_DEBUG("NextHop id %d add depends %d.", m_rib_id.id, *it);
     }
 
     // update m_dependents set
     for (auto it = nhg.dependents.begin(); it != nhg.dependents.end(); it++) {
         m_dependents.insert(*it);
-        SWSS_LOG_DEBUG("NextHop id %d add dependents %d.", m_rib_id, *it);
+        SWSS_LOG_DEBUG("NextHop id %d add dependents %d.", m_rib_id.id, *it);
     }
 
     // check the full list NHG entry and update m_group set
@@ -846,7 +849,7 @@ int RIBNHGEntry::setEntry(const NextHopGroupFull &nhg, uint8_t af) {
             return -1;
         }
         m_group.insert(std::make_pair(it->id, it->weight));
-        SWSS_LOG_DEBUG("NextHop id %d add group %d.", m_rib_id, it->id);
+        SWSS_LOG_DEBUG("NextHop id %d add group %d.", m_rib_id.id, it->id);
     }
 
     /*
@@ -911,7 +914,7 @@ int RIBNHGEntry::syncFvVector() {
         FieldValueTuple wg("weight", m_weight.c_str());
         m_fvVector.push_back(wg);
     }
-    if (!m_segSrc.empty() && m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
+    if (!m_segSrc.empty() && m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
         FieldValueTuple wg("seg_src", m_segSrc.c_str());
         m_fvVector.push_back(wg);
     }
@@ -955,13 +958,13 @@ int RIBNHGEntry::getNextHopGroupFields() {
     string vpnSids = "";
     string segSrcs = "";
     for (const auto &nh: m_resolvedGroup) {
-        ribID id = nh.first;
-        string weight = to_string(nh.second);
-        if (!m_table->isNHGExist(id)) {
-            SWSS_LOG_ERROR("NextHop group is incomplete: nhg %d not found", id);
+        ribID ribId(nh.first.id);
+        string weight = to_string(nh.second.weight);
+        if (!m_table->isNHGExist(ribId)) {
+            SWSS_LOG_ERROR("NextHop group is incomplete: nhg %d not found", ribId.id);
             return -1;
         }
-        RIBNHGEntry *entry = this->m_table->getEntry(id);
+        RIBNHGEntry *entry = this->m_table->getEntry(ribId);
         if (!nexthops.empty()) {
             nexthops += NHG_DELIMITER;
         }
@@ -979,7 +982,7 @@ int RIBNHGEntry::getNextHopGroupFields() {
         SWSS_LOG_DEBUG(" entry weight: [%s]", weight.c_str());
 
         /* SRv6 VPN SID */
-        if(m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC){
+        if(m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT){
             if (!vpnSids.empty()){
                 vpnSids += NHG_DELIMITER;
             }
@@ -1026,7 +1029,7 @@ int RIBNHGEntry::getNextHopFields() {
         m_ifName = m_nhg.ifname;
     }
 
-    if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
+    if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
         char sid[INET6_ADDRSTRLEN] = {0};
         char seg_src[INET6_ADDRSTRLEN] = {0};
         if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr){
@@ -1035,7 +1038,7 @@ int RIBNHGEntry::getNextHopFields() {
             inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_src, seg_src, INET6_ADDRSTRLEN);
             m_segSrc = seg_src;
         }else{
-            SWSS_LOG_ERROR("single nexthop id %d type srv6 gateway has no seg6_segs", m_rib_id);
+            SWSS_LOG_ERROR("single nexthop id %d type srv6 gateway has no seg6_segs", m_rib_id.id);
             return -1;
         }
     }
@@ -1055,11 +1058,11 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
         for (auto nhg: m_nhg.nh_grp_full_list) {
             if (nhg.num_direct == 0) {
                 m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
-                SWSS_LOG_DEBUG("NextHop id %d add resolved group %d.", m_rib_id, nhg.id);
+                SWSS_LOG_DEBUG("NextHop id %d add resolved group %d.", m_rib_id.id, nhg.id);
             }
         }
 
-    } else if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
+    } else if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
         for (auto nhg: m_nhg.nh_grp_full_list){
             RIBNHGEntry *entry = m_table->getEntry(nhg.id);
             if (entry == nullptr){
@@ -1068,7 +1071,7 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
             }
             if (entry->hasSonicPICObj()){
                 m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
-                SWSS_LOG_DEBUG("NextHop id %d add resolved group %d, type %d.", m_rib_id, nhg.id, entry->getSonicObjType());
+                SWSS_LOG_DEBUG("NextHop id %d add resolved group %d, type %d.", m_rib_id.id, nhg.id, entry->getSonicObjType());
             }
         }
     }
@@ -1092,7 +1095,7 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
 
     /* for srv6 gateway, check if we need to create pic group obj */
     for (auto it = m_group.begin(); it != m_group.end(); it++) {
-        RIBNHGEntry *entry = m_table->getEntry(it->first);
+        RIBNHGEntry *entry = m_table->getEntry(ribID(it->first.id));
         if (entry == nullptr) {
             continue;
         }
@@ -1100,8 +1103,8 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
             m_sonic_obj_type = entry->getSonicObjType();
             m_has_sonic_pic_obj = true;
             m_is_shared_sonic_nhg = true;
-            m_is_srv6_nhg = true;
-            SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj, is multi nexthop group.", it->first);
+            m_is_srv6_nhg = entry->isSRv6Nhg();
+            SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj, is multi nexthop group.", it->first.id);
             return;
         }
         if(entry->isSRv6Nhg()) {
@@ -1119,10 +1122,10 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
      * recursive SRv6 VPN nexthops that carry their own SRv6 VPN info.
      */
     if (m_is_srv6_nhg && CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FROM_EXTERNAL)) {
-        m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT;
         m_has_sonic_pic_obj = true;
         m_is_shared_sonic_nhg = true;
-        SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj.", m_rib_id);
+        SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj.", m_rib_id.id);
         return;
     }
 
@@ -1133,7 +1136,7 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
 void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
     SonicNHGObjectKey::createSonicNormalNHGObjectKey(this, m_sonic_nhg_key);
 
-    if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC){
+    if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT){
         /*
          * For SRv6 VPN NHG, create shared NHG object.
          */
@@ -1152,7 +1155,7 @@ void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
          * Skipped received NHG without SRv6 info.
          */
         if (CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FROM_EXTERNAL)){
-            SWSS_LOG_DEBUG("NextHop %d is a received NHG without SRv6 info, skip create sonic object.", m_rib_id);
+            SWSS_LOG_DEBUG("NextHop %d is a received NHG without SRv6 info, skip create sonic object.", m_rib_id.id);
             m_create_sonic_nhg_obj = false;
             return ;
         }
@@ -1161,7 +1164,7 @@ void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
          * Skipped NHG with SRv6 info but not received NHG.
          */
         if (!CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FROM_EXTERNAL) && m_is_srv6_nhg){
-            SWSS_LOG_DEBUG("NextHop %d is a NHG with SRv6 VPN, but not is received NHG, skip create sonic object.", m_rib_id);
+            SWSS_LOG_DEBUG("NextHop %d is a NHG with SRv6 VPN, but not is received NHG, skip create sonic object.", m_rib_id.id);
             m_create_sonic_nhg_obj = false;
             return ;
         }
@@ -1180,16 +1183,16 @@ SonicPICContentTable::SonicPICContentTable(RedisPipeline *pipeline, const std::s
 
 /*
  * write the sonic pic object into DB
- * SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC into PIC_CONTEXT_TABLE
+ * SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT into PIC_CONTEXT_TABLE
  */
 int SonicPICContentTable::writeToDB(SonicPICContentEntry *entry) {
     std::vector<FieldValueTuple> fvVector = entry->getFvVector();
     if (fvVector.size() == 0) {
-        SWSS_LOG_ERROR("Failed to sync fvVector for %d, empty fvVector", entry->getObj().id);
+        SWSS_LOG_ERROR("Failed to sync fvVector for %d, empty fvVector", entry->getSonicPicContentObjIdNum());
         return -1;
     }
-    if (entry->getType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
-        m_pic_contextTable.set(std::to_string(entry->getSonicPicContentObjId()), fvVector);
+    if (entry->getType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
+        m_pic_contextTable.set(std::to_string(entry->getSonicPicContentObjIdNum()), fvVector);
     }
     return 0;
 }
@@ -1198,9 +1201,9 @@ int SonicPICContentTable::writeToDB(SonicPICContentEntry *entry) {
  * remove the sonic pic object from DB
  */
 void SonicPICContentTable::removeFromDB(SonicPICContentEntry *entry) {
-    if (entry->getType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
-        m_pic_contextTable.del(std::to_string(entry->getSonicPicContentObjId()));
-        SWSS_LOG_DEBUG("Remove PIC Context object id %d", entry->getSonicPicContentObjId());
+    if (entry->getType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
+        m_pic_contextTable.del(std::to_string(entry->getSonicPicContentObjIdNum()));
+        SWSS_LOG_DEBUG("Remove PIC Context object id %d", entry->getSonicPicContentObjIdNum());
     }
     return;
 }
@@ -1209,8 +1212,8 @@ void SonicPICContentTable::removeFromDB(SonicPICContentEntry *entry) {
  * add the SonicPICContentEntry
  */
 int SonicPICContentTable::addEntry(const SonicPICContentObject &sonicObj) {
-    if (getEntry(sonicObj.type, sonicObj.id) != nullptr) {
-        SWSS_LOG_ERROR("SonicPICContentObject is already exist: %d", sonicObj.id);
+    if (getEntry(sonicObj.type, sonicObj.sonicID) != nullptr) {
+        SWSS_LOG_ERROR("SonicPICContentObject is already exist: %d", sonicObj.sonicID.id);
         return -1;
     }
 
@@ -1227,7 +1230,7 @@ int SonicPICContentTable::addEntry(const SonicPICContentObject &sonicObj) {
     }
 
     switch (entry->getType()) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
             m_pic_map[entry->getSonicPicContentObjId()] = entry;
             break;
         }
@@ -1244,13 +1247,13 @@ int SonicPICContentTable::addEntry(const SonicPICContentObject &sonicObj) {
 /*
  * delete the SonicPICContentEntry by type and id
  */
-void SonicPICContentTable::delEntry(sonicNhgObjType type, sonicObjectID id) {
+void SonicPICContentTable::delEntry(sonicNhgObjType type, sonicObjectID sonicID) {
     SonicPICContentEntry *entry = nullptr;
     switch (type) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
-            if (m_pic_map.find(id) != m_pic_map.end()) {
-                entry = m_pic_map[id];
-                m_pic_map.erase(id);
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
+            if (m_pic_map.find(sonicID) != m_pic_map.end()) {
+                entry = m_pic_map[sonicID];
+                m_pic_map.erase(sonicID);
             } else {
                 entry = nullptr;
             }
@@ -1262,7 +1265,7 @@ void SonicPICContentTable::delEntry(sonicNhgObjType type, sonicObjectID id) {
         }
     }
     if (entry == nullptr) {
-        SWSS_LOG_WARN("SonicPICContentObject is not exist: %d %d", type, id);
+        SWSS_LOG_WARN("SonicPICContentObject is not exist: %d %d", type, sonicID.id);
         return;
     }
 
@@ -1287,14 +1290,14 @@ void SonicPICContentTable::cleanUp() {
  */
 SonicPICContentEntry *SonicPICContentTable::getEntry(sonicNhgObjType type, sonicObjectID sonicID) {
     switch (type) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
             if (m_pic_map.find(sonicID) != m_pic_map.end()) {
                 return m_pic_map[sonicID];
             }
             return nullptr;
         }
         default: {
-            SWSS_LOG_ERROR("Failed to get SonicPICContentEntry: %d %d", type, sonicID);
+            SWSS_LOG_ERROR("Failed to get SonicPICContentEntry: %d %d", type, sonicID.id);
             return nullptr;
         }
     }
@@ -1315,7 +1318,7 @@ SonicPICContentEntry *SonicPICContentEntry::createSonicPICContentEntry(SonicPICC
 int SonicPICContentEntry::syncFvVector() {
     m_fvVector.clear();
     switch (m_sonic_pic_obj.type) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
             return syncFvVectorForSRv6PIC();
         }
         default: {
@@ -1341,15 +1344,15 @@ int SonicPICContentEntry::syncFvVectorForSRv6PIC() {
         string weights = "";
         string segSrcs = "";
         for (auto member: m_group) {
-            SonicPICContentEntry *entry = m_table->getEntry(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, member.first);
+            SonicPICContentEntry *entry = m_table->getEntry(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT, sonicObjectID(member.first.id));
             if (entry == nullptr) {
-                SWSS_LOG_ERROR("SonicPICContentObject is not exist: %d", member.first);
+                SWSS_LOG_ERROR("SonicPICContentObject is not exist: %d", member.first.id);
                 return -1;
             }
 
             SonicPICContentObject obj = entry->getObj();
             if (obj.groupMember.size() > 0) {
-                SWSS_LOG_ERROR("SonicPICContentObject member is a group: %d", member.first);
+                SWSS_LOG_ERROR("SonicPICContentObject member is a group: %d", member.first.id);
                 return -1;
             }
 
@@ -1375,7 +1378,7 @@ int SonicPICContentEntry::syncFvVectorForSRv6PIC() {
             if (!weights.empty()) {
                 weights += NHG_DELIMITER;
             }
-            weights += std::to_string(member.second);
+            weights += std::to_string(member.second.weight);
 
             if (!segSrcs.empty()) {
                 segSrcs += NHG_DELIMITER;
@@ -1390,19 +1393,19 @@ int SonicPICContentEntry::syncFvVectorForSRv6PIC() {
     }
 
     for (auto it = m_fvVector.begin(); it != m_fvVector.end(); it++) {
-        SWSS_LOG_DEBUG("Sync fvVector for SonicPICContentEntry %d, type %d, %s %s", m_sonic_obj_id, m_sonic_pic_obj.type, fvField(*it).c_str(), fvValue(*it).c_str());
+        SWSS_LOG_DEBUG("Sync fvVector for SonicPICContentEntry %d, type %d, %s %s", m_sonic_obj_id.id, m_sonic_pic_obj.type, fvField(*it).c_str(), fvValue(*it).c_str());
     }
     return 0;
 }
 
-int SonicPICContentEntry::setEntry(const SonicPICContentObject &nhg) {
-    switch (nhg.type) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
-            setSRv6PICEntry(nhg);
+int SonicPICContentEntry::setEntry(const SonicPICContentObject &obj) {
+    switch (obj.type) {
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
+            setSRv6PICEntry(obj);
             break;
         }
         default: {
-            SWSS_LOG_ERROR("Unsupported SonicPICContentObject type: %d", nhg.type);
+            SWSS_LOG_ERROR("Unsupported SonicPICContentObject type: %d", obj.type);
             return -1;
         }
     }
@@ -1414,13 +1417,13 @@ int SonicPICContentEntry::setEntry(const SonicPICContentObject &nhg) {
     return 0;
 }
 
-int SonicPICContentEntry::setSRv6PICEntry(const SonicPICContentObject &nhg) {
-    m_sonic_pic_obj = nhg;
-    m_sonic_obj_id = nhg.id;
-    m_sonic_obj_key = SonicNHGObjectKey::createSonicPICContentObjectKey(nhg);
+int SonicPICContentEntry::setSRv6PICEntry(const SonicPICContentObject &obj) {
+    m_sonic_pic_obj = obj;
+    m_sonic_obj_id = obj.sonicID;
+    m_sonic_obj_key = SonicNHGObjectKey::createSonicPICContentObjectKey(obj);
     m_group.clear();
-    for (auto member: nhg.groupMember) {
-        SonicPICContentEntry *entry = m_table->getEntry(nhg.type, member.first);
+    for (auto member: obj.groupMember) {
+        SonicPICContentEntry *entry = m_table->getEntry(obj.type, sonicObjectID(member.first.id));
         if (entry == nullptr) {
             SWSS_LOG_ERROR("SonicPICContentObject is not exist");
             return -1;
@@ -1437,7 +1440,7 @@ SonicPICContentEntry::~SonicPICContentEntry() {
     m_table = nullptr;
 }
 
-u_int32_t SonicIDMgr::allocateID(sonicNhgObjType type) {
+sonicObjectID SonicIDMgr::allocateID(sonicNhgObjType type) {
     SonicIDAllocator *allocator = getAllocator(type);
     if (allocator == nullptr) {
         SWSS_LOG_ERROR("SonicIDAllocator is not exist: %d", type);
@@ -1457,7 +1460,7 @@ void SonicIDMgr::freeID(sonicNhgObjType type, sonicObjectID id) {
 
 SonicIDAllocator *SonicIDMgr::getAllocator(sonicNhgObjType type) {
     switch (type) {
-        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC:
+        case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT:
             return m_pic_id_allocator;
         case SONIC_NHG_OBJ_TYPE_NHG_NORMAL:
             return m_nhg_id_allocator;
@@ -1469,7 +1472,7 @@ SonicIDAllocator *SonicIDMgr::getAllocator(sonicNhgObjType type) {
 int SonicIDMgr::init(std::vector<sonicNhgObjType> supportedObjs) {
     for (auto type: supportedObjs) {
         switch (type) {
-            case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: {
+            case SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT: {
                 if (m_pic_id_allocator == nullptr) {
                     m_pic_id_allocator = new SonicIDAllocator(APP_PIC_CONTEXT_TABLE_NAME);
                 }
@@ -1504,7 +1507,7 @@ sonicObjectID SonicIDAllocator::allocateID() {
         }
     }
     m_id_map[g_id] = 1;
-    uint32_t allocated = g_id;
+    sonicObjectID allocated = sonicObjectID(g_id);
     g_id++;
     if (g_id == 0) {
         g_id = 1;
@@ -1532,7 +1535,7 @@ SonicNHGObjectKey SonicNHGObjectKey::createSonicPICContentObjectKey(SonicPICCont
     SonicNHGObjectKey key;
     key.groupMember = obj.groupMember;
     key.type = obj.type;
-    if (obj.type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {
+    if (obj.type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC_CONTEXT) {
         key.nexthop = obj.nexthop;
         key.segSrc = obj.segSrc;
         key.vpnSid = obj.vpnSid;
