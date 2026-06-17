@@ -169,6 +169,7 @@ class TestWatermark(object):
         adb.publish('WATERMARK_CLEAR_REQUEST', msg)
         time.sleep(1)
 
+    @pytest.mark.skip(reason="Covered by mock tests")
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
         self.set_up_flex_counter(dvs)
