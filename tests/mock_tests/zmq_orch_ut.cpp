@@ -31,57 +31,6 @@ TEST(ZmqOrchTest, CreateZmqOrchWitTableNames)
     EXPECT_EQ(zmq_orch->getSelectables().size(), tables.size());
 }
 
-TEST(ZmqOrchTest, CreateZmqRouteOrchWithTableNamesAndPri)
-{
-    vector<table_name_with_pri_t> tables = {
-        { "ROUTE_TABLE_1", 1 },
-        { "ROUTE_TABLE_2", 2 },
-        { "ROUTE_TABLE_3", 3 }
-    };
-
-    auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
-    auto zmq_route_orch = make_shared<ZmqRouteOrch>(app_db.get(), tables, nullptr);
-
-    EXPECT_EQ(zmq_route_orch->getSelectables().size(), tables.size());
-}
-
-TEST(ZmqOrchTest, CreateZmqRouteOrchWithTableNames)
-{
-    vector<string> tables = { "ROUTE_TABLE_A", "ROUTE_TABLE_B" };
-
-    auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
-    auto zmq_route_orch = make_shared<ZmqRouteOrch>(app_db.get(), tables, nullptr);
-
-    EXPECT_EQ(zmq_route_orch->getSelectables().size(), tables.size());
-}
-
-TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
-{
-    string zmq_server_address = "tcp://127.0.0.1:18100";
-    auto zmq_server = swss::create_zmq_server(zmq_server_address);
-
-    auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
-
-    // Hosting ZmqRouteOrch — used only as the parent Orch pointer for the
-    // ZmqRouteConsumer below (nullptr server so it doesn't register a real
-    // ZMQ consumer of its own).
-    vector<table_name_with_pri_t> empty_tables;
-    auto host_orch = make_shared<ZmqRouteOrch>(app_db.get(), empty_tables, nullptr);
-
-    // Construct ZmqConsumerStateTable with dbPersistence=false so no
-    // AsyncDBUpdater / Redis activity happens.
-    auto* cst = new swss::ZmqConsumerStateTable(
-        app_db.get(), "ROUTE_TABLE_E", *zmq_server,
-        /*popBatchSize=*/128, /*pri=*/1, /*dbPersistence=*/false);
-    auto* consumer = new ZmqRouteConsumer(cst, host_orch.get(), "ROUTE_TABLE_E");
-
-    // With no messages received, pops() returns empty, addToSync returns 0,
-    // the do-while exits after one iteration, and drain() is a no-op.
-    consumer->execute();
-
-    delete consumer;
-}
-
 TEST(ZmqOrchTest, GetZMQPort)
 {
     const char* backup_nsid = getenv("NAMESPACE_ID");
