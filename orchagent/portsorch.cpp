@@ -11205,18 +11205,22 @@ void PortsOrch::refreshPortStateLinkTraining(const Port &port)
         }
         else if (rx_status == SAI_PORT_LINK_TRAINING_RX_STATUS_TRAINED)
         {
-            status = link_training_rx_status_map.at(rx_status);
+            status = "trained";
         }
         else
         {
             if (getPortLinkTrainingFailure(port, failure) &&
                 failure != SAI_PORT_LINK_TRAINING_FAILURE_STATUS_NO_ERROR)
             {
-                status = link_training_failure_map.at(failure);
+                auto fail_it = link_training_failure_map.find(failure);
+                status = (fail_it != link_training_failure_map.end())
+                    ? fail_it->second : "unknown_failure";
             }
             else
             {
-                status = link_training_rx_status_map.at(rx_status);
+                auto rx_it = link_training_rx_status_map.find(rx_status);
+                status = (rx_it != link_training_rx_status_map.end())
+                    ? rx_it->second : "not_trained";
             }
         }
     }
