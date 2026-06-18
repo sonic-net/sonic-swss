@@ -169,7 +169,7 @@ namespace protnhg_test
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, CreateDuplicateProtNhgFails)
+    TEST_F(ProtNhgTest, CreateDuplicateProtNhgIsIdempotent)
     {
         string key = "prot_nhg_dup";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
@@ -178,7 +178,7 @@ namespace protnhg_test
         registerNextHop(standby_nh);
 
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        EXPECT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -927,7 +927,7 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(expected_key));
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
+        EXPECT_TRUE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(expected_key));
         EXPECT_FALSE(gNhgOrch->hasProtNhg(expected_key));
