@@ -917,6 +917,10 @@ bool OrchDaemon::init()
             return false;
         }
     }
+    else
+    {
+        WarmStart::setWarmStartState("orchagent", WarmStart::WSDISABLED);
+    }
 
     return true;
 }
