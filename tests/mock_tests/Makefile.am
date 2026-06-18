@@ -96,6 +96,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
