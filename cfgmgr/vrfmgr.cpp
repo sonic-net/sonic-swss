@@ -78,6 +78,12 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                         break;
                     }
 
+                    SWSS_LOG_NOTICE("Remove unreachable default route %s", vrfName.c_str());
+                    table = static_cast<uint32_t>(stoul(items[6]));
+                    cmd.str("");
+                    cmd.clear();
+                    cmd << IP_CMD << " route del table " << table << " unreachable default metric 4278198272";
+
                     SWSS_LOG_NOTICE("Remove vrf device %s", vrfName.c_str());
                     cmd.str("");
                     cmd.clear();
@@ -152,6 +158,8 @@ bool VrfMgr::delLink(const string& vrfName)
         return true;
     }
 
+    cmd.str("");
+    cmd.clear();
     cmd << IP_CMD << " link del " << shellquote(vrfName);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
@@ -196,6 +204,59 @@ bool VrfMgr::setLink(const string& vrfName)
     cmd.str("");
     cmd.clear();
     cmd << IP_CMD << " link set " << shellquote(vrfName) << " up";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return true;
+}
+
+bool VrfMgr::delIsolateRoute(const string& vrfName)
+{
+    SWSS_LOG_ENTER();
+
+    stringstream cmd;
+    string res;
+
+    if (m_vrfTableMap.find(vrfName) == m_vrfTableMap.end())
+    {
+        return false;
+    }
+
+    if (vrfName == MGMT_VRF)
+    {
+        return true;
+    }
+
+    cmd.str("");
+    cmd.clear();
+    cmd << IP_CMD << " route del table " << m_vrfTableMap[vrfName] << " unreachable default metric 4278198272";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return true;
+}
+
+bool VrfMgr::setIsolateRoute(const string& vrfName)
+{
+    SWSS_LOG_ENTER();
+
+    stringstream cmd;
+    string res;
+
+    if (m_vrfTableMap.find(vrfName) == m_vrfTableMap.end())
+    {
+        return false;
+    }
+
+    if (vrfName == MGMT_VRF)
+    {
+        return true;
+    }
+
+    // Set unreachable default route to prevent kernel from using default route to default Vrf
+    // https://docs.kernel.org/networking/vrf.html
+    // ip route replace table 10 unreachable default metric 4278198272
+    cmd.str("");
+    cmd.clear();
+    cmd << IP_CMD << " route replace table " << m_vrfTableMap[vrfName] << " unreachable default metric 4278198272";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     return true;
@@ -283,6 +344,11 @@ void VrfMgr::doTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
                 }
 
+                if (!setIsolateRoute(vrfName))
+                {
+                    SWSS_LOG_ERROR("Failed to set isolate route for vrf netdev %s", vrfName.c_str());
+                }
+
                 bool status = true;
                 vector<FieldValueTuple> fvVector;
                 fvVector.emplace_back("state", "ok");
@@ -335,7 +401,8 @@ void VrfMgr::doTask(Consumer &consumer)
                     }
 
                     doVrfVxlanTableRemoveTask (t);
-                    m_appVrfTableProducer.del(vrfName);
+                    delIsolateRoute(vrfName);
+		    m_appVrfTableProducer.del(vrfName);
                     m_stateVrfTable.del(vrfName);
                 }
 
@@ -348,7 +415,7 @@ void VrfMgr::doTask(Consumer &consumer)
             else
             {
                 m_appVnetTableProducer.del(vrfName);
-                m_stateVrfTable.del(vrfName);
+		m_stateVrfTable.del(vrfName);
             }
 
             if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
