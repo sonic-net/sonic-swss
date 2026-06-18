@@ -242,8 +242,17 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        dscp_map_list.list[ind].key.dscp = (uint8_t)stoi(fvField(*i));
-        dscp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            dscp_map_list.list[ind].key.dscp = (uint8_t)stoi(fvField(*i));
+            dscp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid DSCP_TO_TC map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] dscp_map_list.list;
+            return false;
+        }
         SWSS_LOG_DEBUG("key.dscp:%d, value.tc:%d", dscp_map_list.list[ind].key.dscp, dscp_map_list.list[ind].value.tc);
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -312,8 +321,17 @@ bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        exp_map_list.list[ind].key.mpls_exp = (uint8_t)stoi(fvField(*i));
-        exp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            exp_map_list.list[ind].key.mpls_exp = (uint8_t)stoi(fvField(*i));
+            exp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid MPLS_TC_TO_TC map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] exp_map_list.list;
+            return false;
+        }
         SWSS_LOG_DEBUG("key.exp:%d, value.tc:%d", exp_map_list.list[ind].key.mpls_exp, exp_map_list.list[ind].value.tc);
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -436,8 +454,17 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        tc_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
-        tc_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            tc_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+            tc_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid TC_TO_QUEUE map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] tc_map_list.list;
+            return false;
+        }
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = tc_map_list.count;
@@ -633,6 +660,8 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
 
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
+        try
+        {
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
             threshold = stoi(fvValue(*i));
@@ -740,13 +769,25 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
         }
         else if (fvField(*i) == ecn_field_name)
         {
+            auto ecn_it = ecn_map.find(fvValue(*i));
+            if (ecn_it == ecn_map.end())
+            {
+                SWSS_LOG_ERROR("Invalid ECN mark mode '%s' in WRED profile", fvValue(*i).c_str());
+                return false;
+            }
             attr.id = SAI_WRED_ATTR_ECN_MARK_MODE;
-            sai_ecn_mark_mode_t ecn = ecn_map.at(fvValue(*i));
-            attr.value.s32 = ecn;
+            attr.value.s32 = ecn_it->second;
             attribs.push_back(attr);
         }
         else {
             SWSS_LOG_ERROR("Unknown wred profile field:%s", fvField(*i).c_str());
+            return false;
+        }
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid numeric value in WRED profile field '%s': '%s' — %s",
+                           fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
             return false;
         }
     }
@@ -891,8 +932,17 @@ bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        tc_to_pg_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
-        tc_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            tc_to_pg_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+            tc_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid TC_TO_PG map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] tc_to_pg_map_list.list;
+            return false;
+        }
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = tc_to_pg_map_list.count;
@@ -944,8 +994,17 @@ bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        pfc_prio_to_pg_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
-        pfc_prio_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            pfc_prio_to_pg_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
+            pfc_prio_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid PFC_PRIO_TO_PG map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] pfc_prio_to_pg_map_list.list;
+            return false;
+        }
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = pfc_prio_to_pg_map_list.count;
@@ -998,8 +1057,17 @@ bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        pfc_to_queue_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
-        pfc_to_queue_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
+        try
+        {
+            pfc_to_queue_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
+            pfc_to_queue_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid PFC_TO_QUEUE map value %s:%s — %s", fvField(*i).c_str(), fvValue(*i).c_str(), e.what());
+            delete[] pfc_to_queue_map_list.list;
+            return false;
+        }
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = pfc_to_queue_map_list.count;
@@ -2148,10 +2216,33 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             sai_uint8_t bitmask = 0;
             vector<string> queue_indexes;
             queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
-            for(string q_ind : queue_indexes)
+            bool valid = true;
+            for(const string &q_ind : queue_indexes)
             {
-                sai_uint8_t q_val = (uint8_t)stoi(q_ind);
+                int q_val;
+                try
+                {
+                    q_val = stoi(q_ind);
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid queue index '%s' in %s for port %s: %s",
+                                   q_ind.c_str(), fvField(*it).c_str(), key.c_str(), e.what());
+                    valid = false;
+                    break;
+                }
+                if (q_val < 0 || q_val > 7)
+                {
+                    SWSS_LOG_ERROR("Queue index %d out of range [0..7] in %s for port %s",
+                                   q_val, fvField(*it).c_str(), key.c_str());
+                    valid = false;
+                    break;
+                }
                 bitmask |= (uint8_t)(1 << q_val);
+            }
+            if (!valid)
+            {
+                continue;
             }
 
             if (fvField(*it) == pfc_enable_name)
