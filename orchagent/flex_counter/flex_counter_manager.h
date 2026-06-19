@@ -69,7 +69,11 @@ class FlexCounterManager
                 const bool enabled,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
-        FlexCounterManager()
+        FlexCounterManager() :
+            stats_mode(StatsMode::READ),
+            polling_interval(0),
+            enabled(false),
+            is_gearbox(false)
         {}
 
         FlexCounterManager(
