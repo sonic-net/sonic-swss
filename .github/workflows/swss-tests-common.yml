@@ -19,6 +19,19 @@ on:
         required: false
         default: ''
         type: string
+    secrets:
+      GH_APP_ID:
+        required: true
+      GH_APP_PRIVATE_KEY:
+        required: true
+      PAT_TOKEN:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      AWS_REGION:
+        required: false
 
 jobs:
   build-and-test:
@@ -32,20 +45,45 @@ jobs:
             sudo rm -rf "$GITHUB_WORKSPACE"/fsroot-* "$GITHUB_WORKSPACE"/fsroot.docker.* 2>/dev/null || true
           fi
 
+      - name: Generate GitHub App token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: upscale-ai-network
+          repositories: sonic-swss,sonic-swss-common
+
       - name: Checkout sonic-swss
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref_name }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || secrets.PAT_TOKEN }}
           persist-credentials: false
+
+      - name: Configure Git credentials for private repos
+        env:
+          GIT_TOKEN: ${{ steps.app-token.outputs.token || secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$GIT_TOKEN" ]; then
+            echo "::error::No GitHub token available. Configure GH_APP_ID/GH_APP_PRIVATE_KEY or PAT_TOKEN."
+            exit 1
+          fi
+          GIT_CONFIG="${RUNNER_TEMP}/gitconfig-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config --file "$GIT_CONFIG" url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --file "$GIT_CONFIG" --add url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "git@github.com:"
+          echo "GIT_CONFIG_GLOBAL=${GIT_CONFIG}" >> "$GITHUB_ENV"
+          echo "JOB_GIT_CONFIG=${GIT_CONFIG}" >> "$GITHUB_ENV"
 
       - name: Checkout sonic-swss-common (from source branch)
         if: inputs.swss_common_ref != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: upscale-ai-network/sonic-swss-common
           ref: ${{ inputs.swss_common_ref }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ steps.app-token.outputs.token || secrets.PAT_TOKEN }}
           path: sonic-swss-common
           fetch-depth: 1
           persist-credentials: false
@@ -149,6 +187,7 @@ jobs:
           DEBS_DIR: ${{ steps.debs.outputs.debs_dir }}
           SKIP_DPKG: ${{ inputs.skip_dpkg }}
           SWSS_COMMON_REF: ${{ inputs.swss_common_ref }}
+          GIT_TOKEN: ${{ steps.app-token.outputs.token || secrets.PAT_TOKEN }}
         run: |
           MOUNT_ARGS=()
           if [ -d "${{ github.workspace }}/sonic-swss-common" ]; then
@@ -164,9 +203,17 @@ jobs:
             -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
             -e SKIP_DPKG="${SKIP_DPKG}" \
             -e SWSS_COMMON_REF="${SWSS_COMMON_REF}" \
+            -e GIT_TOKEN="${GIT_TOKEN}" \
             "${DOCKER_IMG}" \
             bash -c '
           set -eo pipefail
+
+          if [ -n "${GIT_TOKEN:-}" ]; then
+            GIT_CONFIG="/tmp/gitconfig-$$"
+            git config --file "$GIT_CONFIG" url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
+            git config --file "$GIT_CONFIG" --add url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "git@github.com:"
+            export GIT_CONFIG_GLOBAL="$GIT_CONFIG"
+          fi
 
           # ── Phase 1: Install SONiC build dependencies (quiet) ──
           cd /debs
@@ -336,7 +383,7 @@ jobs:
 
       - name: Configure AWS credentials
         if: success() && github.event_name == 'pull_request'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -370,7 +417,7 @@ jobs:
 
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: swss-coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -382,7 +429,7 @@ jobs:
 
       - name: Upload .deb artifacts
         if: inputs.skip_dpkg != true && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: swss-debs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -409,3 +456,11 @@ jobs:
           echo "| Docker image | \`${DOCKER_IMAGE_USED}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Debs source | \`${DEBS_SOURCE}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Skip dpkg | \`${SKIP_DPKG_VAL}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove job-scoped Git credentials
+        if: always()
+        run: |
+          if [ -n "${JOB_GIT_CONFIG:-}" ] && [ -f "$JOB_GIT_CONFIG" ]; then
+            shred -u "$JOB_GIT_CONFIG" 2>/dev/null || rm -f "$JOB_GIT_CONFIG"
+          fi
+          echo "GIT_CONFIG_GLOBAL=" >> "$GITHUB_ENV"
