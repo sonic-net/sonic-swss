@@ -28,6 +28,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "vrforch.h"
+#include "vrrporch.h"
 #include "vxlanorch.h"
 #include "evpnmhorch.h"
 #include "l2nhgorch.h"
