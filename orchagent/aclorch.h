@@ -543,6 +543,10 @@ public:
     AclTableType type;
     acl_stage_type_t stage = ACL_STAGE_INGRESS;
 
+    // ACL table group member priority. Drives table lookup order (SEQUENTIAL
+    // groups) and action-conflict resolution (PARALLEL groups).
+    sai_uint32_t priority = ACL_TABLE_GROUP_MEMBER_DEFAULT_PRIORITY;
+
     // Map port oid to group member oid
     std::map<sai_object_id_t, sai_object_id_t> ports;
     // Map rule name to rule data
@@ -673,9 +677,11 @@ private:
 
     bool isAclTableTypeUpdated(string table_type, AclTable &aclTable);
     bool isAclTableStageUpdated(acl_stage_type_t acl_stage, AclTable &aclTable);
+    bool isAclTablePriorityUpdated(sai_uint32_t priority, AclTable &aclTable);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
     bool processAclTableType(string type, string &out_table_type);
     bool processAclTablePorts(string portList, AclTable &aclTable);
+    bool processAclTablePriority(const string &priority, AclTable &aclTable);
     bool validateAclTable(AclTable &aclTable);
     bool updateAclTablePorts(AclTable &newTable, AclTable &curTable);
     void getAddDeletePorts(AclTable    &newT,
@@ -719,6 +725,11 @@ private:
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
     FlexCounterManager m_flex_counter_manager;
+
+    // Switch-reported ACL table group member priority range. Both 0 means the
+    // range is unknown (SAI query unsupported) and validation is skipped.
+    sai_uint32_t m_aclTableMinPriority = 0;
+    sai_uint32_t m_aclTableMaxPriority = 0;
 };
 
 #endif /* SWSS_ACLORCH_H */
