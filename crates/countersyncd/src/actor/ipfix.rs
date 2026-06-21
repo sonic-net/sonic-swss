@@ -20,6 +20,7 @@ use super::super::message::{
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
+use super::harmonizer::{validate_reporting_rate, Harmonizer};
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
 /// Helper functions for debug logging formatting
@@ -494,6 +495,8 @@ pub struct IpfixActor {
     applied_templates_map: HashMap<String, Vec<u16>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: HashMap<String, HashMap<u16, String>>,
+    /// Optional per-session harmonizer state.
+    harmonizer: Harmonizer,
 }
 
 impl IpfixActor {
@@ -518,6 +521,7 @@ impl IpfixActor {
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
+            harmonizer: Harmonizer::default(),
         }
     }
 
@@ -610,9 +614,13 @@ impl IpfixActor {
         };
 
         debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
-            templates.key, templates.object_names, templates.object_ids
+            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}, harmonizer_config: {:?}",
+            templates.key, templates.object_names, templates.object_ids, templates.harmonizer_config
         );
+
+        validate_reporting_rate(&templates.harmonizer_config, &templates.key);
+        self.harmonizer
+            .set_config(templates.key.clone(), templates.harmonizer_config.clone());
 
         // Add detailed debug logging for template content if debug level is enabled
         if log::log_enabled!(log::Level::Debug) {
@@ -733,6 +741,9 @@ impl IpfixActor {
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
 
+        // Remove harmonizer metadata for this key
+        self.harmonizer.remove_config(key);
+
         debug!("Template deletion completed for key: {}", key);
     }
 
@@ -823,6 +834,7 @@ impl IpfixActor {
                 let object_name_lookup = self
                     .get_template_key(template_id)
                     .and_then(|key| self.object_id_name_map.get(key));
+                let template_key = self.get_template_key(template_id).cloned();
 
                 let mut observation_time: Option<u64>;
 
@@ -917,7 +929,10 @@ impl IpfixActor {
                         stats: final_stats,
                     });
 
-                    messages.push(saistats.clone());
+                    messages.extend(
+                        self.harmonizer
+                            .process(template_key.as_deref(), saistats.clone()),
+                    );
                     debug!("Record parsed {:?}", saistats);
                 }
             }
@@ -1229,12 +1244,14 @@ mod test {
             Arc::new(Vec::from(template_256_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
+            None,
         ));
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_b"),
             Arc::new(Vec::from(template_257_bytes)),
             Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
             Some(vec![1, 2]),
+            None,
         ));
 
         let valid_records_bytes: [u8; 144] = [
@@ -1306,6 +1323,7 @@ mod test {
             Arc::new(Vec::from(template_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
+            None,
         ));
         let mut expected = HashMap::new();
         expected.insert(1u16, "Ethernet0".to_string());
@@ -1318,6 +1336,7 @@ mod test {
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
+            None,
             None,
             None,
         ));
@@ -1378,6 +1397,7 @@ mod test {
                 Arc::new(Vec::from(template_bytes)),
                 Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
                 Some(vec![1, 2]),
+                None,
             ))
             .await
             .unwrap();
