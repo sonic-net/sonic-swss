@@ -14,29 +14,12 @@ use crate::message::{
 
 const NANOS_PER_MICROSECOND: u64 = 1_000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct StatKey {
-    object_name: String,
-    type_id: u32,
-    stat_id: u32,
-}
-
-impl From<&SAIStat> for StatKey {
-    fn from(stat: &SAIStat) -> Self {
-        Self {
-            object_name: stat.object_name.clone(),
-            type_id: stat.type_id,
-            stat_id: stat.stat_id,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ReportingWindow {
     window: u64,
     observation_time: u64,
     stats: Vec<SAIStat>,
-    index: HashMap<StatKey, usize>,
+    index: HashMap<String, HashMap<(u32, u32), usize>>,
 }
 
 impl ReportingWindow {
@@ -55,13 +38,19 @@ impl ReportingWindow {
         self.observation_time = self.observation_time.max(sample.observation_time);
 
         for stat in &sample.stats {
-            let key = StatKey::from(stat);
-            if let Some(position) = self.index.get(&key).copied() {
+            let stat_index = self.index.get_mut(stat.object_name.as_str());
+            if let Some(position) = stat_index
+                .and_then(|index| index.get(&(stat.type_id, stat.stat_id)))
+                .copied()
+            {
                 self.stats[position] = stat.clone();
             } else {
                 let position = self.stats.len();
                 self.stats.push(stat.clone());
-                self.index.insert(key, position);
+                self.index
+                    .entry(stat.object_name.clone())
+                    .or_default()
+                    .insert((stat.type_id, stat.stat_id), position);
             }
         }
     }
