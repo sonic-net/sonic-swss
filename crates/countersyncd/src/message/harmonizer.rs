@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::saistats::SAIStatsMessage;
 
 /// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_HARMONIZER.
@@ -34,12 +36,12 @@ impl HarmonizerConfigMessage {
 
 #[derive(Debug, Clone)]
 pub struct HarmonizerStatsMessage {
-    pub key: Option<String>,
+    pub key: Option<Arc<str>>,
     pub stats: SAIStatsMessage,
 }
 
 impl HarmonizerStatsMessage {
-    pub fn new(key: Option<String>, stats: SAIStatsMessage) -> Self {
+    pub fn new(key: Option<Arc<str>>, stats: SAIStatsMessage) -> Self {
         Self { key, stats }
     }
 }
