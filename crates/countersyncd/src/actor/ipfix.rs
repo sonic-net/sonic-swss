@@ -490,9 +490,11 @@ pub struct IpfixActor {
     /// Channel for receiving IPFIX data records
     record_recipient: Receiver<SocketBufferMessage>,
     /// Mapping from template ID to message key for temporary templates
-    temporary_templates_map: HashMap<u16, String>,
+    temporary_templates_map: HashMap<u16, Arc<str>>,
     /// Mapping from message key to template IDs for applied templates
-    applied_templates_map: HashMap<String, Vec<u16>>,
+    applied_templates_map: HashMap<Arc<str>, Vec<u16>>,
+    /// Mapping from applied template ID to message key for hot path lookups
+    applied_template_key_map: HashMap<u16, Arc<str>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: HashMap<String, HashMap<u16, String>>,
 }
@@ -518,6 +520,7 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
+            applied_template_key_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
         }
     }
@@ -537,7 +540,8 @@ impl IpfixActor {
     ///
     /// * `msg_key` - Unique key identifying the template message
     /// * `templates` - Parsed IPFIX template message containing template definitions
-    fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
+    fn insert_temporary_template(&mut self, msg_key: &str, templates: Message) {
+        let msg_key = Arc::<str>::from(msg_key);
         templates.iter_template_records().for_each(|record| {
             self.temporary_templates_map
                 .insert(record.template_id, msg_key.clone());
@@ -547,10 +551,7 @@ impl IpfixActor {
     /// Returns true if the template is still known (temporary or applied).
     fn is_template_known(&self, template_id: u16) -> bool {
         self.temporary_templates_map.contains_key(&template_id)
-            || self
-                .applied_templates_map
-                .values()
-                .any(|ids| ids.contains(&template_id))
+            || self.applied_template_key_map.contains_key(&template_id)
     }
 
     /// Moves a template from temporary to applied state when it's used in data records.
@@ -575,16 +576,17 @@ impl IpfixActor {
                 template_ids.push(k);
             });
         self.temporary_templates_map.retain(|_, v| *v != msg_key);
+        for template_id in &template_ids {
+            self.applied_template_key_map
+                .insert(*template_id, msg_key.clone());
+        }
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
-        })
+    fn get_template_key(&self, template_id: u16) -> Option<&Arc<str>> {
+        self.temporary_templates_map
+            .get(&template_id)
+            .or_else(|| self.applied_template_key_map.get(&template_id))
     }
 
     /// Processes IPFIX template messages and stores them for later use.
@@ -723,13 +725,16 @@ impl IpfixActor {
             // Remove from temporary templates map
             for template_id in &template_ids {
                 self.temporary_templates_map.remove(template_id);
+                self.applied_template_key_map.remove(template_id);
             }
             debug!("Removed {} templates for key: {}", template_ids.len(), key);
         }
 
         // Also check and remove any remaining entries in temporary_templates_map
         self.temporary_templates_map
-            .retain(|_, msg_key| msg_key != key);
+            .retain(|_, msg_key| msg_key.as_ref() != key);
+        self.applied_template_key_map
+            .retain(|_, msg_key| msg_key.as_ref() != key);
 
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
@@ -821,12 +826,10 @@ impl IpfixActor {
                     _ => continue,
                 };
 
-                let object_name_lookup = self
-                    .get_template_key(template_id)
-                    .and_then(|key| self.object_id_name_map.get(key));
-                let template_key = self
-                    .get_template_key(template_id)
-                    .map(|key| Arc::<str>::from(key.as_str()));
+                let template_key = self.get_template_key(template_id);
+                let object_name_lookup = template_key
+                    .and_then(|key| self.object_id_name_map.get(key.as_ref()));
+                let template_key = template_key.cloned();
 
                 let mut observation_time: Option<u64>;
 
