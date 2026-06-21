@@ -429,8 +429,11 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             }
         } else if !self.config.detailed && !self.latest_counters.is_empty() {
             // Summary mode - show aggregate information
-            let total_counter_value: u64 =
-                self.latest_counters.values().map(|info| info.counter).sum();
+            let total_counter_value: u128 = self
+                .latest_counters
+                .values()
+                .map(|info| u128::from(info.counter))
+                .sum();
             let unique_types = self
                 .latest_counters
                 .keys()

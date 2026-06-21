@@ -8,8 +8,8 @@ use tokio::time::{timeout, Duration, Instant};
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
     buffer::SocketBufferMessage,
+    harmonizer::HarmonizerStatsMessage,
     ipfix::IPFixTemplatesMessage,
-    saistats::SAIStatsMessage,
 };
 use log::warn;
 
@@ -30,7 +30,7 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
     let (template_tx, template_rx) =
         mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
-    let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
+    let (stats_tx, mut stats_rx) = mpsc::channel::<HarmonizerStatsMessage>(1024);
 
     let mut actor = IpfixActor::new(template_rx, buffer_rx);
     actor.add_recipient(stats_tx);
