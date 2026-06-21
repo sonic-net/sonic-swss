@@ -1,5 +1,5 @@
 use ahash::{HashMap, HashMapExt};
-use log::warn;
+use log::debug;
 use std::collections::LinkedList;
 use std::sync::Arc;
 use tokio::{
@@ -114,26 +114,51 @@ impl ReportingRateState {
 
 #[derive(Debug, Default)]
 pub struct Harmonizer {
-    reporting_rate: HashMap<String, ReportingRateState>,
+    sessions: HashMap<String, HarmonizerState>,
+}
+
+#[derive(Debug)]
+struct HarmonizerState {
+    _config: HarmonizerConfig,
+    reporting_rate: Option<ReportingRateState>,
+}
+
+impl HarmonizerState {
+    fn new(config: HarmonizerConfig) -> Self {
+        let reporting_rate = config.reporting_rate.map(ReportingRateState::new);
+
+        Self {
+            _config: config,
+            reporting_rate,
+        }
+    }
+
+    fn process(&mut self, sample: SAIStatsMessage) -> Vec<SAIStatsMessage> {
+        let Some(reporting_rate) = self.reporting_rate.as_mut() else {
+            return vec![sample];
+        };
+
+        match reporting_rate.push(sample.as_ref()) {
+            Some(message) => vec![message],
+            None => Vec::new(),
+        }
+    }
 }
 
 impl Harmonizer {
     pub fn set_config(&mut self, key: String, config: Option<HarmonizerConfig>) {
-        self.reporting_rate.remove(&key);
-
         match config {
             Some(config) => {
-                if let Some(reporting_rate) = config.reporting_rate {
-                    self.reporting_rate
-                        .insert(key.clone(), ReportingRateState::new(reporting_rate));
-                }
+                self.sessions.insert(key, HarmonizerState::new(config));
             }
-            None => {}
+            None => {
+                self.sessions.remove(&key);
+            }
         }
     }
 
     pub fn remove_config(&mut self, key: &str) {
-        self.reporting_rate.remove(key);
+        self.sessions.remove(key);
     }
 
     pub fn process(&mut self, key: Option<&str>, sample: SAIStatsMessage) -> Vec<SAIStatsMessage> {
@@ -141,21 +166,18 @@ impl Harmonizer {
             return vec![sample];
         };
 
-        let Some(state) = self.reporting_rate.get_mut(key) else {
+        let Some(state) = self.sessions.get_mut(key) else {
             return vec![sample];
         };
 
-        match state.push(sample.as_ref()) {
-            Some(message) => vec![message],
-            None => Vec::new(),
-        }
+        state.process(sample)
     }
 }
 
-pub fn validate_reporting_rate(config: &Option<HarmonizerConfig>, key: &str) {
+fn validate_reporting_rate(config: &Option<HarmonizerConfig>, key: &str) {
     if let Some(config) = config {
         if config.reporting_rate.is_none() {
-            warn!(
+            debug!(
                 "Harmonizer config for session {} has no valid reporting_rate; forwarding samples unchanged",
                 key
             );
@@ -252,7 +274,12 @@ mod tests {
     #[test]
     fn forwards_samples_without_reporting_rate() {
         let mut harmonizer = Harmonizer::default();
-        harmonizer.set_config("session".to_string(), None);
+        harmonizer.set_config(
+            "session".to_string(),
+            Some(HarmonizerConfig {
+                reporting_rate: None,
+            }),
+        );
 
         let input = sample(10, vec![stat("Ethernet0", 1)]);
         let output = harmonizer.process(Some("session"), input.clone());
