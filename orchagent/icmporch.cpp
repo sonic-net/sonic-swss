@@ -404,8 +404,10 @@ std::unordered_set<std::string> IcmpSaiSessionHandler::native_counter_stats()
     // Must match the serializer registered in sairedis for
     // COUNTER_TYPE_ICMP_ECHO_SESSION (FlexCounter::createCounterContext).
     return {
-        sai_serialize_icmp_echo_session_stat(SAI_ICMP_ECHO_SESSION_STAT_IN_PACKETS),
-        sai_serialize_icmp_echo_session_stat(SAI_ICMP_ECHO_SESSION_STAT_OUT_PACKETS),
+        sai_serialize_enum(SAI_ICMP_ECHO_SESSION_STAT_IN_PACKETS,
+                           &sai_metadata_enum_sai_icmp_echo_session_stat_t),
+        sai_serialize_enum(SAI_ICMP_ECHO_SESSION_STAT_OUT_PACKETS,
+                           &sai_metadata_enum_sai_icmp_echo_session_stat_t),
     };
 }
 
