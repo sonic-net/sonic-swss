@@ -395,9 +395,12 @@ impl SwssActor {
     fn parse_harmonizer_config(
         field_values: &HashMap<String, swss_common::CxxString>,
     ) -> Option<HarmonizerConfig> {
-        field_values
+        let reporting_rate = field_values
             .get("reporting_rate")
             .and_then(|value| HarmonizerConfig::parse(&value.to_string_lossy()))
+            .and_then(|config| config.reporting_rate);
+
+        Some(HarmonizerConfig { reporting_rate })
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -833,6 +836,14 @@ mod tests {
                 .expect("harmonizer config")
                 .reporting_rate,
             Some(100)
+        );
+
+        let empty_harmonizer_fields = HashMap::new();
+        assert_eq!(
+            SwssActor::parse_harmonizer_config(&empty_harmonizer_fields)
+                .expect("harmonizer config")
+                .reporting_rate,
+            None
         );
 
         let mut state = HarmonizerConfigState::default();
