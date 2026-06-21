@@ -624,6 +624,7 @@ public:
     bool isCombinedMirrorV6Table();
     bool isAclMirrorV6Supported() const;
     bool isAclMirrorV4Supported() const;
+    bool queryAclMirrorV6Capability(const string &platform) const;
     bool isAclMirrorTableSupported(string type) const;
     bool isAclL3V4V6TableSupported(acl_stage_type_t stage) const;
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;

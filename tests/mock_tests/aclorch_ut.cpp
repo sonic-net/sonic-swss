@@ -1,5 +1,6 @@
 #include "ut_helper.h"
 #include "flowcounterrouteorch.h"
+#include "mock_sai_capability_wrap.h"
 
 extern sai_object_id_t gSwitchId;
 
@@ -1993,6 +1994,65 @@ namespace aclorch_test
 
         // Restore sai_switch_api.
         sai_switch_api = old_sai_switch_api;
+    }
+
+    // SAI reports the IPv6 match field supported: MIRRORV6 enabled even on a
+    // platform absent from the legacy hardcoded list.
+    TEST_F(AclOrchTest, MirrorV6Capability_FollowsSaiQueryWhenSupported)
+    {
+        hftelorch_sai_wrap_ut::HFTelSaiHookGuard guard(
+            hftelorch_sai_wrap_ut::setSaiHookAllSupported);
+
+        // A platform that is NOT in the legacy hardcoded MIRRORV6 platform list.
+        setenv("platform", "acl_ut_unknown_platform", 1);
+
+        auto orch = createAclOrch();
+        EXPECT_TRUE(orch->m_aclOrch->isAclMirrorV6Supported());
+
+        unsetenv("platform");
+    }
+
+    // Query unavailable: fall back to the historical list (platform on it -> supported).
+    TEST_F(AclOrchTest, MirrorV6Capability_FallbackSupportedPlatform)
+    {
+        hftelorch_sai_wrap_ut::HFTelSaiHookGuard guard(
+            hftelorch_sai_wrap_ut::setSaiHookAttributeCapabilityQueryFail);
+
+        setenv("platform", BRCM_PLATFORM_SUBSTRING, 1);
+
+        auto orch = createAclOrch();
+        EXPECT_TRUE(orch->m_aclOrch->isAclMirrorV6Supported());
+
+        unsetenv("platform");
+    }
+
+    // Query unavailable and platform not on the historical list -> unsupported.
+    TEST_F(AclOrchTest, MirrorV6Capability_FallbackUnsupportedPlatform)
+    {
+        hftelorch_sai_wrap_ut::HFTelSaiHookGuard guard(
+            hftelorch_sai_wrap_ut::setSaiHookAttributeCapabilityQueryFail);
+
+        setenv("platform", "acl_ut_unknown_platform", 1);
+
+        auto orch = createAclOrch();
+        EXPECT_FALSE(orch->m_aclOrch->isAclMirrorV6Supported());
+
+        unsetenv("platform");
+    }
+
+    // Query succeeds but reports the field not implemented: MIRRORV6 disabled,
+    // overriding the platform default (BRCM is on the legacy list).
+    TEST_F(AclOrchTest, MirrorV6Capability_SaiQuerySupportedButFieldUnimplemented)
+    {
+        hftelorch_sai_wrap_ut::HFTelSaiHookGuard guard(
+            hftelorch_sai_wrap_ut::setSaiHookAttributeCapabilitySuccessUnsupported);
+
+        setenv("platform", BRCM_PLATFORM_SUBSTRING, 1);
+
+        auto orch = createAclOrch();
+        EXPECT_FALSE(orch->m_aclOrch->isAclMirrorV6Supported());
+
+        unsetenv("platform");
     }
 
     TEST_F(AclOrchTest, Match_Inner_Mac)
