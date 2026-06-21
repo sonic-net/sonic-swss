@@ -9,9 +9,8 @@ use std::time::Duration;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    thread,
 };
-use tokio::sync::mpsc::{self, Sender};
+use tokio::{select, sync::mpsc::Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const CONFIG_DB_ID: i32 = 4;
@@ -20,10 +19,9 @@ const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEM
 const CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_PROFILE";
 const CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE: &str =
     "HIGH_FREQUENCY_TELEMETRY_HARMONIZER";
-const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 #[cfg(test)]
-const MAX_TEST_ITERATIONS: usize = 20;
+const MAX_TEST_IDLE_ITERATIONS: usize = 20;
 
 /// SwssActor monitors HFT session state and HFT harmonizer/profile config.
 ///
@@ -128,70 +126,83 @@ impl SwssActor {
             "SwssActor started, monitoring HFT session state and harmonizer/profile config"
         );
 
-        // Keep the SWSS table polling on dedicated blocking threads so we don't park Tokio workers.
         let SwssActor {
-            session_table,
-            profile_table,
-            harmonizer_table,
+            mut session_table,
+            mut profile_table,
+            mut harmonizer_table,
             template_recipient,
             harmonizer_config_recipient,
         } = actor;
-        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
         let mut harmonizer_state = HarmonizerConfigState::default();
 
-        let _session_reader_thread = match Self::spawn_reader_thread(
-            "countersyncd-swss-session",
-            session_table,
-            event_sender.clone(),
-            |table, timeout| {
-                let mut events = Vec::new();
-                Self::blocking_collect_session_events(table, timeout, &mut events)?;
-                Ok(events)
-            },
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS session reader thread: {}", e);
-                return;
-            }
-        };
+        #[cfg(test)]
+        let mut idle_iterations = 0;
 
-        let _profile_reader_thread = match Self::spawn_reader_thread(
-            "countersyncd-swss-profile",
-            profile_table,
-            event_sender.clone(),
-            |table, timeout| {
-                let mut events = Vec::new();
-                Self::blocking_collect_profile_events(table, timeout, &mut events)?;
-                Ok(events)
-            },
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS profile reader thread: {}", e);
-                return;
+        let mut pending_events = Vec::new();
+        for events in [
+            Self::collect_profile_events(&profile_table),
+            Self::collect_harmonizer_events(&harmonizer_table),
+            Self::collect_session_events(&session_table),
+        ] {
+            match events {
+                Ok(events) => pending_events.extend(events),
+                Err(e) => error!("{}", e),
             }
-        };
+        }
 
-        let _harmonizer_reader_thread = match Self::spawn_reader_thread(
-            "countersyncd-swss-harmonizer",
-            harmonizer_table,
-            event_sender,
-            |table, timeout| {
-                let mut events = Vec::new();
-                Self::blocking_collect_harmonizer_events(table, timeout, &mut events)?;
-                Ok(events)
-            },
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS harmonizer reader thread: {}", e);
-                return;
+        loop {
+            let events = if pending_events.is_empty() {
+                select! {
+                    result = session_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_session_events(&session_table),
+                            Err(e) => Err(format!("Error reading from session table: {}", e)),
+                        }
+                    }
+                    result = profile_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_profile_events(&profile_table),
+                            Err(e) => Err(format!("Error reading from profile table: {}", e)),
+                        }
+                    }
+                    result = harmonizer_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_harmonizer_events(&harmonizer_table),
+                            Err(e) => Err(format!("Error reading from harmonizer table: {}", e)),
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(50)), if cfg!(test) => {
+                        Ok(Vec::new())
+                    }
+                }
+            } else {
+                Ok(std::mem::take(&mut pending_events))
+            };
+
+            let events = match events {
+                Ok(events) => events,
+                Err(e) => {
+                    error!("{}", e);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
+
+            #[cfg(test)]
+            {
+                if events.is_empty() {
+                    idle_iterations += 1;
+                    if idle_iterations > MAX_TEST_IDLE_ITERATIONS {
+                        debug!("SwssActor test mode reached idle limit, terminating");
+                        break;
+                    }
+                } else {
+                    idle_iterations = 0;
+                }
             }
-        };
 
-        while let Some(event) = event_receiver.recv().await {
-            match event {
+            for event in events {
+                match event {
                 SwssEvent::SessionUpdate { key, session_data } => {
                     if Self::process_session_update(&template_recipient, &key, &session_data).await {
                         harmonizer_state.add_session(key.clone());
@@ -268,192 +279,81 @@ impl SwssActor {
                     .await;
                 }
             }
-        }
-
-        debug!("SwssActor terminated");
-    }
-
-    fn spawn_reader_thread<F>(
-        name: &str,
-        mut table: SubscriberStateTable,
-        event_sender: Sender<SwssEvent>,
-        mut collect_events: F,
-    ) -> Result<thread::JoinHandle<()>, std::io::Error>
-    where
-        F: FnMut(&mut SubscriberStateTable, Duration) -> Result<Vec<SwssEvent>, String>
-            + Send
-            + 'static,
-    {
-        let name = name.to_string();
-
-        thread::Builder::new().name(name.clone()).spawn(move || {
-            #[cfg(test)]
-            let mut iteration_count = 0;
-
-            loop {
-                if event_sender.is_closed() {
-                    debug!("{} event receiver closed, terminating reader thread", name);
-                    break;
-                }
-
-                #[cfg(test)]
-                {
-                    iteration_count += 1;
-                    if iteration_count > MAX_TEST_ITERATIONS {
-                        debug!(
-                            "{} test mode reached maximum iterations ({}), terminating reader thread",
-                            name, MAX_TEST_ITERATIONS
-                        );
-                        break;
-                    }
-                }
-
-                #[cfg(test)]
-                let timeout = Duration::from_millis(50);
-                #[cfg(not(test))]
-                let timeout = Duration::from_secs(10);
-
-                match collect_events(&mut table, timeout) {
-                    Ok(events) => {
-                        for event in events {
-                            if event_sender.blocking_send(event).is_err() {
-                                debug!(
-                                    "{} event receiver dropped, terminating reader thread",
-                                    name
-                                );
-                                return;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error reading from {}: {}", name, e);
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                }
             }
+        }
+    }
 
-            #[cfg(test)]
+    fn collect_session_events(session_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+        let items = session_table
+            .pops()
+            .map_err(|e| format!("Error popping items from session table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
             debug!(
-                "{} reader thread terminated after {} iterations",
-                name, iteration_count
+                "SwssActor received: key={}, op={:?}",
+                item.key, item.operation
             );
-        })
+
+            let session_key = Self::extract_session_key(&item.key);
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::SessionUpdate {
+                    key: session_key,
+                    session_data: Self::parse_session_data(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::SessionDelete { key: session_key }),
+            }
+        }
+
+        Ok(events)
     }
 
-    fn blocking_collect_session_events(
-        session_table: &mut SubscriberStateTable,
-        timeout: Duration,
-        events: &mut Vec<SwssEvent>,
-    ) -> Result<(), String> {
-        match session_table.read_data(timeout, false) {
-            Ok(select_result) => match select_result {
-                swss_common::SelectResult::Data => match session_table.pops() {
-                    Ok(items) => {
-                        for item in items {
-                            debug!(
-                                "SwssActor received: key={}, op={:?}",
-                                item.key, item.operation
-                            );
+    fn collect_profile_events(profile_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+        let items = profile_table
+            .pops()
+            .map_err(|e| format!("Error popping items from profile table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
 
-                            let session_key = Self::extract_session_key(&item.key);
-                            match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::SessionUpdate {
-                                    key: session_key,
-                                    session_data: Self::parse_session_data(&item.field_values),
-                                }),
-                                KeyOperation::Del => {
-                                    events.push(SwssEvent::SessionDelete { key: session_key })
-                                }
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("Error popping items from session table: {}", e);
-                        Ok(())
-                    }
-                },
-                swss_common::SelectResult::Timeout => {
-                    debug!("Timeout waiting for session table updates");
-                    Ok(())
-                }
-                swss_common::SelectResult::Signal => {
-                    debug!("Signal received while waiting for session table updates");
-                    Ok(())
-                }
-            },
-            Err(e) => Err(format!("Error reading from session table: {}", e)),
+        for item in items {
+            let profile = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+            );
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
+                    profile,
+                    harmonizer: Self::parse_profile_harmonizer(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
+            }
         }
+
+        Ok(events)
     }
 
-    fn blocking_collect_profile_events(
-        profile_table: &mut SubscriberStateTable,
-        timeout: Duration,
-        events: &mut Vec<SwssEvent>,
-    ) -> Result<(), String> {
-        match profile_table.read_data(timeout, false) {
-            Ok(select_result) => match select_result {
-                swss_common::SelectResult::Data => match profile_table.pops() {
-                    Ok(items) => {
-                        for item in items {
-                            let profile = Self::extract_config_key(
-                                &item.key,
-                                CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
-                            );
-                            match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
-                                    profile,
-                                    harmonizer: Self::parse_profile_harmonizer(&item.field_values),
-                                }),
-                                KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("Error popping items from profile table: {}", e);
-                        Ok(())
-                    }
-                },
-                swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal => Ok(()),
-            },
-            Err(e) => Err(format!("Error reading from profile table: {}", e)),
-        }
-    }
+    fn collect_harmonizer_events(
+        harmonizer_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = harmonizer_table
+            .pops()
+            .map_err(|e| format!("Error popping items from harmonizer table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
 
-    fn blocking_collect_harmonizer_events(
-        harmonizer_table: &mut SubscriberStateTable,
-        timeout: Duration,
-        events: &mut Vec<SwssEvent>,
-    ) -> Result<(), String> {
-        match harmonizer_table.read_data(timeout, false) {
-            Ok(select_result) => match select_result {
-                swss_common::SelectResult::Data => match harmonizer_table.pops() {
-                    Ok(items) => {
-                        for item in items {
-                            let name = Self::extract_config_key(
-                                &item.key,
-                                CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
-                            );
-                            match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::HarmonizerUpdate {
-                                    name,
-                                    config: Self::parse_harmonizer_config(&item.field_values),
-                                }),
-                                KeyOperation::Del => events.push(SwssEvent::HarmonizerDelete { name }),
-                            }
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("Error popping items from harmonizer table: {}", e);
-                        Ok(())
-                    }
-                },
-                swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal => Ok(()),
-            },
-            Err(e) => Err(format!("Error reading from harmonizer table: {}", e)),
+        for item in items {
+            let name = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
+            );
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::HarmonizerUpdate {
+                    name,
+                    config: Self::parse_harmonizer_config(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::HarmonizerDelete { name }),
+            }
         }
+
+        Ok(events)
     }
 
     fn parse_session_data(
