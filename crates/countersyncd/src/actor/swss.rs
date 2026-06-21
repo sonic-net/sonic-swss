@@ -1,4 +1,4 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::{harmonizer::HarmonizerConfig, ipfix::IPFixTemplatesMessage};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info, warn};
@@ -24,6 +24,7 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 ///  3> "object_names"      -> "Ethernet0"
 ///  4> "object_ids"        -> "1"
 ///  5> "session_config"    -> <binary IPFIX template data>
+///  6> "harmonizer_config" -> "reporting_rate=1000"
 /// ```
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
@@ -205,6 +206,9 @@ impl SwssActor {
                 "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
                 "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
                 "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
+                "harmonizer_config" => {
+                    session_data.harmonizer_config = value.to_string_lossy().to_string()
+                }
                 "session_config" => {
                     session_data.session_config = value.as_bytes().to_vec();
                 }
@@ -392,7 +396,15 @@ impl SwssActor {
             }
         };
 
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
+        let harmonizer_config = HarmonizerConfig::parse(&session_data.harmonizer_config);
+
+        let message = IPFixTemplatesMessage::new(
+            key.to_string(),
+            templates,
+            object_names,
+            object_ids,
+            harmonizer_config,
+        );
 
         template_recipient
             .send(message)
@@ -428,6 +440,7 @@ struct SessionData {
     object_names: String,
     object_ids: String,
     session_config: Vec<u8>,
+    harmonizer_config: String,
 }
 
 #[cfg(test)]
@@ -498,6 +511,39 @@ mod tests {
             .expect("Should have object_names");
         assert_eq!(object_names, &vec!["Ethernet0", "Ethernet1", "Ethernet2"]);
         assert_eq!(received_message.object_ids, Some(vec![1, 2, 3]));
+    }
+
+    #[tokio::test]
+    async fn test_session_update_with_harmonizer_config() {
+        let (template_sender, mut template_receiver) = channel(1);
+        let mut actor = create_test_actor(template_sender);
+
+        let key = "test_session|PORT";
+        let mut field_values = HashMap::new();
+        field_values.insert("stream_status".to_string(), CxxString::from("enabled"));
+        field_values.insert("session_type".to_string(), CxxString::from("ipfix"));
+        field_values.insert("object_ids".to_string(), CxxString::from("1"));
+        field_values.insert(
+            "session_config".to_string(),
+            CxxString::from("ipfix_template_data"),
+        );
+        field_values.insert(
+            "harmonizer_config".to_string(),
+            CxxString::from("reporting_rate=100"),
+        );
+
+        actor.handle_session_update(key, &field_values).await;
+
+        let received_message = template_receiver
+            .try_recv()
+            .expect("Should have received a message");
+        assert_eq!(
+            received_message
+                .harmonizer_config
+                .expect("harmonizer config")
+                .reporting_rate,
+            Some(100)
+        );
     }
 
     #[tokio::test]
@@ -630,6 +676,7 @@ mod tests {
         assert_eq!(session_data.object_names, "");
         assert_eq!(session_data.object_ids, "");
         assert!(session_data.session_config.is_empty());
+        assert_eq!(session_data.harmonizer_config, "");
     }
 
     #[test]
@@ -644,12 +691,14 @@ mod tests {
             templates.clone(),
             object_names.clone(),
             object_ids.clone(),
+            None,
         );
 
         assert_eq!(message.key, "test_key");
         assert_eq!(message.templates, Some(templates));
         assert_eq!(message.object_names, object_names);
         assert_eq!(message.object_ids, object_ids);
+        assert_eq!(message.harmonizer_config, None);
         assert!(!message.is_delete);
     }
 
