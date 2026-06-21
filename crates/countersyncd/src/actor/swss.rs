@@ -758,7 +758,8 @@ mod tests {
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
-        let (harmonizer_config_sender, _harmonizer_config_receiver) = channel(100);
+        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(100);
+        tokio::spawn(async move { while harmonizer_config_receiver.recv().await.is_some() {} });
         SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
     }
 
