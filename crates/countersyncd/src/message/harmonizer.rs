@@ -60,11 +60,15 @@ impl HarmonizerConfig {
         };
 
         match reporting_rate {
-            Some(0) => None,
+            Some(0) => Some(Self {
+                reporting_rate: None,
+            }),
             Some(value) => Some(Self {
                 reporting_rate: Some(value),
             }),
-            None => None,
+            None => Some(Self {
+                reporting_rate: None,
+            }),
         }
     }
 }
@@ -126,9 +130,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_missing_or_zero_reporting_rate() {
+    fn parse_preserves_missing_or_zero_reporting_rate() {
         assert_eq!(HarmonizerConfig::parse(""), None);
-        assert_eq!(HarmonizerConfig::parse("rollover_counters=PORT|A"), None);
-        assert_eq!(HarmonizerConfig::parse("reporting_rate=0"), None);
+        assert_eq!(
+            HarmonizerConfig::parse("rollover_counters=PORT|A")
+                .unwrap()
+                .reporting_rate,
+            None
+        );
+        assert_eq!(
+            HarmonizerConfig::parse("reporting_rate=0")
+                .unwrap()
+                .reporting_rate,
+            None
+        );
     }
 }
