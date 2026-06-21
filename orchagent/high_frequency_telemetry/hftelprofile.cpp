@@ -373,7 +373,13 @@ bool HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *obj
         return false;
     }
 
-    auto &objs = m_name_sai_map[object_type];
+    auto objs_itr = m_name_sai_map.find(object_type);
+    if (objs_itr == m_name_sai_map.end())
+    {
+        return false;
+    }
+
+    auto &objs = objs_itr->second;
     auto itr = objs.find(object_name);
     if (itr == objs.end())
     {

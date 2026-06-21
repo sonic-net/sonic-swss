@@ -505,10 +505,8 @@ namespace hftelprofile_ut
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
     }
 
-    struct LocallyNotifyTest : public ::testing::Test
+    struct LocallyNotifyStartedProfileTest : public ::testing::Test
     {
-        static constexpr sai_object_id_t PORT_OID = 0x1000000000001ULL;
-
         struct ProfileStub
         {
             alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
@@ -535,8 +533,9 @@ namespace hftelprofile_ut
                 group.updateObjects({"Ethernet0"});
                 group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS});
                 p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
-                p->m_name_sai_map[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = PORT_OID;
-                p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT][PORT_OID][SAI_PORT_STAT_IF_IN_OCTETS] =
+                constexpr sai_object_id_t port_oid = 0x1000000000001ULL;
+                p->m_name_sai_map[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = port_oid;
+                p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT][port_oid][SAI_PORT_STAT_IF_IN_OCTETS] =
                     make_shared<sai_object_id_t>(0x300);
 
                 auto guard = make_shared<sai_object_id_t>(0x200);
@@ -547,12 +546,19 @@ namespace hftelprofile_ut
             ~ProfileStub()
             {
                 if (!p) return;
-                p->m_profile_name.~basic_string();
-                p->m_groups.~map();
-                p->m_name_sai_map.~unordered_map();
-                p->m_sai_tam_counter_subscription_objs.~unordered_map();
-                p->m_sai_tam_tel_type_objs.~unordered_map();
-                p->m_sai_tam_tel_type_states.~unordered_map();
+                using ProfileName = decay_t<decltype(p->m_profile_name)>;
+                using Groups = decay_t<decltype(p->m_groups)>;
+                using NameSaiMap = decay_t<decltype(p->m_name_sai_map)>;
+                using CounterSubscriptionObjs = decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>;
+                using TelTypeObjs = decay_t<decltype(p->m_sai_tam_tel_type_objs)>;
+                using TelTypeStates = decay_t<decltype(p->m_sai_tam_tel_type_states)>;
+
+                p->m_profile_name.~ProfileName();
+                p->m_groups.~Groups();
+                p->m_name_sai_map.~NameSaiMap();
+                p->m_sai_tam_counter_subscription_objs.~CounterSubscriptionObjs();
+                p->m_sai_tam_tel_type_objs.~TelTypeObjs();
+                p->m_sai_tam_tel_type_states.~TelTypeStates();
                 p = nullptr;
             }
         };
@@ -575,14 +581,17 @@ namespace hftelprofile_ut
             ~OrchStub()
             {
                 if (!p) return;
-                p->m_type_profile_mapping.~unordered_map();
-                p->m_counter_name_cache.~unordered_map();
+                using TypeProfileMapping = decay_t<decltype(p->m_type_profile_mapping)>;
+                using CounterNameCacheType = decay_t<decltype(p->m_counter_name_cache)>;
+
+                p->m_type_profile_mapping.~TypeProfileMapping();
+                p->m_counter_name_cache.~CounterNameCacheType();
                 p = nullptr;
             }
         };
     };
 
-    TEST_F(LocallyNotifyTest, UnrelatedObjectUpdateDoesNotRecommitStartedProfile)
+    TEST_F(LocallyNotifyStartedProfileTest, UnrelatedObjectUpdateDoesNotRecommitStartedProfile)
     {
         ProfileStub profileStub;
         profileStub.init();
