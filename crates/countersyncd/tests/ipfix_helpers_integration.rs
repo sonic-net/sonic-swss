@@ -8,6 +8,7 @@ use tokio::time::{sleep, timeout, Duration};
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
     buffer::SocketBufferMessage,
+    harmonizer::HarmonizerStatsMessage,
     ipfix::IPFixTemplatesMessage,
 };
 
@@ -15,7 +16,7 @@ use countersyncd::message::{
 async fn ipfix_templates_delete_and_readd_schema_change() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(10);
+    let (saistats_sender, mut saistats_receiver) = channel::<HarmonizerStatsMessage>(10);
 
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
@@ -64,7 +65,6 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
                     Arc::new(bytes.clone()),
                     Some(vec!["Obj0".to_string(), "Obj1".to_string()]),
                     Some(vec![1, 2]),
-                    None,
                 ))
                 .await
                 .expect("template send should succeed");
@@ -86,7 +86,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     let mut received = Vec::new();
     for _ in 0..expected_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
-            let stats = Arc::try_unwrap(stats_msg).expect("unwrap stats Arc");
+            let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
             received.push(stats);
         } else {
             break;
@@ -167,7 +167,6 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             Arc::new(readd_templates_bytes.clone()),
             Some(vec!["ObjA".to_string(), "ObjB".to_string()]),
             Some(vec![1, 2]),
-            None,
         ))
         .await
         .expect("template re-add should succeed");
@@ -184,7 +183,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     let mut readd_received = Vec::new();
     for _ in 0..expected_readd_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
-            let stats = Arc::try_unwrap(stats_msg).expect("unwrap stats Arc");
+            let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
             readd_received.push(stats);
         } else {
             break;

@@ -1,9 +1,14 @@
 use ahash::{HashMap, HashMapExt};
 use log::warn;
+use std::collections::LinkedList;
 use std::sync::Arc;
+use tokio::{
+    select,
+    sync::mpsc::{Receiver, Sender},
+};
 
 use crate::message::{
-    harmonizer::HarmonizerConfig,
+    harmonizer::{HarmonizerConfig, HarmonizerConfigMessage, HarmonizerStatsMessage},
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
 
@@ -154,6 +159,72 @@ pub fn validate_reporting_rate(config: &Option<HarmonizerConfig>, key: &str) {
                 "Harmonizer config for session {} has no reporting_rate; forwarding samples unchanged",
                 key
             );
+        }
+    }
+}
+
+pub struct HarmonizerActor {
+    config_recipient: Receiver<HarmonizerConfigMessage>,
+    stats_recipient: Receiver<HarmonizerStatsMessage>,
+    saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
+    harmonizer: Harmonizer,
+}
+
+impl HarmonizerActor {
+    pub fn new(
+        config_recipient: Receiver<HarmonizerConfigMessage>,
+        stats_recipient: Receiver<HarmonizerStatsMessage>,
+    ) -> Self {
+        Self {
+            config_recipient,
+            stats_recipient,
+            saistats_recipients: LinkedList::new(),
+            harmonizer: Harmonizer::default(),
+        }
+    }
+
+    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
+        self.saistats_recipients.push_back(recipient);
+    }
+
+    fn handle_config(&mut self, message: HarmonizerConfigMessage) {
+        if message.is_delete {
+            self.harmonizer.remove_config(&message.key);
+            return;
+        }
+
+        validate_reporting_rate(&message.config, &message.key);
+        self.harmonizer.set_config(message.key, message.config);
+    }
+
+    fn handle_stats(&mut self, message: HarmonizerStatsMessage) -> Vec<SAIStatsMessage> {
+        self.harmonizer
+            .process(message.key.as_deref(), message.stats)
+    }
+
+    pub async fn run(mut actor: HarmonizerActor) {
+        loop {
+            select! {
+                config = actor.config_recipient.recv() => {
+                    match config {
+                        Some(config) => actor.handle_config(config),
+                        None => break,
+                    }
+                },
+                stats = actor.stats_recipient.recv() => {
+                    match stats {
+                        Some(stats) => {
+                            let messages = actor.handle_stats(stats);
+                            for recipient in &actor.saistats_recipients {
+                                for message in &messages {
+                                    let _ = recipient.send(message.clone()).await;
+                                }
+                            }
+                        },
+                        None => break,
+                    }
+                }
+            }
         }
     }
 }

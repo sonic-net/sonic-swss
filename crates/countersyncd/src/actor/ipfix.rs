@@ -17,10 +17,10 @@ use ipfixrw::{
 
 use super::super::message::{
     buffer::SocketBufferMessage,
+    harmonizer::HarmonizerStatsMessage,
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
-use super::harmonizer::{validate_reporting_rate, Harmonizer};
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
 /// Helper functions for debug logging formatting
@@ -484,7 +484,7 @@ type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 /// - Distributing parsed statistics to multiple recipients
 pub struct IpfixActor {
     /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
+    saistats_recipients: LinkedList<Sender<HarmonizerStatsMessage>>,
     /// Channel for receiving IPFIX template messages
     template_recipient: Receiver<IPFixTemplatesMessage>,
     /// Channel for receiving IPFIX data records
@@ -495,8 +495,6 @@ pub struct IpfixActor {
     applied_templates_map: HashMap<String, Vec<u16>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: HashMap<String, HashMap<u16, String>>,
-    /// Optional per-session harmonizer state.
-    harmonizer: Harmonizer,
 }
 
 impl IpfixActor {
@@ -521,7 +519,6 @@ impl IpfixActor {
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
-            harmonizer: Harmonizer::default(),
         }
     }
 
@@ -530,7 +527,7 @@ impl IpfixActor {
     /// # Arguments
     ///
     /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
+    pub fn add_recipient(&mut self, recipient: Sender<HarmonizerStatsMessage>) {
         self.saistats_recipients.push_back(recipient);
     }
 
@@ -614,13 +611,9 @@ impl IpfixActor {
         };
 
         debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}, harmonizer_config: {:?}",
-            templates.key, templates.object_names, templates.object_ids, templates.harmonizer_config
+            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
+            templates.key, templates.object_names, templates.object_ids
         );
-
-        validate_reporting_rate(&templates.harmonizer_config, &templates.key);
-        self.harmonizer
-            .set_config(templates.key.clone(), templates.harmonizer_config.clone());
 
         // Add detailed debug logging for template content if debug level is enabled
         if log::log_enabled!(log::Level::Debug) {
@@ -741,9 +734,6 @@ impl IpfixActor {
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
 
-        // Remove harmonizer metadata for this key
-        self.harmonizer.remove_config(key);
-
         debug!("Template deletion completed for key: {}", key);
     }
 
@@ -756,11 +746,11 @@ impl IpfixActor {
     /// # Returns
     ///
     /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
+    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<HarmonizerStatsMessage> {
         let cache_ref = Self::get_cache();
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
-        let mut messages: Vec<SAIStatsMessage> = Vec::new();
+        let mut messages: Vec<HarmonizerStatsMessage> = Vec::new();
 
         debug!("Processing IPFIX records of length: {}", records.len());
 
@@ -929,10 +919,7 @@ impl IpfixActor {
                         stats: final_stats,
                     });
 
-                    messages.extend(
-                        self.harmonizer
-                            .process(template_key.as_deref(), saistats.clone()),
-                    );
+                    messages.push(HarmonizerStatsMessage::new(template_key.clone(), saistats.clone()));
                     debug!("Record parsed {:?}", saistats);
                 }
             }
@@ -1244,14 +1231,12 @@ mod test {
             Arc::new(Vec::from(template_256_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
-            None,
         ));
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_b"),
             Arc::new(Vec::from(template_257_bytes)),
             Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
             Some(vec![1, 2]),
-            None,
         ));
 
         let valid_records_bytes: [u8; 144] = [
@@ -1271,7 +1256,7 @@ mod test {
         let stats = actor.handle_record(Arc::new(Vec::from(valid_records_bytes)));
         let stats: Vec<_> = stats
             .into_iter()
-            .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
+            .map(|msg| Arc::try_unwrap(msg.stats).expect("single-owner test stats"))
             .collect();
 
         let session_a_names = ["Ethernet0", "Ethernet1"];
@@ -1323,7 +1308,6 @@ mod test {
             Arc::new(Vec::from(template_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
-            None,
         ));
         let mut expected = HashMap::new();
         expected.insert(1u16, "Ethernet0".to_string());
@@ -1336,7 +1320,6 @@ mod test {
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
-            None,
             None,
             None,
         ));
@@ -1397,7 +1380,6 @@ mod test {
                 Arc::new(Vec::from(template_bytes)),
                 Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
                 Some(vec![1, 2]),
-                None,
             ))
             .await
             .unwrap();
@@ -1553,8 +1535,8 @@ mod test {
 
         let mut received_stats = Vec::new();
         while let Some(stats) = saistats_receiver.recv().await {
-            let unwrapped_stats =
-                Arc::try_unwrap(stats).expect("Failed to unwrap Arc<SAIStatsMessage>");
+            let unwrapped_stats = Arc::try_unwrap(stats.stats)
+                .expect("Failed to unwrap Arc<SAIStatsMessage>");
             received_stats.push(unwrapped_stats);
             if received_stats.len() == expected_stats.len() {
                 break;
