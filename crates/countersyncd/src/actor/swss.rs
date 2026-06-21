@@ -1,4 +1,7 @@
-use super::super::message::{harmonizer::HarmonizerConfig, ipfix::IPFixTemplatesMessage};
+use super::super::message::{
+    harmonizer::{HarmonizerConfig, HarmonizerConfigMessage},
+    ipfix::IPFixTemplatesMessage,
+};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info, warn};
@@ -29,6 +32,7 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
+    harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
 }
 
 #[derive(Debug)]
@@ -42,7 +46,10 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `template_recipient` - Channel sender for forwarding IPFIX templates to IPFIX actor
-    pub fn new(template_recipient: Sender<IPFixTemplatesMessage>) -> Result<Self, String> {
+    pub fn new(
+        template_recipient: Sender<IPFixTemplatesMessage>,
+        harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
+    ) -> Result<Self, String> {
         let connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
             .map_err(|e| format!("Failed to create DB connection: {}", e))?;
         let session_table = SubscriberStateTable::new(
@@ -56,6 +63,7 @@ impl SwssActor {
         Ok(SwssActor {
             session_table,
             template_recipient,
+            harmonizer_config_recipient,
         })
     }
 
@@ -76,6 +84,7 @@ impl SwssActor {
         let SwssActor {
             mut session_table,
             template_recipient,
+            harmonizer_config_recipient,
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
 
@@ -137,10 +146,21 @@ impl SwssActor {
         while let Some(event) = event_receiver.recv().await {
             match event {
                 SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(&template_recipient, &key, &session_data).await;
+                    Self::process_session_update(
+                        &template_recipient,
+                        &harmonizer_config_recipient,
+                        &key,
+                        &session_data,
+                    )
+                    .await;
                 }
                 SwssEvent::Delete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
+                    Self::process_session_delete(
+                        &template_recipient,
+                        &harmonizer_config_recipient,
+                        &key,
+                    )
+                    .await;
                 }
             }
         }
@@ -261,16 +281,25 @@ impl SwssActor {
 
     async fn process_session_update(
         template_recipient: &Sender<IPFixTemplatesMessage>,
+        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
         session_data: &SessionData,
     ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
+        if let Err(e) = Self::validate_and_send_session(
+            template_recipient,
+            harmonizer_config_recipient,
+            key,
+            session_data,
+        )
+        .await
+        {
             error!("Failed to process session {}: {}", key, e);
         }
     }
 
     async fn process_session_delete(
         template_recipient: &Sender<IPFixTemplatesMessage>,
+        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
     ) {
         info!("Session deleted: {}", key);
@@ -283,6 +312,20 @@ impl SwssActor {
             }
             Err(e) => {
                 error!("Failed to send session deletion message for {}: {}", key, e);
+            }
+        }
+
+        let harmonizer_delete_message = HarmonizerConfigMessage::delete(key.to_string());
+
+        match harmonizer_config_recipient.send(harmonizer_delete_message).await {
+            Ok(_) => {
+                info!("Successfully sent harmonizer deletion message for: {}", key);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to send harmonizer deletion message for {}: {}",
+                    key, e
+                );
             }
         }
 
@@ -300,7 +343,13 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
-        Self::validate_and_send_session(&self.template_recipient, key, session_data).await
+        Self::validate_and_send_session(
+            &self.template_recipient,
+            &self.harmonizer_config_recipient,
+            key,
+            session_data,
+        )
+        .await
     }
 
     /// Validates session data and processes enabled IPFIX sessions
@@ -310,6 +359,7 @@ impl SwssActor {
     /// * `session_data` - Parsed session configuration
     async fn validate_and_send_session(
         template_recipient: &Sender<IPFixTemplatesMessage>,
+        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
@@ -403,13 +453,19 @@ impl SwssActor {
             templates,
             object_names,
             object_ids,
-            harmonizer_config,
         );
 
         template_recipient
             .send(message)
             .await
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
+
+        let harmonizer_message = HarmonizerConfigMessage::new(key.to_string(), harmonizer_config);
+
+        harmonizer_config_recipient
+            .send(harmonizer_message)
+            .await
+            .map_err(|e| format!("Failed to send harmonizer config to recipient: {}", e))?;
 
         info!("Successfully sent IPFix templates for session: {}", key);
         Ok(())
@@ -421,7 +477,7 @@ impl SwssActor {
     /// * `key` - Session key that was deleted
     #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
-        Self::process_session_delete(&self.template_recipient, key).await;
+        Self::process_session_delete(&self.template_recipient, &self.harmonizer_config_recipient, key).await;
     }
 }
 
@@ -452,7 +508,15 @@ mod tests {
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
-        SwssActor::new(template_sender).expect("Failed to create SwssActor")
+        let (harmonizer_config_sender, _harmonizer_config_receiver) = channel(100);
+        SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
+    }
+
+    fn create_test_actor_with_harmonizer(
+        template_sender: Sender<IPFixTemplatesMessage>,
+        harmonizer_config_sender: Sender<HarmonizerConfigMessage>,
+    ) -> SwssActor {
+        SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
     }
 
     #[tokio::test]
@@ -516,7 +580,8 @@ mod tests {
     #[tokio::test]
     async fn test_session_update_with_harmonizer_config() {
         let (template_sender, mut template_receiver) = channel(1);
-        let mut actor = create_test_actor(template_sender);
+        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(1);
+        let mut actor = create_test_actor_with_harmonizer(template_sender, harmonizer_config_sender);
 
         let key = "test_session|PORT";
         let mut field_values = HashMap::new();
@@ -537,9 +602,17 @@ mod tests {
         let received_message = template_receiver
             .try_recv()
             .expect("Should have received a message");
+        assert_eq!(received_message.key, "test_session|PORT");
+        assert!(received_message.templates.is_some());
+
+        let harmonizer_message = harmonizer_config_receiver
+            .try_recv()
+            .expect("Should have received a harmonizer config message");
+        assert_eq!(harmonizer_message.key, "test_session|PORT");
+        assert!(!harmonizer_message.is_delete);
         assert_eq!(
-            received_message
-                .harmonizer_config
+            harmonizer_message
+                .config
                 .expect("harmonizer config")
                 .reporting_rate,
             Some(100)
@@ -579,7 +652,8 @@ mod tests {
     #[tokio::test]
     async fn test_session_deletion() {
         let (template_sender, mut template_receiver) = channel(1);
-        let mut actor = create_test_actor(template_sender);
+        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(1);
+        let mut actor = create_test_actor_with_harmonizer(template_sender, harmonizer_config_sender);
 
         let key = "test_session|PORT";
 
@@ -595,6 +669,12 @@ mod tests {
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
+
+        let harmonizer_message = harmonizer_config_receiver
+            .try_recv()
+            .expect("Should have received a harmonizer deletion message");
+        assert_eq!(harmonizer_message.key, "test_session|PORT");
+        assert!(harmonizer_message.is_delete);
     }
 
     #[tokio::test]
@@ -691,14 +771,12 @@ mod tests {
             templates.clone(),
             object_names.clone(),
             object_ids.clone(),
-            None,
         );
 
         assert_eq!(message.key, "test_key");
         assert_eq!(message.templates, Some(templates));
         assert_eq!(message.object_names, object_names);
         assert_eq!(message.object_ids, object_ids);
-        assert_eq!(message.harmonizer_config, None);
         assert!(!message.is_delete);
     }
 

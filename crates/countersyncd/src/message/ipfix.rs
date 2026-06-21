@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use super::harmonizer::HarmonizerConfig;
-
 pub type IPFixTemplates = Arc<Vec<u8>>;
 
 #[derive(Debug, Clone)]
@@ -10,7 +8,6 @@ pub struct IPFixTemplatesMessage {
     pub templates: Option<IPFixTemplates>,
     pub object_names: Option<Vec<String>>,
     pub object_ids: Option<Vec<u16>>,
-    pub harmonizer_config: Option<HarmonizerConfig>,
     pub is_delete: bool,
 }
 
@@ -20,14 +17,12 @@ impl IPFixTemplatesMessage {
         templates: IPFixTemplates,
         object_names: Option<Vec<String>>,
         object_ids: Option<Vec<u16>>,
-        harmonizer_config: Option<HarmonizerConfig>,
     ) -> Self {
         Self {
             key,
             templates: Some(templates),
             object_names,
             object_ids,
-            harmonizer_config,
             is_delete: false,
         }
     }
@@ -38,7 +33,6 @@ impl IPFixTemplatesMessage {
             templates: None,
             object_names: None,
             object_ids: None,
-            harmonizer_config: None,
             is_delete: true,
         }
     }

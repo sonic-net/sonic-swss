@@ -1,10 +1,49 @@
 use log::warn;
 
+use super::saistats::SAIStatsMessage;
+
 /// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_HARMONIZER.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HarmonizerConfig {
     /// Reporting interval in microseconds.
     pub reporting_rate: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HarmonizerConfigMessage {
+    pub key: String,
+    pub config: Option<HarmonizerConfig>,
+    pub is_delete: bool,
+}
+
+impl HarmonizerConfigMessage {
+    pub fn new(key: String, config: Option<HarmonizerConfig>) -> Self {
+        Self {
+            key,
+            config,
+            is_delete: false,
+        }
+    }
+
+    pub fn delete(key: String) -> Self {
+        Self {
+            key,
+            config: None,
+            is_delete: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HarmonizerStatsMessage {
+    pub key: Option<String>,
+    pub stats: SAIStatsMessage,
+}
+
+impl HarmonizerStatsMessage {
+    pub fn new(key: Option<String>, stats: SAIStatsMessage) -> Self {
+        Self { key, stats }
+    }
 }
 
 impl HarmonizerConfig {
