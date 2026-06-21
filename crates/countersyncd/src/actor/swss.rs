@@ -864,6 +864,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_multiple_profiles_can_share_harmonizer_config() {
+        let mut state = HarmonizerConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile1|QUEUE".to_string());
+        state.set_profile_harmonizer("profile0".to_string(), Some("harm0".to_string()));
+        state.set_profile_harmonizer("profile1".to_string(), Some("harm0".to_string()));
+        state.set_harmonizer_config(
+            "harm0".to_string(),
+            Some(HarmonizerConfig {
+                reporting_rate: Some(100),
+            }),
+        );
+
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 harmonizer config")
+                .reporting_rate,
+            Some(100)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 harmonizer config")
+                .reporting_rate,
+            Some(100)
+        );
+
+        state.set_harmonizer_config(
+            "harm0".to_string(),
+            Some(HarmonizerConfig {
+                reporting_rate: Some(200),
+            }),
+        );
+
+        let mut affected_sessions = state.session_keys_for_harmonizer("harm0");
+        affected_sessions.sort();
+        assert_eq!(
+            affected_sessions,
+            vec!["profile0|PORT".to_string(), "profile1|QUEUE".to_string()]
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 updated harmonizer config")
+                .reporting_rate,
+            Some(200)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 updated harmonizer config")
+                .reporting_rate,
+            Some(200)
+        );
+    }
+
     #[tokio::test]
     async fn test_session_update_without_object_names() {
         let (template_sender, mut template_receiver) = channel(1);
