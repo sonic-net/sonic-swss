@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc, time::SystemTime};
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -824,7 +824,9 @@ impl IpfixActor {
                 let object_name_lookup = self
                     .get_template_key(template_id)
                     .and_then(|key| self.object_id_name_map.get(key));
-                let template_key = self.get_template_key(template_id).cloned();
+                let template_key = self
+                    .get_template_key(template_id)
+                    .map(|key| Arc::<str>::from(key.as_str()));
 
                 let mut observation_time: Option<u64>;
 
