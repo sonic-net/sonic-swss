@@ -1,5 +1,3 @@
-use log::warn;
-
 use super::saistats::SAIStatsMessage;
 
 /// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_HARMONIZER.
@@ -60,10 +58,7 @@ impl HarmonizerConfig {
         };
 
         match reporting_rate {
-            Some(0) => {
-                warn!("Ignoring harmonizer reporting_rate=0");
-                None
-            }
+            Some(0) => None,
             Some(value) => Some(Self {
                 reporting_rate: Some(value),
             }),

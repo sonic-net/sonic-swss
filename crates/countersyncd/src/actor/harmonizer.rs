@@ -156,7 +156,7 @@ pub fn validate_reporting_rate(config: &Option<HarmonizerConfig>, key: &str) {
     if let Some(config) = config {
         if config.reporting_rate.is_none() {
             warn!(
-                "Harmonizer config for session {} has no reporting_rate; forwarding samples unchanged",
+                "Harmonizer config for session {} has no valid reporting_rate; forwarding samples unchanged",
                 key
             );
         }
