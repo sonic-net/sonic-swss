@@ -5,19 +5,27 @@ use super::super::message::{
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info, warn};
-use std::{collections::HashMap, sync::Arc, thread};
 use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    thread,
+};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
+const CONFIG_DB_ID: i32 = 4;
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_PROFILE";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_HARMONIZER";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
-/// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
-/// messages through the state database. It specifically listens for
-/// HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE updates and forwards IPFIX template
-/// configurations to the IPFIX actor.
+#[cfg(test)]
+const MAX_TEST_ITERATIONS: usize = 20;
+
+/// SwssActor monitors HFT session state and HFT harmonizer/profile config.
 ///
 /// The state DB message format example:
 /// ```text
@@ -27,18 +35,38 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 ///  3> "object_names"      -> "Ethernet0"
 ///  4> "object_ids"        -> "1"
 ///  5> "session_config"    -> <binary IPFIX template data>
-///  6> "harmonizer_config" -> "reporting_rate=1000"
 /// ```
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
+    pub profile_table: SubscriberStateTable,
+    pub harmonizer_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
     harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
 }
 
 #[derive(Debug)]
 enum SwssEvent {
-    Update { key: String, session_data: SessionData },
-    Delete { key: String },
+    SessionUpdate {
+        key: String,
+        session_data: SessionData,
+    },
+    SessionDelete {
+        key: String,
+    },
+    ProfileUpdate {
+        profile: String,
+        harmonizer: Option<String>,
+    },
+    ProfileDelete {
+        profile: String,
+    },
+    HarmonizerUpdate {
+        name: String,
+        config: Option<HarmonizerConfig>,
+    },
+    HarmonizerDelete {
+        name: String,
+    },
 }
 
 impl SwssActor {
@@ -50,18 +78,40 @@ impl SwssActor {
         template_recipient: Sender<IPFixTemplatesMessage>,
         harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
     ) -> Result<Self, String> {
-        let connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
+        let session_connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
             .map_err(|e| format!("Failed to create DB connection: {}", e))?;
         let session_table = SubscriberStateTable::new(
-            connect,
+            session_connect,
             STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE,
             None,
             None,
         )
         .map_err(|e| format!("Failed to create session table: {}", e))?;
 
+        let profile_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB profile connection: {}", e))?;
+        let profile_table = SubscriberStateTable::new(
+            profile_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create profile table: {}", e))?;
+
+        let harmonizer_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB harmonizer connection: {}", e))?;
+        let harmonizer_table = SubscriberStateTable::new(
+            harmonizer_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create harmonizer table: {}", e))?;
+
         Ok(SwssActor {
             session_table,
+            profile_table,
+            harmonizer_table,
             template_recipient,
             harmonizer_config_recipient,
         })
@@ -69,96 +119,151 @@ impl SwssActor {
 
     /// Main event loop for the SwssActor
     ///
-    /// Continuously monitors the HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE for updates
-    /// and processes enabled IPFIX sessions by forwarding their templates to the IPFIX actor.
+    /// Continuously monitors HFT session state and harmonizer/profile config updates.
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
     pub async fn run(actor: SwssActor) {
-        info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
+        info!(
+            "SwssActor started, monitoring HFT session state and harmonizer/profile config"
+        );
 
-        #[cfg(test)]
-        const MAX_TEST_ITERATIONS: usize = 20;
-
-        // Keep the SWSS table polling on a dedicated blocking thread so we don't park a Tokio worker.
+        // Keep the SWSS table polling on dedicated blocking threads so we don't park Tokio workers.
         let SwssActor {
-            mut session_table,
+            session_table,
+            profile_table,
+            harmonizer_table,
             template_recipient,
             harmonizer_config_recipient,
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let mut harmonizer_state = HarmonizerConfigState::default();
 
-        let _reader_thread = match thread::Builder::new()
-            .name("countersyncd-swss".to_string())
-            .spawn(move || {
-                #[cfg(test)]
-                let mut iteration_count = 0;
+        let _session_reader_thread = match Self::spawn_reader_thread(
+            "countersyncd-swss-session",
+            session_table,
+            event_sender.clone(),
+            |table, timeout| {
+                let mut events = Vec::new();
+                Self::blocking_collect_session_events(table, timeout, &mut events)?;
+                Ok(events)
+            },
+        ) {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to spawn SWSS session reader thread: {}", e);
+                return;
+            }
+        };
 
-                loop {
-                    if event_sender.is_closed() {
-                        debug!("SwssActor event receiver closed, terminating reader thread");
-                        break;
-                    }
+        let _profile_reader_thread = match Self::spawn_reader_thread(
+            "countersyncd-swss-profile",
+            profile_table,
+            event_sender.clone(),
+            |table, timeout| {
+                let mut events = Vec::new();
+                Self::blocking_collect_profile_events(table, timeout, &mut events)?;
+                Ok(events)
+            },
+        ) {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to spawn SWSS profile reader thread: {}", e);
+                return;
+            }
+        };
 
-                    #[cfg(test)]
-                    {
-                        iteration_count += 1;
-                        if iteration_count > MAX_TEST_ITERATIONS {
-                            debug!(
-                                "SwssActor test mode reached maximum iterations ({}), terminating reader thread",
-                                MAX_TEST_ITERATIONS
-                            );
-                            break;
-                        }
-                    }
-
-                    #[cfg(test)]
-                    let timeout = Duration::from_millis(50);
-                    #[cfg(not(test))]
-                    let timeout = Duration::from_secs(10);
-
-                    match Self::blocking_collect_events(&mut session_table, timeout) {
-                        Ok(events) => {
-                            for event in events {
-                                if event_sender.blocking_send(event).is_err() {
-                                    debug!("SwssActor event receiver dropped, terminating reader thread");
-                                    return;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Error reading from session table: {}", e);
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                    }
-                }
-
-                #[cfg(test)]
-                debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
-            }) {
-                Ok(handle) => handle,
-                Err(e) => {
-                    error!("Failed to spawn SwssActor reader thread: {}", e);
-                    return;
-                }
-            };
+        let _harmonizer_reader_thread = match Self::spawn_reader_thread(
+            "countersyncd-swss-harmonizer",
+            harmonizer_table,
+            event_sender,
+            |table, timeout| {
+                let mut events = Vec::new();
+                Self::blocking_collect_harmonizer_events(table, timeout, &mut events)?;
+                Ok(events)
+            },
+        ) {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to spawn SWSS harmonizer reader thread: {}", e);
+                return;
+            }
+        };
 
         while let Some(event) = event_receiver.recv().await {
             match event {
-                SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(
-                        &template_recipient,
+                SwssEvent::SessionUpdate { key, session_data } => {
+                    if Self::process_session_update(&template_recipient, &key, &session_data).await {
+                        harmonizer_state.add_session(key.clone());
+                        Self::send_harmonizer_config_for_session(
+                            &harmonizer_config_recipient,
+                            &harmonizer_state,
+                            &key,
+                            false,
+                        )
+                        .await;
+                    } else {
+                        harmonizer_state.remove_session(&key);
+                        Self::send_harmonizer_config_for_session(
+                            &harmonizer_config_recipient,
+                            &harmonizer_state,
+                            &key,
+                            true,
+                        )
+                        .await;
+                    }
+                }
+                SwssEvent::SessionDelete { key } => {
+                    Self::process_session_delete(&template_recipient, &key).await;
+                    harmonizer_state.remove_session(&key);
+                    Self::send_harmonizer_config_for_session(
                         &harmonizer_config_recipient,
+                        &harmonizer_state,
                         &key,
-                        &session_data,
+                        true,
                     )
                     .await;
                 }
-                SwssEvent::Delete { key } => {
-                    Self::process_session_delete(
-                        &template_recipient,
+                SwssEvent::ProfileUpdate {
+                    profile,
+                    harmonizer,
+                } => {
+                    let affected_sessions = harmonizer_state.session_keys_for_profile(&profile);
+                    harmonizer_state.set_profile_harmonizer(profile, harmonizer);
+                    Self::send_harmonizer_configs_for_sessions(
                         &harmonizer_config_recipient,
-                        &key,
+                        &harmonizer_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::ProfileDelete { profile } => {
+                    let affected_sessions = harmonizer_state.session_keys_for_profile(&profile);
+                    harmonizer_state.remove_profile(&profile);
+                    Self::send_harmonizer_configs_for_sessions(
+                        &harmonizer_config_recipient,
+                        &harmonizer_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::HarmonizerUpdate { name, config } => {
+                    let affected_sessions = harmonizer_state.session_keys_for_harmonizer(&name);
+                    harmonizer_state.set_harmonizer_config(name, config);
+                    Self::send_harmonizer_configs_for_sessions(
+                        &harmonizer_config_recipient,
+                        &harmonizer_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::HarmonizerDelete { name } => {
+                    let affected_sessions = harmonizer_state.session_keys_for_harmonizer(&name);
+                    harmonizer_state.remove_harmonizer(&name);
+                    Self::send_harmonizer_configs_for_sessions(
+                        &harmonizer_config_recipient,
+                        &harmonizer_state,
+                        affected_sessions,
                     )
                     .await;
                 }
@@ -168,12 +273,78 @@ impl SwssActor {
         debug!("SwssActor terminated");
     }
 
-    fn blocking_collect_events(
+    fn spawn_reader_thread<F>(
+        name: &str,
+        mut table: SubscriberStateTable,
+        event_sender: Sender<SwssEvent>,
+        mut collect_events: F,
+    ) -> Result<thread::JoinHandle<()>, std::io::Error>
+    where
+        F: FnMut(&mut SubscriberStateTable, Duration) -> Result<Vec<SwssEvent>, String>
+            + Send
+            + 'static,
+    {
+        let name = name.to_string();
+
+        thread::Builder::new().name(name.clone()).spawn(move || {
+            #[cfg(test)]
+            let mut iteration_count = 0;
+
+            loop {
+                if event_sender.is_closed() {
+                    debug!("{} event receiver closed, terminating reader thread", name);
+                    break;
+                }
+
+                #[cfg(test)]
+                {
+                    iteration_count += 1;
+                    if iteration_count > MAX_TEST_ITERATIONS {
+                        debug!(
+                            "{} test mode reached maximum iterations ({}), terminating reader thread",
+                            name, MAX_TEST_ITERATIONS
+                        );
+                        break;
+                    }
+                }
+
+                #[cfg(test)]
+                let timeout = Duration::from_millis(50);
+                #[cfg(not(test))]
+                let timeout = Duration::from_secs(10);
+
+                match collect_events(&mut table, timeout) {
+                    Ok(events) => {
+                        for event in events {
+                            if event_sender.blocking_send(event).is_err() {
+                                debug!(
+                                    "{} event receiver dropped, terminating reader thread",
+                                    name
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error reading from {}: {}", name, e);
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+
+            #[cfg(test)]
+            debug!(
+                "{} reader thread terminated after {} iterations",
+                name, iteration_count
+            );
+        })
+    }
+
+    fn blocking_collect_session_events(
         session_table: &mut SubscriberStateTable,
         timeout: Duration,
-    ) -> Result<Vec<SwssEvent>, String> {
-        let mut events = Vec::new();
-
+        events: &mut Vec<SwssEvent>,
+    ) -> Result<(), String> {
         match session_table.read_data(timeout, false) {
             Ok(select_result) => match select_result {
                 swss_common::SelectResult::Data => match session_table.pops() {
@@ -186,32 +357,102 @@ impl SwssActor {
 
                             let session_key = Self::extract_session_key(&item.key);
                             match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::Update {
+                                KeyOperation::Set => events.push(SwssEvent::SessionUpdate {
                                     key: session_key,
                                     session_data: Self::parse_session_data(&item.field_values),
                                 }),
                                 KeyOperation::Del => {
-                                    events.push(SwssEvent::Delete { key: session_key })
+                                    events.push(SwssEvent::SessionDelete { key: session_key })
                                 }
                             }
                         }
-                        Ok(events)
+                        Ok(())
                     }
                     Err(e) => {
                         error!("Error popping items from session table: {}", e);
-                        Ok(events)
+                        Ok(())
                     }
                 },
                 swss_common::SelectResult::Timeout => {
                     debug!("Timeout waiting for session table updates");
-                    Ok(events)
+                    Ok(())
                 }
                 swss_common::SelectResult::Signal => {
                     debug!("Signal received while waiting for session table updates");
-                    Ok(events)
+                    Ok(())
                 }
             },
             Err(e) => Err(format!("Error reading from session table: {}", e)),
+        }
+    }
+
+    fn blocking_collect_profile_events(
+        profile_table: &mut SubscriberStateTable,
+        timeout: Duration,
+        events: &mut Vec<SwssEvent>,
+    ) -> Result<(), String> {
+        match profile_table.read_data(timeout, false) {
+            Ok(select_result) => match select_result {
+                swss_common::SelectResult::Data => match profile_table.pops() {
+                    Ok(items) => {
+                        for item in items {
+                            let profile = Self::extract_config_key(
+                                &item.key,
+                                CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+                            );
+                            match item.operation {
+                                KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
+                                    profile,
+                                    harmonizer: Self::parse_profile_harmonizer(&item.field_values),
+                                }),
+                                KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
+                            }
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("Error popping items from profile table: {}", e);
+                        Ok(())
+                    }
+                },
+                swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal => Ok(()),
+            },
+            Err(e) => Err(format!("Error reading from profile table: {}", e)),
+        }
+    }
+
+    fn blocking_collect_harmonizer_events(
+        harmonizer_table: &mut SubscriberStateTable,
+        timeout: Duration,
+        events: &mut Vec<SwssEvent>,
+    ) -> Result<(), String> {
+        match harmonizer_table.read_data(timeout, false) {
+            Ok(select_result) => match select_result {
+                swss_common::SelectResult::Data => match harmonizer_table.pops() {
+                    Ok(items) => {
+                        for item in items {
+                            let name = Self::extract_config_key(
+                                &item.key,
+                                CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
+                            );
+                            match item.operation {
+                                KeyOperation::Set => events.push(SwssEvent::HarmonizerUpdate {
+                                    name,
+                                    config: Self::parse_harmonizer_config(&item.field_values),
+                                }),
+                                KeyOperation::Del => events.push(SwssEvent::HarmonizerDelete { name }),
+                            }
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("Error popping items from harmonizer table: {}", e);
+                        Ok(())
+                    }
+                },
+                swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal => Ok(()),
+            },
+            Err(e) => Err(format!("Error reading from harmonizer table: {}", e)),
         }
     }
 
@@ -226,9 +467,6 @@ impl SwssActor {
                 "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
                 "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
                 "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
-                "harmonizer_config" => {
-                    session_data.harmonizer_config = value.to_string_lossy().to_string()
-                }
                 "session_config" => {
                     session_data.session_config = value.as_bytes().to_vec();
                 }
@@ -239,6 +477,27 @@ impl SwssActor {
         }
 
         session_data
+    }
+
+    fn parse_profile_harmonizer(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Option<String> {
+        field_values.get("harmonizer").and_then(|value| {
+            let harmonizer = value.to_string_lossy().trim().to_string();
+            if harmonizer.is_empty() {
+                None
+            } else {
+                Some(harmonizer)
+            }
+        })
+    }
+
+    fn parse_harmonizer_config(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Option<HarmonizerConfig> {
+        field_values
+            .get("reporting_rate")
+            .and_then(|value| HarmonizerConfig::parse(&value.to_string_lossy()))
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -258,6 +517,19 @@ impl SwssActor {
         full_key.to_string()
     }
 
+    fn extract_config_key(full_key: &str, table_name: &str) -> String {
+        if let Some(pos) = full_key.find('|') {
+            if full_key.starts_with(table_name) {
+                return full_key[pos + 1..].to_string();
+            }
+        }
+        full_key.to_string()
+    }
+
+    fn extract_profile_from_session_key(session_key: &str) -> &str {
+        session_key.split('|').next().unwrap_or(session_key)
+    }
+
     /// Processes session update messages from the state database
     ///
     /// # Arguments
@@ -274,32 +546,28 @@ impl SwssActor {
         let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
-        if let Err(e) = self.validate_and_process_session(key, &session_data).await {
-            error!("Failed to process session {}: {}", key, e);
+        match self.validate_and_process_session(key, &session_data).await {
+            Ok(_) => {}
+            Err(e) => error!("Failed to process session {}: {}", key, e),
         }
     }
 
     async fn process_session_update(
         template_recipient: &Sender<IPFixTemplatesMessage>,
-        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
         session_data: &SessionData,
-    ) {
-        if let Err(e) = Self::validate_and_send_session(
-            template_recipient,
-            harmonizer_config_recipient,
-            key,
-            session_data,
-        )
-        .await
-        {
-            error!("Failed to process session {}: {}", key, e);
+    ) -> bool {
+        match Self::validate_and_send_session(template_recipient, key, session_data).await {
+            Ok(processed) => processed,
+            Err(e) => {
+                error!("Failed to process session {}: {}", key, e);
+                false
+            }
         }
     }
 
     async fn process_session_delete(
         template_recipient: &Sender<IPFixTemplatesMessage>,
-        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
     ) {
         info!("Session deleted: {}", key);
@@ -312,20 +580,6 @@ impl SwssActor {
             }
             Err(e) => {
                 error!("Failed to send session deletion message for {}: {}", key, e);
-            }
-        }
-
-        let harmonizer_delete_message = HarmonizerConfigMessage::delete(key.to_string());
-
-        match harmonizer_config_recipient.send(harmonizer_delete_message).await {
-            Ok(_) => {
-                info!("Successfully sent harmonizer deletion message for: {}", key);
-            }
-            Err(e) => {
-                error!(
-                    "Failed to send harmonizer deletion message for {}: {}",
-                    key, e
-                );
             }
         }
 
@@ -342,14 +596,8 @@ impl SwssActor {
         &mut self,
         key: &str,
         session_data: &SessionData,
-    ) -> Result<(), String> {
-        Self::validate_and_send_session(
-            &self.template_recipient,
-            &self.harmonizer_config_recipient,
-            key,
-            session_data,
-        )
-        .await
+    ) -> Result<bool, String> {
+        Self::validate_and_send_session(&self.template_recipient, key, session_data).await
     }
 
     /// Validates session data and processes enabled IPFIX sessions
@@ -359,14 +607,13 @@ impl SwssActor {
     /// * `session_data` - Parsed session configuration
     async fn validate_and_send_session(
         template_recipient: &Sender<IPFixTemplatesMessage>,
-        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
         key: &str,
         session_data: &SessionData,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         // Only process enabled sessions with ipfix type
         if session_data.stream_status != "enabled" {
             debug!("Skipping disabled session: {}", key);
-            return Ok(());
+            return Ok(false);
         }
 
         if session_data.session_type != "ipfix" {
@@ -374,7 +621,7 @@ impl SwssActor {
                 "Skipping non-IPFIX session: {} (type: {})",
                 key, session_data.session_type
             );
-            return Ok(());
+            return Ok(false);
         }
 
         if session_data.session_config.is_empty() {
@@ -446,8 +693,6 @@ impl SwssActor {
             }
         };
 
-        let harmonizer_config = HarmonizerConfig::parse(&session_data.harmonizer_config);
-
         let message = IPFixTemplatesMessage::new(
             key.to_string(),
             templates,
@@ -460,15 +705,44 @@ impl SwssActor {
             .await
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
 
-        let harmonizer_message = HarmonizerConfigMessage::new(key.to_string(), harmonizer_config);
-
-        harmonizer_config_recipient
-            .send(harmonizer_message)
-            .await
-            .map_err(|e| format!("Failed to send harmonizer config to recipient: {}", e))?;
-
         info!("Successfully sent IPFix templates for session: {}", key);
-        Ok(())
+        Ok(true)
+    }
+
+    async fn send_harmonizer_config_for_session(
+        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
+        harmonizer_state: &HarmonizerConfigState,
+        key: &str,
+        is_delete: bool,
+    ) {
+        let message = if is_delete {
+            HarmonizerConfigMessage::delete(key.to_string())
+        } else {
+            HarmonizerConfigMessage::new(
+                key.to_string(),
+                harmonizer_state.config_for_session_key(key).cloned(),
+            )
+        };
+
+        if let Err(e) = harmonizer_config_recipient.send(message).await {
+            error!("Failed to send harmonizer config for {}: {}", key, e);
+        }
+    }
+
+    async fn send_harmonizer_configs_for_sessions(
+        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
+        harmonizer_state: &HarmonizerConfigState,
+        session_keys: Vec<String>,
+    ) {
+        for key in session_keys {
+            Self::send_harmonizer_config_for_session(
+                harmonizer_config_recipient,
+                harmonizer_state,
+                &key,
+                false,
+            )
+            .await;
+        }
     }
 
     /// Handles session deletion events
@@ -477,7 +751,81 @@ impl SwssActor {
     /// * `key` - Session key that was deleted
     #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
-        Self::process_session_delete(&self.template_recipient, &self.harmonizer_config_recipient, key).await;
+        Self::process_session_delete(&self.template_recipient, key).await;
+    }
+}
+
+#[derive(Default)]
+struct HarmonizerConfigState {
+    profile_harmonizers: HashMap<String, String>,
+    harmonizer_configs: HashMap<String, HarmonizerConfig>,
+    sessions: HashSet<String>,
+}
+
+impl HarmonizerConfigState {
+    fn add_session(&mut self, key: String) {
+        self.sessions.insert(key);
+    }
+
+    fn remove_session(&mut self, key: &str) {
+        self.sessions.remove(key);
+    }
+
+    fn set_profile_harmonizer(&mut self, profile: String, harmonizer: Option<String>) {
+        match harmonizer {
+            Some(harmonizer) => {
+                self.profile_harmonizers.insert(profile, harmonizer);
+            }
+            None => {
+                self.profile_harmonizers.remove(&profile);
+            }
+        }
+    }
+
+    fn remove_profile(&mut self, profile: &str) {
+        self.profile_harmonizers.remove(profile);
+    }
+
+    fn set_harmonizer_config(&mut self, name: String, config: Option<HarmonizerConfig>) {
+        match config {
+            Some(config) => {
+                self.harmonizer_configs.insert(name, config);
+            }
+            None => {
+                self.harmonizer_configs.remove(&name);
+            }
+        }
+    }
+
+    fn remove_harmonizer(&mut self, name: &str) {
+        self.harmonizer_configs.remove(name);
+    }
+
+    fn config_for_session_key(&self, session_key: &str) -> Option<&HarmonizerConfig> {
+        let profile = SwssActor::extract_profile_from_session_key(session_key);
+        let harmonizer = self.profile_harmonizers.get(profile)?;
+        self.harmonizer_configs.get(harmonizer)
+    }
+
+    fn session_keys_for_profile(&self, profile: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| SwssActor::extract_profile_from_session_key(key) == profile)
+            .cloned()
+            .collect()
+    }
+
+    fn session_keys_for_harmonizer(&self, harmonizer: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| {
+                let profile = SwssActor::extract_profile_from_session_key(key);
+                self.profile_harmonizers
+                    .get(profile)
+                    .is_some_and(|configured| configured == harmonizer)
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -496,7 +844,6 @@ struct SessionData {
     object_names: String,
     object_ids: String,
     session_config: Vec<u8>,
-    harmonizer_config: String,
 }
 
 #[cfg(test)]
@@ -509,13 +856,6 @@ mod tests {
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
         let (harmonizer_config_sender, _harmonizer_config_receiver) = channel(100);
-        SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
-    }
-
-    fn create_test_actor_with_harmonizer(
-        template_sender: Sender<IPFixTemplatesMessage>,
-        harmonizer_config_sender: Sender<HarmonizerConfigMessage>,
-    ) -> SwssActor {
         SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
     }
 
@@ -577,43 +917,37 @@ mod tests {
         assert_eq!(received_message.object_ids, Some(vec![1, 2, 3]));
     }
 
-    #[tokio::test]
-    async fn test_session_update_with_harmonizer_config() {
-        let (template_sender, mut template_receiver) = channel(1);
-        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(1);
-        let mut actor = create_test_actor_with_harmonizer(template_sender, harmonizer_config_sender);
-
-        let key = "test_session|PORT";
-        let mut field_values = HashMap::new();
-        field_values.insert("stream_status".to_string(), CxxString::from("enabled"));
-        field_values.insert("session_type".to_string(), CxxString::from("ipfix"));
-        field_values.insert("object_ids".to_string(), CxxString::from("1"));
-        field_values.insert(
-            "session_config".to_string(),
-            CxxString::from("ipfix_template_data"),
-        );
-        field_values.insert(
-            "harmonizer_config".to_string(),
-            CxxString::from("reporting_rate=100"),
-        );
-
-        actor.handle_session_update(key, &field_values).await;
-
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a message");
-        assert_eq!(received_message.key, "test_session|PORT");
-        assert!(received_message.templates.is_some());
-
-        let harmonizer_message = harmonizer_config_receiver
-            .try_recv()
-            .expect("Should have received a harmonizer config message");
-        assert_eq!(harmonizer_message.key, "test_session|PORT");
-        assert!(!harmonizer_message.is_delete);
+    #[test]
+    fn test_profile_and_harmonizer_config_mapping() {
+        let mut profile_fields = HashMap::new();
+        profile_fields.insert("harmonizer".to_string(), CxxString::from("harm0"));
         assert_eq!(
-            harmonizer_message
-                .config
+            SwssActor::parse_profile_harmonizer(&profile_fields),
+            Some("harm0".to_string())
+        );
+
+        let mut harmonizer_fields = HashMap::new();
+        harmonizer_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
+        assert_eq!(
+            SwssActor::parse_harmonizer_config(&harmonizer_fields)
                 .expect("harmonizer config")
+                .reporting_rate,
+            Some(100)
+        );
+
+        let mut state = HarmonizerConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_harmonizer("profile0".to_string(), Some("harm0".to_string()));
+        state.set_harmonizer_config(
+            "harm0".to_string(),
+            Some(HarmonizerConfig {
+                reporting_rate: Some(100),
+            }),
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("session harmonizer config")
                 .reporting_rate,
             Some(100)
         );
@@ -652,8 +986,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_deletion() {
         let (template_sender, mut template_receiver) = channel(1);
-        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(1);
-        let mut actor = create_test_actor_with_harmonizer(template_sender, harmonizer_config_sender);
+        let mut actor = create_test_actor(template_sender);
 
         let key = "test_session|PORT";
 
@@ -670,11 +1003,6 @@ mod tests {
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
 
-        let harmonizer_message = harmonizer_config_receiver
-            .try_recv()
-            .expect("Should have received a harmonizer deletion message");
-        assert_eq!(harmonizer_message.key, "test_session|PORT");
-        assert!(harmonizer_message.is_delete);
     }
 
     #[tokio::test]
@@ -756,7 +1084,6 @@ mod tests {
         assert_eq!(session_data.object_names, "");
         assert_eq!(session_data.object_ids, "");
         assert!(session_data.session_config.is_empty());
-        assert_eq!(session_data.harmonizer_config, "");
     }
 
     #[test]
