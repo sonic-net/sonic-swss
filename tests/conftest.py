@@ -585,7 +585,12 @@ class DockerVirtualSwitch:
                 if process_status.get(pname, None) != "RUNNING":
                     return (False, process_status)
 
-            return (process_status.get("start.sh", None) == "EXITED", process_status)
+            # The docker-sonic-vs supervisor program that runs start.sh was
+            # renamed from "start.sh" to "start" in sonic-buildimage
+            # (commit 0f59ce19bc). Accept either name so the readiness check
+            # works against both old and new base images.
+            start_status = process_status.get("start", process_status.get("start.sh", None))
+            return (start_status == "EXITED", process_status)
 
         wait_for_result(_polling_function, service_polling_config)
 
