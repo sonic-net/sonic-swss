@@ -6,6 +6,11 @@ namespace mock_orch_test
 
     void MockDashOrchTest::SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set, bool expect_empty)
     {
+        SetDashTableRaw(table_name, key, { { "pb", message.SerializeAsString() } }, set, expect_empty);
+    }
+
+    void MockDashOrchTest::SetDashTableRaw(std::string table_name, std::string key, const std::vector<swss::FieldValueTuple> &fvs, bool set, bool expect_empty)
+    {
         auto it = dash_table_orch_map.find(table_name);
         if (it == dash_table_orch_map.end())
         {
@@ -17,8 +22,7 @@ namespace mock_orch_test
             new swss::ConsumerStateTable(m_app_db.get(), table_name),
             target_orch, table_name);
         std::string op = set ? SET_COMMAND : DEL_COMMAND;
-        consumer->addToSync(
-            swss::KeyOpFieldsValuesTuple(key, op, { { "pb", message.SerializeAsString() } }));
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, op, fvs));
         target_orch->doTask(*consumer.get());
 
         auto it2 = consumer->m_toSync.begin();
@@ -101,12 +105,35 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", route, true, expect_empty);
     }
 
+    void MockDashOrchTest::RemoveOutboundRoutingEntry(bool expect_empty)
+    {
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", dash::route::Route(), false, expect_empty);
+    }
+
+    void MockDashOrchTest::AddInboundRoutingEntry(bool expect_empty)
+    {
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        rule.set_pa_validation(true);
+        rule.set_vnet(vnet1);
+        SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", rule, true, expect_empty);
+    }
+
+    void MockDashOrchTest::RemoveInboundRoutingEntry(bool expect_empty)
+    {
+        SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", dash::route_rule::RouteRule(), false, expect_empty);
+    }
+
     void MockDashOrchTest::AddTunnel()
     {
         dash::tunnel::Tunnel tunnel = dash::tunnel::Tunnel();
         tunnel.set_encap_type(dash::route_type::ENCAP_TYPE_VXLAN);
         tunnel.set_vni(5555);
         SetDashTable(APP_DASH_TUNNEL_TABLE_NAME, tunnel1, tunnel);
+    }
+
+    void MockDashOrchTest::RemoveTunnel()
+    {
+        SetDashTable(APP_DASH_TUNNEL_TABLE_NAME, tunnel1, dash::tunnel::Tunnel(), false);
     }
 
     void MockDashOrchTest::AddVnetMap(bool expect_empty)

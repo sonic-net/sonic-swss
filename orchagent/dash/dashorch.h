@@ -84,6 +84,7 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
+    bool createApplianceSaiObjects(const std::string& appliance_id, const dash::appliance::Appliance &entry, sai_object_id_t &sai_appliance_id);
     bool addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
     bool removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
@@ -110,7 +111,11 @@ private:
     std::unordered_set<std::string> m_counter_stats;
     std::unique_ptr<swss::Table> m_eni_name_table;
     std::unique_ptr<swss::Table> m_vid_to_rid_table;
+    std::unique_ptr<swss::Table> m_eni_oid_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::shared_ptr<swss::DBConnector> m_dpu_counter_db;
+    std::unique_ptr<swss::Table> m_dpu_eni_name_table;
+    std::unique_ptr<swss::Table> m_dpu_eni_oid_table;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     swss::SelectableTimer* m_fc_update_timer = nullptr;
     DashHaOrch* m_dash_ha_orch = nullptr;

@@ -1120,6 +1120,11 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         setIntfIp(alias, "add", ip_prefix);
 
+        if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            m_intfLLAddresses[alias].insert(ip_prefix.to_string());
+        }
+
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
 
@@ -1136,6 +1141,19 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     else if (op == DEL_COMMAND)
     {
         setIntfIp(alias, "del", ip_prefix);
+
+        if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            auto it = m_intfLLAddresses.find(alias);
+            if (it != m_intfLLAddresses.end())
+            {
+                it->second.erase(ip_prefix.to_string());
+                if (it->second.empty())
+                {
+                    m_intfLLAddresses.erase(it);
+                }
+            }
+        }
 
         // Don't send ipv4 link local config to AppDB and Orchagent
         if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
@@ -1236,6 +1254,11 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             {
                 SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
                 updateSubIntfAdminStatus(key, value);
+
+                if (value == "up" && m_intfLLAddresses.count(key) > 0)
+                {
+                    replayLLIntfAddresses(key);
+                }
             }
             else if (field == "mtu")
             {
@@ -1254,4 +1277,21 @@ bool IntfMgr::enableIpv6Flag(const string &alias)
     int ret = swss::exec(cmd.str(), temp_res);
     SWSS_LOG_INFO("disable_ipv6 flag is set to 0 for iface: %s, cmd: %s, ret: %d", alias.c_str(), cmd.str().c_str(), ret);
     return (ret == 0) ? true : false;
+}
+
+void IntfMgr::replayLLIntfAddresses(const string &alias)
+{
+    auto it = m_intfLLAddresses.find(alias);
+    if (it == m_intfLLAddresses.end())
+    {
+        return;
+    }
+
+    for (const auto &addr : it->second)
+    {
+        IpPrefix ipPrefix(addr);
+        setIntfIp(alias, "add", ipPrefix);
+        SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
+            addr.c_str(), alias.c_str());
+    }
 }

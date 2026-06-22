@@ -1021,10 +1021,6 @@ void FabricPortsOrch::updateFabricCapacity()
     // Init value for fabric capacity monitoring
     int capacity = 0;
     int downCapacity = 0;
-    string lnkStatus = "down";
-    string configIsolated = "0";
-    string isolated = "0";
-    string autoIsolated = "0";
     int operating_links = 0;
     int total_links = 0;
     int threshold = 100;
@@ -1062,6 +1058,10 @@ void FabricPortsOrch::updateFabricCapacity()
         string key = FABRIC_PORT_PREFIX + to_string(lane);
         std::vector<FieldValueTuple> values;
         string valuePt;
+        string lnkStatus = "down";
+        string configIsolated = "0";
+        string isolated = "0";
+        string autoIsolated = "0";
 
         // Get fabric serdes link status from STATE_DB
         bool exist = m_stateTable->get(key, values);

@@ -3,6 +3,7 @@
 #include <swss/redisutility.h>
 #include <swss/ipaddress.h>
 #include <swssnet.h>
+#include <exception>
 
 #include "directory.h"
 #include "dashmeterorch.h"
@@ -223,7 +224,7 @@ bool DashMeterOrch::addMeterPolicy(const string& meter_policy, MeterPolicyContex
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -240,7 +241,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
 
     if (isMeterPolicyBound(meter_policy))
     {
-        SWSS_LOG_WARN("Cannot remove bound meter policy %s", meter_policy.c_str());
+        SWSS_LOG_ERROR("Cannot remove bound meter policy %s", meter_policy.c_str());
         return false;
     }
 
@@ -255,7 +256,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
     if (rule_count != 0)
     {
         SWSS_LOG_INFO("Failed to remove meter policy %s due to rule count %d ", meter_policy.c_str(), rule_count);
-        return true;
+        return false;
     }
 
     sai_status_t status = sai_dash_meter_api->remove_meter_policy(meter_policy_oid);
@@ -265,7 +266,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -288,45 +289,46 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
         auto op = kfvOp(tuple);
         const string& key = kfvKey(tuple);
 
-        if (op == SET_COMMAND)
+        try
         {
-            MeterPolicyContext ctxt;
-            ctxt.meter_policy = key;
+            if (op == SET_COMMAND)
+            {
+                MeterPolicyContext ctxt;
+                ctxt.meter_policy = key;
 
-            if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
-            {
-                SWSS_LOG_WARN("Requires protobuff at MeterPolicy :%s", key.c_str());
+                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                {
+                    SWSS_LOG_WARN("Requires protobuff at MeterPolicy :%s", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                if (!addMeterPolicy(key, ctxt))
+                {
+                    SWSS_LOG_ERROR("Failed to process meter policy %s", key.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
             }
-            if (addMeterPolicy(key, ctxt))
+            else if (op == DEL_COMMAND)
             {
+                if (!removeMeterPolicy(key))
+                {
+                    SWSS_LOG_ERROR("Failed to remove meter policy %s", key.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                it++;
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeMeterPolicy(key))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
             }
-            else
-            {
-                it++;
-            }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
 }
-
 
 bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
 {
@@ -342,14 +344,16 @@ bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
     if (isMeterPolicyBound(ctxt.meter_policy))
     {
         SWSS_LOG_WARN("Cannot add new rule %s to Meter policy %s as it is already bound", key.c_str(), ctxt.meter_policy.c_str());
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
     sai_object_id_t meter_policy_oid = getMeterPolicyOid(ctxt.meter_policy);
     if (meter_policy_oid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_INFO("Retry for rule %s as meter policy %s not found", key.c_str(), ctxt.meter_policy.c_str());
-        return false;
+        SWSS_LOG_ERROR("Meter policy %s not found for rule %s", ctxt.meter_policy.c_str(), key.c_str());
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
+        return true;
     }
 
     auto& object_ids = ctxt.object_ids;
@@ -447,16 +451,21 @@ bool DashMeterOrch::removeMeterRulePost(const string& key, const MeterRuleBulkCo
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        // Retry later if object has non-zero reference to it
         if (status == SAI_STATUS_NOT_EXECUTED)
         {
+            SWSS_LOG_ERROR("Failed to remove meter rule entry for %s, dropping notification", key.c_str());
             return false;
+        }
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_INFO("Meter rule entry for %s already removed", key.c_str());
+            return true;
         }
         SWSS_LOG_ERROR("Failed to remove meter rule entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -467,7 +476,6 @@ bool DashMeterOrch::removeMeterRulePost(const string& key, const MeterRuleBulkCo
 
     return true;
 }
-
 
 void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
 {
@@ -485,59 +493,69 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple tuple = it->second;
             const string& key = kfvKey(tuple);
             auto op = kfvOp(tuple);
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
-            bool inserted = rc.second;
-            auto &ctxt = rc.first->second;
 
-            if (!inserted)
+            try
             {
-                ctxt.clear();
-            }
+                auto rc = toBulk.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(key, op),
+                        std::forward_as_tuple());
+                bool inserted = rc.second;
+                auto &ctxt = rc.first->second;
 
-            string& meter_policy = ctxt.meter_policy;
-            uint32_t& rule_num   = ctxt.rule_num;
-
-            vector<string> keys = tokenize(key, ':');
-            meter_policy = keys[0];
-            string rule_num_str;
-            size_t pos = key.find(":", meter_policy.length());
-            rule_num_str = key.substr(pos + 1);
-            rule_num = stoi(rule_num_str);
-
-            if (op == SET_COMMAND)
-            {
-                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                if (!inserted)
                 {
-                    SWSS_LOG_WARN("Requires protobuff at MeterRule :%s", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    ctxt.clear();
                 }
-                if (addMeterRule(key, ctxt))
+
+                string& meter_policy = ctxt.meter_policy;
+                uint32_t& rule_num   = ctxt.rule_num;
+
+                vector<string> keys = tokenize(key, ':');
+                meter_policy = keys[0];
+                string rule_num_str;
+                size_t pos = key.find(":", meter_policy.length());
+                rule_num_str = key.substr(pos + 1);
+                rule_num = stoi(rule_num_str);
+
+                if (op == SET_COMMAND)
                 {
-                    it = consumer.m_toSync.erase(it);
+                    if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                    {
+                        SWSS_LOG_WARN("Requires protobuff at MeterRule :%s", key.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (addMeterRule(key, ctxt))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeMeterRule(key, ctxt))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
                 }
                 else
                 {
-                    it++;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeMeterRule(key, ctxt))
-                {
+                    SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                     it = consumer.m_toSync.erase(it);
                 }
-                else
-                {
-                    it++;
-                }
             }
-            else
+            catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
 
@@ -549,50 +567,54 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            auto found = toBulk.find(make_pair(key, op));
-            if (found == toBulk.end())
+            try
             {
-                it_prev++;
-                continue;
-            }
-
-            const auto& ctxt = found->second;
-            const auto& object_statuses = ctxt.object_statuses;
-            const auto& object_ids = ctxt.object_ids;
-
-            if (op == SET_COMMAND)
-            {
-                if (object_ids.empty())
+                auto found = toBulk.find(make_pair(key, op));
+                if (found == toBulk.end())
                 {
                     it_prev++;
                     continue;
                 }
 
-                if (addMeterRulePost(key, ctxt))
+                const auto& ctxt = found->second;
+                const auto& object_statuses = ctxt.object_statuses;
+                const auto& object_ids = ctxt.object_ids;
+
+                if (op == SET_COMMAND)
                 {
+                    if (object_ids.empty())
+                    {
+                        SWSS_LOG_ERROR("Missing meter rule create results for %s", key.c_str());
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        continue;
+                    }
+
+                    if (!addMeterRulePost(key, ctxt))
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing meter rule %s", key.c_str());
+                    }
                     it_prev = consumer.m_toSync.erase(it_prev);
                 }
-                else
+                else if (op == DEL_COMMAND)
                 {
-                    it_prev++;
+                    if (object_statuses.empty())
+                    {
+                        SWSS_LOG_ERROR("Missing meter rule remove results for %s", key.c_str());
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        continue;
+                    }
+
+                    if (!removeMeterRulePost(key, ctxt))
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing meter rule removal %s", key.c_str());
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
                 }
             }
-            else if (op == DEL_COMMAND)
+            catch (const std::exception& e)
             {
-                if (object_statuses.empty())
-                {
-                    it_prev++;
-                    continue;
-                }
-
-                if (removeMeterRulePost(key, ctxt))
-                {
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                }
-                else
-                {
-                    it_prev++;
-                }
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+                it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
     }

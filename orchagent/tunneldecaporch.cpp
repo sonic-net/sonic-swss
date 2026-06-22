@@ -160,6 +160,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_mode, tunnel_id);
                         tunnelTable[key].dscp_mode = dscp_mode;
                     }
@@ -207,6 +208,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), ttl_mode, tunnel_id);
                     }
                 }
@@ -221,6 +223,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_to_tc_map_id, tunnel_id);
                     }
                 }
@@ -235,6 +238,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
                     }
                 }
@@ -274,6 +278,13 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     valid = false;
                     break;
                 }
+            }
+
+            if (exists)
+            {
+                // Publish to STATE_DB if any mirrored field changed
+                setDecapTunnelStatus(key);
+                SWSS_LOG_NOTICE("Fields for TUNNEL_DECAP_TABLE entry '%s' have been synchronised in STATE_DB", key.c_str());
             }
 
             if (task_status == task_process_status::task_need_retry)
@@ -1434,6 +1445,28 @@ std::string TunnelDecapOrch::getDscpMode(const std::string &tunnelKey) const
         return "";
     }
     return iter->second.dscp_mode;
+}
+
+std::string TunnelDecapOrch::getEcnMode(const std::string &tunnelKey) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return "";
+    }
+    return iter->second.ecn_mode;
+}
+
+std::string TunnelDecapOrch::getEncapEcnMode(const std::string &tunnelKey) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return "";
+    }
+    return iter->second.encap_ecn_mode;
 }
 
 bool TunnelDecapOrch::getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const

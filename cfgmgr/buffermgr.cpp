@@ -100,8 +100,15 @@ void BufferMgr::readPgProfileLookupFile(string file)
 
 task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
-    m_cableLenLookup[port] = cable_length;
-    SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
+
+    if (cable_length != "None" && m_cableLenLookup[port] != cable_length)
+    {
+        m_cableLenLookup[port] = cable_length;
+        SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
+        // The return status is ignored
+        doSpeedUpdateTask(port);
+    }
+
     return task_process_status::task_success;
 }
 

@@ -23,8 +23,8 @@ use crate::actor::{
 };
 
 // Internal exit codes
-use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED, EXIT_SUCCESS};
-use crate::utilities::{set_comm_capacity, ChannelLabel};
+use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED};
+use crate::utilities::{set_comm_capacity, set_comm_log_interval_secs, ChannelLabel};
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -85,33 +85,64 @@ fn init_logging(log_level: &str, log_format: &str) {
     builder.init();
 }
 
-fn exit_on_join(name: &str, result: Result<(), tokio::task::JoinError>) -> ! {
-    match result {
-        Ok(()) => {
-            info!("{} actor exited normally; shutting down", name);
-            std::process::exit(EXIT_SUCCESS);
-        }
-        Err(e) => {
-            error!("{} actor join error: {:?}", name, e);
-            std::process::exit(EXIT_FAILURE);
-        }
+#[derive(Debug)]
+struct SupervisorExit {
+    actor_name: &'static str,
+    exit_code: i32,
+    message: String,
+}
+
+fn describe_join_error(e: tokio::task::JoinError) -> String {
+    if e.is_panic() {
+        format!("task panicked: {}", e)
+    } else if e.is_cancelled() {
+        format!("task was cancelled: {}", e)
+    } else {
+        format!("task join error: {}", e)
     }
 }
 
-fn exit_on_otel_join(result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>) -> ! {
+fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>) -> SupervisorExit {
+    match result {
+        Ok(()) => {
+            // Actors are expected to run indefinitely; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
+        }
+        Err(e) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message: describe_join_error(e),
+        },
+    }
+}
+
+fn classify_otel_join(
+    name: &'static str,
+    result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>,
+) -> SupervisorExit {
     match result {
         Ok(Ok(())) => {
-            info!("OpenTelemetry actor exited normally; shutting down");
-            std::process::exit(EXIT_SUCCESS);
+            // OpenTelemetry is also a long-running actor; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
         }
-        Ok(Err(e)) => {
-            error!("OpenTelemetry actor failed: {:?}", e);
-            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        }
-        Err(e) => {
-            error!("OpenTelemetry actor join error: {:?}", e);
-            std::process::exit(EXIT_FAILURE);
-        }
+        Ok(Err(e)) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
+            message: format!("export failed after retries: {:?}", e),
+        },
+        Err(e) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message: describe_join_error(e),
+        },
     }
 }
 
@@ -170,6 +201,32 @@ struct Args {
         help = "Set the log output format: 'simple' for level and message only, 'full' for timestamp, file, line, level, and message"
     )]
     log_format: String,
+
+    /// Interval (seconds) between periodic comm stats log lines (channel queue stats)
+    #[arg(
+        long,
+        default_value = "600",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Interval in seconds for logging comm stats (channel lengths). Use a shorter value (e.g. 60) when verifying HFT processing slowness. Minimum 1"
+    )]
+    comm_stats_interval: u64,
+
+    /// Netlink socket receive buffer size in bytes (0 = OS default). Increase to reduce ENOBUFS under high HFT load.
+    #[arg(
+        long,
+        default_value = "4194304",
+        help = "Netlink SO_RCVBUF size in bytes (0 = default). Use 4MB or higher if you see 'Netlink receive buffer full (ENOBUFS)'"
+    )]
+    netlink_rcvbuf: usize,
+
+    /// Socket readiness poll interval in milliseconds. Shorter than HFT sample interval (e.g. 10 ms) reduces ENOBUFS.
+    #[arg(
+        long,
+        default_value = "5",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Poll interval in ms for netlink socket readiness. Default 5, minimum 1"
+    )]
+    socket_readiness_timeout_ms: u64,
 
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
     #[arg(
@@ -263,9 +320,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     info!(
+        "Comm stats log interval: {} seconds",
+        args.comm_stats_interval
+    );
+    info!(
+        "Socket readiness poll interval: {} ms",
+        args.socket_readiness_timeout_ms
+    );
+    info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
         args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
     );
+
+    set_comm_log_interval_secs(args.comm_stats_interval);
 
     // Create communication channels between actors with configurable capacities
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
@@ -288,7 +355,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Using netlink family: '{}', group: '{}'", family, group);
 
     // Initialize and configure actors
-    let mut data_netlink = DataNetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
+    let mut data_netlink = DataNetlinkActor::new(
+        family.as_str(),
+        group.as_str(),
+        command_receiver,
+        args.netlink_rcvbuf,
+        args.socket_readiness_timeout_ms,
+    );
     data_netlink.add_recipient(ipfix_record_sender);
 
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
@@ -444,28 +517,101 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Exit the program as soon as any actor completes
-    tokio::select! {
+    // All actors are treated as critical. If any actor exits, abort the rest and terminate.
+    let first_exit = tokio::select! {
         res = &mut data_netlink_handle => {
-            exit_on_join("Data netlink", res);
+            classify_join("Data netlink", res)
         }
         res = &mut control_netlink_handle => {
-            exit_on_join("Control netlink", res);
+            classify_join("Control netlink", res)
         }
         res = &mut ipfix_handle => {
-            exit_on_join("IPFIX", res);
+            classify_join("IPFIX", res)
         }
         res = &mut swss_handle => {
-            exit_on_join("SWSS", res);
+            classify_join("SWSS", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
-            exit_on_join("Stats reporter", res);
+            classify_join("Stats reporter", res)
         }
         res = async { counter_db_handle.as_mut().unwrap().await }, if counter_db_handle.is_some() => {
-            exit_on_join("Counter DB", res);
+            classify_join("Counter DB", res)
         }
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
-            exit_on_otel_join(res);
+            classify_otel_join("OpenTelemetry", res)
         }
+    };
+
+    error!(
+        "Critical actor '{}' triggered daemon shutdown: {}",
+        first_exit.actor_name,
+        first_exit.message
+    );
+
+    data_netlink_handle.abort();
+    control_netlink_handle.abort();
+    ipfix_handle.abort();
+    swss_handle.abort();
+
+    if let Some(handle) = reporter_handle.as_mut() {
+        handle.abort();
+    }
+    if let Some(handle) = counter_db_handle.as_mut() {
+        handle.abort();
+    }
+    if let Some(handle) = otel_handle.as_mut() {
+        handle.abort();
+    }
+
+    std::process::exit(first_exit.exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(args)
+    }
+
+    #[test]
+    fn test_defaults() {
+        let args = parse(&["countersyncd"]).unwrap();
+        assert_eq!(args.socket_readiness_timeout_ms, 5);
+        assert_eq!(args.netlink_rcvbuf, 4194304);
+        assert_eq!(args.comm_stats_interval, 600);
+        assert_eq!(args.stats_interval, 10);
+        assert!(!args.enable_stats);
+        assert!(!args.enable_counter_db);
+        assert!(!args.enable_otel);
+    }
+
+    #[test]
+    fn test_socket_readiness_timeout_zero_rejected() {
+        assert!(parse(&["countersyncd", "--socket-readiness-timeout-ms", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_socket_readiness_timeout_custom() {
+        let args = parse(&["countersyncd", "--socket-readiness-timeout-ms", "10"]).unwrap();
+        assert_eq!(args.socket_readiness_timeout_ms, 10);
+    }
+
+    #[test]
+    fn test_netlink_rcvbuf_zero_accepted() {
+        let args = parse(&["countersyncd", "--netlink-rcvbuf", "0"]).unwrap();
+        assert_eq!(args.netlink_rcvbuf, 0);
+    }
+
+    #[test]
+    fn test_comm_stats_interval_custom() {
+        let args = parse(&["countersyncd", "--comm-stats-interval", "60"]).unwrap();
+        assert_eq!(args.comm_stats_interval, 60);
+    }
+
+    #[test]
+    fn test_unknown_flag_rejected() {
+        assert!(parse(&["countersyncd", "--unknown-flag"]).is_err());
     }
 }

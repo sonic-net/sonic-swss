@@ -66,7 +66,7 @@ const map<string, sai_my_sid_entry_endpoint_behavior_flavor_t> end_flavor_map =
     {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
     {"end.t",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
-    {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE},
     {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD}
 };
 
@@ -378,23 +378,22 @@ void Srv6Orch::addMySidCfgCacheEntry(const string& my_sid_key, const vector<Fiel
     auto key_list = tokenize(my_sid_key, '|');
     auto locator = key_list[0];
     auto my_sid_prefix = key_list[1];
+    boost::optional<sai_tunnel_dscp_mode_t> dscp_mode = boost::none;
 
     auto cfg = fvsGetValue(fvs, "decap_dscp_mode", false);
-    if (!cfg)
+    if (cfg)
     {
-        SWSS_LOG_ERROR("MySID entry %s doesn't have mandatory decap_dscp_mode configuration", my_sid_prefix.c_str());
-        return;
-    }
-
-    sai_tunnel_dscp_mode_t dscp_mode;
-    if (!mySidDscpModeToSai(*cfg, dscp_mode))
-    {
-        SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_prefix.c_str(), cfg->c_str());
-        return;
+        sai_tunnel_dscp_mode_t dscp_mode_sai;
+        if (!mySidDscpModeToSai(*cfg, dscp_mode_sai))
+        {
+            SWSS_LOG_ERROR("Invalid MySID %s DSCP mode: %s", my_sid_prefix.c_str(), cfg->c_str());
+            return;
+        }
+        dscp_mode = dscp_mode_sai;
     }
 
     my_sid_dscp_cfg_cache_.insert({my_sid_prefix, {locator, dscp_mode}});
-    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_prefix.c_str(), cfg->c_str());
+    SWSS_LOG_INFO("Saving MySID entry %s %s DSCP mode %s", locator.c_str(), my_sid_prefix.c_str(), cfg ? cfg->c_str() : "none");
 }
 
 void Srv6Orch::removeMySidCfgCacheEntry(const string& my_sid_key)
@@ -427,7 +426,7 @@ void Srv6Orch::mySidCfgCacheRefresh()
     }
 }
 
-bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode)
+bool Srv6Orch::getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode)
 {
     auto my_sid_prefix = getMySidPrefix(my_sid_addr, locator_cfg);
 
@@ -1414,7 +1413,7 @@ bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t e
     return false;
 }
 
-bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode)
+bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode)
 {
     if (end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN &&
         end_behavior != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46)
@@ -1424,7 +1423,8 @@ bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_e
 
     auto locator_cfg = getMySidEntryLocatorCfg(sai_entry);
 
-    return getMySidEntryDscpMode(my_sid_addr, locator_cfg, dscp_mode);
+    auto status = getMySidEntryDscpMode(my_sid_addr, locator_cfg, dscp_mode);
+    return status && dscp_mode.has_value();
 }
 
 bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
@@ -1546,11 +1546,11 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         nh_update = true;
     }
 
-    sai_tunnel_dscp_mode_t dscp_mode;
+    boost::optional<sai_tunnel_dscp_mode_t> dscp_mode;
     if (mySidTunnelRequired(my_sid_string, my_sid_entry, end_behavior, dscp_mode))
     {
         sai_object_id_t tunnel_oid;
-        auto ok = createMySidIpInIpTunnel(dscp_mode, tunnel_oid);
+        auto ok = createMySidIpInIpTunnel(dscp_mode.get(), tunnel_oid);
         if (!ok)
         {
             return false;
@@ -1560,12 +1560,12 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         ok = createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, term_entry_oid);
         if (!ok)
         {
-            removeMySidIpInIpTunnel(dscp_mode);
+            removeMySidIpInIpTunnel(dscp_mode.get());
             return false;
         }
 
         srv6_my_sid_table_[key_string].tunnel_term_entry = term_entry_oid;
-        srv6_my_sid_table_[key_string].dscp_mode = dscp_mode;
+        srv6_my_sid_table_[key_string].dscp_mode = dscp_mode.get();
 
         attr.id = SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID;
         attr.value.oid = tunnel_oid;
