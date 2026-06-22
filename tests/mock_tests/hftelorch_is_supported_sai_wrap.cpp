@@ -15,6 +15,7 @@ namespace
         None = 0,
         StatsStFail,
         AttributeCapabilityQueryFail,
+        IcmpSessionCapabilityQueryFail,
         CollectorCreateNotImplemented,
         SwitchNotifySetNotImplemented,
     };
@@ -63,6 +64,18 @@ extern "C"
         if (g_hook == Hook::AttributeCapabilityQueryFail)
         {
             return SAI_STATUS_NOT_SUPPORTED;
+        }
+
+        if (g_hook == Hook::IcmpSessionCapabilityQueryFail)
+        {
+            // Only fail the selective-counter capability query on the ICMP echo
+            // session object; forward switch/other queries (e.g. state-change
+            // notification registration) to the real implementation.
+            if (object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
         }
 
         if (g_hook == Hook::CollectorCreateNotImplemented)
@@ -130,6 +143,11 @@ namespace hftel_is_supported_ut
     void setSaiHookAttributeCapabilityQueryFail()
     {
         g_hook = Hook::AttributeCapabilityQueryFail;
+    }
+
+    void setSaiHookIcmpSessionCapabilityQueryFail()
+    {
+        g_hook = Hook::IcmpSessionCapabilityQueryFail;
     }
 
     void setSaiHookCollectorCreateNotImplemented()

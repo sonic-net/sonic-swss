@@ -8,6 +8,7 @@
 #include "table.h"
 #include "dbconnector.h"
 #include "sai_serialize.h"
+#include "saihelper.h"
 
 #include <gtest/gtest.h>
 #include <vector>
@@ -121,7 +122,7 @@ namespace icmporch_test
     TEST_F(IcmpOrchStatsCountModeTest, CountersState_NativeFallbackUsesSessionKeyNameMapField)
     {
         hftel_is_supported_ut::SaiHookGuard g(
-                hftel_is_supported_ut::setSaiHookAttributeCapabilityQueryFail);
+                hftel_is_supported_ut::setSaiHookIcmpSessionCapabilityQueryFail);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         ASSERT_TRUE(icmpOrch.create_icmp_session("default:default:5200:NORMAL",
@@ -138,6 +139,9 @@ namespace icmporch_test
     TEST_F(IcmpOrchStatsCountModeTest, CountersState_TraditionalModePendingCountersDrainAfterVidToRid)
     {
         gTraditionalFlexCounter = true;
+        // Traditional flex counter mode writes through the global flex-counter
+        // producer tables; allocate them (mirrors orchagent init ordering).
+        initFlexCounterTables();
 
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
@@ -147,8 +151,17 @@ namespace icmporch_test
         icmpOrch.setCountersState(true);
         ASSERT_FALSE(icmpOrch.m_stats_handler->m_pending_counters.empty());
 
-        auto pending_oid = icmpOrch.m_stats_handler->m_pending_counters.begin()->first;
-        addVidtOridMap(pending_oid);
+        // A session registers one counter per selective variant (IN/OUT), so
+        // resolve VID->RID for every pending OID (as syncd would) before draining.
+        std::vector<sai_object_id_t> pending_oids;
+        for (const auto& kv : icmpOrch.m_stats_handler->m_pending_counters)
+        {
+            pending_oids.push_back(kv.first);
+        }
+        for (auto pending_oid : pending_oids)
+        {
+            addVidtOridMap(pending_oid);
+        }
         icmpOrch.m_stats_handler->processPending();
 
         EXPECT_TRUE(icmpOrch.m_stats_handler->m_pending_counters.empty());

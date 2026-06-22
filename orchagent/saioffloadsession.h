@@ -747,7 +747,7 @@ public:
         if (m_counter_update_timer == nullptr)
         {
             m_counter_update_timer = new SelectableTimer(
-                timespec{ .tv_sec = m_update_timer_interval_sec, .tv_nsec = 0 });
+                timespec{ .tv_sec = static_cast<time_t>(m_update_timer_interval_sec), .tv_nsec = 0 });
         }
         return m_counter_update_timer;
     }

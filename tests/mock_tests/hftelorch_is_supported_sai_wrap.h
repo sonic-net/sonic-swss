@@ -5,6 +5,10 @@ namespace hftel_is_supported_ut
     void setSaiHookNone();
     void setSaiHookStatsStFail();
     void setSaiHookAttributeCapabilityQueryFail();
+    // Fails only the ICMP echo session capability query (forces native
+    // FlexCounter fallback) while leaving switch/other capability queries intact
+    // so unrelated paths (e.g. state-change notification registration) succeed.
+    void setSaiHookIcmpSessionCapabilityQueryFail();
     void setSaiHookCollectorCreateNotImplemented();
     void setSaiHookSwitchNotifySetNotImplemented();
 
