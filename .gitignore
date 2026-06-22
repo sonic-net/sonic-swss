@@ -59,6 +59,7 @@ cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
 cfgmgr/coppmgrd
 cfgmgr/tunnelmgrd
+cfgmgr/vrrpmgrd
 cfgmgr/fabricmgrd
 cfgmgr/stpmgrd
 fpmsyncd/fpmsyncd
