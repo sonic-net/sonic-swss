@@ -966,5 +966,25 @@ int main(int argc, char **argv)
 
     orchDaemon->start(heartBeatInterval);
 
+    /*
+     * On SIGTERM/SIGINT the signal handler sets gOrchShutdownRequested and
+     * start() returns. Do not fall through to `return 0;`: running ~OrchDaemon
+     * and its member destructors is unsafe here. FlexCounterManager destruction
+     * issues SAI calls (stopFlexCounterPolling -> set_switch_attribute) that
+     * round-trip through sairedis's ZMQ channel and park the main thread in
+     * zmq_poll while libzmq I/O threads are still alive; orchs torn down earlier
+     * in the reverse-order loop have already freed buffers those threads still
+     * reference, corrupting the heap.
+     *
+     * Drain the async swss recorder so pending records flush, then _exit() to
+     * let the kernel reclaim the rest of the process without the destructor
+     * chain.
+     */
+    if (gOrchShutdownRequested != 0)
+    {
+        Recorder::Instance().swss.setAsync(false);
+        _exit(0);
+    }
+
     return 0;
 }
