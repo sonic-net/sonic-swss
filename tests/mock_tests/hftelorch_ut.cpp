@@ -1,4 +1,4 @@
-#include "hftelorch_is_supported_sai_wrap.h"
+#include "mock_sai_capability_wrap.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "high_frequency_telemetry/hftelorch.h"
@@ -11,7 +11,7 @@ extern sai_switch_api_t *sai_switch_api;
 namespace hftelorch_test
 {
     using namespace std;
-    using hftel_is_supported_ut::SaiHookGuard;
+    using hftelorch_sai_wrap_ut::HFTelSaiHookGuard;
 
     namespace constructor_ut
     {
@@ -66,7 +66,7 @@ namespace hftelorch_test
 
         void TearDown() override
         {
-            hftel_is_supported_ut::setSaiHookNone();
+            hftelorch_sai_wrap_ut::setSaiHookNone();
 
             ASSERT_EQ(sai_switch_api->remove_switch(gSwitchId), SAI_STATUS_SUCCESS);
             gSwitchId = SAI_NULL_OBJECT_ID;
@@ -92,7 +92,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_streaming_stats_unsupported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookStatsStFail);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookStatsStFail);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -102,7 +102,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_attribute_capability_query_failed)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookAttributeCapabilityQueryFail);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookAttributeCapabilityQueryFail);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -113,7 +113,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_collector_create_not_supported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookCollectorCreateNotImplemented);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookCollectorCreateNotImplemented);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -124,7 +124,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_switch_notify_set_not_supported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookSwitchNotifySetNotImplemented);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookSwitchNotifySetNotImplemented);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 

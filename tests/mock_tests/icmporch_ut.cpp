@@ -1,5 +1,4 @@
-#include "icmporch_sai_wrap.h"
-#include "hftelorch_is_supported_sai_wrap.h"
+#include "mock_sai_capability_wrap.h"
 #include "mock_orch_test.h"
 #include "schema.h"
 #define private public
@@ -24,7 +23,6 @@ namespace icmporch_test
         void TearDown() override
         {
             icmporch_sai_wrap_ut::setIcmpSaiHookNone();
-            hftel_is_supported_ut::setSaiHookNone();
             gTraditionalFlexCounter = false;
             MockOrchTest::TearDown();
         }
@@ -121,8 +119,8 @@ namespace icmporch_test
 
     TEST_F(IcmpOrchStatsCountModeTest, CountersState_NativeFallbackUsesSessionKeyNameMapField)
     {
-        hftel_is_supported_ut::SaiHookGuard g(
-                hftel_is_supported_ut::setSaiHookIcmpSessionCapabilityQueryFail);
+        icmporch_sai_wrap_ut::IcmpSaiHookGuard g(
+                icmporch_sai_wrap_ut::setIcmpSaiHookSessionCapabilityQueryFail);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         ASSERT_TRUE(icmpOrch.create_icmp_session("default:default:5200:NORMAL",
