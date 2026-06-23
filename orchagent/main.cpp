@@ -50,9 +50,7 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
-bool gOrchUnhealthy = false;
 extern volatile sig_atomic_t gOrchShutdownRequested;
-string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -82,6 +80,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = false;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
@@ -105,7 +104,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -A: enable async swss.rec recording path" << endl;
+    cout << "    -A: enable async swss.rec recording and async route state publish path" << endl;
     cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
@@ -429,7 +428,6 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 
@@ -505,7 +503,8 @@ int main(int argc, char **argv)
             break;
         case 'A':
             Recorder::Instance().swss.setAsync(true);
-            SWSS_LOG_NOTICE("Async swss recorder enabled");
+            gRouteStateAsyncPublish = true;
+            SWSS_LOG_NOTICE("Async swss recorder and async route state publish enabled");
             break;
         case 'd':
             record_location = optarg;
@@ -608,6 +607,11 @@ int main(int argc, char **argv)
     );
     Recorder::Instance().sairedis.setLocation(record_location);
     Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
+
+    /* Initialize SAI failure health table before SAI init so all
+     * handleSaiFailure() paths can persist status to STATE_DB. */
+    initSaiFailureTable();
+    setSaiFailureStatus(false);
 
     /* Initialize sairedis */
     initSaiApi();
