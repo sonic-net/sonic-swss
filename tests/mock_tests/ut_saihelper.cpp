@@ -70,6 +70,7 @@ namespace ut_helper
         sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
         sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&sai_virtual_router_api);
         sai_api_query(SAI_API_SAMPLEPACKET, (void **)&sai_samplepacket_api);
+        sai_api_query(SAI_API_MIRROR, (void **)&sai_mirror_api);
         sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
         sai_api_query(SAI_API_LAG, (void **)&sai_lag_api);
         sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
@@ -127,6 +128,7 @@ namespace ut_helper
         sai_bridge_api = nullptr;
         sai_virtual_router_api = nullptr;
         sai_port_api = nullptr;
+        sai_mirror_api = nullptr;
         sai_lag_api = nullptr;
         sai_vlan_api = nullptr;
         sai_router_intfs_api = nullptr;

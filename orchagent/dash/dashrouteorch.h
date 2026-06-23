@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "bulker.h"
 #include "dbconnector.h"
+#include "redispipeline.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
@@ -26,6 +27,7 @@ struct OutboundRoutingBulkContext
     swss::IpPrefix destination;
     dash::route::Route metadata;
     std::deque<sai_status_t> object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     OutboundRoutingBulkContext() {}
     OutboundRoutingBulkContext(const OutboundRoutingBulkContext&) = delete;
     OutboundRoutingBulkContext(OutboundRoutingBulkContext&&) = delete;
@@ -33,6 +35,7 @@ struct OutboundRoutingBulkContext
     void clear()
     {
         object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -45,6 +48,7 @@ struct InboundRoutingBulkContext
     uint32_t priority;
     dash::route_rule::RouteRule metadata;
     std::deque<sai_status_t> object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     InboundRoutingBulkContext() {}
     InboundRoutingBulkContext(const InboundRoutingBulkContext&) = delete;
     InboundRoutingBulkContext(InboundRoutingBulkContext&&) = delete;
@@ -52,6 +56,7 @@ struct InboundRoutingBulkContext
     void clear()
     {
         object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -70,6 +75,7 @@ private:
     DashOrch *dash_orch_;
     std::unordered_map<std::string, sai_object_id_t> route_group_oid_map_;
     std::unordered_map<std::string, int> route_group_bind_count_;
+    std::unique_ptr<swss::RedisPipeline> m_resultPipeline;
     std::unique_ptr<swss::Table> dash_route_result_table_;
     std::unique_ptr<swss::Table> dash_route_rule_result_table_;
     std::unique_ptr<swss::Table> dash_route_group_result_table_;
