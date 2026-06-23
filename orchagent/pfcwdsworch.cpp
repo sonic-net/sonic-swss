@@ -350,6 +350,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         // Clean up
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
         this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+
+        // Drop this queue's PFC_WD_TABLE_INSTORM field so a stale row can't
+        // replay a phantom storm on warm restart.
+        string instormKey = m_applTable->getTableName()
+            + m_applTable->getTableNameSeparator()
+            + port.m_alias;
+        m_applDb->hdel(instormKey, to_string(i));
     }
 }
 

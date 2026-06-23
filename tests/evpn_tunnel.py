@@ -50,10 +50,16 @@ class VxlanEvpnHelper(object):
         if db.getDbId() == swsscommon.ASIC_DB and table == "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY":
             for k in entries:
                 try:
-                    if json.loads(k).get("dest") == "fe80::/10":
-                        baseline.add(k)
+                    dest = json.loads(k).get("dest")
                 except (ValueError, TypeError):
                     continue
+                # Exclude the link-local CPU routes (the fe80::/10 subnet route
+                # and the eui64 fe80::.../128 host route). The latter is added
+                # per-VRF when an EVPN L3 VNI is bound, which can coincide with
+                # the data route under test and must not be counted.
+                if dest == "fe80::/10" or \
+                        (isinstance(dest, str) and dest.lower().startswith("fe80:") and dest.endswith("/128")):
+                    baseline.add(k)
         new_entries = list(entries - baseline)
         assert len(new_entries) == count, "Wrong number of created entries."
         new_entries.sort()

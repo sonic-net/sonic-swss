@@ -491,6 +491,11 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 
 void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
 {
+    if (!m_recordable)
+    {
+        return;
+    }
+
     auto& swssRecorder = Recorder::Instance().swss;
 
     if (!swssRecorder.isAsyncEnabled())
@@ -506,6 +511,11 @@ void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
 
 void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
+    if (!m_recordable)
+    {
+        return;
+    }
+
     auto& swssRecorder = Recorder::Instance().swss;
 
     if (!swssRecorder.isAsyncEnabled())

@@ -10,10 +10,12 @@
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
+#include "saihelper.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "stporch.h"
 
 using namespace std;
@@ -29,8 +31,6 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
-extern bool                        gOrchUnhealthy;
-extern string                      gSaiErrorString;
 volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
@@ -73,6 +73,9 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+ShlOrch *gShlOrch;
+EvpnMhOrch *gEvpnMhOrch;
+L2NhgOrch *gL2NhgOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -192,6 +195,14 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
+    // Construct the NotificationConsumer stats publisher before any
+    // orch that owns a NotificationConsumer it cares to publish, so
+    // each of those orchs can call
+    // gNotifConsumerStatsOrch->registerConsumer(...) from its
+    // constructor.  A null gNotifConsumerStatsOrch means publish is
+    // disabled; the registerConsumer call sites all null-check.
+    gNotifConsumerStatsOrch = new NotificationConsumerStatsOrch();
+
     TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
@@ -229,9 +240,23 @@ bool OrchDaemon::init()
     };
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+
+    // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+    // processes bridge ports and VLAN members (fixes warm boot ordering)
+    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
+
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                           m_configDb);
 
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
@@ -292,8 +317,14 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    vector<table_name_with_pri_t> intf_tables = {
+        { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+        { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+    };
+
+    gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
     gDirectory.set(gIntfsOrch);
+
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
 
@@ -330,10 +361,10 @@ bool OrchDaemon::init()
     };
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
-    auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
-    auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
+    auto enable_route_zmq = get_route_perf_zmq_enabled();
+    auto route_zmq_server = enable_route_zmq ? m_zmqServer : nullptr;
 
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
@@ -488,6 +519,8 @@ bool OrchDaemon::init()
 
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
+    gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -496,8 +529,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
-
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {
@@ -545,6 +577,13 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    TableConnector appDbShlTbl(m_applDb, APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<TableConnector> shl_tbl_ctrs = {
+        appDbShlTbl
+    };
+
+    gShlOrch = new ShlOrch(shl_tbl_ctrs);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -572,6 +611,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(gShlOrch);
 
     if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {
@@ -988,15 +1028,6 @@ void OrchDaemon::start(long heartBeatInterval)
             break;
         }
 
-        /*
-         * Log an error message periodically if a previous SAI API call failed with
-         * an unrecoverable error.
-         */
-        if (gOrchUnhealthy)
-        {
-            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
-        }
-
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
 
@@ -1005,6 +1036,16 @@ void OrchDaemon::start(long heartBeatInterval)
         if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
+
+            /*
+             * Log an error message periodically if a previous SAI API call failed with
+             * an unrecoverable error.
+             */
+            string orchHealthError;
+            if (getSaiFailureStatus(orchHealthError))
+            {
+                SWSS_LOG_ERROR("%s", orchHealthError.c_str());
+            }
 
             flush();
         }
