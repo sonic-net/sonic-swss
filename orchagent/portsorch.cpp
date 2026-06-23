@@ -1451,6 +1451,9 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         return false;
     }
 
+    bool hasFailure = false;
+    std::uint32_t failIndex = 0;
+
     for (std::uint32_t i = 0; i < portCount; i++)
     {
         if (statusList.at(i) != SAI_STATUS_SUCCESS)
@@ -1459,14 +1462,9 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
                 "Failed to create port %s with bulk operation, rv:%d",
                 portList.at(i).key.c_str(), statusList.at(i)
             );
-
-            auto handle_status = handleSaiCreateStatus(SAI_API_PORT, statusList.at(i));
-            if (handle_status != task_process_status::task_success)
-            {
-                SWSS_LOG_THROW("PortsOrch bulk create failure");
-            }
-
-            return false;
+            hasFailure = true;
+            failIndex = i;
+            break;
         }
 
         Port& p = addedPorts.at(i);
@@ -1480,6 +1478,50 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         m_portListLaneMap[portList.at(i).lanes.value] = oidList.at(i);
         addedPorts.at(i).m_port_id = oidList.at(i);
         m_portCount++;
+    }
+
+    if (hasFailure)
+    {
+        std::vector<sai_object_id_t> rollbackOids;
+        for (std::uint32_t j = 0; j < failIndex; j++)
+        {
+            if (statusList.at(j) == SAI_STATUS_SUCCESS &&
+                oidList.at(j) != SAI_NULL_OBJECT_ID)
+            {
+                rollbackOids.push_back(oidList.at(j));
+                m_portListLaneMap.erase(portList.at(j).lanes.value);
+                m_portCount--;
+            }
+        }
+
+        if (!rollbackOids.empty())
+        {
+            SWSS_LOG_NOTICE("Rolling back %zu successfully created ports after partial bulk failure",
+                            rollbackOids.size());
+
+            std::vector<sai_status_t> rollbackStatusList(rollbackOids.size(), SAI_STATUS_SUCCESS);
+            auto rollbackStatus = sai_port_api->remove_ports(
+                static_cast<std::uint32_t>(rollbackOids.size()),
+                rollbackOids.data(),
+                SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR,
+                rollbackStatusList.data()
+            );
+            if (rollbackStatus != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Rollback of bulk port create failed, rv:%d — orphaned port OIDs in SAI",
+                               rollbackStatus);
+            }
+        }
+
+        addedPorts.clear();
+
+        auto handle_status = handleSaiCreateStatus(SAI_API_PORT, statusList.at(failIndex));
+        if (handle_status != task_process_status::task_success)
+        {
+            SWSS_LOG_THROW("PortsOrch bulk create failure (after rollback)");
+        }
+
+        return false;
     }
 
     // newly created ports might be put in the default vlan so remove all ports from
@@ -11205,18 +11247,22 @@ void PortsOrch::refreshPortStateLinkTraining(const Port &port)
         }
         else if (rx_status == SAI_PORT_LINK_TRAINING_RX_STATUS_TRAINED)
         {
-            status = link_training_rx_status_map.at(rx_status);
+            status = "trained";
         }
         else
         {
             if (getPortLinkTrainingFailure(port, failure) &&
                 failure != SAI_PORT_LINK_TRAINING_FAILURE_STATUS_NO_ERROR)
             {
-                status = link_training_failure_map.at(failure);
+                auto fail_it = link_training_failure_map.find(failure);
+                status = (fail_it != link_training_failure_map.end())
+                    ? fail_it->second : "unknown_failure";
             }
             else
             {
-                status = link_training_rx_status_map.at(rx_status);
+                auto rx_it = link_training_rx_status_map.find(rx_status);
+                status = (rx_it != link_training_rx_status_map.end())
+                    ? rx_it->second : "not_trained";
             }
         }
     }

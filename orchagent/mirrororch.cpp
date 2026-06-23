@@ -1152,13 +1152,19 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     assert(!session.status);
 
-    // Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
-    // support global mirror session traffic class.
     if (session.queue != 0)
     {
-        attr.id = SAI_MIRROR_SESSION_ATTR_TC;
-        attr.value.u8 = session.queue;
-        attrs.push_back(attr);
+        if (m_switchOrch->isMirrorSessionTcSupported())
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_TC;
+            attr.value.u8 = session.queue;
+            attrs.push_back(attr);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Session %s: per-session TC not supported, ignoring queue %d",
+                          name.c_str(), session.queue);
+        }
     }
 
     if (session.type == MIRROR_SESSION_SPAN)
@@ -1352,22 +1358,27 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         SWSS_LOG_DEBUG("Session %s: programming truncate_size=%u bytes", name.c_str(), session.truncate_size);
     }
 
-    // SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE: controls behavior when mirror
-    // buffer is full.  "independent" = drop mirror copy (best-effort),
-    // "correlated" = back-pressure original traffic (guaranteed delivery).
     if (!session.congestion_mode.empty())
     {
-        attr.id = SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE;
-        if (session.congestion_mode == "correlated")
+        if (m_switchOrch->isMirrorSessionCongestionModeSupported())
         {
-            attr.value.s32 = SAI_MIRROR_SESSION_CONGESTION_MODE_CORRELATED;
+            attr.id = SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE;
+            if (session.congestion_mode == "correlated")
+            {
+                attr.value.s32 = SAI_MIRROR_SESSION_CONGESTION_MODE_CORRELATED;
+            }
+            else
+            {
+                attr.value.s32 = SAI_MIRROR_SESSION_CONGESTION_MODE_INDEPENDENT;
+            }
+            attrs.push_back(attr);
+            SWSS_LOG_NOTICE("Session %s: congestion_mode=%s", name.c_str(), session.congestion_mode.c_str());
         }
         else
         {
-            attr.value.s32 = SAI_MIRROR_SESSION_CONGESTION_MODE_INDEPENDENT;
+            SWSS_LOG_WARN("Session %s: congestion_mode not supported by platform, ignoring '%s'",
+                          name.c_str(), session.congestion_mode.c_str());
         }
-        attrs.push_back(attr);
-        SWSS_LOG_NOTICE("Session %s: congestion_mode=%s", name.c_str(), session.congestion_mode.c_str());
     }
 
     status = sai_mirror_api->
@@ -1382,6 +1393,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+        return true;
     }
 
     session.status = true;
@@ -2220,21 +2232,29 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         session.congestion_mode = new_congestion_mode;
         if (session.status)
         {
-            sai_attribute_t attr;
-            attr.id = SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE;
-            attr.value.s32 = (new_congestion_mode == "correlated") ?
-                SAI_MIRROR_SESSION_CONGESTION_MODE_CORRELATED :
-                SAI_MIRROR_SESSION_CONGESTION_MODE_INDEPENDENT;
-            sai_status_t status = sai_mirror_api->set_mirror_session_attribute(
-                session.sessionId, &attr);
-            if (status != SAI_STATUS_SUCCESS)
+            if (!m_switchOrch->isMirrorSessionCongestionModeSupported())
             {
-                SWSS_LOG_ERROR("Session %s: failed to update congestion_mode in SAI, rv:%d",
-                               key.c_str(), status);
-                return task_process_status::task_failed;
+                SWSS_LOG_WARN("Session %s: congestion_mode not supported by platform, storing '%s' without SAI update",
+                              key.c_str(), new_congestion_mode.c_str());
             }
-            SWSS_LOG_NOTICE("Session %s: congestion_mode updated to %s in-place",
-                            key.c_str(), new_congestion_mode.c_str());
+            else
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE;
+                attr.value.s32 = (new_congestion_mode == "correlated") ?
+                    SAI_MIRROR_SESSION_CONGESTION_MODE_CORRELATED :
+                    SAI_MIRROR_SESSION_CONGESTION_MODE_INDEPENDENT;
+                sai_status_t status = sai_mirror_api->set_mirror_session_attribute(
+                    session.sessionId, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Session %s: failed to update congestion_mode in SAI, rv:%d",
+                                   key.c_str(), status);
+                    return task_process_status::task_failed;
+                }
+                SWSS_LOG_NOTICE("Session %s: congestion_mode updated to %s in-place",
+                                key.c_str(), new_congestion_mode.c_str());
+            }
         }
         else
         {

@@ -81,7 +81,7 @@ sai_my_mac_api_t*           sai_my_mac_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
 sai_dash_appliance_api_t*           sai_dash_appliance_api;
 sai_dash_acl_api_t*                 sai_dash_acl_api;
-sai_dash_vnet_api_t                 sai_dash_vnet_api;
+sai_dash_vnet_api_t*                sai_dash_vnet_api;
 sai_dash_outbound_ca_to_pa_api_t*   sai_dash_outbound_ca_to_pa_api;
 sai_dash_pa_validation_api_t *      sai_dash_pa_validation_api;
 sai_dash_outbound_routing_api_t*    sai_dash_outbound_routing_api;
@@ -199,7 +199,12 @@ void initSaiApi()
         gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
     }
 
-    sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
+    sai_status_t status = sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to initialize SAI API, status: %d", status);
+        exit(EXIT_FAILURE);
+    }
 
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
     sai_api_query(SAI_API_BRIDGE,               (void **)&sai_bridge_api);
@@ -591,9 +596,9 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
         case SAI_STATUS_OBJECT_IN_USE:
-            SWSS_LOG_WARN("Status %s is not expected for create operation, SAI API: %s",
+            SWSS_LOG_ERROR("Unexpected status %s for create operation, SAI API: %s",
                             s_status.c_str(), s_api.c_str());
-            return task_success;
+            return task_failed;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
             SWSS_LOG_NOTICE("Returning success for create operation, SAI API: %s, status: %s",
                                 s_api.c_str(), s_status.c_str());

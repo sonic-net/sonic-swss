@@ -2774,7 +2774,24 @@ bool AclRuleUnderlaySetDscp::validateAddAction(string attr_name, string _attr_va
             SWSS_LOG_ERROR("Metadata already allocated for Rule %s in table %s. Remove and Re-add the rule.", m_id.c_str(), table_id.c_str());
             return false;
         }
-        u_int8_t actionDscpValue = uint8_t(std::stoi(attr_value));
+        int parsedDscp;
+        try
+        {
+            parsedDscp = std::stoi(attr_value);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid DSCP value '%s' in ACL rule %s: %s",
+                           attr_value.c_str(), m_id.c_str(), e.what());
+            return false;
+        }
+        if (parsedDscp < 0 || parsedDscp > 63)
+        {
+            SWSS_LOG_ERROR("DSCP value %d out of range [0..63] in ACL rule %s",
+                           parsedDscp, m_id.c_str());
+            return false;
+        }
+        u_int8_t actionDscpValue = static_cast<uint8_t>(parsedDscp);
         cachedDscpValue = actionDscpValue;
         auto metadata = m_metaDataMgr->getFreeMetaData(actionDscpValue);
 

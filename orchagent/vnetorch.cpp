@@ -512,6 +512,11 @@ bool VNetOrch::addOperation(const Request& request)
                 create = true;
 
                 VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
+                if (!vrf_obj)
+                {
+                    SWSS_LOG_ERROR("VNET '%s': failed to cast to VNetVrfObject", vnet_name.c_str());
+                    return false;
+                }
                 if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
                                                       vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
                 {
@@ -581,6 +586,11 @@ bool VNetOrch::delOperation(const Request& request)
         {
             VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
             VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(it->second.get());
+            if (!vrf_obj)
+            {
+                SWSS_LOG_ERROR("VNET '%s': failed to cast to VNetVrfObject", vnet_name.c_str());
+                return false;
+            }
 
             if (vrf_obj->getRouteCount())
             {

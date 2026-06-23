@@ -66,7 +66,21 @@ public:
         for (uint32_t i = 0; i < nhv.size(); i++)
         {
             NextHopKey nh(nhv[i]);
-            nh.weight = set_weight? (uint32_t)std::stoi(wtv[i]) : 0;
+            if (set_weight)
+            {
+                try
+                {
+                    nh.weight = static_cast<uint32_t>(std::stoi(wtv[i]));
+                }
+                catch (const std::exception &)
+                {
+                    nh.weight = 0;
+                }
+            }
+            else
+            {
+                nh.weight = 0;
+            }
             m_nexthops.insert(nh);
         }
     }

@@ -96,6 +96,8 @@ public:
     bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
     bool isMirrorErspanSessionIdSupported() const { return m_mirrorErspanSessionIdSupported; }
     bool isMirrorCounterIdSupported() const { return m_mirrorCounterIdSupported; }
+    bool isMirrorSessionTcSupported() const { return m_mirrorSessionTcSupported; }
+    bool isMirrorSessionCongestionModeSupported() const { return m_mirrorSessionCongestionModeSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -178,6 +180,8 @@ private:
     bool m_samplepacketTruncationSupported = false;
     bool m_mirrorErspanSessionIdSupported = false;
     bool m_mirrorCounterIdSupported = false;
+    bool m_mirrorSessionTcSupported = false;
+    bool m_mirrorSessionCongestionModeSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;

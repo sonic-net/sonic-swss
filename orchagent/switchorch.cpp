@@ -1598,8 +1598,15 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
                                             const sai_u8_list_t &description)
 {
     std::vector<swss::FieldValueTuple> values;
-    const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
-    const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
+
+    auto sev_it = switch_asic_sdk_health_event_severity_reverse_map.find(severity);
+    const string severity_str = (sev_it != switch_asic_sdk_health_event_severity_reverse_map.end())
+        ? sev_it->second : "unknown(" + to_string(static_cast<int>(severity)) + ")";
+
+    auto cat_it = switch_asic_sdk_health_event_category_reverse_map.find(category);
+    const string category_str = (cat_it != switch_asic_sdk_health_event_category_reverse_map.end())
+        ? cat_it->second : "unknown(" + to_string(static_cast<int>(category)) + ")";
+
     string description_str;
     std::time_t t = (std::time_t)timestamp.tv_sec;
     const std::time_t now = std::time(0);
@@ -1623,6 +1630,10 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     {
     case SAI_HEALTH_DATA_TYPE_GENERAL:
     {
+        if (!description.list || description.count == 0)
+        {
+            break;
+        }
         vector<uint8_t> description_with_terminator(description.list, description.list + description.count);
         // Add the terminate character
         description_with_terminator.push_back(0);
@@ -1926,9 +1937,9 @@ void SwitchOrch::querySwitchPortMirrorCapability()
                             SAI_PORT_ATTR_INGRESS_MIRROR_SESSION, &capability);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Could not query port ingress mirror capability %d", status);
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
-        m_portIngressMirrorSupported = true;
+        SWSS_LOG_WARN("Could not query port ingress mirror capability %d, defaulting to unsupported", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "false");
+        m_portIngressMirrorSupported = false;
     }
     else
     {
@@ -1950,9 +1961,9 @@ void SwitchOrch::querySwitchPortMirrorCapability()
                             SAI_PORT_ATTR_EGRESS_MIRROR_SESSION, &capability);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Could not query port egress mirror capability %d", status);
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
-        m_portEgressMirrorSupported = true;
+        SWSS_LOG_WARN("Could not query port egress mirror capability %d, defaulting to unsupported", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "false");
+        m_portEgressMirrorSupported = false;
     }
     else
     {
@@ -2071,6 +2082,34 @@ void SwitchOrch::querySwitchSampledMirrorCapability()
             m_mirrorCounterIdSupported = false;
         }
         SWSS_LOG_NOTICE("mirror session counter ID capability: set=%d", capability.set_implemented);
+    }
+
+    // Check if SAI supports per-session TC on mirror sessions
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION,
+                            SAI_MIRROR_SESSION_ATTR_TC, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("SAI_MIRROR_SESSION_ATTR_TC capability query failed (status=%d); assuming unsupported", status);
+        m_mirrorSessionTcSupported = false;
+    }
+    else
+    {
+        m_mirrorSessionTcSupported = capability.create_implemented;
+        SWSS_LOG_NOTICE("mirror session TC capability: create=%d", capability.create_implemented);
+    }
+
+    // Check if SAI supports congestion mode on mirror sessions
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION,
+                            SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("SAI_MIRROR_SESSION_ATTR_CONGESTION_MODE capability query failed (status=%d); assuming unsupported", status);
+        m_mirrorSessionCongestionModeSupported = false;
+    }
+    else
+    {
+        m_mirrorSessionCongestionModeSupported = capability.create_implemented;
+        SWSS_LOG_NOTICE("mirror session congestion mode capability: create=%d", capability.create_implemented);
     }
 
     set_switch_capability(fvVector);

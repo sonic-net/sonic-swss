@@ -87,7 +87,7 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
     /* TODO: Later a better restart story will be told here */
     SWSS_LOG_ERROR("Syncd stopped");
 
-    if (gSwitchOrch->isFatalEventReceived())
+    if (gSwitchOrch && gSwitchOrch->isFatalEventReceived())
     {
         SWSS_LOG_ERROR("Orchagent aborted due to fatal SAI error received");
         abort();
@@ -120,6 +120,11 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                      sai_switch_health_data_t data,
                                      const sai_u8_list_t description)
 {
+    if (!gSwitchOrch)
+    {
+        SWSS_LOG_WARN("Health event received before SwitchOrch is initialized, ignoring");
+        return;
+    }
     gSwitchOrch->onSwitchAsicSdkHealthEvent(switch_id,
                                             severity,
                                             timestamp,
