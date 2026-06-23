@@ -2100,7 +2100,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 return false;
             }
 
-            /* Verify RIF is not mid-VRF-migration and belongs to the correct VRF.
+            /* Verify RIF is not mid-VRF-migration.
              * During VRF bind, the old RIF may still exist in the previous VRF
              * if neighbor references prevent its removal. Retry until the RIF is
              * recreated in the correct VRF. */
@@ -2108,16 +2108,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 SWSS_LOG_INFO("Interface %s is being removed, retry route %s later",
                         nexthop.alias.c_str(), ipPrefix.to_string().c_str());
-                return false;
-            }
-
-            Port port;
-            if (gPortsOrch->getPort(nexthop.alias, port) &&
-                port.m_vr_id != 0 && port.m_vr_id != vrf_id)
-            {
-                SWSS_LOG_INFO("RIF VRF mismatch for %s: route VRF 0x%" PRIx64
-                        " != RIF VRF 0x%" PRIx64 ", retry",
-                        nexthop.alias.c_str(), vrf_id, port.m_vr_id);
                 return false;
             }
         }
