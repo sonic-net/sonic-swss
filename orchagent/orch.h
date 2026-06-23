@@ -177,6 +177,10 @@ public:
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
+    /* Enable or disable swss.rec recording for this consumer */
+    void setRecordable(bool recordable) { m_recordable = recordable; }
+    bool isRecordable() const { return m_recordable; }
+
     void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
@@ -195,6 +199,7 @@ public:
 
 private:
     void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
+    bool m_recordable = true;
 };
 
 class RingBuffer
@@ -355,7 +360,7 @@ public:
     /**
      * @brief Flush pending responses
      */
-    void flushResponses();
+    virtual void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
     RetryCacheMap m_retryCaches;

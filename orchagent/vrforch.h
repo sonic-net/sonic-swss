@@ -88,6 +88,17 @@ public:
         }
     }
 
+    std::vector<sai_object_id_t> getVRFids(void) const
+    {
+        std::vector<sai_object_id_t> vrf_ids;
+        for (auto kv: vrf_id_table_)
+        {
+            vrf_ids.push_back(kv.first);
+        }
+
+        return vrf_ids;
+    }
+
     void increaseVrfRefCount(const std::string& name)
     {
         if (vrf_table_.find(name) != std::end(vrf_table_))
@@ -166,6 +177,11 @@ public:
         {
             return false;
         }
+    }
+
+    void markVniAsL3(const uint32_t vni)
+    {
+        l3vni_table_[vni].l3_vni = true;
     }
 
     int updateL3VniVlan(uint32_t vni, uint16_t vlan_id);

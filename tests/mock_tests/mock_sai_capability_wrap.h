@@ -72,6 +72,7 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookAttributeCapabilityQueryFail();
     void setSaiHookCollectorCreateNotImplemented();
     void setSaiHookSwitchNotifySetNotImplemented();
+    void setSaiHookAllSupported();
 
     /** RAII: restores the HFTel hook to None on scope exit. */
     struct HFTelSaiHookGuard
