@@ -21,6 +21,7 @@ extern "C" {
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "orch.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -417,12 +418,33 @@ void initSaiRedis()
     char *platform = getenv("platform");
     if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING) || strstr(platform, MRVL_PRST_PLATFORM_SUBSTRING)))
     {
-        /* We set this long timeout in order for Orchagent to wait enough time for
-         * response from syncd. It is needed since in init, systemd syncd startup
-         * script first calls FW upgrade script (that might take up to 7 minutes
-         * in systems with Gearbox) and only then launches syncd container */
+        /*
+         * Set a long timeout for the INIT_VIEW request to syncd.
+         *
+         * Cold boot: syncd startup script may run FW upgrade (up to 7 minutes
+         * on Gearbox systems) before launching the syncd container, so the
+         * default 480 s timeout covers that.
+         *
+         * Warm/fast restart on Mellanox: syncd's create_switch() internally
+         * calls sx_api_issu_end_set() for ASIC warm restore, which can block
+         * the syncd thread for well over 480 s on Spectrum-4.  Since syncd
+         * cannot enter its Redis event loop until that call returns, the
+         * INIT_VIEW message sits unprocessed and orchagent's timeout fires,
+         * causing a crash-loop (UPSW-4822).  Use a 900 s timeout for
+         * warm-restart to accommodate the longer ISSU duration.
+         */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
-        attr.value.u64 = SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT;
+
+        if (WarmStart::isWarmStart() &&
+            (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
+        {
+            attr.value.u64 = 900 * 1000;
+        }
+        else
+        {
+            attr.value.u64 = SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        }
+
         status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
         if (status != SAI_STATUS_SUCCESS)
