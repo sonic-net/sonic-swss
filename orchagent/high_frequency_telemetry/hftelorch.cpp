@@ -78,14 +78,16 @@ HFTelOrch::HFTelOrch(
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
 
-    m_asic_notification_consumer = make_shared<NotificationConsumer>(&m_asic_db, "NOTIFICATIONS");
-    auto notifier = new Notifier(m_asic_notification_consumer.get(), this, "TAM_TEL_TYPE_STATE");
+    m_asic_notification_consumer = new NotificationConsumer(&m_asic_db, "NOTIFICATIONS");
+    auto notifier = new Notifier(m_asic_notification_consumer, this, "TAM_TEL_TYPE_STATE");
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_tam_tel_type_config_change;
     if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY");
+        delete notifier;
+        m_asic_notification_consumer = nullptr;
         throw runtime_error("HFTelOrch initialization failure (failed to set tam tel type config change notify)");
     }
 
@@ -490,7 +492,7 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
     std::string data;
     std::vector<swss::FieldValueTuple> values;
 
-    if (&consumer != m_asic_notification_consumer.get())
+    if (&consumer != m_asic_notification_consumer)
     {
         SWSS_LOG_DEBUG("Is not TAM notification");
         return;
