@@ -1860,9 +1860,17 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
         else if (name == "nexthop")
         {
             auto ipstr = request.getAttrString(name);
-            for (const auto& tok : tokenize(ipstr, ','))
+
+            if (!ipstr.empty())
             {
-                ip_addresses.emplace_back(tok);
+                for (const auto& tok : tokenize(ipstr, ','))
+                {
+                    if (tok.empty())
+                    {
+                        continue;
+                    }
+                    ip_addresses.emplace_back(tok);
+                }
             }
         }
         else
