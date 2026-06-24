@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cbf/cbfnhgorch.h"
+#include "protnhg.h"
 #include "vector"
 #include "portsorch.h"
 #include "routeorch.h"
@@ -129,6 +130,109 @@ public:
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
+    /* Check if the ASIC supports the SW protection NHG type
+     * (SAI_NEXT_HOP_GROUP_TYPE_PROTECTION). */
+    bool isSwProtectionSupported();
+
+    /* Check if the ASIC supports the HW protection NHG type
+     * (SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION). */
+    bool isHwProtectionSupported();
+
+    /*
+     * Protection NHG APIs.
+     * MuxOrch is the primary consumer of these for dual-ToR hardware
+     * protection switching. Capacity accounting is shared with ECMP NHGs.
+     *
+     * All createProtNhg overloads are idempotent: re-creating with an
+     * existing canonical key is a no-op that returns true. Membership
+     * is immutable once created -- callers wishing to change membership
+     * must removeProtNhg() first.
+     */
+
+    /* Create a protection NHG as a strict pair: one primary and one standby
+     * next hop. Individual NHs are resolved via NeighOrch at sync time.
+     * For N:M, use the recursive NextHopGroupKey-pair overloads below.
+     */
+    bool createProtNhg(const string &key,
+                       const NextHopKey &primary_nh,
+                       const NextHopKey &standby_nh,
+                       bool hw_protection = true);
+
+    /* Auto-keyed convenience overload -- key is derived from the members. */
+    bool createProtNhg(const NextHopKey &primary_nh,
+                       const NextHopKey &standby_nh,
+                       bool hw_protection = true);
+
+    /* Create a protection NHG where each role is an existing ECMP NHG.
+     * NHG OIDs are dynamically resolved via NhgOrch at sync time.
+     */
+    bool createProtNhg(const string &key,
+                       const NextHopGroupKey &primary_nhg_key,
+                       const NextHopGroupKey &standby_nhg_key,
+                       bool hw_protection = true);
+
+    /* Auto-keyed convenience overload -- key is derived from the group keys. */
+    bool createProtNhg(const NextHopGroupKey &primary_nhg_key,
+                       const NextHopGroupKey &standby_nhg_key,
+                       bool hw_protection = true);
+
+    /* Build the deterministic key for a protection NHG from its members. */
+    static string buildProtNhgKey(const NextHopKey &primary_nh,
+                                  const NextHopKey &standby_nh,
+                                  bool hw_protection = true);
+    static string buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
+                                  const NextHopGroupKey &standby_nhg_key,
+                                  bool hw_protection = true);
+
+    /* Remove a protection NHG by key. */
+    bool removeProtNhg(const string &key);
+
+    /* Check if a protection NHG exists. */
+    bool hasProtNhg(const string &key) const;
+
+    /* Get a const reference to a protection NHG. */
+    const ProtNhg& getProtNhg(const string &key) const;
+
+    /* Get the SAI object ID of a protection NHG. */
+    sai_object_id_t getProtNhgId(const string &key) const;
+
+    /* Toggle admin role -- HW_PROTECTION groups only. */
+    bool setProtNhgAdminRole(const string &key, sai_int32_t admin_role);
+
+    /* Trigger switchover from primary to backup -- PROTECTION groups only. */
+    bool setProtNhgSwitchover(const string &key, bool enable);
+
+    /* Update the monitored object on a protection NHG member. */
+    bool setProtNhgMonitoredObject(const string &key,
+                                   const NextHopKey &nh_key,
+                                   sai_object_id_t monitored_oid);
+
+    /* Query the hardware-observed role (active/inactive) of a protection NHG member. */
+    bool getProtNhgMemberObservedRole(const string &key,
+                                      const NextHopKey &nh_key,
+                                      sai_next_hop_group_member_observed_role_t &observed_role) const;
+
+    /* Query observed roles for all synced members of a protection NHG. */
+    bool getProtNhgAllObservedRoles(
+        const string &key,
+        map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const;
+
+    /* Ref counting for protection NHGs. */
+    void incProtNhgRefCount(const string &key);
+    void decProtNhgRefCount(const string &key);
+
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Probe the ASIC once for SW/HW protection NHG support and publish the
+     * result to STATE_DB|SWITCH_CAPABILITY. Subsequent calls are no-ops. */
+    void probeProtectionCapabilities();
+
+    /* Cached protection-capability probe results. */
+    bool m_protCapChecked = false;
+    bool m_swProtectionSupported = false;
+    bool m_hwProtectionSupported = false;
+
+    /* Storage for protection NHGs, keyed by a string identifier (e.g., port name). */
+    unordered_map<string, NhgEntry<ProtNhg>> m_protNhgs;
 };
