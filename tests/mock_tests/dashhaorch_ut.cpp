@@ -1229,4 +1229,39 @@ namespace dashhaorch_ut
         RemoveHaScope();
         RemoveHaSet();
     }
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSetRoleUpdatesStateWhenHaSetMissing)
+    {
+        // Create switch-owner HA Set, then HA Scope.
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateSwitchOwnerDpuScopeHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateHaScope();
+
+        // Remove the HA Set while HA Scope still exists. This makes the HA Set
+        // lookup inside updateHaScopeStateForSwitchOwner fail.
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaSet();
+        ASSERT_TRUE(m_dashHaOrch->getHaSetEntries().find("HA_SET_1") == m_dashHaOrch->getHaSetEntries().end());
+
+        // Trigger a role change. The new code path should emit a warning that
+        // the HA Set is missing but still update the in-memory ha_state for the
+        // HA Scope entry (previously this path would silently early-return).
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        SetHaScopeHaRole("active");
+
+        auto scope_it = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1");
+        ASSERT_NE(scope_it, m_dashHaOrch->getHaScopeEntries().end());
+        EXPECT_EQ(scope_it->second.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(scope_it->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaScope();
+    }
 }
