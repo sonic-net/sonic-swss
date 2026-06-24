@@ -34,7 +34,7 @@ public:
 private:
     swss::Table m_state_telemetry_session;
     swss::DBConnector m_asic_db;
-    std::shared_ptr<swss::NotificationConsumer> m_asic_notification_consumer;
+    swss::NotificationConsumer* m_asic_notification_consumer = nullptr;
 
     std::unordered_map<std::string, std::shared_ptr<HFTelProfile>> m_name_profile_mapping;
     std::unordered_map<sai_object_type_t, std::unordered_set<std::shared_ptr<HFTelProfile>>> m_type_profile_mapping;

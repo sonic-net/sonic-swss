@@ -34,6 +34,10 @@ bool parseHandleSaiStatusFailure(task_process_status status);
 bool isSaiStatusResourceFull(sai_status_t status);
 void handleSaiFailure(sai_api_t api, std::string oper, sai_status_t status, bool abort_on_failure);
 
+void initSaiFailureTable();
+void setSaiFailureStatus(bool unhealthy, const std::string& error = "");
+bool getSaiFailureStatus(std::string& error);
+
 void setFlexCounterGroupParameter(const std::string &group,
                                   const std::string &poll_interval,
                                   const std::string &stats_mode,
@@ -68,6 +72,3 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
 
 std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);
-void writeResultToDB(const std::unique_ptr<swss::Table>&, const std::string& key,
-                     uint32_t res, const std::string& version="");
-void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const std::string& key);
