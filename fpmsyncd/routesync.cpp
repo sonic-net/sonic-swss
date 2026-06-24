@@ -2520,9 +2520,20 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
-    if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
+    if (nlmsg_type == RTM_NEWLINK)
     {
-        nl_cache_refill(m_nl_sock, m_link_cache);
+        nl_cache_include(m_link_cache, obj, NULL, NULL);
+        return;
+    }
+    if (nlmsg_type == RTM_DELLINK)
+    {
+        struct rtnl_link *cached = rtnl_link_get(m_link_cache,
+                                        rtnl_link_get_ifindex((struct rtnl_link *)obj));
+        if (cached)
+        {
+            nl_cache_remove((struct nl_object *)cached);
+            rtnl_link_put(cached);
+        }
         return;
     }
 
