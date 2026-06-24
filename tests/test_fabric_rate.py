@@ -4,6 +4,7 @@ from swsscommon import swsscommon
 import random
 
 class TestVirtualChassis(object):
+    @pytest.mark.skip(reason="Covered by mock test: FabricPort_TxRate_Increases_When_TestFlag_Set")
     def test_voq_switch_fabric_rate(self, vst):
         """Test fabric counters rate mpbs commands.
 
