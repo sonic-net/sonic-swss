@@ -3576,19 +3576,7 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet4", "down")
 
     '''
-    ECMP VNET local route with duplicate nexthop IP but different ifname, used for Link Local nexthops learned via FRR/BGP
-    '''
-    '''
-    One VNET + one prefix through 5 phases:
-      A) Create route with 2 ifnames sharing the same nexthop IP -> 2-member NHG,
-         distinct RIFs per member (the duplicate-IP fix).
-      B) Re-issue route with 1 ifname  -> NHG removed, route collapses to a single NH.
-      C) Re-issue route with 2 ifnames -> new 2-member NHG, both RIFs.
-      D) Flap the veth carrier of one ifname DOWN. PortsOrch oper-status change
-         drives NeighOrch.ifChangeInformNextHop -> RouteOrch.invalidnexthopinNextHopGroup,
-         which must implicitly remove the down member from the NHG (no test-driven
-         re-issue of the route). NHG stays, drops to 1 member.
-      E) Flap the veth back UP, re-add the neighbor -> NHG returns to 2 members.
+    Test 37: ECMP VNET local route with duplicate nexthop IP but different ifname, used for Link Local nexthops learned via FRR/BGP
     '''
     def test_vnet_local_route_ecmp_unnumbered(self, dvs, testlog):
         self.setup_db(dvs)
@@ -3635,7 +3623,8 @@ class TestVnetOrch(object):
         rif_tbl   = swsscommon.Table(asic_db_conn, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         nhgm_tbl  = swsscommon.Table(asic_db_conn, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
-        port_name_map = counters_db.hgetall("COUNTERS_PORT_NAME_MAP") or {}
+        port_name_map = dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
+        port_name_map = dict(port_name_map)
 
         def _rif_for_port(port_name):
             port_oid = port_name_map.get(port_name)
