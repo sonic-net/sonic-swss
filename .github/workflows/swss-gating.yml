@@ -34,6 +34,13 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        continue-on-error: true
+        with:
+          pattern: swss-coverage-*
+          merge-multiple: true
+
       - name: Build PR comment
         env:
           BUILD_RESULT: ${{ needs.swss-build-test.result }}
@@ -52,13 +59,23 @@ jobs:
               "|-------|--------|",
               f"| Build + mock tests + S3 baseline coverage gate + cargo (self-hosted) | {icon.get(result, result)} {result} |",
               "",
+          ]
+
+          cov_md = Path("coverage-gate.md")
+          cov_log = Path("coverage-gate.log")
+          if cov_md.is_file():
+              lines += [cov_md.read_text(errors="replace").strip(), ""]
+          elif cov_log.is_file():
+              lines += ["### Coverage gate", "", "```log", cov_log.read_text(errors="replace").strip(), "```", ""]
+
+          lines += [
               "_Runs on runner label `sonic-build-202511` with sonic-slave-bookworm and buildimage debs._",
               "",
           ]
 
           if result == "success":
               lines += ["All gate stages passed.", ""]
-          else:
+          elif result != "skipped":
               lines += [
                   "Self-hosted gate failed. Open the **swss-tests-common / build-and-test** job log for details.",
                   "",
@@ -68,7 +85,7 @@ jobs:
           PY
 
       - name: Post gate summary on PR
-        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        uses: ./.github/actions/sticky-gate-comment
         with:
           header: gate-sonic-swss
           path: gate-report.md

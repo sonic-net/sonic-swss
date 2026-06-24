@@ -1,0 +1,40 @@
+name: Sticky gate PR comment
+description: Create or update a sticky pull-request comment for gate workflows
+inputs:
+  header:
+    description: Unique sticky-comment header (one per gate/repo)
+    required: true
+  path:
+    description: Path to a markdown file to post
+    required: false
+    default: ''
+  message:
+    description: Inline markdown body (alternative to path)
+    required: false
+    default: ''
+  coverage_current:
+    description: Current diff-cover percentage (optional; parsed from diff_cover_log if omitted)
+    required: false
+    default: ''
+  coverage_required:
+    description: Required diff-cover threshold percentage (e.g. 80)
+    required: false
+    default: ''
+  diff_cover_log:
+    description: Path to diff-cover log to parse current coverage when coverage_current is not set
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Post sticky gate summary
+      shell: bash
+      env:
+        INPUT_HEADER: ${{ inputs.header }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_MESSAGE: ${{ inputs.message }}
+        INPUT_COVERAGE_CURRENT: ${{ inputs.coverage_current }}
+        INPUT_COVERAGE_REQUIRED: ${{ inputs.coverage_required }}
+        INPUT_DIFF_COVER_LOG: ${{ inputs.diff_cover_log }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: python3 "${{ github.action_path }}/post_sticky_comment.py"
