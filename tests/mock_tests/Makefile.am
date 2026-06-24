@@ -99,12 +99,11 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
-                hftelorch_is_supported_sai_wrap.cpp \
                 shlorch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
                 icmporch_ut.cpp \
-                icmporch_sai_wrap.cpp \
+                mock_sai_capability_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

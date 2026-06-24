@@ -46,6 +46,8 @@ enum class CounterType
     SRV6,
     SWITCH,
     HA_SET,
+    OFFLOAD_SESSION,
+    ICMP_ECHO_SESSION,
 };
 
 extern bool gTraditionalFlexCounter;
