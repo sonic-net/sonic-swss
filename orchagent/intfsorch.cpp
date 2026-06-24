@@ -133,7 +133,6 @@ void IntfsOrch::update(SubjectType type, void *cntx)
     }
 
     string loopbackAction = it->second;
-    m_pendingLagRifs.erase(it);
 
     Port port;
     if (!gPortsOrch->getPort(lagAlias, port))
@@ -150,6 +149,7 @@ void IntfsOrch::update(SubjectType type, void *cntx)
     }
 
     sai_object_id_t vrf_id = intfsIt->second.vrf_id;
+    m_pendingLagRifs.erase(it);
 
     SWSS_LOG_NOTICE("Creating deferred RIF on LAG %s (now has members)", lagAlias.c_str());
 
@@ -1026,7 +1026,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         port.m_nat_zone_id = nat_zone_id;
 
-                        if (gIsNatSupported)
+                        if (gIsNatSupported && port.m_rif_id != 0)
                         {
                             setRouterIntfsNatZoneId(port);
                         }
@@ -1042,12 +1042,15 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         port.m_mpls = mpls;
 
-                        setRouterIntfsMpls(port);
+                        if (port.m_rif_id != 0)
+                        {
+                            setRouterIntfsMpls(port);
+                        }
                         gPortsOrch->setPort(alias, port);
                     }
 
-                    /* Set loopback action */
-                    if (!loopbackAction.empty())
+                    /* Set loopback action (skip when RIF is deferred on empty LAG) */
+                    if (!loopbackAction.empty() && port.m_rif_id != 0)
                     {
                         setIntfLoopbackAction(port, loopbackAction);
                     }
@@ -1062,7 +1065,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
 
                 /*port.m_rif_id is set in setIntf(), need get port again*/
-                if (gPortsOrch->getPort(alias, port))
+                if (gPortsOrch->getPort(alias, port) && port.m_rif_id != 0)
                 {
                     sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
                     if (status != SAI_STATUS_SUCCESS)
@@ -1398,9 +1401,10 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     }
 
     /* RIF was deferred and never created (UPSW-4791) — just clean up state */
-    if (port.m_rif_id == 0)
+    auto pendingIt = m_pendingLagRifs.find(port.m_alias);
+    if (port.m_rif_id == 0 && port.m_type == Port::LAG && pendingIt != m_pendingLagRifs.end())
     {
-        m_pendingLagRifs.erase(port.m_alias);
+        m_pendingLagRifs.erase(pendingIt);
         port.m_vr_id = 0;
         port.m_nat_zone_id = 0;
         port.m_mpls = false;
