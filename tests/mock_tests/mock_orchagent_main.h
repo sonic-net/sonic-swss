@@ -21,6 +21,7 @@
 #include "qosorch.h"
 #define protected public
 #include "pfcwdorch.h"
+#include "pfcwdsworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"
