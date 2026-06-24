@@ -1,6 +1,8 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 
+#include <saiicmpecho.h>
+
 namespace ut_helper
 {
     map<string, string> gProfileMap;
@@ -68,6 +70,7 @@ namespace ut_helper
         sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
         sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&sai_virtual_router_api);
         sai_api_query(SAI_API_SAMPLEPACKET, (void **)&sai_samplepacket_api);
+        sai_api_query(SAI_API_MIRROR, (void **)&sai_mirror_api);
         sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
         sai_api_query(SAI_API_LAG, (void **)&sai_lag_api);
         sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
@@ -90,12 +93,14 @@ namespace ut_helper
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
+        sai_api_query(SAI_API_ICMP_ECHO, (void**)&sai_icmp_echo_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
         sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, (void**)&sai_dash_direction_lookup_api);
         sai_api_query((sai_api_t)SAI_API_DASH_ENI, (void**)&sai_dash_eni_api);
         sai_api_query((sai_api_t)SAI_API_DASH_HA, (void**)&sai_dash_ha_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_FLOW, (void**)&sai_dash_flow_api);
         sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA, (void**)&sai_dash_outbound_ca_to_pa_api);
         sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION, (void**)&sai_dash_pa_validation_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VNET, (void**)&sai_dash_vnet_api);
@@ -122,6 +127,7 @@ namespace ut_helper
         sai_bridge_api = nullptr;
         sai_virtual_router_api = nullptr;
         sai_port_api = nullptr;
+        sai_mirror_api = nullptr;
         sai_lag_api = nullptr;
         sai_vlan_api = nullptr;
         sai_router_intfs_api = nullptr;
@@ -136,12 +142,14 @@ namespace ut_helper
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
+        sai_icmp_echo_api = nullptr;
         sai_twamp_api = nullptr;
         sai_tam_api = nullptr;
         sai_dash_vip_api = nullptr;
         sai_dash_direction_lookup_api = nullptr;
         sai_dash_eni_api = nullptr;
         sai_dash_ha_api = nullptr;
+        sai_dash_flow_api = nullptr;
         sai_stp_api = nullptr;
         sai_dash_meter_api = nullptr;
 
@@ -197,7 +205,13 @@ namespace ut_helper
                 { "lanes", lanes_str },
                 { "speed", "1000" },
                 { "mtu", "6000" },
-                { "admin_status", "up" }
+                { "admin_status", "up" },
+                // PortConfig::role.value has no default initializer; without
+                // an explicit role here, p.m_role is read from uninitialized
+                // memory and intermittently matches Rec/Inb, which would make
+                // the recycle/inband gates in portsorch silently skip serdes
+                // and PHY-attr setup for these ports.
+                { "role", "Ext" }
             };
 
             auto key = FRONT_PANEL_PORT_PREFIX + to_string(i);

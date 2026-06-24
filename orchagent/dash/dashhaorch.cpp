@@ -6,6 +6,7 @@
 #include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "table.h"
 #include "taskworker.h"
@@ -243,6 +244,15 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
 {
     SWSS_LOG_ENTER();
 
+    if (entry.owner() != m_ha_set_entries[key].metadata.owner())
+    {
+        SWSS_LOG_NOTICE("HA Set owner updated for %s from %s to %s",
+                        key.c_str(),
+                        dash::types::HaOwner_Name(m_ha_set_entries[key].metadata.owner()).c_str(),
+                        dash::types::HaOwner_Name(entry.owner()).c_str());
+        m_ha_set_entries[key].metadata.set_owner(entry.owner());
+    }
+
     sai_status_t status;
     sai_attribute_t ha_set_attr_list[8]={};
     sai_ip_address_t sai_peer_ip;
@@ -382,6 +392,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
     }
     m_ha_set_entries.erase(it);
     m_counter_ha_set_name_map_table->hdel("", key);
+    m_dpuStateDbHaSetTable->del(key);
     SWSS_LOG_NOTICE("Removed HA Set object for %s", key.c_str());
 
     return true;
@@ -470,8 +481,15 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
 
         if (ha_scope_it->second.metadata.ha_role() != entry.ha_role())
         {
-            success = success && setHaScopeHaRole(key, entry);
+            bool set_role_success = setHaScopeHaRole(key, entry);
+            success = success && set_role_success;
             repeated_message = false;
+
+            // If setHaScopeHaRole succeeded and owner is switch, directly update state DB with ha_state
+            if (set_role_success)
+            {
+                updateHaScopeStateForSwitchOwner(key, entry);
+            }
         }
 
         if (entry.flow_reconcile_requested() == true)
@@ -626,6 +644,9 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime(), SAI_DASH_HA_STATE_DEAD, getNowTime()};
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
 
+    // If owner is switch, directly update state DB with ha_state on first creation
+    updateHaScopeStateForSwitchOwner(key, entry);
+
     // set HA Scope ID to ENI
     if (ha_set_it->second.metadata.scope() == dash::types::HaScope::HA_SCOPE_ENI)
     {
@@ -706,6 +727,66 @@ bool DashHaOrch::setHaScopeHaRole(const std::string &key, const dash::ha_scope::
     return true;
 }
 
+void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const dash::ha_scope::HaScope &entry)
+{
+    SWSS_LOG_ENTER();
+
+    std::string ha_set_id = entry.ha_set_id().empty() ? key : entry.ha_set_id();
+    auto ha_set_it = m_ha_set_entries.find(ha_set_id);
+    if (ha_set_it == m_ha_set_entries.end())
+    {
+        SWSS_LOG_WARN("HA Set entry %s does not exist, still updating HA Scope state for %s",
+                      ha_set_id.c_str(), key.c_str());
+    }
+    else if (ha_set_it->second.metadata.owner() != dash::types::HA_OWNER_SWITCH)
+    {
+        return;
+    }
+
+    std::time_t now_time = getNowTime();
+    sai_dash_ha_state_t ha_state = SAI_DASH_HA_STATE_DEAD;
+    switch (entry.ha_role())
+    {
+        case dash::types::HA_ROLE_ACTIVE:
+            ha_state = SAI_DASH_HA_STATE_ACTIVE;
+            break;
+        case dash::types::HA_ROLE_STANDBY:
+            ha_state = SAI_DASH_HA_STATE_STANDBY;
+            break;
+        case dash::types::HA_ROLE_STANDALONE:
+            ha_state = SAI_DASH_HA_STATE_STANDALONE;
+            break;
+        case dash::types::HA_ROLE_DEAD:
+            ha_state = SAI_DASH_HA_STATE_DEAD;
+            break;
+        case dash::types::HA_ROLE_SWITCHING_TO_ACTIVE:
+            return;
+        default:
+            ha_state = SAI_DASH_HA_STATE_DEAD;
+    }
+
+    std::vector<FieldValueTuple> fvs;
+    fvs.push_back({"last_updated_time", to_string(now_time)});
+    fvs.push_back({"ha_role", sai_ha_role_name.at(static_cast<sai_dash_ha_role_t>(to_sai(entry.ha_role())))});
+    fvs.push_back({"ha_role_start_time", to_string(now_time)});
+    fvs.push_back({"ha_state", sai_ha_state_name.at(ha_state)});
+    fvs.push_back({"ha_state_start_time", to_string(now_time)});
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+
+    m_ha_scope_entries[key].ha_state = ha_state;
+    m_ha_scope_entries[key].last_state_start_time = now_time;
+    m_ha_scope_entries[key].metadata.set_ha_role(entry.ha_role());
+    m_ha_scope_entries[key].last_role_start_time = now_time;
+
+    SWSS_LOG_NOTICE("Updated HA Scope state for %s to %s (owner is switch)",
+                    key.c_str(), sai_ha_state_name.at(ha_state).c_str());
+
+    if (has_dpu_scope() && ha_state != SAI_DASH_HA_STATE_DEAD)
+    {
+        processCachedBfdSessions();
+    }
+}
+
 bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
 {
     SWSS_LOG_ENTER();
@@ -732,6 +813,17 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
 
     std::vector<FieldValueTuple> fvs = {{"flow_reconcile_pending", "false"}};
     m_dpuStateDbHaScopeTable->set(key, fvs);
+
+    return true;
+}
+
+bool DashHaOrch::clearHaScopeBrainSplitRecoverPending(const std::string &key)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs = {{"brainsplit_recover_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+    SWSS_LOG_NOTICE("Cleared HA Scope brainsplit recover pending flag for %s", key.c_str());
 
     return true;
 }
@@ -847,6 +939,7 @@ bool DashHaOrch::removeHaScopeEntry(const std::string &key)
         }
     }
     m_ha_scope_entries.erase(it);
+    m_dpuStateDbHaScopeTable->del(key);
     SWSS_LOG_NOTICE("Removed HA Scope object for %s", key.c_str());
 
     return true;
@@ -870,6 +963,16 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         if (op == SET_COMMAND)
         {
             dash::ha_scope::HaScope entry;
+            bool brainSplitRecovered = false;
+
+            for (const auto &fieldValue : kfvFieldsValues(tuple))
+            {
+                if (fvField(fieldValue) == "brainsplit_recovered")
+                {
+                    brainSplitRecovered = fvValue(fieldValue) == "true" || fvValue(fieldValue) == "1";
+                    break;
+                }
+            }
 
             auto existing_it = m_ha_scope_entries.find(key);
             if (existing_it != m_ha_scope_entries.end())
@@ -900,6 +1003,10 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
 
             if (addHaScopeEntry(key, entry))
             {
+                if (brainSplitRecovered)
+                {
+                    clearHaScopeBrainSplitRecoverPending(key);
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else

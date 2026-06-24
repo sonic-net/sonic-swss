@@ -33,7 +33,7 @@ pipeline_artifact_map = {
     DASH_API: 'sonic-dash-api'
 }
 
-deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'libyang-*_1.0*.deb', 'python3-swsscommon*.deb', '*vpp*.deb', 'libdash*.deb']
+deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang3_*.deb', 'libyang-dev_3*.deb', 'python3-swsscommon*.deb', '*vpp*.deb', 'libdash*.deb']
 
 pipeline_out_file_map = {
     SAIREDIS: 'sairedis.zip',

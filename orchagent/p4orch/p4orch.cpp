@@ -1,4 +1,5 @@
 #include "p4orch.h"
+#include "../notificationconsumerstatsorch.h"
 
 #include <map>
 #include <memory>
@@ -58,8 +59,8 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
     m_wcmpManager = std::make_unique<p4orch::WcmpManager>(&m_p4OidMapper, &m_publisher);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);
-    m_tunnelDecapGroupManager = std::make_unique<TunnelDecapGroupManager>(
-        &m_p4OidMapper, vrfOrch, &m_publisher);
+    m_tunnelDecapGroupManager =
+        std::make_unique<TunnelDecapGroupManager>(&m_p4OidMapper, &m_publisher);
     m_extTablesManager = std::make_unique<ExtTablesManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
 
     m_p4TableToManagerMap[APP_P4RT_TABLES_DEFINITION_TABLE_NAME] = m_tablesDefnManager.get();
@@ -116,9 +117,13 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add port state change notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
+    // Add port state change notification handling support.
+    m_notificationsDb = std::make_shared<swss::DBConnector>("ASIC_DB", 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
+    m_portStatusNotificationConsumer->setStatsLabel("P4Orch:port_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("P4Orch:port_state_change", m_portStatusNotificationConsumer);
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }

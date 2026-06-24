@@ -4,6 +4,7 @@ from swsscommon import swsscommon
 import pytest
 import util
 import acl
+import time
 
 
 def get_exist_entry(dvs, table):
@@ -24,9 +25,10 @@ def verify_selected_attr_vals(db, table, key, expected_attrs):
     fv_dict = dict(fvs)
 
     for attr_name, expected_val in expected_attrs:
-        assert attr_name in fv_dict, "Attribute %s not found in %s" % (
-            attr_name, key)
-        assert fv_dict[attr_name] == expected_val, "Wrong value %s for the attribute %s = %s" % (
+        assert attr_name in fv_dict, "Attribute %s not found in %s" % (attr_name, key)
+        assert (
+            fv_dict[attr_name] == expected_val
+        ), "Wrong value %s for the attribute %s = %s" % (
             fv_dict[attr_name],
             attr_name,
             expected_val,
@@ -132,19 +134,24 @@ class TestP4RTAcl(object):
             self._p4rt_acl_group_obj.asic_db,
             "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
             switch_oid,
-            [("SAI_SWITCH_ATTR_PRE_INGRESS_ACL", pre_ingress_group_oids[0]),
-             ("SAI_SWITCH_ATTR_INGRESS_ACL", ingress_group_oids[0]),
-             ("SAI_SWITCH_ATTR_EGRESS_ACL", egress_group_oids[0])],
+            [
+                ("SAI_SWITCH_ATTR_PRE_INGRESS_ACL", pre_ingress_group_oids[0]),
+                ("SAI_SWITCH_ATTR_INGRESS_ACL", ingress_group_oids[0]),
+                ("SAI_SWITCH_ATTR_EGRESS_ACL", egress_group_oids[0]),
+            ],
         )
 
         # Verify APP DB trap groups for QOS_QUEUE
-        genetlink_name = "genl_packet"
+        genetlink_name = "genl_packet_q{}"
         genetlink_mcgrp_name = "packets"
 
         for queue_num in range(1, 9):
             attr_list = [
                 (self._p4rt_trap_group_obj.QUEUE, str(queue_num)),
-                (self._p4rt_trap_group_obj.HOSTIF_NAME, genetlink_name),
+                (
+                    self._p4rt_trap_group_obj.HOSTIF_NAME,
+                    genetlink_name.format(str(queue_num)),
+                ),
                 (
                     self._p4rt_trap_group_obj.HOSTIF_GENETLINK_MCGRP_NAME,
                     genetlink_mcgrp_name,
@@ -187,6 +194,7 @@ class TestP4RTAcl(object):
         qos_queue = '[{"action":"SAI_PACKET_ACTION_TRAP"},{"action":"QOS_QUEUE","param":"cpu_queue"}]'
 
         acl_rate_limit_copy = '[{"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},{"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_YELLOW"},{"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_RED"},{"action":"QOS_QUEUE","param":"qos_queue"}]'
+        acl_set_metadata = '[{"action":"SAI_PACKET_ACTION_FORWARD"},{"action":"SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA","param":"acl_metadata"}]'
 
         attr_list = [
             (self._p4rt_acl_table_definition_obj.STAGE_FIELD, stage),
@@ -214,6 +222,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_table_definition_obj.ACTION_SET_QOS_QUEUE, qos_queue),
 	    (self._p4rt_acl_table_definition_obj.ACTION_SET_ACL_RATE_LIMIT_COPY, acl_rate_limit_copy),
+            (self._p4rt_acl_table_definition_obj.ACTION_SET_ACL_METADATA, acl_set_metadata),
             (self._p4rt_acl_table_definition_obj.METER_UNIT, meter_unit),
             (self._p4rt_acl_table_definition_obj.COUNTER_UNIT, counter_unit),
         ]
@@ -320,8 +329,7 @@ class TestP4RTAcl(object):
         assert len(udfs_asic) == len(original_asic_udfs) + 2
 
         # query ASIC database for newly created UDFs
-        udfs_asic_db_keys = [
-            key for key in udfs_asic if key not in original_asic_udfs]
+        udfs_asic_db_keys = [key for key in udfs_asic if key not in original_asic_udfs]
         assert len(udfs_asic_db_keys) == 2
         udfs_asic_db_keys.sort()
         udf_0_asic_db_key = udfs_asic_db_keys[0]
@@ -382,7 +390,10 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_table_definition_obj.SAI_ACL_TABLE_ATTR_SIZE, size),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_ETHER_TYPE, "true"),
-            (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_ROUTE_DST_USER_META, "true"),
+            (
+                self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_ROUTE_DST_USER_META,
+                "true",
+            ),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_IP_TYPE, "true"),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_DST_MAC, "true"),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_SRC_IPV6_WORD3, "true"),
@@ -424,8 +435,6 @@ class TestP4RTAcl(object):
         action = "copy_and_set_tc"
         meter_cir = "80"
         meter_cbs = "80"
-        meter_pir = "200"
-        meter_pbs = "200"
         table_name_with_rule_key1 = table_name + ":" + rule_json_key1
 
         # First attemp failed due to invalid meter
@@ -451,8 +460,7 @@ class TestP4RTAcl(object):
             ("param/traffic_class", "1"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+            (self._p4rt_acl_rule_obj.METER_MODE, "single_rate_two_color"),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -527,11 +535,12 @@ class TestP4RTAcl(object):
         assert status == True
         attr_list = [
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE,
+                "SAI_POLICER_MODE_STORM_CONTROL",
+            ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -598,8 +607,6 @@ class TestP4RTAcl(object):
         action = "punt_and_set_tc"
         meter_cir = "100"
         meter_cbs = "100"
-        meter_pir = "400"
-        meter_pbs = "400"
         table_name_with_rule_key1 = table_name + ":" + rule_json_key1
 
         attr_list = [
@@ -607,8 +614,6 @@ class TestP4RTAcl(object):
             ("param/traffic_class", "2"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -683,11 +688,12 @@ class TestP4RTAcl(object):
         assert status == True
         attr_list = [
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE,
+                "SAI_POLICER_MODE_STORM_CONTROL",
+            ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
             (
                 self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
                 "SAI_PACKET_ACTION_TRAP",
@@ -755,8 +761,6 @@ class TestP4RTAcl(object):
         action = "qos_queue"
         meter_cir = "80"
         meter_cbs = "80"
-        meter_pir = "200"
-        meter_pbs = "200"
         table_name_with_rule_key2 = table_name + ":" + rule_json_key2
 
     # First attempt failed since no UserDefinedTrap is created for the CPU queue    
@@ -804,8 +808,6 @@ class TestP4RTAcl(object):
             ("param/cpu_queue", "5"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -884,11 +886,12 @@ class TestP4RTAcl(object):
         assert status == True
         attr_list = [
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE,
+                "SAI_POLICER_MODE_STORM_CONTROL",
+            ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -980,7 +983,9 @@ class TestP4RTAcl(object):
         util.verify_attr(fvs, attr_list)
 
         # create ACL rule 3 with match field SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META
-        rule_json_key3 = '{"match/ether_type":"0x0800","match/l3_class_id":"0x1", "priority":100}'
+        rule_json_key3 = (
+            '{"match/ether_type":"0x0800","match/l3_class_id":"0x1", "priority":100}'
+        )
         action = "copy_and_set_tc"
         table_name_with_rule_key3 = table_name + ":" + rule_json_key3
 
@@ -1022,7 +1027,8 @@ class TestP4RTAcl(object):
 
         # query ASIC database for newly created ACL counter
         counter_asic_db_keys = [
-            key for key in acl_asic_counters
+            key
+            for key in acl_asic_counters
             if key not in original_asic_acl_counters
             and key != counter_asic_db_key1
             and key != counter_asic_db_key2
@@ -1051,7 +1057,8 @@ class TestP4RTAcl(object):
 
         # query ASIC database for newly created ACL rule
         rule_asic_db_keys = [
-            key for key in acl_asic_rules
+            key
+            for key in acl_asic_rules
             if key not in original_asic_acl_rules
             and key != rule_asic_db_key1
             and key != rule_asic_db_key2
@@ -1087,7 +1094,6 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-	
 	  # update ACL rule 2 with acl_rate_limit_copy action
         action = "acl_rate_limit_copy"
 
@@ -1096,8 +1102,6 @@ class TestP4RTAcl(object):
             ("param/qos_queue", "7"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -1124,7 +1128,7 @@ class TestP4RTAcl(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-         # query ASIC database for updated ACL meter
+        # query ASIC database for updated ACL meter
         (status, fvs) = util.get_key(
             self._p4rt_acl_meter_obj.asic_db,
             self._p4rt_acl_meter_obj.ASIC_DB_TBL_NAME,
@@ -1137,19 +1141,16 @@ class TestP4RTAcl(object):
                 "SAI_PACKET_ACTION_FORWARD",
             ),
             (
-                self._p4rt_acl_meter_obj.SAI_ATTR_YELLOW_PACKET_ACTION,
-                "SAI_PACKET_ACTION_COPY_CANCEL",
-            ),
-            (
                 self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
                 "SAI_PACKET_ACTION_COPY_CANCEL",
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE,
+                "SAI_POLICER_MODE_STORM_CONTROL",
+            ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
-            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1186,6 +1187,401 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
+        # create ACL rule 4 with tr_tcm policer mode
+        rule_json_key4 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}'
+        action = "acl_rate_limit_tcm"
+        meter_cir = "80"
+        meter_cbs = "400"
+        meter_pir = "800"
+        meter_pbs = "4000"
+        table_name_with_rule_key4 = table_name + ":" + rule_json_key4
+
+        # First attempt failed with invalid policer mode
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/qos_queue", "7"),
+            (self._p4rt_acl_rule_obj.METER_MODE, "tcm"),  # invalid policer mode
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            '[OrchAgent] ACL rule \'ACL_PUNT_TABLE_RULE_TEST:{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}\' has invalid policer mode:\'tcm\'',
+        )
+
+        # Second attempt failed with since pir!=cir or pburst!=cburst in default single_rate_two_color mode
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/qos_queue", "7"),
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            '[OrchAgent] ACL policer for \'ACL_PUNT_TABLE_RULE_TEST:{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}\' in default single_rate_two_color mode has invalid cir:pir/cburst:pburst pairs, expected cir==pir, cburst==pburst.',
+        )
+
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/qos_queue", "7"),
+            (
+                self._p4rt_acl_rule_obj.METER_MODE,
+                "two_rate_three_color",
+            ),  # Two Rate, Three Code Marker
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 4
+
+        # query application database for newly created ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key4,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for ACL counters
+        acl_asic_counters = util.get_keys(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+        )
+        assert len(acl_asic_counters) == len(original_asic_acl_counters) + 4
+
+        # query ASIC database for ACL meters
+        acl_asic_meters = util.get_keys(
+            self._p4rt_acl_meter_obj.asic_db, self._p4rt_acl_meter_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(acl_asic_meters) == len(original_asic_acl_meters) + 3
+
+        # query ASIC database for newly created ACL meter
+        meter_asic_db_keys = [
+            key
+            for key in acl_asic_meters
+            if key not in original_asic_acl_meters
+            and key != meter_asic_db_key1
+            and key != meter_asic_db_key2
+        ]
+        assert len(meter_asic_db_keys) == 1
+        meter_asic_db_key4 = meter_asic_db_keys[0]
+
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_meter_obj.asic_db,
+            self._p4rt_acl_meter_obj.ASIC_DB_TBL_NAME,
+            meter_asic_db_key4,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_GREEN_PACKET_ACTION,
+                "SAI_PACKET_ACTION_FORWARD",
+            ),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_YELLOW_PACKET_ACTION,
+                "SAI_PACKET_ACTION_COPY_CANCEL",
+            ),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
+                "SAI_PACKET_ACTION_COPY_CANCEL",
+            ),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # Update ACL rule 4 to single_rate_three_color policer mode is not supported
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/qos_queue", "7"),
+            (
+                self._p4rt_acl_rule_obj.METER_MODE,
+                "single_rate_three_color",
+            ),  # Single Rate, Three Code Marker
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_UNIMPLEMENTED",
+            "[OrchAgent] Updating ACL rule meter mode is not supported for ACL entry: 'match/ether_dst=AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF:match/ether_type=0x0800 & 0xFFFF:match/is_ip=0x1:priority=100' in table 'ACL_PUNT_TABLE_RULE_TEST'",
+        )
+
+        # remove ACL rule 4
+        self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key4)
+        util.verify_response(
+            self.response_consumer, table_name_with_rule_key4, [], "SWSS_RC_SUCCESS"
+        )
+
+        # Re-create ACL rule 4 with sr_tcm policer mode
+        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+        # remove ACL rule 4
+        self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key4)
+        util.verify_response(
+            self.response_consumer, table_name_with_rule_key4, [], "SWSS_RC_SUCCESS"
+        )
+
+        # create new ACL rule 4 with ACL_METADATA action
+        rule_json_key4 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"11:22:33:44:55:66 & FF:FF:FF:FF:FF:FF","priority":100}'
+        action = "set_acl_metadata"
+        table_name_with_rule_key4 = table_name + ":" + rule_json_key4
+
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/acl_metadata", "1"),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 4
+
+        # query application database for newly created ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key4,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for ACL counters
+        acl_asic_counters = util.get_keys(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+        )
+        assert len(acl_asic_counters) == len(original_asic_acl_counters) + 4
+
+        # query ASIC database for newly created ACL counter
+        counter_asic_db_keys = [
+            key for key in acl_asic_counters
+            if key not in original_asic_acl_counters
+            and key != counter_asic_db_key1
+            and key != counter_asic_db_key2
+            and key != counter_asic_db_key3
+        ]
+        assert len(counter_asic_db_keys) == 1
+        counter_asic_db_key4 = counter_asic_db_keys[0]
+
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+            counter_asic_db_key4,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
+            (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
+            (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for ACL rules
+        acl_asic_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(acl_asic_rules) == len(original_asic_acl_rules) + 4
+
+        # query ASIC database for newly created ACL rule
+        rule_asic_db_keys = [
+            key for key in acl_asic_rules
+            if key not in original_asic_acl_rules
+            and key != rule_asic_db_key1
+            and key != rule_asic_db_key2
+            and key != rule_asic_db_key3
+        ]
+        assert len(rule_asic_db_keys) == 1
+        rule_asic_db_key4 = rule_asic_db_keys[0]
+
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key4,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_SET_ACL_META_DATA, "1"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_PACKET_ACTION,
+                "SAI_PACKET_ACTION_FORWARD",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_ETHER_TYPE, "2048&mask:0xffff"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_IP_TYPE,
+                "SAI_ACL_IP_TYPE_IP&mask:0xffffffffffffffff",
+            ),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_DST_MAC,
+                "11:22:33:44:55:66&mask:FF:FF:FF:FF:FF:FF",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_COUNTER, counter_asic_db_key4),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ADMIN_STATE, "true"),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_PRIORITY, "100"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # update new ACL rule 4 with different acl metadata
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/acl_metadata", "2"),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key4, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key4,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 4
+
+        # query application database for updated ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key4,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for updated ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key4,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_SET_ACL_META_DATA, "2"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_PACKET_ACTION,
+                "SAI_PACKET_ACTION_FORWARD",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_ETHER_TYPE, "2048&mask:0xffff"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_IP_TYPE,
+                "SAI_ACL_IP_TYPE_IP&mask:0xffffffffffffffff",
+            ),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_DST_MAC,
+                "11:22:33:44:55:66&mask:FF:FF:FF:FF:FF:FF",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_COUNTER, counter_asic_db_key4),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ADMIN_STATE, "true"),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_PRIORITY, "100"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # Perform state verification
+        sv = StateVerification(dvs)
+        component = "swss:orchagent"
+        timestamp = "2024-01-01 00:00:00"
+        alarm = "false"
+        sv.set_state_verification_response(
+            dvs, "syncd:syncd", timestamp, "ready", "")
+        sv.trigger_state_verification(dvs, component, timestamp, alarm)
+        time.sleep(2)
+        sv.check_state_verification_status(
+            dvs, component, timestamp, "pass")
+
+        # remove ACL rule 4
+        self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key4)
+        util.verify_response(
+            self.response_consumer, table_name_with_rule_key4, [], "SWSS_RC_SUCCESS"
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 3
+
+        # verify that the ACL rule no longer exists in application database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key4,
+        )
+        assert status == False
+
+        # query ASIC database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(acl_rules) == len(original_asic_acl_rules) + 3
+
+        # verify that removed ACL rule no longer exists in ASIC database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key4,
+        )
+        assert status == False
 
         # remove ACL rule 3
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key3)
@@ -1396,8 +1792,6 @@ class TestP4RTAcl(object):
         action = "copy_and_set_tc"
         meter_cir = "80"
         meter_cbs = "80"
-        meter_pir = "200"
-        meter_pbs = "200"
         table_name_with_rule_key = table_name + ":" + rule_json_key
 
         attr_list = [
@@ -1405,8 +1799,6 @@ class TestP4RTAcl(object):
             ("param/traffic_class", "1"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(

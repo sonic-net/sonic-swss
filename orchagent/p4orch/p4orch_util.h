@@ -32,6 +32,7 @@ constexpr char *kInPort = "in_port";
 constexpr char* kMulticastReplicaPort = "multicast_replica_port";
 constexpr char* kMulticastReplicaInstance = "multicast_replica_instance";
 constexpr char* kReplicas = "replicas";
+constexpr char* kBackups = "backups";
 constexpr char *kSrcMac = "src_mac";
 constexpr char *kAction = "action";
 constexpr char *kActions = "actions";
@@ -73,6 +74,7 @@ constexpr char *kStage = "stage";
 constexpr char *kSize = "size";
 constexpr char *kPriority = "priority";
 constexpr char *kPacketColor = "packet_color";
+constexpr char *kObjectType = "object_type";
 constexpr char *kMeterUnit = "meter/unit";
 constexpr char *kCounterUnit = "counter/unit";
 constexpr char kFieldDelimiter = '/';
@@ -82,6 +84,7 @@ constexpr char kPortsDelimiter = ',';
 constexpr char *kMatchPrefix = "match";
 constexpr char *kActionParamPrefix = "param";
 constexpr char *kMeterPrefix = "meter";
+constexpr char *kMeterMode = "mode";
 constexpr char *kMeterCir = "cir";
 constexpr char *kMeterCburst = "cburst";
 constexpr char *kMeterPir = "pir";
@@ -110,7 +113,7 @@ constexpr char* kDisableDecrementTtl = "disable_decrement_ttl";
 constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
 constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
 constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
-constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kIpv6TunnelTermAction = "tunnel_decap";
 constexpr char* kDecapSrcIpv6 = "src_ipv6";
 constexpr char* kDecapDstIpv6 = "dst_ipv6";
 constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
@@ -279,6 +282,7 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;  // optionally included for some sai_actions.
 };
 
 struct P4PacketActionWithColor
@@ -309,8 +313,10 @@ struct P4AclMeterAppDb
     uint64_t cburst;
     uint64_t pir;
     uint64_t pburst;
+    std::string mode;
 
-    P4AclMeterAppDb() : enabled(false)
+    //P4AclMeterAppDb() : enabled(false)
+    P4AclMeterAppDb() : enabled(false), cir(0), cburst(0), pir(0), pburst(0)
     {
     }
 };
@@ -335,8 +341,8 @@ struct Ipv6TunnelTermAppDbEntry
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
+  uint32_t priority;
   // Action
-  std::string vrf_id;
   std::string action_str;
 };
 
@@ -415,6 +421,11 @@ class KeyGenerator
     static std::string generateMulticastRouterInterfaceRifKey(
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
+
+    static std::string generateL2MulticastGroupKey(
+        const std::string& l2_multicast_group_id);
+    static std::string generateL3MulticastGroupKey(
+        const std::string& multicast_group_id);
 
     static std::string generateIpMulticastKey(const std::string& vrf_id,
                                               const swss::IpAddress& ip_dst);
