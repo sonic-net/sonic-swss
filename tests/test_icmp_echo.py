@@ -33,11 +33,21 @@ class TestIcmpEcho(object):
 
     def check_asic_icmp_echo_session_value(self, key, expected_values):
         fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", key)
+        for _ in range(30):
+            if all(fvs.get(k) == v for k, v in expected_values.items()):
+                break
+            time.sleep(1)
+            fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", key)
         for k, v in expected_values.items():
             assert fvs[k] == v
 
     def check_state_icmp_echo_session_value(self, key, expected_values):
         fvs = self.sdb.get_entry("ICMP_ECHO_SESSION_TABLE", key)
+        for _ in range(30):
+            if all(fvs.get(k) == v for k, v in expected_values.items()):
+                break
+            time.sleep(1)
+            fvs = self.sdb.get_entry("ICMP_ECHO_SESSION_TABLE", key)
         for k, v in expected_values.items():
             assert fvs[k] == v
 
@@ -158,7 +168,6 @@ class TestIcmpEcho(object):
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", created.pop())
         self.wait_for_icmp_counter_name_map_fields(expected_fields, present=False)
 
-    @pytest.mark.skip(reason="This test is flaky")
     def test_addUpdateRemoveIcmpEchoSession(self, dvs):
         self.setup_db(dvs)
 
@@ -306,7 +315,6 @@ class TestIcmpEcho(object):
         keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
         assert len(keys) == 0
 
-    @pytest.mark.skip(reason="This test is flaky")
     def test_multipleIcmpEchoSessions(self, dvs):
         self.setup_db(dvs)
 
