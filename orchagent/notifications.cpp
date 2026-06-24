@@ -15,8 +15,14 @@ extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 {
-    // don't use this event handler, because it runs by libsairedis in a separate thread
-    // which causes concurrency access to the DB
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer fdbNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_fdb_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        fdbNotifier.send("fdb_event", sdata, values);
+    }
 }
 
 /*
@@ -30,26 +36,36 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer port_state_change(&db, "NOTIFICATIONS");
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer portStateNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
-
-        // Forward port_state_change notification to be handled in portsorch doTask()
-        port_state_change.send("port_state_change", sdata, values);
+        portStateNotifier.send("port_state_change", sdata, values);
     }
 }
 
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
 {
-    // don't use this event handler, because it runs by libsairedis in a separate thread
-    // which causes concurrency access to the DB
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer bfdNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_bfd_session_state_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        bfdNotifier.send("bfd_session_state_change", sdata, values);
+    }
 }
 
 void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification_data_t *data)
 {
-    // don't use this event handler, because it runs by libsairedis in a separate thread
-    // which causes concurrency access to the DB
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer twampNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_twamp_session_event_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        twampNotifier.send("twamp_session_event", sdata, values);
+    }
 }
 
 void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
@@ -123,8 +139,14 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
 
 void on_port_host_tx_ready(sai_object_id_t switch_id, sai_object_id_t port_id, sai_port_host_tx_ready_status_t m_portHostTxReadyStatus)
 {
-    // don't use this event handler, because it runs by libsairedis in a separate thread
-    // which causes concurrency access to the DB
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer portHostTxReadyNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_port_host_tx_ready_ntf(switch_id, port_id, m_portHostTxReadyStatus);
+        std::vector<swss::FieldValueTuple> values;
+        portHostTxReadyNotifier.send("port_host_tx_ready", sdata, values);
+    }
 }
 
 void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
@@ -144,6 +166,14 @@ void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
 
 void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
 {
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer tamNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_object_id(tam_tel_id);
+        std::vector<swss::FieldValueTuple> values;
+        tamNotifier.send(SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE, sdata, values);
+    }
 }
 
 void on_switch_macsec_post_status_notify(sai_object_id_t switch_id,
