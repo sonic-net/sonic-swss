@@ -198,6 +198,11 @@ TEST_F(P4OrchTest, ProcessInvalidEntry) {
   InSequence s;
   ZmqServer zmq_server("endpoint", "", false, true);
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -223,6 +228,11 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
   InSequence s;
   ZmqServer zmq_server("endpoint", "", false, true);
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -323,6 +333,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationInvalidKey) {
   InSequence s;
   ZmqServer zmq_server("endpoint");
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -347,6 +362,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
   InSequence s;
   ZmqServer zmq_server("endpoint");
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -406,6 +426,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
   InSequence s;
   ZmqServer zmq_server("endpoint");
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -506,6 +531,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   InSequence s;
   ZmqServer zmq_server("endpoint", "", false, true);
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
@@ -610,6 +640,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   InSequence s;
   ZmqServer zmq_server("endpoint", "", false, true);
   DBConnector db("APPL_DB", 0);
+
+  std::vector<std::string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+  delete gP4Orch;
+  gP4Orch = new P4Orch(&db, p4rt_tables, &zmq_server, gVrfOrch, copp_orch_);
+
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
