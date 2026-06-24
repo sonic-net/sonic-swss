@@ -27,13 +27,17 @@ async fn start_ipfix_harmonizer_pipeline(
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(buffer_capacity);
     let (template_sender, template_receiver) = channel(template_capacity);
     let (harmonizer_config_sender, harmonizer_config_receiver) = channel(config_capacity);
-    let (harmonizer_stats_sender, harmonizer_stats_receiver) = channel::<HarmonizerStatsMessage>(stats_capacity);
+    let (harmonizer_stats_sender, harmonizer_stats_receiver) =
+        channel::<HarmonizerStatsMessage>(stats_capacity);
     let (saistats_sender, saistats_receiver) = channel::<SAIStatsMessage>(stats_capacity);
 
     let mut ipfix = IpfixActor::new(template_receiver, buffer_receiver);
     ipfix.add_recipient(harmonizer_stats_sender);
-    tokio::spawn(async move {
-        IpfixActor::run(ipfix).await;
+    tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Runtime::new().expect("ipfix runtime");
+        rt.block_on(async move {
+            IpfixActor::run(ipfix).await;
+        });
     });
 
     let mut harmonizer = HarmonizerActor::new(harmonizer_config_receiver, harmonizer_stats_receiver);
@@ -181,8 +185,11 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
 
-    let actor_handle = tokio::spawn(async move {
-        IpfixActor::run(actor).await;
+    let actor_handle = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Runtime::new().expect("ipfix runtime");
+        rt.block_on(async move {
+            IpfixActor::run(actor).await;
+        });
     });
 
     let max_counters = ipfix_test_helpers::max_counters_per_template();
