@@ -1802,7 +1802,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             if (idx >= ifnames.size())
             {
-                SWSS_LOG_WARN("nexthop ip/ifname count mismatch for VNET route");
+                SWSS_LOG_ERROR("Nexthop ip/ifname count mismatch for VNET %s route %s", vnet.c_str(), ipPrefix.to_string().c_str());
                 break;
             }
             if (!nhg_str.empty())
