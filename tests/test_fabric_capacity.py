@@ -1,5 +1,4 @@
 import random
-from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig
 
 
@@ -8,8 +7,8 @@ class TestVirtualChassis(object):
         """Test basic fabric capacity infrastructure in VOQ switchs.
 
         This test validates that when fabric links get isolated, the fabric capacity
-        get updated in the state_db.
-        When the link get unisolated, the fabric capacity get set back as well.
+        and isolated links get updated in the state_db.
+        When the link get unisolated, the fabric capacity and isolated links get set back as well.
         """
 
         dvss = vst.dvss
@@ -42,8 +41,9 @@ class TestVirtualChassis(object):
                sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST": "TEST"})
 
                # get current fabric capacity
-               fvs = sdb.wait_for_fields("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA",['operating_links'], polling_config=max_poll)
+               fvs = sdb.wait_for_fields("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA",['operating_links', 'isolated_links'], polling_config=max_poll)
                capacity = fvs['operating_links']
+               iso_links = fvs['isolated_links']
 
                fvs = sdb.wait_for_fields("FABRIC_PORT_TABLE", sdb_port, ['STATUS'], polling_config=max_poll)
                link_status = fvs['STATUS']
@@ -60,10 +60,12 @@ class TestVirtualChassis(object):
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "1"}, polling_config=max_poll)
                        # check if capacity reduced
                        sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+                       sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'isolated_links': iso_links}, polling_config=max_poll)
                        # unisolate the link from config_db
                        config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "False"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "0"}, polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'isolated_links': iso_links}, polling_config=max_poll)
 
                        # now disable fabric link monitor
                        config_db.update_entry("FABRIC_MONITOR", "FABRIC_MONITOR_DATA",{'monState': 'disable'})
@@ -75,6 +77,7 @@ class TestVirtualChassis(object):
                           sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "1"}, polling_config=max_poll)
                           # check if capacity reduced
                           sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
+                          sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'isolated_links': iso_links}, polling_config=max_poll)
                           assert False, "Expecting no change here"
                        except Exception as e:
                           # Expect field not change here
@@ -85,7 +88,7 @@ class TestVirtualChassis(object):
                        sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST_CODE_ERRORS": "0"})
                        sdb.update_entry("FABRIC_PORT_TABLE", sdb_port, {"TEST": "product"})
                else:
-                   print("The link ", port, " is down")
+                   print("The link ", sdb_port, " is down")
             else:
                print("We do not check switch type:", cfg_switch_type)
 
