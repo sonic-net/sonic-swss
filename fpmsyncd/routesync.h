@@ -267,6 +267,8 @@ public:
     }
 
 private:
+    /* ApplDB connector */
+    shared_ptr<DBConnector> m_appDb;
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
@@ -413,6 +415,8 @@ private:
     {
         return m_zmqClient != nullptr;
     }
+
+    bool getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists);
 
 };
 struct NextHopField {
