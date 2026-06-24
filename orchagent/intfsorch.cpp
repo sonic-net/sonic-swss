@@ -109,7 +109,10 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         m_tableVoqSystemInterfaceTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME));
     }
 
-    gPortsOrch->attach(this);
+    if (gPortsOrch)
+    {
+        gPortsOrch->attach(this);
+    }
 }
 
 void IntfsOrch::update(SubjectType type, void *cntx)
