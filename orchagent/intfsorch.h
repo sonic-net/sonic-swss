@@ -32,12 +32,13 @@ struct IntfsEntry
 
 typedef map<string, IntfsEntry> IntfsTable;
 
-class IntfsOrch : public Orch
+class IntfsOrch : public Orch, public Observer
 {
 public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
+    void update(SubjectType, void *) override;
     bool isPrefixSubnet(const IpPrefix&, const string&);
     bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
@@ -94,6 +95,7 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    std::map<std::string, std::string> m_pendingLagRifs;
 
     std::string getRifFlexCounterTableKey(std::string s);
 
