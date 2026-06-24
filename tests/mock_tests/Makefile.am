@@ -100,6 +100,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
+                udforch_ut.cpp \
                 shlorch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
@@ -207,6 +208,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp \
+                $(top_srcdir)/orchagent/udforch.cpp
                 $(top_srcdir)/orchagent/shlorch.cpp
 
 
