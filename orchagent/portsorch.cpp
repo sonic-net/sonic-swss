@@ -5596,7 +5596,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_line_side_id && !line_serdes_attr.empty())
                 {
-                    if (!programSerdes(p, p.m_line_side_id, p.m_switch_id, line_serdes_attr))
+                    if (m_gearboxPortMap[p.m_index].line_training) {
+                        SWSS_LOG_NOTICE("Line-side link training is enabled on port %s. Skipping setting serdes attributes", p.m_alias.c_str());
+                    }
+                    else if (!programSerdes(p, p.m_line_side_id, p.m_switch_id, line_serdes_attr))
                     {
                         it++;
                         continue;
@@ -5605,7 +5608,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_system_side_id && !system_serdes_attr.empty())
                 {
-                    if (!programSerdes(p, p.m_system_side_id, p.m_switch_id, system_serdes_attr))
+                    if (m_gearboxPortMap[p.m_index].system_training) {
+                        SWSS_LOG_NOTICE("System-side link training is enabled on port %s. Skipping setting serdes attributes", p.m_alias.c_str());
+                    }
+                    else if (!programSerdes(p, p.m_system_side_id, p.m_switch_id, system_serdes_attr))
                     {
                         it++;
                         continue;
