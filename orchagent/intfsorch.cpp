@@ -109,6 +109,58 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         m_tableVoqSystemInterfaceTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME));
     }
 
+    if (gPortsOrch)
+    {
+        gPortsOrch->attach(this);
+    }
+}
+
+void IntfsOrch::update(SubjectType type, void *cntx)
+{
+    if (type != SUBJECT_TYPE_LAG_MEMBER_CHANGE)
+    {
+        return;
+    }
+
+    auto *lagUpdate = static_cast<LagMemberUpdate *>(cntx);
+    if (!lagUpdate->add)
+    {
+        return;
+    }
+
+    const string &lagAlias = lagUpdate->lag.m_alias;
+    auto it = m_pendingLagRifs.find(lagAlias);
+    if (it == m_pendingLagRifs.end())
+    {
+        return;
+    }
+
+    string loopbackAction = it->second;
+
+    Port port;
+    if (!gPortsOrch->getPort(lagAlias, port))
+    {
+        SWSS_LOG_ERROR("Failed to get port for deferred RIF on LAG %s", lagAlias.c_str());
+        return;
+    }
+
+    auto intfsIt = m_syncdIntfses.find(lagAlias);
+    if (intfsIt == m_syncdIntfses.end())
+    {
+        SWSS_LOG_ERROR("No IntfsEntry for deferred RIF on LAG %s", lagAlias.c_str());
+        return;
+    }
+
+    sai_object_id_t vrf_id = intfsIt->second.vrf_id;
+    m_pendingLagRifs.erase(it);
+
+    SWSS_LOG_NOTICE("Creating deferred RIF on LAG %s (now has members)", lagAlias.c_str());
+
+    if (!addRouterIntfs(vrf_id, port, loopbackAction))
+    {
+        SWSS_LOG_ERROR("Failed to create deferred RIF on LAG %s", lagAlias.c_str());
+        m_pendingLagRifs[lagAlias] = loopbackAction;
+    }
 }
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
@@ -977,7 +1029,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         port.m_nat_zone_id = nat_zone_id;
 
-                        if (gIsNatSupported)
+                        if (gIsNatSupported && port.m_rif_id != 0)
                         {
                             setRouterIntfsNatZoneId(port);
                         }
@@ -993,12 +1045,15 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         port.m_mpls = mpls;
 
-                        setRouterIntfsMpls(port);
+                        if (port.m_rif_id != 0)
+                        {
+                            setRouterIntfsMpls(port);
+                        }
                         gPortsOrch->setPort(alias, port);
                     }
 
-                    /* Set loopback action */
-                    if (!loopbackAction.empty())
+                    /* Set loopback action (skip when RIF is deferred on empty LAG) */
+                    if (!loopbackAction.empty() && port.m_rif_id != 0)
                     {
                         setIntfLoopbackAction(port, loopbackAction);
                     }
@@ -1013,7 +1068,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
 
                 /*port.m_rif_id is set in setIntf(), need get port again*/
-                if (gPortsOrch->getPort(alias, port))
+                if (gPortsOrch->getPort(alias, port) && port.m_rif_id != 0)
                 {
                     sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
                     if (status != SAI_STATUS_SUCCESS)
@@ -1178,6 +1233,22 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         return true;
     }
 
+    /*
+     * Mellanox SAI rejects RIF creation on a LAG with no members during
+     * warm-reboot (SAI_STATUS_ITEM_NOT_FOUND from the SDK when it tries
+     * to resolve port learning mode on the empty LAG).  Defer the RIF
+     * creation until the first member is added (UPSW-4791).
+     */
+    if (port.m_type == Port::LAG && port.m_members.empty())
+    {
+        SWSS_LOG_NOTICE("Deferring RIF creation on empty LAG %s until a member is added",
+                        port.m_alias.c_str());
+        m_pendingLagRifs[port.m_alias] = loopbackActionStr;
+        port.m_vr_id = vrf_id;
+        gPortsOrch->setPort(port.m_alias, port);
+        return true;
+    }
+
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -1330,6 +1401,19 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     {
         SWSS_LOG_NOTICE("Router interface %s is still referenced with ref count %d", port.m_alias.c_str(), m_syncdIntfses[port.m_alias].ref_count);
         return false;
+    }
+
+    /* RIF was deferred and never created (UPSW-4791) — just clean up state */
+    auto pendingIt = m_pendingLagRifs.find(port.m_alias);
+    if (port.m_rif_id == 0 && port.m_type == Port::LAG && pendingIt != m_pendingLagRifs.end())
+    {
+        m_pendingLagRifs.erase(pendingIt);
+        port.m_vr_id = 0;
+        port.m_nat_zone_id = 0;
+        port.m_mpls = false;
+        gPortsOrch->setPort(port.m_alias, port);
+        SWSS_LOG_NOTICE("Remove deferred (never-created) router interface for port %s", port.m_alias.c_str());
+        return true;
     }
 
     bool port_found = false;
