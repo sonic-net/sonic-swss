@@ -1,9 +1,12 @@
 #ifndef SWSS_ORCHDAEMON_H
 #define SWSS_ORCHDAEMON_H
 
+#include <unordered_set>
+
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "consumertable.h"
+#include "table.h"
 #include "zmqserver.h"
 #include "select.h"
 
@@ -132,7 +135,26 @@ protected:
     Select *m_select;
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
+    // Queue-depth telemetry. Publishes STATE_DB:ORCHAGENT_QUEUE|<Orch>|<consumer>
+    // rows with pending_count, orch, consumer fields, every
+    // QUEUE_DEPTH_PUBLISH_INTERVAL_SEC. The Orch class name is included in the
+    // key because consumer names alone are not unique across m_orchList (e.g.,
+    // CFG_FLEX_COUNTER_TABLE is registered in both WatermarkOrch and
+    // FlexCounterOrch).
+    static constexpr const char *ORCHAGENT_QUEUE_TABLE_NAME = "ORCHAGENT_QUEUE";
+    static constexpr int QUEUE_DEPTH_PUBLISH_INTERVAL_SEC = 5;
+    std::unique_ptr<swss::Table> m_queueDepthTable;
+    std::chrono::time_point<std::chrono::high_resolution_clock> m_lastQueueDepthPublish;
+    // Keys written in the previous publishQueueDepth() call. Used to DEL keys
+    // that disappear from the current snapshot (consumer removed, Orch torn
+    // down) so STATE_DB does not accumulate stale rows.
+    std::unordered_set<std::string> m_lastPublishedQueueKeys;
+
     void flush();
+
+    /* Publish per-consumer pending-count snapshot to STATE_DB. Called periodically
+     * from start(). Safe to call when m_queueDepthTable is null (no-op). */
+    void publishQueueDepth();
 
     void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 

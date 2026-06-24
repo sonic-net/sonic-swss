@@ -326,7 +326,13 @@ public:
     virtual void onWarmBootEnd() { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
-    
+
+    /* Return list of (consumer_name, pending_task_count) for all ConsumerBase
+     * executors in this Orch. Used by OrchDaemon for queue-depth telemetry.
+     * Non-ConsumerBase executors (NotificationConsumer, ExecutableTimer) are
+     * skipped — they don't have an m_toSync queue. */
+    std::vector<std::pair<std::string, size_t>> getConsumerPendingCounts() const;
+
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
     ConsumerBase* getConsumerBase(const std::string &executorName);

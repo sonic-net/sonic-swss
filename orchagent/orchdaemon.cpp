@@ -1,6 +1,9 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
+#include <cstdlib>
+#include <cxxabi.h>
+#include <typeinfo>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -94,6 +97,22 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
     SWSS_LOG_ENTER();
     m_select = new Select();
     m_lastHeartBeat = std::chrono::high_resolution_clock::now();
+
+    if (m_stateDb != nullptr)
+    {
+        m_queueDepthTable.reset(new Table(m_stateDb, ORCHAGENT_QUEUE_TABLE_NAME));
+
+        // Wipe any pre-existing ORCHAGENT_QUEUE rows on startup. A previous
+        // orchagent run may have left rows for consumers that this run will
+        // not register (e.g., warm-restart reconfig, code change).
+        std::vector<std::string> existingKeys;
+        m_queueDepthTable->getKeys(existingKeys);
+        for (const auto &k : existingKeys)
+        {
+            m_queueDepthTable->del(k);
+        }
+    }
+    m_lastQueueDepthPublish = std::chrono::high_resolution_clock::now();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -956,6 +975,66 @@ void OrchDaemon::flush()
     }
 }
 
+// Demangle a typeid().name() (compiler-mangled) into a human-readable class
+// name (e.g. "9RouteOrch" -> "RouteOrch"). On non-GCC/Clang or demangle
+// failure, returns the input unchanged.
+static std::string demangleClassName(const char *mangled)
+{
+    int status = 0;
+    char *demangled = abi::__cxa_demangle(mangled, nullptr, nullptr, &status);
+    std::string out = (status == 0 && demangled != nullptr) ? std::string(demangled) : std::string(mangled);
+    std::free(demangled);
+    return out;
+}
+
+void OrchDaemon::publishQueueDepth()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_queueDepthTable == nullptr)
+    {
+        return;
+    }
+
+    std::unordered_set<std::string> currentKeys;
+
+    for (const Orch *o : m_orchList)
+    {
+        // The Orch class name is used to qualify the STATE_DB key because
+        // consumer table names alone are not unique across m_orchList. For
+        // example, CFG_FLEX_COUNTER_TABLE is registered as a consumer in
+        // both WatermarkOrch and FlexCounterOrch; an unqualified key would
+        // overwrite one with the other every publish cycle.
+        const std::string orchName = demangleClassName(typeid(*o).name());
+        for (const auto &nameAndCount : o->getConsumerPendingCounts())
+        {
+            const std::string &consumerName = nameAndCount.first;
+            const std::string key = orchName + "|" + consumerName;
+
+            std::vector<FieldValueTuple> values;
+            values.emplace_back("pending_count", std::to_string(nameAndCount.second));
+            values.emplace_back("orch", orchName);
+            values.emplace_back("consumer", consumerName);
+            m_queueDepthTable->set(key, values);
+
+            currentKeys.insert(key);
+        }
+    }
+
+    // DEL keys that were published last cycle but are no longer in the
+    // current snapshot (a consumer was removed, an Orch was torn down, etc.)
+    // so STATE_DB always reflects the currently-running orchagent's
+    // consumer set.
+    for (const auto &k : m_lastPublishedQueueKeys)
+    {
+        if (currentKeys.find(k) == currentKeys.end())
+        {
+            m_queueDepthTable->del(k);
+        }
+    }
+    m_lastPublishedQueueKeys = std::move(currentKeys);
+}
+
 /* Release the file handle so the log can be rotated */
 void OrchDaemon::logRotate() {
     SWSS_LOG_ENTER();
@@ -1024,6 +1103,16 @@ void OrchDaemon::start(long heartBeatInterval)
             }
 
             flush();
+        }
+
+        // Publish per-consumer queue depth to STATE_DB every
+        // QUEUE_DEPTH_PUBLISH_INTERVAL_SEC. Independent of SELECT_TIMEOUT so it
+        // fires under load as well as idle.
+        auto qdiff = std::chrono::duration_cast<std::chrono::seconds>(tend - m_lastQueueDepthPublish);
+        if (qdiff.count() >= QUEUE_DEPTH_PUBLISH_INTERVAL_SEC)
+        {
+            m_lastQueueDepthPublish = tend;
+            publishQueueDepth();
         }
 
         if (ret == Select::ERROR)
