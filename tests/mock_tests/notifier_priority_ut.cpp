@@ -10,16 +10,19 @@
 
 #include <string>
 #include <memory>
+#include <set>
 
 #define protected public
+#define private public
 #include "orch.h"
+#include "select.h"
+#undef private
 #undef protected
 
 #include "notifier.h"
 #include "dbconnector.h"
 #include "notificationconsumer.h"
 #include "consumerstatetable.h"
-#include "select.h"
 
 #include <gtest/gtest.h>
 
@@ -116,10 +119,13 @@ namespace notifier_priority_test
     }
 
     /**
-     * Verify that the Select class would order a Notifier before a Consumer
-     * when both have pending events, due to the priority difference.
+     * Verify that Select's comparator (which orders its m_ready set) places
+     * a Notifier before a Consumer. This is the actual mechanism that gives
+     * notifications dispatch priority in the event loop.
+     *
+     * Select::cmp returns true if 'a' should come before 'b' (higher priority first).
      */
-    TEST_F(NotifierPriorityTest, SelectOrdersNotifierBeforeConsumer)
+    TEST_F(NotifierPriorityTest, SelectComparatorOrdersNotifierBeforeConsumer)
     {
         DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
@@ -129,8 +135,46 @@ namespace notifier_priority_test
         auto *cst = new swss::ConsumerStateTable(m_app_db.get(), "TEST_TABLE");
         Consumer consumer(cst, &orch, "TEST_TABLE");
 
-        // Notifier priority (100) > Consumer priority (0)
-        EXPECT_GT(notifier.getPri(), consumer.getPri());
+        // Use the same comparator that Select uses internally for its m_ready set.
+        // This set determines dispatch order: begin() is returned first.
+        std::set<swss::Selectable *, swss::Select::cmp> readySet;
+        readySet.insert(&notifier);
+        readySet.insert(&consumer);
+
+        // The first element in readySet (highest priority) must be the Notifier
+        auto first = *readySet.begin();
+        EXPECT_EQ(first, static_cast<swss::Selectable *>(&notifier))
+            << "Select should dispatch Notifier (pri=100) before Consumer (pri=0)";
+    }
+
+    /**
+     * Verify ordering is stable: even if Consumer is inserted first, Notifier
+     * still wins due to higher priority.
+     */
+    TEST_F(NotifierPriorityTest, SelectComparatorPriorityOverridesInsertionOrder)
+    {
+        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+
+        auto *cst = new swss::ConsumerStateTable(m_app_db.get(), "TEST_TABLE");
+        Consumer consumer(cst, &orch, "TEST_TABLE");
+
+        auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CHANNEL");
+        Notifier notifier(notifConsumer, &orch, "TEST_NOTIFICATIONS");
+
+        // Insert consumer first, then notifier
+        std::set<swss::Selectable *, swss::Select::cmp> readySet;
+        readySet.insert(&consumer);
+        readySet.insert(&notifier);
+
+        // Notifier should still be first regardless of insertion order
+        auto first = *readySet.begin();
+        EXPECT_EQ(first, static_cast<swss::Selectable *>(&notifier))
+            << "Priority should override insertion order";
+
+        // Second element should be the consumer
+        auto it = readySet.begin();
+        ++it;
+        EXPECT_EQ(*it, static_cast<swss::Selectable *>(&consumer));
     }
 
 } // namespace notifier_priority_test
