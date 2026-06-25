@@ -16,7 +16,7 @@ use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
-    harmonizer::HarmonizerActor,
+    aggregator::AggregatorActor,
     ipfix::IpfixActor,
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
@@ -339,8 +339,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
     let (ipfix_record_sender, ipfix_record_receiver) = channel(args.data_netlink_capacity);
     let (ipfix_template_sender, ipfix_template_receiver) = channel(10); // Fixed capacity for templates
-    let (harmonizer_config_sender, harmonizer_config_receiver) = channel(10);
-    let (harmonizer_stats_sender, harmonizer_stats_receiver) = channel(args.data_netlink_capacity);
+    let (aggregator_config_sender, aggregator_config_receiver) = channel(10);
+    let (aggregator_stats_sender, aggregator_stats_receiver) = channel(args.data_netlink_capacity);
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
@@ -370,12 +370,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
-    ipfix.add_recipient(harmonizer_stats_sender);
+    ipfix.add_recipient(aggregator_stats_sender);
 
-    let mut harmonizer = HarmonizerActor::new(harmonizer_config_receiver, harmonizer_stats_receiver);
+    let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
-    let swss = match SwssActor::new(ipfix_template_sender, harmonizer_config_sender) {
+    let swss = match SwssActor::new(ipfix_template_sender, aggregator_config_sender) {
         Ok(actor) => actor,
         Err(e) => {
             error!("Failed to initialize SwssActor: {}", e);
@@ -395,8 +395,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        // Add stats reporter to harmonizer recipients only when enabled
-        harmonizer.add_recipient(stats_report_sender.clone());
+        // Add stats reporter to aggregator recipients only when enabled
+        aggregator.add_recipient(stats_report_sender.clone());
         Some(StatsReporterActor::new(
             stats_report_receiver,
             reporter_config,
@@ -414,8 +414,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             interval: Duration::from_secs(args.counter_db_frequency),
         };
 
-        // Add counter DB to harmonizer recipients only when enabled
-        harmonizer.add_recipient(counter_db_sender.clone());
+        // Add counter DB to aggregator recipients only when enabled
+        aggregator.add_recipient(counter_db_sender.clone());
         match CounterDBActor::new(counter_db_receiver, counter_db_config) {
             Ok(actor) => Some(actor),
             Err(e) => {
@@ -437,8 +437,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
         };
 
-        // Add OTEL to harmonizer recipients only when enabled
-        harmonizer.add_recipient(otel_sender.clone());
+        // Add OTEL to aggregator recipients only when enabled
+        aggregator.add_recipient(otel_sender.clone());
         match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
             Ok(actor) => Some(actor),
             Err(e) => {
@@ -486,10 +486,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("SWSS actor terminated");
     });
 
-    let mut harmonizer_handle = spawn(async move {
-        info!("Harmonizer actor started");
-        HarmonizerActor::run(harmonizer).await;
-        info!("Harmonizer actor terminated");
+    let mut aggregator_handle = spawn(async move {
+        info!("Aggregator actor started");
+        AggregatorActor::run(aggregator).await;
+        info!("Aggregator actor terminated");
     });
 
     // Only spawn stats reporter if enabled
@@ -543,8 +543,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = &mut swss_handle => {
             classify_join("SWSS", res)
         }
-        res = &mut harmonizer_handle => {
-            classify_join("Harmonizer", res)
+        res = &mut aggregator_handle => {
+            classify_join("Aggregator", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
             classify_join("Stats reporter", res)
@@ -567,7 +567,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     control_netlink_handle.abort();
     ipfix_handle.abort();
     swss_handle.abort();
-    harmonizer_handle.abort();
+    aggregator_handle.abort();
 
     if let Some(handle) = reporter_handle.as_mut() {
         handle.abort();

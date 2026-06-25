@@ -1,7 +1,7 @@
 pub mod control_netlink;
 pub mod counter_db;
 pub mod data_netlink;
-pub mod harmonizer;
+pub mod aggregator;
 pub mod ipfix;
 pub mod netlink_utils;
 pub mod stats_reporter;

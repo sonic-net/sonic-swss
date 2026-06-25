@@ -5,15 +5,15 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::channel;
 use tokio::time::{sleep, timeout, Duration};
 
-use countersyncd::actor::{harmonizer::HarmonizerActor, ipfix::IpfixActor};
+use countersyncd::actor::{aggregator::AggregatorActor, ipfix::IpfixActor};
 use countersyncd::message::{
     buffer::SocketBufferMessage,
-    harmonizer::{HarmonizerConfig, HarmonizerConfigMessage, HarmonizerStatsMessage},
+    aggregator::{AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage},
     ipfix::IPFixTemplatesMessage,
     saistats::SAIStatsMessage,
 };
 
-async fn start_ipfix_harmonizer_pipeline(
+async fn start_ipfix_aggregator_pipeline(
     template_capacity: usize,
     buffer_capacity: usize,
     config_capacity: usize,
@@ -21,18 +21,18 @@ async fn start_ipfix_harmonizer_pipeline(
 ) -> (
     tokio::sync::mpsc::Sender<IPFixTemplatesMessage>,
     tokio::sync::mpsc::Sender<SocketBufferMessage>,
-    tokio::sync::mpsc::Sender<HarmonizerConfigMessage>,
+    tokio::sync::mpsc::Sender<AggregatorConfigMessage>,
     tokio::sync::mpsc::Receiver<SAIStatsMessage>,
 ) {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(buffer_capacity);
     let (template_sender, template_receiver) = channel(template_capacity);
-    let (harmonizer_config_sender, harmonizer_config_receiver) = channel(config_capacity);
-    let (harmonizer_stats_sender, harmonizer_stats_receiver) =
-        channel::<HarmonizerStatsMessage>(stats_capacity);
+    let (aggregator_config_sender, aggregator_config_receiver) = channel(config_capacity);
+    let (aggregator_stats_sender, aggregator_stats_receiver) =
+        channel::<AggregatorStatsMessage>(stats_capacity);
     let (saistats_sender, saistats_receiver) = channel::<SAIStatsMessage>(stats_capacity);
 
     let mut ipfix = IpfixActor::new(template_receiver, buffer_receiver);
-    ipfix.add_recipient(harmonizer_stats_sender);
+    ipfix.add_recipient(aggregator_stats_sender);
     tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Runtime::new().expect("ipfix runtime");
         rt.block_on(async move {
@@ -40,16 +40,16 @@ async fn start_ipfix_harmonizer_pipeline(
         });
     });
 
-    let mut harmonizer = HarmonizerActor::new(harmonizer_config_receiver, harmonizer_stats_receiver);
-    harmonizer.add_recipient(saistats_sender);
+    let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
+    aggregator.add_recipient(saistats_sender);
     tokio::spawn(async move {
-        HarmonizerActor::run(harmonizer).await;
+        AggregatorActor::run(aggregator).await;
     });
 
     (
         template_sender,
         buffer_sender,
-        harmonizer_config_sender,
+        aggregator_config_sender,
         saistats_receiver,
     )
 }
@@ -90,21 +90,21 @@ async fn send_record_with_observation_time(
 }
 
 #[tokio::test]
-async fn ipfix_harmonizer_downsamples_10us_stream_to_100us() {
-    let key = "harmonized_downsample|PORT";
+async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
+    let key = "aggregated_downsample|PORT";
     let (template_sender, buffer_sender, config_sender, mut saistats_receiver) =
-        start_ipfix_harmonizer_pipeline(1, 25, 1, 10).await;
+        start_ipfix_aggregator_pipeline(1, 25, 1, 10).await;
 
     let templates = send_single_counter_template(&template_sender, key, 500).await;
     config_sender
-        .send(HarmonizerConfigMessage::new(
+        .send(AggregatorConfigMessage::new(
             key.to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(100),
             }),
         ))
         .await
-        .expect("harmonizer config send should succeed");
+        .expect("aggregator config send should succeed");
 
     for observation_time in (0..=200_000).step_by(10_000) {
         send_record_with_observation_time(&buffer_sender, &templates, observation_time).await;
@@ -112,12 +112,12 @@ async fn ipfix_harmonizer_downsamples_10us_stream_to_100us() {
 
     let first = timeout(Duration::from_secs(2), saistats_receiver.recv())
         .await
-        .expect("first harmonized sample should arrive")
-        .expect("first harmonized sample channel should be open");
+        .expect("first aggregated sample should arrive")
+        .expect("first aggregated sample channel should be open");
     let second = timeout(Duration::from_secs(2), saistats_receiver.recv())
         .await
-        .expect("second harmonized sample should arrive")
-        .expect("second harmonized sample channel should be open");
+        .expect("second aggregated sample should arrive")
+        .expect("second aggregated sample channel should be open");
 
     assert_eq!(first.observation_time, 90_000);
     assert_eq!(first.stats.len(), 1);
@@ -134,21 +134,21 @@ async fn ipfix_harmonizer_downsamples_10us_stream_to_100us() {
 }
 
 #[tokio::test]
-async fn harmonizer_delete_while_streaming_forwards_later_samples() {
-    let key = "harmonizer_delete_while_streaming|PORT";
+async fn aggregator_delete_while_streaming_forwards_later_samples() {
+    let key = "aggregator_delete_while_streaming|PORT";
     let (template_sender, buffer_sender, config_sender, mut saistats_receiver) =
-        start_ipfix_harmonizer_pipeline(1, 10, 2, 10).await;
+        start_ipfix_aggregator_pipeline(1, 10, 2, 10).await;
 
     let templates = send_single_counter_template(&template_sender, key, 501).await;
     config_sender
-        .send(HarmonizerConfigMessage::new(
+        .send(AggregatorConfigMessage::new(
             key.to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(100),
             }),
         ))
         .await
-        .expect("harmonizer config send should succeed");
+        .expect("aggregator config send should succeed");
 
     send_record_with_observation_time(&buffer_sender, &templates, 0).await;
     send_record_with_observation_time(&buffer_sender, &templates, 10_000).await;
@@ -160,9 +160,9 @@ async fn harmonizer_delete_while_streaming_forwards_later_samples() {
     );
 
     config_sender
-        .send(HarmonizerConfigMessage::delete(key.to_string()))
+        .send(AggregatorConfigMessage::delete(key.to_string()))
         .await
-        .expect("harmonizer delete send should succeed");
+        .expect("aggregator delete send should succeed");
     sleep(Duration::from_millis(20)).await;
 
     send_record_with_observation_time(&buffer_sender, &templates, 20_000).await;
@@ -180,7 +180,7 @@ async fn harmonizer_delete_while_streaming_forwards_later_samples() {
 async fn ipfix_templates_delete_and_readd_schema_change() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel::<HarmonizerStatsMessage>(10);
+    let (saistats_sender, mut saistats_receiver) = channel::<AggregatorStatsMessage>(10);
 
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);

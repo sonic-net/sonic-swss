@@ -17,7 +17,7 @@ use ipfixrw::{
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    harmonizer::HarmonizerStatsMessage,
+    aggregator::AggregatorStatsMessage,
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
@@ -484,7 +484,7 @@ type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 /// - Distributing parsed statistics to multiple recipients
 pub struct IpfixActor {
     /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<HarmonizerStatsMessage>>,
+    saistats_recipients: LinkedList<Sender<AggregatorStatsMessage>>,
     /// Channel for receiving IPFIX template messages
     template_recipient: Receiver<IPFixTemplatesMessage>,
     /// Channel for receiving IPFIX data records
@@ -530,7 +530,7 @@ impl IpfixActor {
     /// # Arguments
     ///
     /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<HarmonizerStatsMessage>) {
+    pub fn add_recipient(&mut self, recipient: Sender<AggregatorStatsMessage>) {
         self.saistats_recipients.push_back(recipient);
     }
 
@@ -751,11 +751,11 @@ impl IpfixActor {
     /// # Returns
     ///
     /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<HarmonizerStatsMessage> {
+    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<AggregatorStatsMessage> {
         let cache_ref = Self::get_cache();
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
-        let mut messages: Vec<HarmonizerStatsMessage> = Vec::new();
+        let mut messages: Vec<AggregatorStatsMessage> = Vec::new();
 
         debug!("Processing IPFIX records of length: {}", records.len());
 
@@ -924,7 +924,7 @@ impl IpfixActor {
                         stats: final_stats,
                     });
 
-                    messages.push(HarmonizerStatsMessage::new(template_key.clone(), saistats.clone()));
+                    messages.push(AggregatorStatsMessage::new(template_key.clone(), saistats.clone()));
                     debug!("Record parsed {:?}", saistats);
                 }
             }

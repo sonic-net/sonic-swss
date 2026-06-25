@@ -2,22 +2,22 @@ use std::sync::Arc;
 
 use super::saistats::SAIStatsMessage;
 
-/// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_HARMONIZER.
+/// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_AGGREGATOR.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct HarmonizerConfig {
+pub struct AggregatorConfig {
     /// Reporting interval in microseconds.
     pub reporting_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
-pub struct HarmonizerConfigMessage {
+pub struct AggregatorConfigMessage {
     pub key: String,
-    pub config: Option<HarmonizerConfig>,
+    pub config: Option<AggregatorConfig>,
     pub is_delete: bool,
 }
 
-impl HarmonizerConfigMessage {
-    pub fn new(key: String, config: Option<HarmonizerConfig>) -> Self {
+impl AggregatorConfigMessage {
+    pub fn new(key: String, config: Option<AggregatorConfig>) -> Self {
         Self {
             key,
             config,
@@ -35,18 +35,18 @@ impl HarmonizerConfigMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct HarmonizerStatsMessage {
+pub struct AggregatorStatsMessage {
     pub key: Option<Arc<str>>,
     pub stats: SAIStatsMessage,
 }
 
-impl HarmonizerStatsMessage {
+impl AggregatorStatsMessage {
     pub fn new(key: Option<Arc<str>>, stats: SAIStatsMessage) -> Self {
         Self { key, stats }
     }
 }
 
-impl HarmonizerConfig {
+impl AggregatorConfig {
     pub fn parse(serialized: &str) -> Option<Self> {
         let trimmed = serialized.trim();
         if trimmed.is_empty() {
@@ -106,23 +106,23 @@ mod tests {
     #[test]
     fn parse_reporting_rate_from_supported_formats() {
         assert_eq!(
-            HarmonizerConfig::parse("100").unwrap().reporting_rate,
+            AggregatorConfig::parse("100").unwrap().reporting_rate,
             Some(100)
         );
         assert_eq!(
-            HarmonizerConfig::parse("reporting_rate=200")
+            AggregatorConfig::parse("reporting_rate=200")
                 .unwrap()
                 .reporting_rate,
             Some(200)
         );
         assert_eq!(
-            HarmonizerConfig::parse("{\"reporting_rate\":300}")
+            AggregatorConfig::parse("{\"reporting_rate\":300}")
                 .unwrap()
                 .reporting_rate,
             Some(300)
         );
         assert_eq!(
-            HarmonizerConfig::parse("rollover_counters=PORT|A;reporting_rate:400")
+            AggregatorConfig::parse("rollover_counters=PORT|A;reporting_rate:400")
                 .unwrap()
                 .reporting_rate,
             Some(400)
@@ -131,15 +131,15 @@ mod tests {
 
     #[test]
     fn parse_preserves_missing_or_zero_reporting_rate() {
-        assert_eq!(HarmonizerConfig::parse(""), None);
+        assert_eq!(AggregatorConfig::parse(""), None);
         assert_eq!(
-            HarmonizerConfig::parse("rollover_counters=PORT|A")
+            AggregatorConfig::parse("rollover_counters=PORT|A")
                 .unwrap()
                 .reporting_rate,
             None
         );
         assert_eq!(
-            HarmonizerConfig::parse("reporting_rate=0")
+            AggregatorConfig::parse("reporting_rate=0")
                 .unwrap()
                 .reporting_rate,
             None

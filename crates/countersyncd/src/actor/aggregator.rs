@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::message::{
-    harmonizer::{HarmonizerConfig, HarmonizerConfigMessage, HarmonizerStatsMessage},
+    aggregator::{AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage},
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
 
@@ -106,18 +106,18 @@ impl ReportingRateState {
 }
 
 #[derive(Debug, Default)]
-pub struct Harmonizer {
-    sessions: HashMap<String, HarmonizerState>,
+pub struct Aggregator {
+    sessions: HashMap<String, AggregatorState>,
 }
 
 #[derive(Debug)]
-struct HarmonizerState {
-    _config: HarmonizerConfig,
+struct AggregatorState {
+    _config: AggregatorConfig,
     reporting_rate: Option<ReportingRateState>,
 }
 
-impl HarmonizerState {
-    fn new(config: HarmonizerConfig) -> Self {
+impl AggregatorState {
+    fn new(config: AggregatorConfig) -> Self {
         let reporting_rate = config.reporting_rate.map(ReportingRateState::new);
 
         Self {
@@ -138,11 +138,11 @@ impl HarmonizerState {
     }
 }
 
-impl Harmonizer {
-    pub fn set_config(&mut self, key: String, config: Option<HarmonizerConfig>) {
+impl Aggregator {
+    pub fn set_config(&mut self, key: String, config: Option<AggregatorConfig>) {
         match config {
             Some(config) => {
-                self.sessions.insert(key, HarmonizerState::new(config));
+                self.sessions.insert(key, AggregatorState::new(config));
             }
             None => {
                 self.sessions.remove(&key);
@@ -167,34 +167,34 @@ impl Harmonizer {
     }
 }
 
-fn validate_reporting_rate(config: &Option<HarmonizerConfig>, key: &str) {
+fn validate_reporting_rate(config: &Option<AggregatorConfig>, key: &str) {
     if let Some(config) = config {
         if config.reporting_rate.is_none() {
             debug!(
-                "Harmonizer config for session {} has no valid reporting_rate; forwarding samples unchanged",
+                "Aggregator config for session {} has no valid reporting_rate; forwarding samples unchanged",
                 key
             );
         }
     }
 }
 
-pub struct HarmonizerActor {
-    config_recipient: Receiver<HarmonizerConfigMessage>,
-    stats_recipient: Receiver<HarmonizerStatsMessage>,
+pub struct AggregatorActor {
+    config_recipient: Receiver<AggregatorConfigMessage>,
+    stats_recipient: Receiver<AggregatorStatsMessage>,
     saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
-    harmonizer: Harmonizer,
+    aggregator: Aggregator,
 }
 
-impl HarmonizerActor {
+impl AggregatorActor {
     pub fn new(
-        config_recipient: Receiver<HarmonizerConfigMessage>,
-        stats_recipient: Receiver<HarmonizerStatsMessage>,
+        config_recipient: Receiver<AggregatorConfigMessage>,
+        stats_recipient: Receiver<AggregatorStatsMessage>,
     ) -> Self {
         Self {
             config_recipient,
             stats_recipient,
             saistats_recipients: LinkedList::new(),
-            harmonizer: Harmonizer::default(),
+            aggregator: Aggregator::default(),
         }
     }
 
@@ -202,22 +202,22 @@ impl HarmonizerActor {
         self.saistats_recipients.push_back(recipient);
     }
 
-    fn handle_config(&mut self, message: HarmonizerConfigMessage) {
+    fn handle_config(&mut self, message: AggregatorConfigMessage) {
         if message.is_delete {
-            self.harmonizer.remove_config(&message.key);
+            self.aggregator.remove_config(&message.key);
             return;
         }
 
         validate_reporting_rate(&message.config, &message.key);
-        self.harmonizer.set_config(message.key, message.config);
+        self.aggregator.set_config(message.key, message.config);
     }
 
-    fn handle_stats(&mut self, message: HarmonizerStatsMessage) -> Vec<SAIStatsMessage> {
-        self.harmonizer
+    fn handle_stats(&mut self, message: AggregatorStatsMessage) -> Vec<SAIStatsMessage> {
+        self.aggregator
             .process(message.key.as_deref(), message.stats)
     }
 
-    pub async fn run(mut actor: HarmonizerActor) {
+    pub async fn run(mut actor: AggregatorActor) {
         loop {
             select! {
                 config = actor.config_recipient.recv() => {
@@ -266,39 +266,39 @@ mod tests {
 
     #[test]
     fn forwards_samples_without_reporting_rate() {
-        let mut harmonizer = Harmonizer::default();
-        harmonizer.set_config(
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
             "session".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: None,
             }),
         );
 
         let input = sample(10, vec![stat("Ethernet0", 1)]);
-        let output = harmonizer.process(Some("session"), input.clone());
+        let output = aggregator.process(Some("session"), input.clone());
 
         assert_eq!(output, vec![input]);
     }
 
     #[test]
     fn aggregates_samples_until_next_reporting_window() {
-        let mut harmonizer = Harmonizer::default();
-        harmonizer.set_config(
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
             "session".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(10),
             }),
         );
 
-        assert!(harmonizer
+        assert!(aggregator
             .process(Some("session"), sample(1_000, vec![stat("Ethernet0", 1)]))
             .is_empty());
-        assert!(harmonizer
+        assert!(aggregator
             .process(Some("session"), sample(9_000, vec![stat("Ethernet0", 9)]))
             .is_empty());
 
         let output =
-            harmonizer.process(Some("session"), sample(10_000, vec![stat("Ethernet0", 10)]));
+            aggregator.process(Some("session"), sample(10_000, vec![stat("Ethernet0", 10)]));
 
         assert_eq!(output.len(), 1);
         assert_eq!(output[0].observation_time, 9_000);
@@ -307,22 +307,22 @@ mod tests {
 
     #[test]
     fn keeps_latest_stat_per_object_type_and_counter() {
-        let mut harmonizer = Harmonizer::default();
-        harmonizer.set_config(
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
             "session".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(10),
             }),
         );
 
-        harmonizer.process(Some("session"), sample(1_000, vec![stat("Ethernet0", 1)]));
-        harmonizer.process(
+        aggregator.process(Some("session"), sample(1_000, vec![stat("Ethernet0", 1)]));
+        aggregator.process(
             Some("session"),
             sample(2_000, vec![stat("Ethernet0", 2), stat("Ethernet4", 3)]),
         );
 
         let output =
-            harmonizer.process(Some("session"), sample(11_000, vec![stat("Ethernet0", 11)]));
+            aggregator.process(Some("session"), sample(11_000, vec![stat("Ethernet0", 11)]));
 
         assert_eq!(output.len(), 1);
         assert_eq!(
@@ -333,25 +333,25 @@ mod tests {
 
     #[test]
     fn resets_state_when_config_changes() {
-        let mut harmonizer = Harmonizer::default();
-        harmonizer.set_config(
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
             "session".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(10),
             }),
         );
-        assert!(harmonizer
+        assert!(aggregator
             .process(Some("session"), sample(1_000, vec![stat("Ethernet0", 1)]))
             .is_empty());
 
-        harmonizer.set_config(
+        aggregator.set_config(
             "session".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(20),
             }),
         );
 
-        assert!(harmonizer
+        assert!(aggregator
             .process(Some("session"), sample(11_000, vec![stat("Ethernet0", 11)]))
             .is_empty());
     }
