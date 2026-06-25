@@ -8,6 +8,7 @@
 #include "mock_sai_switch.h"
 #include "saihelper.h"
 
+extern volatile sig_atomic_t gOrchShutdownRequested;
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
 
@@ -55,6 +56,15 @@ namespace orchdaemon_test
         EXPECT_CALL(mock_sai_switch_, set_switch_attribute( _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
 
         orchd->logRotate();
+    }
+
+    TEST_F(OrchDaemonTest, sairedisLogRotateFlagNotClearedAtStartup)
+    {
+        Recorder::Instance().sairedis.setRotate(true);
+        // Need to set shutdown flag, otherwise start() will loop indefinitely
+        gOrchShutdownRequested = true;
+        orchd->start(1000);
+        EXPECT_TRUE(Recorder::Instance().sairedis.isRotate());
     }
 
     TEST_F(OrchDaemonTest, ringBuffer)
