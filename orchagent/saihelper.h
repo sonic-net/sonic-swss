@@ -72,3 +72,12 @@ void stopFlexCounterPolling(sai_object_id_t switch_oid,
                             const std::string &key);
 
 std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t);
+
+/*
+ * Query the ACL table group lookup type (PARALLEL/SEQUENTIAL) supported by the
+ * platform for SAI_ACL_TABLE_GROUP_ATTR_TYPE. Returns the historical PARALLEL
+ * default on every non-definitive result so existing platforms are never
+ * regressed; only a *successful* query that reports PARALLEL unsupported (and
+ * SEQUENTIAL supported) yields SEQUENTIAL. See saihelper.cpp for details.
+ */
+sai_acl_table_group_type_t querySupportedAclTableGroupType(sai_object_id_t switch_id);
