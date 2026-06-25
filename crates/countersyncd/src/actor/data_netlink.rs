@@ -589,6 +589,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
+
         debug!("Adding multicast membership for group_id {}", group_id);
         if let Err(e) = socket.add_membership(group_id) {
             warn!(
@@ -605,8 +607,6 @@ impl DataNetlinkActor {
             warn!("Failed to set non-blocking mode: {:?}", e);
             return None;
         }
-
-        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
@@ -710,6 +710,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
+
         debug!("Adding multicast membership for group_id {}", group_id);
         if let Err(e) = socket.add_membership(group_id) {
             warn!(
@@ -724,8 +726,6 @@ impl DataNetlinkActor {
             warn!("Failed to set non-blocking mode: {:?}", e);
             return None;
         }
-
-        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
