@@ -502,11 +502,11 @@ class DockerVirtualSwitch:
             subprocess.getstatusoutput(cmd)
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
             subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/gcda.tar {self.ctn.short_id}.gcda.tar"
+            cmd = f"docker exec {self.ctn.short_id} cat '/tmp/gcda.tar' > {self.ctn.short_id}.gcda.tar"
             subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.info {self.ctn.short_id}.coverage.info"
+            cmd = f"docker exec {self.ctn.short_id} cat '/tmp/coverage.info' > {self.ctn.short_id}.coverage.info"
             subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.xml {self.ctn.short_id}.coverage.xml"
+            cmd = f"docker exec {self.ctn.short_id} cat '/tmp/coverage.xml' > {self.ctn.short_id}.coverage.xml"
             subprocess.getstatusoutput(cmd)
         except:
             traceback.print_exc()
@@ -723,6 +723,7 @@ class DockerVirtualSwitch:
         tarstr.close()
 
     def get_logs(self) -> None:
+        return
         log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
 
         ensure_system(f"rm -rf {log_dir}")
