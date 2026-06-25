@@ -1,20 +1,29 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::{
+    aggregator::{AggregatorConfig, AggregatorConfigMessage},
+    ipfix::IPFixTemplatesMessage,
+};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info, warn};
-use std::{collections::HashMap, sync::Arc, thread};
 use std::time::Duration;
-use tokio::sync::mpsc::{self, Sender};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::{select, sync::mpsc::Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
+const CONFIG_DB_ID: i32 = 4;
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
-const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_PROFILE";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR";
 
-/// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
-/// messages through the state database. It specifically listens for
-/// HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE updates and forwards IPFIX template
-/// configurations to the IPFIX actor.
+#[cfg(test)]
+const MAX_TEST_IDLE_ITERATIONS: usize = 20;
+
+/// SwssActor monitors HFT session state and HFT aggregator/profile config.
 ///
 /// The state DB message format example:
 /// ```text
@@ -27,13 +36,35 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 /// ```
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
+    pub profile_table: SubscriberStateTable,
+    pub aggregator_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
+    aggregator_config_recipient: Sender<AggregatorConfigMessage>,
 }
 
 #[derive(Debug)]
 enum SwssEvent {
-    Update { key: String, session_data: SessionData },
-    Delete { key: String },
+    SessionUpdate {
+        key: String,
+        session_data: SessionData,
+    },
+    SessionDelete {
+        key: String,
+    },
+    ProfileUpdate {
+        profile: String,
+        aggregator: Option<String>,
+    },
+    ProfileDelete {
+        profile: String,
+    },
+    AggregatorUpdate {
+        name: String,
+        config: Option<AggregatorConfig>,
+    },
+    AggregatorDelete {
+        name: String,
+    },
 }
 
 impl SwssActor {
@@ -41,157 +72,288 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `template_recipient` - Channel sender for forwarding IPFIX templates to IPFIX actor
-    pub fn new(template_recipient: Sender<IPFixTemplatesMessage>) -> Result<Self, String> {
-        let connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
+    pub fn new(
+        template_recipient: Sender<IPFixTemplatesMessage>,
+        aggregator_config_recipient: Sender<AggregatorConfigMessage>,
+    ) -> Result<Self, String> {
+        let session_connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
             .map_err(|e| format!("Failed to create DB connection: {}", e))?;
         let session_table = SubscriberStateTable::new(
-            connect,
+            session_connect,
             STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE,
             None,
             None,
         )
         .map_err(|e| format!("Failed to create session table: {}", e))?;
 
+        let profile_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB profile connection: {}", e))?;
+        let profile_table = SubscriberStateTable::new(
+            profile_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create profile table: {}", e))?;
+
+        let aggregator_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB aggregator connection: {}", e))?;
+        let aggregator_table = SubscriberStateTable::new(
+            aggregator_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create aggregator table: {}", e))?;
+
         Ok(SwssActor {
             session_table,
+            profile_table,
+            aggregator_table,
             template_recipient,
+            aggregator_config_recipient,
         })
     }
 
     /// Main event loop for the SwssActor
     ///
-    /// Continuously monitors the HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE for updates
-    /// and processes enabled IPFIX sessions by forwarding their templates to the IPFIX actor.
+    /// Continuously monitors HFT session state and aggregator/profile config updates.
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
     pub async fn run(actor: SwssActor) {
-        info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
+        info!(
+            "SwssActor started, monitoring HFT session state and aggregator/profile config"
+        );
 
-        #[cfg(test)]
-        const MAX_TEST_ITERATIONS: usize = 20;
-
-        // Keep the SWSS table polling on a dedicated blocking thread so we don't park a Tokio worker.
         let SwssActor {
             mut session_table,
+            mut profile_table,
+            mut aggregator_table,
             template_recipient,
+            aggregator_config_recipient,
         } = actor;
-        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let mut aggregator_state = AggregatorConfigState::default();
 
-        let _reader_thread = match thread::Builder::new()
-            .name("countersyncd-swss".to_string())
-            .spawn(move || {
-                #[cfg(test)]
-                let mut iteration_count = 0;
+        #[cfg(test)]
+        let mut idle_iterations = 0;
 
-                loop {
-                    if event_sender.is_closed() {
-                        debug!("SwssActor event receiver closed, terminating reader thread");
-                        break;
-                    }
-
-                    #[cfg(test)]
-                    {
-                        iteration_count += 1;
-                        if iteration_count > MAX_TEST_ITERATIONS {
-                            debug!(
-                                "SwssActor test mode reached maximum iterations ({}), terminating reader thread",
-                                MAX_TEST_ITERATIONS
-                            );
-                            break;
-                        }
-                    }
-
-                    #[cfg(test)]
-                    let timeout = Duration::from_millis(50);
-                    #[cfg(not(test))]
-                    let timeout = Duration::from_secs(10);
-
-                    match Self::blocking_collect_events(&mut session_table, timeout) {
-                        Ok(events) => {
-                            for event in events {
-                                if event_sender.blocking_send(event).is_err() {
-                                    debug!("SwssActor event receiver dropped, terminating reader thread");
-                                    return;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Error reading from session table: {}", e);
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                    }
-                }
-
-                #[cfg(test)]
-                debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
-            }) {
-                Ok(handle) => handle,
-                Err(e) => {
-                    error!("Failed to spawn SwssActor reader thread: {}", e);
-                    return;
-                }
-            };
-
-        while let Some(event) = event_receiver.recv().await {
-            match event {
-                SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(&template_recipient, &key, &session_data).await;
-                }
-                SwssEvent::Delete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
-                }
+        let mut pending_events = Vec::new();
+        for events in [
+            Self::collect_profile_events(&profile_table),
+            Self::collect_aggregator_events(&aggregator_table),
+            Self::collect_session_events(&session_table),
+        ] {
+            match events {
+                Ok(events) => pending_events.extend(events),
+                Err(e) => error!("{}", e),
             }
         }
 
-        debug!("SwssActor terminated");
+        loop {
+            let events = if pending_events.is_empty() {
+                select! {
+                    result = session_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_session_events(&session_table),
+                            Err(e) => Err(format!("Error reading from session table: {}", e)),
+                        }
+                    }
+                    result = profile_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_profile_events(&profile_table),
+                            Err(e) => Err(format!("Error reading from profile table: {}", e)),
+                        }
+                    }
+                    result = aggregator_table.read_data_async() => {
+                        match result {
+                            Ok(()) => Self::collect_aggregator_events(&aggregator_table),
+                            Err(e) => Err(format!("Error reading from aggregator table: {}", e)),
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(50)), if cfg!(test) => {
+                        Ok(Vec::new())
+                    }
+                }
+            } else {
+                Ok(std::mem::take(&mut pending_events))
+            };
+
+            let events = match events {
+                Ok(events) => events,
+                Err(e) => {
+                    error!("{}", e);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
+
+            #[cfg(test)]
+            {
+                if events.is_empty() {
+                    idle_iterations += 1;
+                    if idle_iterations > MAX_TEST_IDLE_ITERATIONS {
+                        debug!("SwssActor test mode reached idle limit, terminating");
+                        break;
+                    }
+                } else {
+                    idle_iterations = 0;
+                }
+            }
+
+            for event in events {
+                match event {
+                SwssEvent::SessionUpdate { key, session_data } => {
+                    if Self::process_session_update(&template_recipient, &key, &session_data).await {
+                        aggregator_state.add_session(key.clone());
+                        Self::send_aggregator_config_for_session(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            &key,
+                            false,
+                        )
+                        .await;
+                    } else {
+                        aggregator_state.remove_session(&key);
+                        Self::send_aggregator_config_for_session(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            &key,
+                            true,
+                        )
+                        .await;
+                    }
+                }
+                SwssEvent::SessionDelete { key } => {
+                    Self::process_session_delete(&template_recipient, &key).await;
+                    aggregator_state.remove_session(&key);
+                    Self::send_aggregator_config_for_session(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
+                        &key,
+                        true,
+                    )
+                    .await;
+                }
+                SwssEvent::ProfileUpdate {
+                    profile,
+                    aggregator,
+                } => {
+                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                    aggregator_state.set_profile_aggregator(profile, aggregator);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::ProfileDelete { profile } => {
+                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                    aggregator_state.remove_profile(&profile);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::AggregatorUpdate { name, config } => {
+                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                    aggregator_state.set_aggregator_config(name, config);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::AggregatorDelete { name } => {
+                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                    aggregator_state.remove_aggregator(&name);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+            }
+            }
+        }
     }
 
-    fn blocking_collect_events(
-        session_table: &mut SubscriberStateTable,
-        timeout: Duration,
-    ) -> Result<Vec<SwssEvent>, String> {
-        let mut events = Vec::new();
+    fn collect_session_events(session_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+        let items = session_table
+            .pops()
+            .map_err(|e| format!("Error popping items from session table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
 
-        match session_table.read_data(timeout, false) {
-            Ok(select_result) => match select_result {
-                swss_common::SelectResult::Data => match session_table.pops() {
-                    Ok(items) => {
-                        for item in items {
-                            debug!(
-                                "SwssActor received: key={}, op={:?}",
-                                item.key, item.operation
-                            );
+        for item in items {
+            debug!(
+                "SwssActor received: key={}, op={:?}",
+                item.key, item.operation
+            );
 
-                            let session_key = Self::extract_session_key(&item.key);
-                            match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::Update {
-                                    key: session_key,
-                                    session_data: Self::parse_session_data(&item.field_values),
-                                }),
-                                KeyOperation::Del => {
-                                    events.push(SwssEvent::Delete { key: session_key })
-                                }
-                            }
-                        }
-                        Ok(events)
-                    }
-                    Err(e) => {
-                        error!("Error popping items from session table: {}", e);
-                        Ok(events)
-                    }
-                },
-                swss_common::SelectResult::Timeout => {
-                    debug!("Timeout waiting for session table updates");
-                    Ok(events)
-                }
-                swss_common::SelectResult::Signal => {
-                    debug!("Signal received while waiting for session table updates");
-                    Ok(events)
-                }
-            },
-            Err(e) => Err(format!("Error reading from session table: {}", e)),
+            let session_key = Self::extract_session_key(&item.key);
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::SessionUpdate {
+                    key: session_key,
+                    session_data: Self::parse_session_data(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::SessionDelete { key: session_key }),
+            }
         }
+
+        Ok(events)
+    }
+
+    fn collect_profile_events(profile_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+        let items = profile_table
+            .pops()
+            .map_err(|e| format!("Error popping items from profile table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let profile = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+            );
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
+                    profile,
+                    aggregator: Self::parse_profile_aggregator(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn collect_aggregator_events(
+        aggregator_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = aggregator_table
+            .pops()
+            .map_err(|e| format!("Error popping items from aggregator table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let name = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
+            );
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::AggregatorUpdate {
+                    name,
+                    config: Self::parse_aggregator_config(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::AggregatorDelete { name }),
+            }
+        }
+
+        Ok(events)
     }
 
     fn parse_session_data(
@@ -217,6 +379,30 @@ impl SwssActor {
         session_data
     }
 
+    fn parse_profile_aggregator(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Option<String> {
+        field_values.get("aggregator").and_then(|value| {
+            let aggregator = value.to_string_lossy().trim().to_string();
+            if aggregator.is_empty() {
+                None
+            } else {
+                Some(aggregator)
+            }
+        })
+    }
+
+    fn parse_aggregator_config(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Option<AggregatorConfig> {
+        let reporting_rate = field_values
+            .get("reporting_rate")
+            .and_then(|value| AggregatorConfig::parse(&value.to_string_lossy()))
+            .and_then(|config| config.reporting_rate);
+
+        Some(AggregatorConfig { reporting_rate })
+    }
+
     /// Extracts the session key from the full Redis key by removing the table name prefix
     ///
     /// # Arguments
@@ -232,6 +418,19 @@ impl SwssActor {
         }
         // If no table prefix found, return as-is
         full_key.to_string()
+    }
+
+    fn extract_config_key(full_key: &str, table_name: &str) -> String {
+        if let Some(pos) = full_key.find('|') {
+            if full_key.starts_with(table_name) {
+                return full_key[pos + 1..].to_string();
+            }
+        }
+        full_key.to_string()
+    }
+
+    fn extract_profile_from_session_key(session_key: &str) -> &str {
+        session_key.split('|').next().unwrap_or(session_key)
     }
 
     /// Processes session update messages from the state database
@@ -250,8 +449,9 @@ impl SwssActor {
         let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
-        if let Err(e) = self.validate_and_process_session(key, &session_data).await {
-            error!("Failed to process session {}: {}", key, e);
+        match self.validate_and_process_session(key, &session_data).await {
+            Ok(_) => {}
+            Err(e) => error!("Failed to process session {}: {}", key, e),
         }
     }
 
@@ -259,9 +459,13 @@ impl SwssActor {
         template_recipient: &Sender<IPFixTemplatesMessage>,
         key: &str,
         session_data: &SessionData,
-    ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
-            error!("Failed to process session {}: {}", key, e);
+    ) -> bool {
+        match Self::validate_and_send_session(template_recipient, key, session_data).await {
+            Ok(processed) => processed,
+            Err(e) => {
+                error!("Failed to process session {}: {}", key, e);
+                false
+            }
         }
     }
 
@@ -295,7 +499,7 @@ impl SwssActor {
         &mut self,
         key: &str,
         session_data: &SessionData,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         Self::validate_and_send_session(&self.template_recipient, key, session_data).await
     }
 
@@ -308,11 +512,11 @@ impl SwssActor {
         template_recipient: &Sender<IPFixTemplatesMessage>,
         key: &str,
         session_data: &SessionData,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         // Only process enabled sessions with ipfix type
         if session_data.stream_status != "enabled" {
             debug!("Skipping disabled session: {}", key);
-            return Ok(());
+            return Ok(false);
         }
 
         if session_data.session_type != "ipfix" {
@@ -320,7 +524,7 @@ impl SwssActor {
                 "Skipping non-IPFIX session: {} (type: {})",
                 key, session_data.session_type
             );
-            return Ok(());
+            return Ok(false);
         }
 
         if session_data.session_config.is_empty() {
@@ -392,7 +596,12 @@ impl SwssActor {
             }
         };
 
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
+        let message = IPFixTemplatesMessage::new(
+            key.to_string(),
+            templates,
+            object_names,
+            object_ids,
+        );
 
         template_recipient
             .send(message)
@@ -400,7 +609,43 @@ impl SwssActor {
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
 
         info!("Successfully sent IPFix templates for session: {}", key);
-        Ok(())
+        Ok(true)
+    }
+
+    async fn send_aggregator_config_for_session(
+        aggregator_config_recipient: &Sender<AggregatorConfigMessage>,
+        aggregator_state: &AggregatorConfigState,
+        key: &str,
+        is_delete: bool,
+    ) {
+        let message = if is_delete {
+            AggregatorConfigMessage::delete(key.to_string())
+        } else {
+            AggregatorConfigMessage::new(
+                key.to_string(),
+                aggregator_state.config_for_session_key(key).cloned(),
+            )
+        };
+
+        if let Err(e) = aggregator_config_recipient.send(message).await {
+            error!("Failed to send aggregator config for {}: {}", key, e);
+        }
+    }
+
+    async fn send_aggregator_configs_for_sessions(
+        aggregator_config_recipient: &Sender<AggregatorConfigMessage>,
+        aggregator_state: &AggregatorConfigState,
+        session_keys: Vec<String>,
+    ) {
+        for key in session_keys {
+            Self::send_aggregator_config_for_session(
+                aggregator_config_recipient,
+                aggregator_state,
+                &key,
+                false,
+            )
+            .await;
+        }
     }
 
     /// Handles session deletion events
@@ -410,6 +655,80 @@ impl SwssActor {
     #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
         Self::process_session_delete(&self.template_recipient, key).await;
+    }
+}
+
+#[derive(Default)]
+struct AggregatorConfigState {
+    profile_aggregators: HashMap<String, String>,
+    aggregator_configs: HashMap<String, AggregatorConfig>,
+    sessions: HashSet<String>,
+}
+
+impl AggregatorConfigState {
+    fn add_session(&mut self, key: String) {
+        self.sessions.insert(key);
+    }
+
+    fn remove_session(&mut self, key: &str) {
+        self.sessions.remove(key);
+    }
+
+    fn set_profile_aggregator(&mut self, profile: String, aggregator: Option<String>) {
+        match aggregator {
+            Some(aggregator) => {
+                self.profile_aggregators.insert(profile, aggregator);
+            }
+            None => {
+                self.profile_aggregators.remove(&profile);
+            }
+        }
+    }
+
+    fn remove_profile(&mut self, profile: &str) {
+        self.profile_aggregators.remove(profile);
+    }
+
+    fn set_aggregator_config(&mut self, name: String, config: Option<AggregatorConfig>) {
+        match config {
+            Some(config) => {
+                self.aggregator_configs.insert(name, config);
+            }
+            None => {
+                self.aggregator_configs.remove(&name);
+            }
+        }
+    }
+
+    fn remove_aggregator(&mut self, name: &str) {
+        self.aggregator_configs.remove(name);
+    }
+
+    fn config_for_session_key(&self, session_key: &str) -> Option<&AggregatorConfig> {
+        let profile = SwssActor::extract_profile_from_session_key(session_key);
+        let aggregator = self.profile_aggregators.get(profile)?;
+        self.aggregator_configs.get(aggregator)
+    }
+
+    fn session_keys_for_profile(&self, profile: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| SwssActor::extract_profile_from_session_key(key) == profile)
+            .cloned()
+            .collect()
+    }
+
+    fn session_keys_for_aggregator(&self, aggregator: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| {
+                let profile = SwssActor::extract_profile_from_session_key(key);
+                self.profile_aggregators
+                    .get(profile)
+                    .is_some_and(|configured| configured == aggregator)
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -439,7 +758,9 @@ mod tests {
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
-        SwssActor::new(template_sender).expect("Failed to create SwssActor")
+        let (aggregator_config_sender, mut aggregator_config_receiver) = channel(100);
+        tokio::spawn(async move { while aggregator_config_receiver.recv().await.is_some() {} });
+        SwssActor::new(template_sender, aggregator_config_sender).expect("Failed to create SwssActor")
     }
 
     #[tokio::test]
@@ -500,6 +821,108 @@ mod tests {
         assert_eq!(received_message.object_ids, Some(vec![1, 2, 3]));
     }
 
+    #[test]
+    fn test_profile_and_aggregator_config_mapping() {
+        let mut profile_fields = HashMap::new();
+        profile_fields.insert("aggregator".to_string(), CxxString::from("harm0"));
+        assert_eq!(
+            SwssActor::parse_profile_aggregator(&profile_fields),
+            Some("harm0".to_string())
+        );
+
+        let mut aggregator_fields = HashMap::new();
+        aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
+        assert_eq!(
+            SwssActor::parse_aggregator_config(&aggregator_fields)
+                .expect("aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+
+        let empty_aggregator_fields = HashMap::new();
+        assert_eq!(
+            SwssActor::parse_aggregator_config(&empty_aggregator_fields)
+                .expect("aggregator config")
+                .reporting_rate,
+            None
+        );
+
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(100),
+            }),
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("session aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn test_multiple_profiles_can_share_aggregator_config() {
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile1|QUEUE".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_profile_aggregator("profile1".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(100),
+            }),
+        );
+
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(200),
+            }),
+        );
+
+        let mut affected_sessions = state.session_keys_for_aggregator("harm0");
+        affected_sessions.sort();
+        assert_eq!(
+            affected_sessions,
+            vec!["profile0|PORT".to_string(), "profile1|QUEUE".to_string()]
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 updated aggregator config")
+                .reporting_rate,
+            Some(200)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 updated aggregator config")
+                .reporting_rate,
+            Some(200)
+        );
+    }
+
     #[tokio::test]
     async fn test_session_update_without_object_names() {
         let (template_sender, mut template_receiver) = channel(1);
@@ -549,6 +972,7 @@ mod tests {
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
+
     }
 
     #[tokio::test]
