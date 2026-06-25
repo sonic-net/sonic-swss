@@ -5,6 +5,7 @@
 #include <linux/if.h>
 #include <netlink/route/link.h>
 #include <chrono>
+#include <fstream>
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -58,6 +59,7 @@ void TeamSync::periodic()
         }
     }
 
+    processEventQueue();
     doSelectableTask();
 }
 
@@ -115,6 +117,7 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_LOWER_UP;
     unsigned int ifindex = rtnl_link_get_ifindex(link);
+    unsigned int mtu = rtnl_link_get_mtu(link);
 
     if (type)
     {
@@ -127,20 +130,104 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
                        nlmsg_type, lagName.c_str(), admin, oper, ifindex);
     }
 
-    if (nlmsg_type == RTM_DELLINK)
+    /* Enqueue the event for deferred processing instead of handling inline */
+    NetlinkEvent event;
+    event.nlmsg_type = nlmsg_type;
+    event.lagName = lagName;
+    event.ifindex = static_cast<int>(ifindex);
+    event.admin_state = admin;
+    event.oper_state = oper;
+    event.mtu = mtu;
+    m_eventQueue.push_back(event);
+
+    SWSS_LOG_INFO("Enqueued netlink event type:%d for LAG %s ifindex:%d (queue size: %zu)",
+                   nlmsg_type, lagName.c_str(), ifindex, m_eventQueue.size());
+}
+
+void TeamSync::enqueueEvent(const NetlinkEvent &event)
+{
+    m_eventQueue.push_back(event);
+}
+
+void TeamSync::processEventQueue()
+{
+    if (m_eventQueue.empty())
     {
-        if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
-        {
-            /* Remove LAG ports and delete LAG */
-            removeLag(lagName);
-        }
         return;
     }
 
-    unsigned int mtu = rtnl_link_get_mtu(link);
-    addLag(lagName, rtnl_link_get_ifindex(link),
-           rtnl_link_get_flags(link) & IFF_UP,
-           rtnl_link_get_flags(link) & IFF_LOWER_UP, mtu);
+    /* Insert a sentinel at the end of the queue to mark the boundary of this
+     * processing cycle. Failed events are pushed to the back of the queue for
+     * retry on the next periodic() call. When we reach the sentinel, all
+     * original events have been processed and we stop. */
+    NetlinkEvent sentinel;
+    sentinel.nlmsg_type = 0;  /* Invalid type — never matches RTM_NEWLINK/RTM_DELLINK */
+    sentinel.lagName = "";
+    sentinel.ifindex = 0;
+    m_eventQueue.push_back(sentinel);
+
+    while (!m_eventQueue.empty())
+    {
+        NetlinkEvent event = m_eventQueue.front();
+        m_eventQueue.pop_front();
+
+        /* Stop when we reach the sentinel — all original events processed */
+        if (event.nlmsg_type == 0)
+        {
+            break;
+        }
+
+        if (event.nlmsg_type == RTM_NEWLINK)
+        {
+            /* Try to add the LAG. addLag() catches system_error internally.
+             * If the device was deleted and recreated (teamd -r), the stale
+             * RTM_NEWLINK will fail and get dropped when the sysfs ifindex
+             * check below detects the mismatch. */
+            addLag(event.lagName, event.ifindex, event.admin_state,
+                   event.oper_state, event.mtu);
+
+            /* If addLag() failed (no entry in m_teamSelectables and this was a
+             * new LAG), check whether the ifindex is still valid. If not, drop
+             * the event — the device no longer exists. */
+            if (m_teamSelectables.find(event.lagName) == m_teamSelectables.end())
+            {
+                /* Check if the ifindex is still valid by reading sysfs */
+                string sysPath = "/sys/class/net/" + event.lagName + "/ifindex";
+                ifstream ifs(sysPath);
+                if (!ifs.good())
+                {
+                    SWSS_LOG_NOTICE("Dropping failed RTM_NEWLINK for LAG %s "
+                                    "(ifindex %d) — interface no longer exists",
+                                    event.lagName.c_str(), event.ifindex);
+                    continue;
+                }
+
+                int currentIfindex = 0;
+                ifs >> currentIfindex;
+                if (currentIfindex != event.ifindex)
+                {
+                    SWSS_LOG_NOTICE("Dropping failed RTM_NEWLINK for LAG %s "
+                                    "(ifindex %d) — current ifindex is %d",
+                                    event.lagName.c_str(), event.ifindex, currentIfindex);
+                    continue;
+                }
+
+                /* ifindex is still valid but init failed — push to back of queue
+                 * for retry on next periodic() cycle (after the sentinel) */
+                SWSS_LOG_INFO("Re-queuing RTM_NEWLINK for LAG %s (ifindex %d) "
+                              "for retry on next cycle", event.lagName.c_str(), event.ifindex);
+                m_eventQueue.push_back(event);
+            }
+        }
+        else if (event.nlmsg_type == RTM_DELLINK)
+        {
+            if (m_teamSelectables.find(event.lagName) != m_teamSelectables.end())
+            {
+                removeLag(event.lagName);
+            }
+        }
+    }
+
 }
 
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
@@ -177,20 +264,6 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
     if (lag_update)
     {
-        /* Create the team instance.
-         * On container restart, teamsyncd may receive RTM_NEWLINK for pre-existing
-         * team devices (from the kernel's initial dump) before teammgrd has had a
-         * chance to recreate them via "teamd -r".  The recreate deletes the old
-         * kernel device first, so team_init() fails with EADDRNOTAVAIL (errno 99)
-         * because the ifindex is no longer valid.  Catch the exception here so it
-         * does not propagate through NetLink::readData() into Select::poll_descriptors,
-         * which would abort the entire netlink processing loop.  When teamd finishes
-         * recreating the device the kernel emits a fresh RTM_NEWLINK with the correct
-         * new ifindex and addLag() is called again, at which point initialization
-         * succeeds.
-         * STATE_DB is written only after the team instance is successfully created
-         * to prevent dependent services (e.g. intfmgrd) from acting on a LAG that
-         * teamd has not yet finished setting up. */
         try
         {
             auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
@@ -208,7 +281,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         catch (const system_error& e)
         {
             SWSS_LOG_ERROR("addLag: Failed to initialize team handler for LAG %s "
-                           "(ifindex %d): %d:%s. Waiting for next RTM_NEWLINK.",
+                           "(ifindex %d): %d:%s. Event will be retried.",
                            lagName.c_str(), ifindex, e.code().value(), e.what());
         }
     }
@@ -282,87 +355,67 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     m_lagName(lagName),
     m_ifindex(ifindex)
 {
-    int count = 0;
-    int max_retries = 3;
-
-    while (true)
+    /* Try once — no retry loop. The queue-based event processing in
+     * TeamSync::processEventQueue() handles retries by re-queuing failed
+     * events for the next periodic() call. */
+    m_team = team_alloc();
+    if (!m_team)
     {
-        try
-        {
-            m_team = team_alloc();
-            if (!m_team)
-            {
-                throw system_error(make_error_code(errc::address_not_available),
-                                   "Unable to allocate team socket");
-            }
-
-            int err = team_init(m_team, ifindex);
-            if (err)
-            {
-                team_free(m_team);
-                m_team = NULL;
-                throw system_error(make_error_code(errc::address_not_available),
-                                   "Unable to initialize team socket");
-            }
-
-            err = team_change_handler_register(m_team, &gPortChangeHandler, this);
-            if (err)
-            {
-                team_free(m_team);
-                m_team = NULL;
-                throw system_error(make_error_code(errc::address_not_available),
-                                   "Unable to register port change event");
-            }
-
-            struct teamdctl *m_teamdctl = teamdctl_alloc();
-            if (!m_teamdctl)
-            {
-                team_free(m_team);
-                m_team = NULL;
-                throw system_error(make_error_code(errc::address_not_available),
-                                   "Unable to allocate teamdctl socket");
-            }
-
-            err = teamdctl_connect(m_teamdctl, lagName.c_str(), nullptr, "usock");
-            if (err)
-            {
-                team_free(m_team);
-                m_team = NULL;
-                teamdctl_free(m_teamdctl);
-                throw system_error(make_error_code(errc::connection_refused),
-                                   "Unable to connect to teamd");
-            }
-
-            char *response;
-            err = teamdctl_config_get_raw_direct(m_teamdctl, &response);
-            if (err)
-            {
-                team_free(m_team);
-                m_team = NULL;
-                teamdctl_disconnect(m_teamdctl);
-                teamdctl_free(m_teamdctl);
-                throw system_error(make_error_code(errc::io_error),
-                                   "Unable to get config from teamd (to prove that it is running and alive)");
-            }
-
-            teamdctl_disconnect(m_teamdctl);
-            teamdctl_free(m_teamdctl);
-
-            break;
-        }
-        catch (const system_error& e)
-        {
-            SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
-                          lagName.c_str(), e.code().value(), e.what(), count);
-
-            if (++count == max_retries)
-            {
-                throw;
-            }
-
-            sleep(1);
-        }
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to allocate team socket");
     }
+
+    int err = team_init(m_team, ifindex);
+    if (err)
+    {
+        team_free(m_team);
+        m_team = NULL;
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to initialize team socket");
+    }
+
+    err = team_change_handler_register(m_team, &gPortChangeHandler, this);
+    if (err)
+    {
+        team_free(m_team);
+        m_team = NULL;
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to register port change event");
+    }
+
+    struct teamdctl *m_teamdctl = teamdctl_alloc();
+    if (!m_teamdctl)
+    {
+        team_free(m_team);
+        m_team = NULL;
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to allocate teamdctl socket");
+    }
+
+    err = teamdctl_connect(m_teamdctl, lagName.c_str(), nullptr, "usock");
+    if (err)
+    {
+        team_free(m_team);
+        m_team = NULL;
+        teamdctl_free(m_teamdctl);
+        throw system_error(make_error_code(errc::connection_refused),
+                           "Unable to connect to teamd");
+    }
+
+    char *response;
+    err = teamdctl_config_get_raw_direct(m_teamdctl, &response);
+    if (err)
+    {
+        team_free(m_team);
+        m_team = NULL;
+        teamdctl_disconnect(m_teamdctl);
+        teamdctl_free(m_teamdctl);
+        throw system_error(make_error_code(errc::io_error),
+                           "Unable to get config from teamd (to prove that it is running and alive)");
+    }
+
+    teamdctl_disconnect(m_teamdctl);
+    teamdctl_free(m_teamdctl);
 
     /* Sync LAG at first */
     onChange();
