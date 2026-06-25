@@ -83,7 +83,7 @@ impl ReportingRateState {
         }
 
         let window = sample.observation_time / self.interval_ns;
-        // Reporting-rate harmonization is sample-driven: a later sample closes
+        // Reporting-rate aggregation is sample-driven: a later sample closes
         // the previous window. For continuous stream telemetry this avoids a
         // per-session timer, accepting that the final partial window may remain
         // buffered when a stream becomes idle or ends.
