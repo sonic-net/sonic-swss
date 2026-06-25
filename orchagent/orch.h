@@ -121,6 +121,7 @@ public:
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }
+    int getPri() const override { return m_selectable->getPri(); }
 
     // Disable copying
     Executor(const Executor&) = delete;
