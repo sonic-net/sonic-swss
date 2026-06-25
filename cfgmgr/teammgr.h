@@ -1,7 +1,9 @@
 #pragma once
 
+#include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -10,6 +12,13 @@
 #include <sys/types.h>
 
 namespace swss {
+
+struct LagRunnerConfig
+{
+    int min_links = 0;
+    bool fallback = false;
+    bool fast_rate = false;
+};
 
 class TeamMgr : public Orch
 {
@@ -33,6 +42,7 @@ private:
     ProducerStateTable m_appLagTable;
 
     std::set<std::string> m_lagList;
+    std::map<std::string, LagRunnerConfig> m_lagRunnerConfig;
 
     MacAddress m_mac;
 
@@ -43,6 +53,7 @@ private:
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);
+    bool restartLag(const std::string &alias, int min_links, bool fallback, bool fast_rate);
     task_process_status addLagMember(const std::string &lag, const std::string &member);
     bool removeLagMember(const std::string &lag, const std::string &member);
 
