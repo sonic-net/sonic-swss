@@ -32,6 +32,7 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+    m_cfgVlanSubInterfaceTable(cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME),
     m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
     m_cfgEvpnNvoTable(cfgDb, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -349,7 +350,19 @@ bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
 
-    if (!port.compare(0, strlen("Vlan"), "Vlan"))
+    bool isSubIntf = (port.find('.') != string::npos);
+
+    if (isSubIntf &&
+        (!port.compare(0, strlen("Ethernet"), "Ethernet") ||
+         !port.compare(0, strlen("PortChannel"), "PortChannel")))
+    {
+        if (!m_cfgVlanSubInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else if (!port.compare(0, strlen("Vlan"), "Vlan"))
     {
         if (!m_cfgVlanInterfaceTable.get(port, values))
         {
