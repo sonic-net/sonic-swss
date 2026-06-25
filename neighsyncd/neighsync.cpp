@@ -14,6 +14,7 @@
 
 #include "neighsync.h"
 #include "warm_restart.h"
+#include "subintf.h"
 #include <algorithm>
 #include <linux/neighbour.h>
 
@@ -32,6 +33,7 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+    m_cfgVlanSubInterfaceTable(cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME),
     m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
     m_cfgEvpnNvoTable(cfgDb, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -349,7 +351,26 @@ bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
 
-    if (!port.compare(0, strlen("Vlan"), "Vlan"))
+    /*
+     * VLAN sub-interfaces appear in the kernel with either a long-name
+     * (e.g. "Ethernet0.10", "PortChannel1.10") or a short-name
+     * (e.g. "Eth0.10", "Po1.10") format. Both forms are valid CONFIG_DB
+     * keys for VLAN_SUB_INTERFACE, and the kernel ifname matches whatever
+     * was used when "ip link add link <parent> name <subintf>" was invoked
+     * by intfmgrd. Use the same swss::subIntf parser that intfmgr /
+     * portsorch use, so any name those modules accept is also accepted
+     * here (and nothing more).
+     */
+    subIntf subif(port);
+    if (subif.isValid())
+    {
+        if (!m_cfgVlanSubInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else if (!port.compare(0, strlen("Vlan"), "Vlan"))
     {
         if (!m_cfgVlanInterfaceTable.get(port, values))
         {
