@@ -14,6 +14,7 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "saihelper.h"
+#include "policerorch.h"
 
 using namespace std;
 using namespace swss;
@@ -32,6 +33,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -139,6 +141,11 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
 static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
     { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
+};
+
+static acl_rule_attr_lookup_t aclPolicerActionLookup =
+{
+    { ACTION_POLICER_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER}
 };
 
 static acl_packet_action_lookup_t aclPacketActionLookup =
@@ -842,6 +849,7 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
         auto innerAction = aclInnerActionLookup.find(action);
+        auto policerAction = aclPolicerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
@@ -865,6 +873,10 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         else if (metadataAction != aclMetadataDscpActionLookup.end())
         {
             saiActionAttr = metadataAction->second;
+        }
+        else if (policerAction != aclPolicerActionLookup.end())
+        {
+            saiActionAttr = policerAction->second;
         }
         else
         {
@@ -1813,6 +1825,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
         }
+        else if (aclPolicerActionLookup.find(action) != aclPolicerActionLookup.cend())
+        {
+            return make_shared<AclRulePolicer>(acl, rule, table);
+        }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
@@ -2246,6 +2262,104 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
  {
     //do nothing
  }
+
+AclRulePolicer::AclRulePolicer(AclOrch *aclOrch, string rule, string table, bool createCounter) :
+        AclRule(aclOrch, rule, table, createCounter)
+{
+}
+
+bool AclRulePolicer::validateAddAction(string attr_name, string attr_value)
+{
+    SWSS_LOG_ENTER();
+
+    if (attr_name != ACTION_POLICER_ACTION)
+    {
+        return false;
+    }
+
+    if (attr_value.empty())
+    {
+        SWSS_LOG_ERROR("Empty policer name for action %s in rule %s", attr_name.c_str(), m_id.c_str());
+        return false;
+    }
+
+    sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+    if (!gPolicerOrch->getPolicerOid(attr_value, policer_oid))
+    {
+        SWSS_LOG_ERROR("Failed to add policer action to rule %s: policer %s does not exist",
+                m_id.c_str(), attr_value.c_str());
+        return false;
+    }
+
+    sai_acl_action_data_t actionData = {};
+    actionData.enable = true;
+    actionData.parameter.oid = policer_oid;
+
+    m_policerName = attr_value;
+
+    return setAction(aclPolicerActionLookup[attr_name], actionData);
+}
+
+bool AclRulePolicer::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void AclRulePolicer::onUpdate(SubjectType, void *)
+{
+    // Do nothing
+}
+
+bool AclRulePolicer::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::createRule())
+    {
+        return false;
+    }
+
+    // Hold a reference on the policer so it cannot be removed while this rule
+    // binds it. Bump only once per created rule to keep the count balanced
+    // across recreate cycles.
+    if (!m_policerRefHeld)
+    {
+        if (!gPolicerOrch->increaseRefCount(m_policerName))
+        {
+            SWSS_LOG_ERROR("Failed to increase reference count for policer %s bound by rule %s",
+                    m_policerName.c_str(), m_id.c_str());
+            return false;
+        }
+        m_policerRefHeld = true;
+    }
+
+    return true;
+}
+
+bool AclRulePolicer::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (m_policerRefHeld)
+    {
+        gPolicerOrch->decreaseRefCount(m_policerName);
+        m_policerRefHeld = false;
+    }
+
+    return true;
+}
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
         AclRule(aclOrch, rule, table),
@@ -5573,6 +5687,29 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 type = table_id == m_mirrorTableId[stage] ? TABLE_TYPE_MIRROR : TABLE_TYPE_MIRRORV6;
             }
 
+            /* If the rule references a policer that has not been created yet,
+             * defer it and rely on the Consumer m_toSync retry (same pattern as
+             * "Wait for ACL table" above). This covers the case where the
+             * POLICER table is synced after the ACL_RULE table. */
+            bool waitForPolicer = false;
+            for (const auto& itr : kfvFieldsValues(t))
+            {
+                if (to_upper(fvField(itr)) == ACTION_POLICER_ACTION)
+                {
+                    if (!fvValue(itr).empty() && !gPolicerOrch->policerExists(fvValue(itr)))
+                    {
+                        SWSS_LOG_INFO("Wait for policer %s to be created for ACL rule %s",
+                                fvValue(itr).c_str(), key.c_str());
+                        waitForPolicer = true;
+                    }
+                    break;
+                }
+            }
+            if (waitForPolicer)
+            {
+                it++;
+                continue;
+            }
 
             try
             {
