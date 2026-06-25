@@ -18,6 +18,7 @@ namespace
         CollectorCreateNotImplemented,
         SwitchNotifySetNotImplemented,
         AllSupported,
+        AttributeCapabilitySuccessUnsupported,
     };
 
     static thread_local Hook g_hook = Hook::None;
@@ -68,6 +69,13 @@ extern "C"
             attr_capability->create_implemented = true;
             attr_capability->set_implemented = true;
             attr_capability->get_implemented = true;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        if (g_hook == Hook::AttributeCapabilitySuccessUnsupported)
+        {
+            if (!attr_capability) return SAI_STATUS_INVALID_PARAMETER;
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
             return SAI_STATUS_SUCCESS;
         }
 
@@ -156,5 +164,10 @@ namespace hftel_is_supported_ut
     void setSaiHookAllSupported()
     {
         g_hook = Hook::AllSupported;
+    }
+
+    void setSaiHookAttributeCapabilitySuccessUnsupported()
+    {
+        g_hook = Hook::AttributeCapabilitySuccessUnsupported;
     }
 }

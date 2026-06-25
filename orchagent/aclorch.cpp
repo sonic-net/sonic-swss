@@ -3481,37 +3481,17 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     removeAllAclTableStatus();
     removeAllAclRuleStatus();
 
-    // TODO: Query SAI to get mirror table capabilities
-    // Right now, verified platforms that support mirroring IPv6 packets are
-    // Broadcom and Mellanox. Virtual switch is also supported for testing
-    // purposes.
     string platform = getenv("platform") ? getenv("platform") : "";
     string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
-    if (platform == BRCM_PLATFORM_SUBSTRING ||
-            platform == CISCO_8000_PLATFORM_SUBSTRING ||
-            platform == MLNX_PLATFORM_SUBSTRING ||
-            platform == BFN_PLATFORM_SUBSTRING  ||
-            platform == MRVL_PRST_PLATFORM_SUBSTRING ||
-            platform == MRVL_TL_PLATFORM_SUBSTRING ||
-            platform == NPS_PLATFORM_SUBSTRING ||
-            platform == XS_PLATFORM_SUBSTRING ||
-            platform == CLX_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+
+    // MIRRORV6 (IPv6 mirror) ACL table support: query SAI rather than relying
+    // on a hardcoded platform list (see queryAclMirrorV6Capability()).
+    m_mirrorTableCapabilities =
     {
-        m_mirrorTableCapabilities =
-        {
-            { TABLE_TYPE_MIRROR, true },
-            { TABLE_TYPE_MIRRORV6, true },
-        };
-    }
-    else
-    {
-        m_mirrorTableCapabilities =
-        {
-            { TABLE_TYPE_MIRROR, true },
-            { TABLE_TYPE_MIRRORV6, false },
-        };
-    }
+        // IPv4 mirror was never platform-gated; only MIRRORV6 is queried.
+        { TABLE_TYPE_MIRROR, true },
+        { TABLE_TYPE_MIRRORV6, queryAclMirrorV6Capability(platform) },
+    };
 
     if ( platform == MRVL_PRST_PLATFORM_SUBSTRING ||
 	    platform == MRVL_TL_PLATFORM_SUBSTRING ||
@@ -5213,6 +5193,60 @@ bool AclOrch::isAclMirrorV4Supported() const
 bool AclOrch::isAclMirrorV6Supported() const
 {
     return isAclMirrorTableSupported(TABLE_TYPE_MIRRORV6);
+}
+
+bool AclOrch::queryAclMirrorV6Capability(const string &platform) const
+{
+    // No real ASIC on the virtual switch; assume supported so VS tests run.
+    if (platform == VS_PLATFORM_SUBSTRING)
+    {
+        return true;
+    }
+
+    // The IPv6 match field distinguishes the MIRRORV6 table, so its create
+    // capability gates the table.
+    sai_attr_capability_t capability = {};
+    sai_status_t status = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
+            SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6, &capability);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Queried SAI ACL IPv6 match-field capability: MIRRORV6 %s",
+                capability.create_implemented ? "supported" : "not supported");
+        return capability.create_implemented;
+    }
+
+    // Query unavailable (older SAI): fall back to the historical platform list
+    // so those platforms behave as before.
+    static const set<string> mirrorV6SupportedPlatforms =
+    {
+        BRCM_PLATFORM_SUBSTRING,
+        CISCO_8000_PLATFORM_SUBSTRING,
+        MLNX_PLATFORM_SUBSTRING,
+        BFN_PLATFORM_SUBSTRING,
+        MRVL_PRST_PLATFORM_SUBSTRING,
+        MRVL_TL_PLATFORM_SUBSTRING,
+        NPS_PLATFORM_SUBSTRING,
+        XS_PLATFORM_SUBSTRING,
+        CLX_PLATFORM_SUBSTRING,
+    };
+    bool supported = mirrorV6SupportedPlatforms.count(platform) != 0;
+
+    // NOT_IMPLEMENTED/NOT_SUPPORTED just means the SAI lacks the query (expected
+    // on older SAI) -> NOTICE; any other status is an unexpected error -> WARN.
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_NOTICE("SAI ACL IPv6 match-field capability query not implemented "
+                "(status %d); using platform default for '%s': MIRRORV6 %s",
+                status, platform.c_str(), supported ? "supported" : "not supported");
+    }
+    else
+    {
+        SWSS_LOG_WARN("SAI ACL IPv6 match-field capability query failed (status %d); "
+                "using platform default for '%s': MIRRORV6 %s",
+                status, platform.c_str(), supported ? "supported" : "not supported");
+    }
+    return supported;
 }
 
 bool AclOrch::isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const
