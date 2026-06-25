@@ -729,27 +729,45 @@ bool ArsOrch::createArsProfile(ArsProfileEntry &profile, vector<sai_attribute_t>
 
     // update read-only attributes
     sai_attribute_t attr;
+    attr.value.u32 = 0;
     if (isGetImplemented(SAI_OBJECT_TYPE_ARS_PROFILE, SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_GROUPS))
     {
         attr.id = SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_GROUPS;
         status = sai_ars_profile_api->get_ars_profile_attribute(profile.m_sai_ars_id, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get ars profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_GROUPS: %d",
-                profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+            {
+                SWSS_LOG_NOTICE("ARS profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_GROUPS not supported by SAI (%d); defaulting to 0",
+                    profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get ars profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_GROUPS: %d",
+                    profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            }
             attr.value.u32 = 0;
         }
     }
     profile.max_ecmp_groups = attr.value.u32;
 
+    attr.value.u32 = 0;
     if (isGetImplemented(SAI_OBJECT_TYPE_ARS_PROFILE, SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_MEMBERS_PER_GROUP))
     {
         attr.id = SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_MEMBERS_PER_GROUP;
         status = sai_ars_profile_api->get_ars_profile_attribute(profile.m_sai_ars_id, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get ars profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_MEMBERS_PER_GROUP: %d",
-                profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+            {
+                SWSS_LOG_NOTICE("ARS profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_MEMBERS_PER_GROUP not supported by SAI (%d); defaulting to 0",
+                    profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get ars profile %s (oid 0x%" PRIx64 ") attr SAI_ARS_PROFILE_ATTR_ECMP_ARS_MAX_MEMBERS_PER_GROUP: %d",
+                    profile.profile_name.c_str(), profile.m_sai_ars_id, status);
+            }
             attr.value.u32 = 0;
         }
     }
@@ -1274,6 +1292,8 @@ bool ArsOrch::doTaskArsProfile(Consumer &consumer)
         std::string             default_ars_object;
         ArsSelectorModeNhg nhg_mode = ArsSelectorModeNhg::ARS_SELECTOR_MODE_NHG_INTERFACE;
         ArsSelectorModeNhg new_nhg_mode = ArsSelectorModeNhg::ARS_SELECTOR_MODE_NHG_INTERFACE;
+        ArsSelectorModeNhg prev_nhg_mode = ArsSelectorModeNhg::ARS_SELECTOR_MODE_NHG_INTERFACE;
+        bool nhg_mode_changed = false;
         ArsSelectorModeLag lag_mode = ArsSelectorModeLag::ARS_SELECTOR_MODE_LAG_INTERFACE;
         ArsSelectorModeLag new_lag_mode = ArsSelectorModeLag::ARS_SELECTOR_MODE_LAG_INTERFACE;
 
@@ -1416,10 +1436,11 @@ bool ArsOrch::doTaskArsProfile(Consumer &consumer)
                         SWSS_LOG_ERROR("Invalid NHG selector mode: %s", fvValue(i).c_str());
                         continue;
                     }
-                    if(new_nhg_mode != nhg_mode)
+                    if (new_nhg_mode != nhg_mode)
                     {
-                       createArsProfileSelectorMode(arsProfile_entry->second, new_nhg_mode, nhg_mode);
-                       nhg_mode = new_nhg_mode;
+                        prev_nhg_mode = nhg_mode;
+                        nhg_mode_changed = true;
+                        nhg_mode = new_nhg_mode;
                     }
                 }
                 else if (fvField(i) == ARS_FIELD_NAME_LAG_PATH_SELECTOR_MODE)
@@ -1485,6 +1506,10 @@ bool ArsOrch::doTaskArsProfile(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Failed to create/set ARS profile %s", ars_profile_name.c_str());
                 continue;
+            }
+            if (nhg_mode_changed)
+            {
+                createArsProfileSelectorMode(arsProfile_entry->second, new_nhg_mode, prev_nhg_mode);
             }
             if (new_nhg_mode == ArsSelectorModeNhg::ARS_SELECTOR_MODE_NHG_INTERFACE)
             {
@@ -1879,6 +1904,12 @@ void ArsOrch::doTask(Consumer& consumer)
         return;
     }
 
+    // Defer ARS processing until all ports are created in SAI.
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+
 	if (table_name == CFG_ARS_PROFILE_TABLE_NAME)
     {
         doTaskArsProfile(consumer);
@@ -1898,5 +1929,34 @@ void ArsOrch::doTask(Consumer& consumer)
     else
     {
         SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+    }
+}
+
+void ArsOrch::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    static const std::vector<std::string> ordered_tables = {
+        CFG_ARS_PROFILE_TABLE_NAME,
+        CFG_ARS_OBJECT_TABLE_NAME,
+        CFG_ARS_NEXTHOP_TABLE_NAME,
+        CFG_ARS_INTERFACE_TABLE_NAME
+    };
+
+    for (const auto &table_name : ordered_tables)
+    {
+        auto it = m_consumerMap.find(table_name);
+        if (it != m_consumerMap.end())
+        {
+            it->second->drain();
+        }
+    }
+
+    for (auto &it : m_consumerMap)
+    {
+        if (std::find(ordered_tables.begin(), ordered_tables.end(), it.first) == ordered_tables.end())
+        {
+            it.second->drain();
+        }
     }
 }

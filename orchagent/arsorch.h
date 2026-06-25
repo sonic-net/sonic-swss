@@ -186,6 +186,7 @@ private:
     bool doTaskArsInterfaces(Consumer &consumer);
     bool doTaskArsNexthop(Consumer &consumer);
     void doTask(Consumer& consumer);
+    void doTask() override;
 
     bool isSetImplemented(sai_object_type_t object_type, sai_attr_id_t attr_id);
     bool isCreateImplemented(sai_object_type_t object_type, sai_attr_id_t attr_id);
