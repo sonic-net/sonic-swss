@@ -112,7 +112,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_PACKET_COLOR_ACTION,              SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -146,6 +147,13 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
     { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
+};
+
+static acl_packet_color_lookup_t aclPacketColorLookup =
+{
+    { PACKET_COLOR_GREEN,  SAI_PACKET_COLOR_GREEN },
+    { PACKET_COLOR_YELLOW, SAI_PACKET_COLOR_YELLOW },
+    { PACKET_COLOR_RED,    SAI_PACKET_COLOR_RED },
 };
 
 static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
@@ -2064,6 +2072,17 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             return false;
         }
         actionData.parameter.oid = param_id;
+    }
+    else if (attr_name == ACTION_PACKET_COLOR_ACTION)
+    {
+        const auto it = aclPacketColorLookup.find(attr_value);
+        if (it == aclPacketColorLookup.cend())
+        {
+            SWSS_LOG_ERROR("Invalid packet color %s for action %s",
+                           attr_value.c_str(), attr_name.c_str());
+            return false;
+        }
+        actionData.parameter.s32 = it->second;
     }
     else
     {
@@ -4049,6 +4068,9 @@ void AclOrch::queryAclActionCapability()
     queryAclActionAttrEnumValues(ACTION_PACKET_ACTION,
                                  aclL3ActionLookup,
                                  aclPacketActionLookup);
+    queryAclActionAttrEnumValues(ACTION_PACKET_COLOR_ACTION,
+                                 aclL3ActionLookup,
+                                 aclPacketColorLookup);
     queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
                                  aclDTelActionLookup,
                                  aclDTelFlowOpTypeLookup);

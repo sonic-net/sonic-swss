@@ -2061,6 +2061,207 @@ namespace aclorch_test
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
     }
 
+    sai_switch_api_t *old_sai_switch_api_packet_color;
+
+    // Override SAI get_switch_attribute so that the ASIC reports SET_PACKET_COLOR
+    // (and PACKET_ACTION) as supported ACL actions for both stages.
+    sai_status_t getSwitchAttributePacketColor(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                               _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch (attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 2;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_SET_PACKET_COLOR;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = false;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_packet_color->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    // Verify that the generic (CONFIG_DB) ACL path programs SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR
+    // with the right sai_packet_color_t value for the PACKET_COLOR_ACTION rule action.
+    TEST_F(AclOrchTest, AclRuleSetPacketColorAction)
+    {
+        // Report SET_PACKET_COLOR as a supported ACL action.
+        old_sai_switch_api_packet_color = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributePacketColor;
+
+        auto orch = createAclOrch();
+
+        const string aclTableTypeName = "PACKET_COLOR_TABLE_TYPE";
+        const string aclTableName = "PACKET_COLOR_TABLE";
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableTypeName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                        { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_COLOR_ACTION }
+                    }
+                }
+            })
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, aclTableTypeName },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS }
+                    }
+                }
+            })
+        );
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        const vector<pair<string, sai_packet_color_t>> colors = {
+            { PACKET_COLOR_GREEN,  SAI_PACKET_COLOR_GREEN },
+            { PACKET_COLOR_YELLOW, SAI_PACKET_COLOR_YELLOW },
+            { PACKET_COLOR_RED,    SAI_PACKET_COLOR_RED }
+        };
+
+        for (const auto &color : colors)
+        {
+            const string aclRuleName = "PACKET_COLOR_RULE_" + color.first;
+            orch->doAclRuleTask(
+                deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "999" },
+                            { MATCH_SRC_IP, "1.2.3.4/32" },
+                            { ACTION_PACKET_COLOR_ACTION, color.first }
+                        }
+                    }
+                })
+            );
+
+            auto rule = orch->getAclRule(aclTableName, aclRuleName);
+            ASSERT_NE(rule, nullptr);
+
+            const auto &actions = Portal::AclRuleInternal::getActions(rule);
+            auto it = actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR);
+            ASSERT_NE(it, actions.end());
+            ASSERT_TRUE(it->second.getSaiAttr().value.aclaction.enable);
+            ASSERT_EQ(it->second.getSaiAttr().value.aclaction.parameter.s32, color.second);
+        }
+
+        // An invalid packet color must be rejected (rule not created).
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName + "|PACKET_COLOR_RULE_INVALID",
+                    SET_COMMAND,
+                    {
+                        { RULE_PRIORITY, "998" },
+                        { MATCH_SRC_IP, "1.2.3.5/32" },
+                        { ACTION_PACKET_COLOR_ACTION, "PURPLE" }
+                    }
+                }
+            })
+        );
+        ASSERT_EQ(orch->getAclRule(aclTableName, "PACKET_COLOR_RULE_INVALID"), nullptr);
+
+        sai_switch_api = old_sai_switch_api_packet_color;
+    }
+
+    sai_switch_api_t *old_sai_switch_api_no_packet_color;
+
+    // Override SAI get_switch_attribute so that the ASIC does NOT advertise
+    // SET_PACKET_COLOR (only PACKET_ACTION is supported).
+    sai_status_t getSwitchAttributeNoPacketColor(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                                 _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch (attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 1;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 1;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = false;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_no_packet_color->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    // When the ASIC does not advertise SET_PACKET_COLOR, an ACL table whose type
+    // lists PACKET_COLOR_ACTION must be rejected: AclOrch validates every table
+    // action against the queried switch capability on table creation.
+    TEST_F(AclOrchTest, AclTableSetPacketColorActionNotSupported)
+    {
+        old_sai_switch_api_no_packet_color = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeNoPacketColor;
+
+        auto orch = createAclOrch();
+
+        const string aclTableTypeName = "PACKET_COLOR_UNSUP_TABLE_TYPE";
+        const string aclTableName = "PACKET_COLOR_UNSUP_TABLE";
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableTypeName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                        { ACL_TABLE_TYPE_ACTIONS, string(ACTION_PACKET_ACTION) + comma + ACTION_PACKET_COLOR_ACTION }
+                    }
+                }
+            })
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, aclTableTypeName },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS }
+                    }
+                }
+            })
+        );
+
+        // Restore the SAI switch API before asserting so that a failed
+        // expectation does not leave TearDown's remove_switch dereferencing
+        // the temporary stack override.
+        sai_switch_api = old_sai_switch_api_no_packet_color;
+
+        // The table is rejected because SET_PACKET_COLOR is not a supported action.
+        ASSERT_EQ(orch->getAclTable(aclTableName), nullptr);
+    }
+
     TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
     {
         const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";
