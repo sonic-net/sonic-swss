@@ -1150,6 +1150,185 @@ namespace aclorch_test
         }
     }
 
+    // An ACL table with no PRIORITY field inherits the default group member
+    // priority, and a configured PRIORITY is parsed and stored on the table.
+    TEST_F(AclOrchTest, AclTableGroupMemberPriority)
+    {
+        auto orch = createAclOrch();
+
+        // No PRIORITY configured -> default is used.
+        {
+            string acl_table_id = "acl_table_default_prio";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "default priority" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+
+            orch->doAclTableTask(kvfAclTable);
+
+            const auto *acl_table = orch->getAclTable(acl_table_id);
+            ASSERT_NE(acl_table, nullptr);
+            ASSERT_EQ(acl_table->priority, (sai_uint32_t)ACL_TABLE_GROUP_MEMBER_DEFAULT_PRIORITY);
+        }
+
+        // PRIORITY configured -> the configured value is stored on the table.
+        {
+            string acl_table_id = "acl_table_custom_prio";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "custom priority" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PRIORITY, "200" },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+
+            orch->doAclTableTask(kvfAclTable);
+
+            const auto *acl_table = orch->getAclTable(acl_table_id);
+            ASSERT_NE(acl_table, nullptr);
+            ASSERT_EQ(acl_table->priority, (sai_uint32_t)200);
+        }
+    }
+
+    // Helpers to force a known ACL table group member priority range so that the
+    // range-validation path in AclOrch::processAclTablePriority can be exercised.
+    static sai_status_t (*g_orig_get_switch_attribute_fn)(sai_object_id_t, uint32_t, sai_attribute_t *) = nullptr;
+
+    static sai_status_t _ut_acl_table_prio_get_switch_attribute(
+        sai_object_id_t switch_id, uint32_t attr_count, sai_attribute_t *attr_list)
+    {
+        if (attr_count == 2 && attr_list != nullptr &&
+            attr_list[0].id == SAI_SWITCH_ATTR_ACL_TABLE_MINIMUM_PRIORITY &&
+            attr_list[1].id == SAI_SWITCH_ATTR_ACL_TABLE_MAXIMUM_PRIORITY)
+        {
+            attr_list[0].value.u32 = 100;
+            attr_list[1].value.u32 = 10000;
+            return SAI_STATUS_SUCCESS;
+        }
+        return g_orig_get_switch_attribute_fn(switch_id, attr_count, attr_list);
+    }
+
+    // RAII guard so the original SAI switch API is restored even if an assertion
+    // returns early from the test.
+    struct AclTablePriorityRangeStub
+    {
+        AclTablePriorityRangeStub()
+        {
+            g_orig_get_switch_attribute_fn = sai_switch_api->get_switch_attribute;
+            sai_switch_api->get_switch_attribute = _ut_acl_table_prio_get_switch_attribute;
+        }
+        ~AclTablePriorityRangeStub()
+        {
+            sai_switch_api->get_switch_attribute = g_orig_get_switch_attribute_fn;
+        }
+    };
+
+    // An invalid (non-numeric) priority is rejected and the table is not created.
+    TEST_F(AclOrchTest, AclTableGroupMemberPriorityInvalid)
+    {
+        auto orch = createAclOrch();
+
+        string acl_table_id = "acl_table_invalid_prio";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "invalid priority" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PRIORITY, "not_a_number" },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+    }
+
+    // Changing the priority of an existing table recreates it with the new value.
+    TEST_F(AclOrchTest, AclTableGroupMemberPriorityUpdate)
+    {
+        auto orch = createAclOrch();
+        string acl_table_id = "acl_table_upd_prio";
+
+        auto setPriority = [&](const string &prio) {
+            auto kvf = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "update priority" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PRIORITY, prio },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvf);
+        };
+
+        setPriority("200");
+        const auto *acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+        ASSERT_EQ(acl_table->priority, (sai_uint32_t)200);
+
+        setPriority("300");
+        acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+        ASSERT_EQ(acl_table->priority, (sai_uint32_t)300);
+    }
+
+    // With a switch-reported priority range, out-of-range values are rejected.
+    TEST_F(AclOrchTest, AclTableGroupMemberPriorityRange)
+    {
+        AclTablePriorityRangeStub stub;
+
+        auto orch = createAclOrch();
+
+        auto setPriority = [&](const string &id, const string &prio) {
+            auto kvf = deque<KeyOpFieldsValuesTuple>(
+                { { id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "range" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PRIORITY, prio },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvf);
+        };
+
+        // In range -> accepted.
+        setPriority("acl_in_range", "200");
+        const auto *acl_table = orch->getAclTable("acl_in_range");
+        ASSERT_NE(acl_table, nullptr);
+        ASSERT_EQ(acl_table->priority, (sai_uint32_t)200);
+
+        // Below minimum and above maximum -> rejected.
+        setPriority("acl_below_min", "5");
+        ASSERT_EQ(orch->getAclTable("acl_below_min"), nullptr);
+
+        setPriority("acl_above_max", "20000");
+        ASSERT_EQ(orch->getAclTable("acl_above_max"), nullptr);
+    }
+
+    // Priority on a non port/LAG-bound table type (CTRLPLANE) is accepted but
+    // ignored; the table is tracked as a control plane table, not a SAI ACL table.
+    TEST_F(AclOrchTest, AclTableGroupMemberPriorityIgnoredForCtrlPlane)
+    {
+        auto orch = createAclOrch();
+        string acl_table_id = "acl_table_ctrl_prio";
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "ctrlplane" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_CTRLPLANE },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PRIORITY, "200" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+
+        ASSERT_EQ(orch->getTableById(acl_table_id), SAI_NULL_OBJECT_ID);
+    }
+
     // When received ACL rule SET_COMMAND, orchagent can create corresponding ACL rule.
     // When received ACL rule DEL_COMMAND, orchagent can delete corresponding ACL rule.
     //
