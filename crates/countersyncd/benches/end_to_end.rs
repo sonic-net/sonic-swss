@@ -13,13 +13,13 @@ use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
 use countersyncd::actor::counter_db::{CounterDBActor, CounterDBConfig};
-use countersyncd::actor::harmonizer::HarmonizerActor;
+use countersyncd::actor::aggregator::AggregatorActor;
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
 use countersyncd::actor::stats_reporter::{OutputWriter, StatsReporterActor, StatsReporterConfig};
 use countersyncd::message::{
     buffer::SocketBufferMessage,
-    harmonizer::{HarmonizerConfigMessage, HarmonizerStatsMessage},
+    aggregator::{AggregatorConfigMessage, AggregatorStatsMessage},
     ipfix::IPFixTemplatesMessage,
     saistats::SAIStatsMessage,
 };
@@ -122,15 +122,15 @@ fn seed_port_name_map(port_count: usize) {
 async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_counter: Arc<AtomicU64>) -> (Duration, usize, u64) {
     let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
-    let (harmonizer_config_tx, harmonizer_config_rx) = mpsc::channel::<HarmonizerConfigMessage>(prepared.template_messages.len() + 4);
-    let (harmonizer_stats_tx, harmonizer_stats_rx) = mpsc::channel::<HarmonizerStatsMessage>(1024);
+    let (aggregator_config_tx, aggregator_config_rx) = mpsc::channel::<AggregatorConfigMessage>(prepared.template_messages.len() + 4);
+    let (aggregator_stats_tx, aggregator_stats_rx) = mpsc::channel::<AggregatorStatsMessage>(1024);
     let (counter_tx, counter_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (otel_tx, otel_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (stats_tx, stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (otel_done_tx, otel_done_rx) = oneshot::channel();
 
     let mut ipfix = IpfixActor::new(template_rx, buffer_rx);
-    ipfix.add_recipient(harmonizer_stats_tx);
+    ipfix.add_recipient(aggregator_stats_tx);
 
     // Run IpfixActor on a dedicated thread with its own runtime to satisfy thread-local requirements
     let ipfix_handle = spawn_blocking(move || {
@@ -140,11 +140,11 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
         });
     });
 
-    let mut harmonizer = HarmonizerActor::new(harmonizer_config_rx, harmonizer_stats_rx);
-    harmonizer.add_recipient(counter_tx.clone());
-    harmonizer.add_recipient(otel_tx.clone());
-    harmonizer.add_recipient(stats_tx.clone());
-    let harmonizer_handle = tokio::spawn(async move { HarmonizerActor::run(harmonizer).await });
+    let mut aggregator = AggregatorActor::new(aggregator_config_rx, aggregator_stats_rx);
+    aggregator.add_recipient(counter_tx.clone());
+    aggregator.add_recipient(otel_tx.clone());
+    aggregator.add_recipient(stats_tx.clone());
+    let aggregator_handle = tokio::spawn(async move { AggregatorActor::run(aggregator).await });
 
     let counter_cfg = CounterDBConfig {
         interval: Duration::from_millis(100),
@@ -176,10 +176,10 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
             .send(message.clone())
             .await
             .expect("template send should succeed");
-        harmonizer_config_tx
-            .send(HarmonizerConfigMessage::new(message.key.clone(), None))
+        aggregator_config_tx
+            .send(AggregatorConfigMessage::new(message.key.clone(), None))
             .await
-            .expect("harmonizer config send should succeed");
+            .expect("aggregator config send should succeed");
     }
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -216,8 +216,8 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     drop(template_tx);
 
     let _ = ipfix_handle.await.expect("ipfix join");
-    drop(harmonizer_config_tx);
-    let _ = harmonizer_handle.await;
+    drop(aggregator_config_tx);
+    let _ = aggregator_handle.await;
 
     // Allow at least one counter DB write tick before closing the channel
     tokio::time::sleep(counter_interval * 2).await;

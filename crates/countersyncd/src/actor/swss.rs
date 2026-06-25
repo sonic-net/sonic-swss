@@ -1,5 +1,5 @@
 use super::super::message::{
-    harmonizer::{HarmonizerConfig, HarmonizerConfigMessage},
+    aggregator::{AggregatorConfig, AggregatorConfigMessage},
     ipfix::IPFixTemplatesMessage,
 };
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
@@ -17,13 +17,13 @@ const CONFIG_DB_ID: i32 = 4;
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
 const CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_PROFILE";
-const CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE: &str =
-    "HIGH_FREQUENCY_TELEMETRY_HARMONIZER";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR";
 
 #[cfg(test)]
 const MAX_TEST_IDLE_ITERATIONS: usize = 20;
 
-/// SwssActor monitors HFT session state and HFT harmonizer/profile config.
+/// SwssActor monitors HFT session state and HFT aggregator/profile config.
 ///
 /// The state DB message format example:
 /// ```text
@@ -37,9 +37,9 @@ const MAX_TEST_IDLE_ITERATIONS: usize = 20;
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     pub profile_table: SubscriberStateTable,
-    pub harmonizer_table: SubscriberStateTable,
+    pub aggregator_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
-    harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
+    aggregator_config_recipient: Sender<AggregatorConfigMessage>,
 }
 
 #[derive(Debug)]
@@ -53,16 +53,16 @@ enum SwssEvent {
     },
     ProfileUpdate {
         profile: String,
-        harmonizer: Option<String>,
+        aggregator: Option<String>,
     },
     ProfileDelete {
         profile: String,
     },
-    HarmonizerUpdate {
+    AggregatorUpdate {
         name: String,
-        config: Option<HarmonizerConfig>,
+        config: Option<AggregatorConfig>,
     },
-    HarmonizerDelete {
+    AggregatorDelete {
         name: String,
     },
 }
@@ -74,7 +74,7 @@ impl SwssActor {
     /// * `template_recipient` - Channel sender for forwarding IPFIX templates to IPFIX actor
     pub fn new(
         template_recipient: Sender<IPFixTemplatesMessage>,
-        harmonizer_config_recipient: Sender<HarmonizerConfigMessage>,
+        aggregator_config_recipient: Sender<AggregatorConfigMessage>,
     ) -> Result<Self, String> {
         let session_connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
             .map_err(|e| format!("Failed to create DB connection: {}", e))?;
@@ -96,44 +96,44 @@ impl SwssActor {
         )
         .map_err(|e| format!("Failed to create profile table: {}", e))?;
 
-        let harmonizer_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
-            .map_err(|e| format!("Failed to create CONFIG_DB harmonizer connection: {}", e))?;
-        let harmonizer_table = SubscriberStateTable::new(
-            harmonizer_connect,
-            CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
+        let aggregator_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB aggregator connection: {}", e))?;
+        let aggregator_table = SubscriberStateTable::new(
+            aggregator_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
             None,
             None,
         )
-        .map_err(|e| format!("Failed to create harmonizer table: {}", e))?;
+        .map_err(|e| format!("Failed to create aggregator table: {}", e))?;
 
         Ok(SwssActor {
             session_table,
             profile_table,
-            harmonizer_table,
+            aggregator_table,
             template_recipient,
-            harmonizer_config_recipient,
+            aggregator_config_recipient,
         })
     }
 
     /// Main event loop for the SwssActor
     ///
-    /// Continuously monitors HFT session state and harmonizer/profile config updates.
+    /// Continuously monitors HFT session state and aggregator/profile config updates.
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
     pub async fn run(actor: SwssActor) {
         info!(
-            "SwssActor started, monitoring HFT session state and harmonizer/profile config"
+            "SwssActor started, monitoring HFT session state and aggregator/profile config"
         );
 
         let SwssActor {
             mut session_table,
             mut profile_table,
-            mut harmonizer_table,
+            mut aggregator_table,
             template_recipient,
-            harmonizer_config_recipient,
+            aggregator_config_recipient,
         } = actor;
-        let mut harmonizer_state = HarmonizerConfigState::default();
+        let mut aggregator_state = AggregatorConfigState::default();
 
         #[cfg(test)]
         let mut idle_iterations = 0;
@@ -141,7 +141,7 @@ impl SwssActor {
         let mut pending_events = Vec::new();
         for events in [
             Self::collect_profile_events(&profile_table),
-            Self::collect_harmonizer_events(&harmonizer_table),
+            Self::collect_aggregator_events(&aggregator_table),
             Self::collect_session_events(&session_table),
         ] {
             match events {
@@ -165,10 +165,10 @@ impl SwssActor {
                             Err(e) => Err(format!("Error reading from profile table: {}", e)),
                         }
                     }
-                    result = harmonizer_table.read_data_async() => {
+                    result = aggregator_table.read_data_async() => {
                         match result {
-                            Ok(()) => Self::collect_harmonizer_events(&harmonizer_table),
-                            Err(e) => Err(format!("Error reading from harmonizer table: {}", e)),
+                            Ok(()) => Self::collect_aggregator_events(&aggregator_table),
+                            Err(e) => Err(format!("Error reading from aggregator table: {}", e)),
                         }
                     }
                     _ = tokio::time::sleep(Duration::from_millis(50)), if cfg!(test) => {
@@ -205,19 +205,19 @@ impl SwssActor {
                 match event {
                 SwssEvent::SessionUpdate { key, session_data } => {
                     if Self::process_session_update(&template_recipient, &key, &session_data).await {
-                        harmonizer_state.add_session(key.clone());
-                        Self::send_harmonizer_config_for_session(
-                            &harmonizer_config_recipient,
-                            &harmonizer_state,
+                        aggregator_state.add_session(key.clone());
+                        Self::send_aggregator_config_for_session(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
                             &key,
                             false,
                         )
                         .await;
                     } else {
-                        harmonizer_state.remove_session(&key);
-                        Self::send_harmonizer_config_for_session(
-                            &harmonizer_config_recipient,
-                            &harmonizer_state,
+                        aggregator_state.remove_session(&key);
+                        Self::send_aggregator_config_for_session(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
                             &key,
                             true,
                         )
@@ -226,10 +226,10 @@ impl SwssActor {
                 }
                 SwssEvent::SessionDelete { key } => {
                     Self::process_session_delete(&template_recipient, &key).await;
-                    harmonizer_state.remove_session(&key);
-                    Self::send_harmonizer_config_for_session(
-                        &harmonizer_config_recipient,
-                        &harmonizer_state,
+                    aggregator_state.remove_session(&key);
+                    Self::send_aggregator_config_for_session(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
                         &key,
                         true,
                     )
@@ -237,43 +237,43 @@ impl SwssActor {
                 }
                 SwssEvent::ProfileUpdate {
                     profile,
-                    harmonizer,
+                    aggregator,
                 } => {
-                    let affected_sessions = harmonizer_state.session_keys_for_profile(&profile);
-                    harmonizer_state.set_profile_harmonizer(profile, harmonizer);
-                    Self::send_harmonizer_configs_for_sessions(
-                        &harmonizer_config_recipient,
-                        &harmonizer_state,
+                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                    aggregator_state.set_profile_aggregator(profile, aggregator);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
                         affected_sessions,
                     )
                     .await;
                 }
                 SwssEvent::ProfileDelete { profile } => {
-                    let affected_sessions = harmonizer_state.session_keys_for_profile(&profile);
-                    harmonizer_state.remove_profile(&profile);
-                    Self::send_harmonizer_configs_for_sessions(
-                        &harmonizer_config_recipient,
-                        &harmonizer_state,
+                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                    aggregator_state.remove_profile(&profile);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
                         affected_sessions,
                     )
                     .await;
                 }
-                SwssEvent::HarmonizerUpdate { name, config } => {
-                    let affected_sessions = harmonizer_state.session_keys_for_harmonizer(&name);
-                    harmonizer_state.set_harmonizer_config(name, config);
-                    Self::send_harmonizer_configs_for_sessions(
-                        &harmonizer_config_recipient,
-                        &harmonizer_state,
+                SwssEvent::AggregatorUpdate { name, config } => {
+                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                    aggregator_state.set_aggregator_config(name, config);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
                         affected_sessions,
                     )
                     .await;
                 }
-                SwssEvent::HarmonizerDelete { name } => {
-                    let affected_sessions = harmonizer_state.session_keys_for_harmonizer(&name);
-                    harmonizer_state.remove_harmonizer(&name);
-                    Self::send_harmonizer_configs_for_sessions(
-                        &harmonizer_config_recipient,
-                        &harmonizer_state,
+                SwssEvent::AggregatorDelete { name } => {
+                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                    aggregator_state.remove_aggregator(&name);
+                    Self::send_aggregator_configs_for_sessions(
+                        &aggregator_config_recipient,
+                        &aggregator_state,
                         affected_sessions,
                     )
                     .await;
@@ -322,7 +322,7 @@ impl SwssActor {
             match item.operation {
                 KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
                     profile,
-                    harmonizer: Self::parse_profile_harmonizer(&item.field_values),
+                    aggregator: Self::parse_profile_aggregator(&item.field_values),
                 }),
                 KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
             }
@@ -331,25 +331,25 @@ impl SwssActor {
         Ok(events)
     }
 
-    fn collect_harmonizer_events(
-        harmonizer_table: &SubscriberStateTable,
+    fn collect_aggregator_events(
+        aggregator_table: &SubscriberStateTable,
     ) -> Result<Vec<SwssEvent>, String> {
-        let items = harmonizer_table
+        let items = aggregator_table
             .pops()
-            .map_err(|e| format!("Error popping items from harmonizer table: {}", e))?;
+            .map_err(|e| format!("Error popping items from aggregator table: {}", e))?;
         let mut events = Vec::with_capacity(items.len());
 
         for item in items {
             let name = Self::extract_config_key(
                 &item.key,
-                CONFIG_HIGH_FREQUENCY_TELEMETRY_HARMONIZER_TABLE,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
             );
             match item.operation {
-                KeyOperation::Set => events.push(SwssEvent::HarmonizerUpdate {
+                KeyOperation::Set => events.push(SwssEvent::AggregatorUpdate {
                     name,
-                    config: Self::parse_harmonizer_config(&item.field_values),
+                    config: Self::parse_aggregator_config(&item.field_values),
                 }),
-                KeyOperation::Del => events.push(SwssEvent::HarmonizerDelete { name }),
+                KeyOperation::Del => events.push(SwssEvent::AggregatorDelete { name }),
             }
         }
 
@@ -379,28 +379,28 @@ impl SwssActor {
         session_data
     }
 
-    fn parse_profile_harmonizer(
+    fn parse_profile_aggregator(
         field_values: &HashMap<String, swss_common::CxxString>,
     ) -> Option<String> {
-        field_values.get("harmonizer").and_then(|value| {
-            let harmonizer = value.to_string_lossy().trim().to_string();
-            if harmonizer.is_empty() {
+        field_values.get("aggregator").and_then(|value| {
+            let aggregator = value.to_string_lossy().trim().to_string();
+            if aggregator.is_empty() {
                 None
             } else {
-                Some(harmonizer)
+                Some(aggregator)
             }
         })
     }
 
-    fn parse_harmonizer_config(
+    fn parse_aggregator_config(
         field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> Option<HarmonizerConfig> {
+    ) -> Option<AggregatorConfig> {
         let reporting_rate = field_values
             .get("reporting_rate")
-            .and_then(|value| HarmonizerConfig::parse(&value.to_string_lossy()))
+            .and_then(|value| AggregatorConfig::parse(&value.to_string_lossy()))
             .and_then(|config| config.reporting_rate);
 
-        Some(HarmonizerConfig { reporting_rate })
+        Some(AggregatorConfig { reporting_rate })
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -612,35 +612,35 @@ impl SwssActor {
         Ok(true)
     }
 
-    async fn send_harmonizer_config_for_session(
-        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
-        harmonizer_state: &HarmonizerConfigState,
+    async fn send_aggregator_config_for_session(
+        aggregator_config_recipient: &Sender<AggregatorConfigMessage>,
+        aggregator_state: &AggregatorConfigState,
         key: &str,
         is_delete: bool,
     ) {
         let message = if is_delete {
-            HarmonizerConfigMessage::delete(key.to_string())
+            AggregatorConfigMessage::delete(key.to_string())
         } else {
-            HarmonizerConfigMessage::new(
+            AggregatorConfigMessage::new(
                 key.to_string(),
-                harmonizer_state.config_for_session_key(key).cloned(),
+                aggregator_state.config_for_session_key(key).cloned(),
             )
         };
 
-        if let Err(e) = harmonizer_config_recipient.send(message).await {
-            error!("Failed to send harmonizer config for {}: {}", key, e);
+        if let Err(e) = aggregator_config_recipient.send(message).await {
+            error!("Failed to send aggregator config for {}: {}", key, e);
         }
     }
 
-    async fn send_harmonizer_configs_for_sessions(
-        harmonizer_config_recipient: &Sender<HarmonizerConfigMessage>,
-        harmonizer_state: &HarmonizerConfigState,
+    async fn send_aggregator_configs_for_sessions(
+        aggregator_config_recipient: &Sender<AggregatorConfigMessage>,
+        aggregator_state: &AggregatorConfigState,
         session_keys: Vec<String>,
     ) {
         for key in session_keys {
-            Self::send_harmonizer_config_for_session(
-                harmonizer_config_recipient,
-                harmonizer_state,
+            Self::send_aggregator_config_for_session(
+                aggregator_config_recipient,
+                aggregator_state,
                 &key,
                 false,
             )
@@ -659,13 +659,13 @@ impl SwssActor {
 }
 
 #[derive(Default)]
-struct HarmonizerConfigState {
-    profile_harmonizers: HashMap<String, String>,
-    harmonizer_configs: HashMap<String, HarmonizerConfig>,
+struct AggregatorConfigState {
+    profile_aggregators: HashMap<String, String>,
+    aggregator_configs: HashMap<String, AggregatorConfig>,
     sessions: HashSet<String>,
 }
 
-impl HarmonizerConfigState {
+impl AggregatorConfigState {
     fn add_session(&mut self, key: String) {
         self.sessions.insert(key);
     }
@@ -674,40 +674,40 @@ impl HarmonizerConfigState {
         self.sessions.remove(key);
     }
 
-    fn set_profile_harmonizer(&mut self, profile: String, harmonizer: Option<String>) {
-        match harmonizer {
-            Some(harmonizer) => {
-                self.profile_harmonizers.insert(profile, harmonizer);
+    fn set_profile_aggregator(&mut self, profile: String, aggregator: Option<String>) {
+        match aggregator {
+            Some(aggregator) => {
+                self.profile_aggregators.insert(profile, aggregator);
             }
             None => {
-                self.profile_harmonizers.remove(&profile);
+                self.profile_aggregators.remove(&profile);
             }
         }
     }
 
     fn remove_profile(&mut self, profile: &str) {
-        self.profile_harmonizers.remove(profile);
+        self.profile_aggregators.remove(profile);
     }
 
-    fn set_harmonizer_config(&mut self, name: String, config: Option<HarmonizerConfig>) {
+    fn set_aggregator_config(&mut self, name: String, config: Option<AggregatorConfig>) {
         match config {
             Some(config) => {
-                self.harmonizer_configs.insert(name, config);
+                self.aggregator_configs.insert(name, config);
             }
             None => {
-                self.harmonizer_configs.remove(&name);
+                self.aggregator_configs.remove(&name);
             }
         }
     }
 
-    fn remove_harmonizer(&mut self, name: &str) {
-        self.harmonizer_configs.remove(name);
+    fn remove_aggregator(&mut self, name: &str) {
+        self.aggregator_configs.remove(name);
     }
 
-    fn config_for_session_key(&self, session_key: &str) -> Option<&HarmonizerConfig> {
+    fn config_for_session_key(&self, session_key: &str) -> Option<&AggregatorConfig> {
         let profile = SwssActor::extract_profile_from_session_key(session_key);
-        let harmonizer = self.profile_harmonizers.get(profile)?;
-        self.harmonizer_configs.get(harmonizer)
+        let aggregator = self.profile_aggregators.get(profile)?;
+        self.aggregator_configs.get(aggregator)
     }
 
     fn session_keys_for_profile(&self, profile: &str) -> Vec<String> {
@@ -718,14 +718,14 @@ impl HarmonizerConfigState {
             .collect()
     }
 
-    fn session_keys_for_harmonizer(&self, harmonizer: &str) -> Vec<String> {
+    fn session_keys_for_aggregator(&self, aggregator: &str) -> Vec<String> {
         self.sessions
             .iter()
             .filter(|key| {
                 let profile = SwssActor::extract_profile_from_session_key(key);
-                self.profile_harmonizers
+                self.profile_aggregators
                     .get(profile)
-                    .is_some_and(|configured| configured == harmonizer)
+                    .is_some_and(|configured| configured == aggregator)
             })
             .cloned()
             .collect()
@@ -758,9 +758,9 @@ mod tests {
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
-        let (harmonizer_config_sender, mut harmonizer_config_receiver) = channel(100);
-        tokio::spawn(async move { while harmonizer_config_receiver.recv().await.is_some() {} });
-        SwssActor::new(template_sender, harmonizer_config_sender).expect("Failed to create SwssActor")
+        let (aggregator_config_sender, mut aggregator_config_receiver) = channel(100);
+        tokio::spawn(async move { while aggregator_config_receiver.recv().await.is_some() {} });
+        SwssActor::new(template_sender, aggregator_config_sender).expect("Failed to create SwssActor")
     }
 
     #[tokio::test]
@@ -822,59 +822,59 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_and_harmonizer_config_mapping() {
+    fn test_profile_and_aggregator_config_mapping() {
         let mut profile_fields = HashMap::new();
-        profile_fields.insert("harmonizer".to_string(), CxxString::from("harm0"));
+        profile_fields.insert("aggregator".to_string(), CxxString::from("harm0"));
         assert_eq!(
-            SwssActor::parse_profile_harmonizer(&profile_fields),
+            SwssActor::parse_profile_aggregator(&profile_fields),
             Some("harm0".to_string())
         );
 
-        let mut harmonizer_fields = HashMap::new();
-        harmonizer_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
+        let mut aggregator_fields = HashMap::new();
+        aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
         assert_eq!(
-            SwssActor::parse_harmonizer_config(&harmonizer_fields)
-                .expect("harmonizer config")
+            SwssActor::parse_aggregator_config(&aggregator_fields)
+                .expect("aggregator config")
                 .reporting_rate,
             Some(100)
         );
 
-        let empty_harmonizer_fields = HashMap::new();
+        let empty_aggregator_fields = HashMap::new();
         assert_eq!(
-            SwssActor::parse_harmonizer_config(&empty_harmonizer_fields)
-                .expect("harmonizer config")
+            SwssActor::parse_aggregator_config(&empty_aggregator_fields)
+                .expect("aggregator config")
                 .reporting_rate,
             None
         );
 
-        let mut state = HarmonizerConfigState::default();
+        let mut state = AggregatorConfigState::default();
         state.add_session("profile0|PORT".to_string());
-        state.set_profile_harmonizer("profile0".to_string(), Some("harm0".to_string()));
-        state.set_harmonizer_config(
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
             "harm0".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(100),
             }),
         );
         assert_eq!(
             state
                 .config_for_session_key("profile0|PORT")
-                .expect("session harmonizer config")
+                .expect("session aggregator config")
                 .reporting_rate,
             Some(100)
         );
     }
 
     #[test]
-    fn test_multiple_profiles_can_share_harmonizer_config() {
-        let mut state = HarmonizerConfigState::default();
+    fn test_multiple_profiles_can_share_aggregator_config() {
+        let mut state = AggregatorConfigState::default();
         state.add_session("profile0|PORT".to_string());
         state.add_session("profile1|QUEUE".to_string());
-        state.set_profile_harmonizer("profile0".to_string(), Some("harm0".to_string()));
-        state.set_profile_harmonizer("profile1".to_string(), Some("harm0".to_string()));
-        state.set_harmonizer_config(
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_profile_aggregator("profile1".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
             "harm0".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(100),
             }),
         );
@@ -882,26 +882,26 @@ mod tests {
         assert_eq!(
             state
                 .config_for_session_key("profile0|PORT")
-                .expect("profile0 harmonizer config")
+                .expect("profile0 aggregator config")
                 .reporting_rate,
             Some(100)
         );
         assert_eq!(
             state
                 .config_for_session_key("profile1|QUEUE")
-                .expect("profile1 harmonizer config")
+                .expect("profile1 aggregator config")
                 .reporting_rate,
             Some(100)
         );
 
-        state.set_harmonizer_config(
+        state.set_aggregator_config(
             "harm0".to_string(),
-            Some(HarmonizerConfig {
+            Some(AggregatorConfig {
                 reporting_rate: Some(200),
             }),
         );
 
-        let mut affected_sessions = state.session_keys_for_harmonizer("harm0");
+        let mut affected_sessions = state.session_keys_for_aggregator("harm0");
         affected_sessions.sort();
         assert_eq!(
             affected_sessions,
@@ -910,14 +910,14 @@ mod tests {
         assert_eq!(
             state
                 .config_for_session_key("profile0|PORT")
-                .expect("profile0 updated harmonizer config")
+                .expect("profile0 updated aggregator config")
                 .reporting_rate,
             Some(200)
         );
         assert_eq!(
             state
                 .config_for_session_key("profile1|QUEUE")
-                .expect("profile1 updated harmonizer config")
+                .expect("profile1 updated aggregator config")
                 .reporting_rate,
             Some(200)
         );
