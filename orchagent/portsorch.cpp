@@ -7960,34 +7960,59 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     }
 
     sai_object_id_t lag_id;
-    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, static_cast<uint32_t>(lag_attrs.size()), lag_attrs.data());
 
-    if (status != SAI_STATUS_SUCCESS)
+    /*
+     * During Mellanox warm-reboot (fastfast), defer LAG SAI creation.
+     * The Mellanox SDK's ISSU finalization (SAI_SWITCH_ATTR_FAST_API_ENABLE=false)
+     * fails when empty LAGs exist in the ASIC.  By deferring creation, the LAG
+     * is only materialized in SAI when a member is added (via addLagMember) or
+     * after APPLY_VIEW succeeds (via createDeferredLagsAfterApplyView).
+     * UPSW-4791.
+     */
+    if (WarmStart::isWarmStart())
     {
-        SWSS_LOG_ERROR("Failed to create LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        lag_id = SAI_NULL_OBJECT_ID;
+        m_warmRebootDeferredLags.insert(lag_alias);
+        SWSS_LOG_NOTICE("Deferring LAG %s SAI creation during warm-reboot (UPSW-4791)", lag_alias.c_str());
     }
+    else
+    {
+        sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, static_cast<uint32_t>(lag_attrs.size()), lag_attrs.data());
 
-    SWSS_LOG_NOTICE("Create an empty LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        SWSS_LOG_NOTICE("Create an empty LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
+    }
 
     Port lag(lag_alias, Port::LAG);
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
     m_port_ref_count[lag_alias] = 0;
-    saiOidToAlias[lag_id] = lag_alias;
+
+    if (lag_id != SAI_NULL_OBJECT_ID)
+    {
+        saiOidToAlias[lag_id] = lag_alias;
+    }
 
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
-    FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
-    vector<FieldValueTuple> fields;
-    fields.push_back(tuple);
-    m_counterLagTable->set("", fields);
+    if (lag_id != SAI_NULL_OBJECT_ID)
+    {
+        FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
+        vector<FieldValueTuple> fields;
+        fields.push_back(tuple);
+        m_counterLagTable->set("", fields);
+    }
 
     if (gMySwitchType == "voq")
     {
@@ -8087,6 +8112,63 @@ bool PortsOrch::removeLag(Port lag)
     return true;
 }
 
+void PortsOrch::createDeferredLagsAfterApplyView()
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &alias : m_warmRebootDeferredLags)
+    {
+        auto it = m_portList.find(alias);
+        if (it == m_portList.end())
+        {
+            continue;
+        }
+
+        Port &port = it->second;
+        if (port.m_lag_id != SAI_NULL_OBJECT_ID)
+        {
+            continue;
+        }
+
+        vector<sai_attribute_t> lag_attrs;
+        if (gMySwitchType == "voq" && port.m_system_lag_info.spa_id > 0)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID;
+            attr.value.u32 = port.m_system_lag_info.spa_id;
+            lag_attrs.push_back(attr);
+        }
+
+        sai_object_id_t lag_id;
+        sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId,
+                                  static_cast<uint32_t>(lag_attrs.size()),
+                                  lag_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create deferred LAG %s after APPLY_VIEW status:%d",
+                           alias.c_str(), status);
+            continue;
+        }
+
+        port.m_lag_id = lag_id;
+        saiOidToAlias[lag_id] = alias;
+
+        FieldValueTuple tuple(alias, sai_serialize_object_id(lag_id));
+        vector<FieldValueTuple> fields;
+        fields.push_back(tuple);
+        m_counterLagTable->set("", fields);
+
+        SWSS_LOG_NOTICE("Created deferred LAG %s lid:%" PRIx64 " after APPLY_VIEW (UPSW-4791)",
+                        alias.c_str(), lag_id);
+
+        PortUpdate update = { port, true };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+    }
+
+    m_warmRebootDeferredLags.clear();
+}
+
 void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
 {
     Port member;
@@ -8106,6 +8188,48 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 {
     SWSS_LOG_ENTER();
     bool enableForwarding = (member_status == "enabled");
+
+    /* Materialize a deferred LAG before adding its first member (UPSW-4791) */
+    if (lag.m_lag_id == SAI_NULL_OBJECT_ID &&
+        m_warmRebootDeferredLags.count(lag.m_alias))
+    {
+        vector<sai_attribute_t> lag_attrs;
+        if (gMySwitchType == "voq" && lag.m_system_lag_info.spa_id > 0)
+        {
+            sai_attribute_t la;
+            la.id = SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID;
+            la.value.u32 = lag.m_system_lag_info.spa_id;
+            lag_attrs.push_back(la);
+        }
+
+        sai_object_id_t new_lag_id;
+        sai_status_t st = sai_lag_api->create_lag(&new_lag_id, gSwitchId,
+                              static_cast<uint32_t>(lag_attrs.size()),
+                              lag_attrs.data());
+        if (st != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to materialize deferred LAG %s for member %s status:%d",
+                           lag.m_alias.c_str(), port.m_alias.c_str(), st);
+            return false;
+        }
+
+        lag.m_lag_id = new_lag_id;
+        m_portList[lag.m_alias] = lag;
+        saiOidToAlias[new_lag_id] = lag.m_alias;
+
+        FieldValueTuple tuple(lag.m_alias, sai_serialize_object_id(new_lag_id));
+        vector<FieldValueTuple> fields;
+        fields.push_back(tuple);
+        m_counterLagTable->set("", fields);
+
+        m_warmRebootDeferredLags.erase(lag.m_alias);
+
+        SWSS_LOG_NOTICE("Materialized deferred LAG %s lid:%" PRIx64 " for member %s (UPSW-4791)",
+                        lag.m_alias.c_str(), new_lag_id, port.m_alias.c_str());
+
+        PortUpdate update = { lag, true };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+    }
 
     sai_uint32_t pvid;
     if (getPortPvid(lag, pvid))

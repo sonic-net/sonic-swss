@@ -1212,6 +1212,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     SWSS_LOG_NOTICE("Orchagent state restore done");
 
     syncd_apply_view();
+    gPortsOrch->createDeferredLagsAfterApplyView();
 
     for (Orch *o : m_orchList)
     {
