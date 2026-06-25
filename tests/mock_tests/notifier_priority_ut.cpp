@@ -8,9 +8,19 @@
  * report pri=0 regardless of their actual priority.
  */
 
+// Pre-include standard library headers that conflict with
+// the #define private/protected public hack (they use 'private' internally).
 #include <string>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <memory>
 #include <set>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
 
 #define protected public
 #define private public
@@ -23,10 +33,9 @@
 #include "dbconnector.h"
 #include "notificationconsumer.h"
 #include "consumerstatetable.h"
+#include "mock_table.h"
 
 #include <gtest/gtest.h>
-
-extern PortsOrch *gPortsOrch;
 
 namespace notifier_priority_test
 {
@@ -110,10 +119,10 @@ namespace notifier_priority_test
         // The raw ConsumerStateTable has pri=45
         EXPECT_EQ(cst->getPri(), 45);
 
-        // Wrap it in a Consumer (Executor subclass — no getPri override)
+        // Wrap it in a Consumer (Executor subclass - no getPri override)
         Consumer consumer(cst, &orch, "PORT_TABLE");
 
-        // Executor base does NOT delegate getPri — returns default 0
+        // Executor base does NOT delegate getPri - returns default 0
         // This is INTENTIONAL: table priorities should not affect cross-orch scheduling
         EXPECT_EQ(consumer.getPri(), 0);
     }
