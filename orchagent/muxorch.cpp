@@ -1605,14 +1605,19 @@ sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddr
     auto it = mux_tunnel_nh_.find(ipAddr);
     if (it != mux_tunnel_nh_.end())
     {
-        return it->second.nh_id;
+        return it->second;
     }
 
     sai_object_id_t nh = create_nh_tunnel(mux_tunnel_id_, ipAddr);
 
     if (SAI_NULL_OBJECT_ID != nh)
     {
-        mux_tunnel_nh_[ipAddr] = { nh, 1 };
+        mux_tunnel_nh_[ipAddr] = nh;
+        NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+        if (gNeighOrch)
+        {
+            gNeighOrch->addIpinipTunnelNextHop(nhKey, nh);
+        }
     }
 
     return nh;
@@ -1627,20 +1632,41 @@ bool MuxOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr
         return true;
     }
 
-    auto ref_cnt = --it->second.ref_count;
+    NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
 
-    if (it->second.ref_count == 0)
+    /* NeighOrch is the single source of truth for whether this tunnel NH is
+     * still in use. Don't delete the SAI object while consumers still reference
+     * it, otherwise NeighOrch would be left with a next_hop_id that is already
+     * gone from SAI. */
+    if (gNeighOrch && gNeighOrch->hasNextHop(nhKey) &&
+        gNeighOrch->getNextHopRefCount(nhKey) > 0)
     {
-        if (!remove_nh_tunnel(it->second.nh_id, ipAddr))
-        {
-            SWSS_LOG_INFO("NH tunnel remove failed %s, ip %s",
-                           tunnelKey.c_str(), ipAddr.to_string().c_str());
-        }
-        mux_tunnel_nh_.erase(ipAddr);
+        SWSS_LOG_NOTICE("NH tunnel %s ip %s still referenced by NeighOrch "
+                        "(ref_count=%d), deferring removal",
+                        tunnelKey.c_str(), ipAddr.to_string().c_str(),
+                        gNeighOrch->getNextHopRefCount(nhKey));
+        return false;
     }
 
-    SWSS_LOG_INFO("NH tunnel removed  %s, ip %s or decremented to ref count %d",
-                   tunnelKey.c_str(), ipAddr.to_string().c_str(), ref_cnt);
+    /* Delete the SAI next hop first. On failure keep both the local OID cache
+     * and the NeighOrch registration intact so the removal can be retried. */
+    if (!remove_nh_tunnel(it->second, ipAddr))
+    {
+        SWSS_LOG_ERROR("NH tunnel remove failed %s, ip %s, deferring removal",
+                       tunnelKey.c_str(), ipAddr.to_string().c_str());
+        return false;
+    }
+
+    /* SAI object is gone; now it is safe to unregister from NeighOrch and drop
+     * our cached OID. */
+    if (gNeighOrch)
+    {
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+    }
+    mux_tunnel_nh_.erase(ipAddr);
+
+    SWSS_LOG_INFO("NH tunnel removed %s, ip %s",
+                   tunnelKey.c_str(), ipAddr.to_string().c_str());
     return true;
 }
 
@@ -1653,7 +1679,7 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
         return SAI_NULL_OBJECT_ID;
     }
 
-    return it->second.nh_id;
+    return it->second;
 }
 
 sai_object_id_t MuxOrch::getTunnelNextHopId()
@@ -1663,7 +1689,7 @@ sai_object_id_t MuxOrch::getTunnelNextHopId()
         auto it = mux_tunnel_nh_.find(mux_peer_switch_);
         if (it != mux_tunnel_nh_.end())
         {
-            return it->second.nh_id;
+            return it->second;
         }
     }
 
