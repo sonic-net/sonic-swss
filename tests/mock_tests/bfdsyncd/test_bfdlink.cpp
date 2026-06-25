@@ -1,6 +1,7 @@
 #include "bfdsyncd/bfdlink.h"
 
 #include <swss/netdispatcher.h>
+#include "mock_table.h"
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -34,6 +35,7 @@ class BfdSyncdTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        ::testing_db::reset();
     }
 
     void TearDown() override

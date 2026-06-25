@@ -360,6 +360,7 @@ tests_bfdsyncd_SOURCES = bfdsyncd/test_bfdlink.cpp \
                          mock_dbconnector.cpp \
                          mock_table.cpp \
                          mock_hiredis.cpp \
+                         mock_redisreply.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/bfdsyncd/bfdlink.cpp
 
