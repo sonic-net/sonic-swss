@@ -95,6 +95,10 @@ sai_l2mc_api_t* sai_l2mc_api;
 sai_l2mc_group_api_t* sai_l2mc_group_api;
 sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
+sai_port_api_t *sai_port_api;
+sai_scheduler_api_t *sai_scheduler_api;
+sai_scheduler_group_api_t *sai_scheduler_group_api;
+sai_queue_api_t *sai_queue_api;
 
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
 {
