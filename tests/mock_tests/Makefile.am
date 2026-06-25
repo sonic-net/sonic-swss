@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -352,6 +352,25 @@ tests_fdbsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST
 tests_fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fdbsyncd_INCLUDES)
 tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
+## neighsyncd unit tests
+
+tests_neighsyncd_SOURCES = swss_ut_main.cpp \
+                           neighsyncd/neighsync_ut.cpp \
+                           mock_dbconnector.cpp \
+                           mock_table.cpp \
+                           mock_hiredis.cpp \
+                           mock_redisreply.cpp \
+                           $(top_srcdir)/neighsyncd/neighsync.cpp \
+                           $(top_srcdir)/lib/subintf.cpp \
+                           $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
+                           $(top_srcdir)/warmrestart/warmRestartAssist.cpp
+
+tests_neighsyncd_INCLUDES = -I$(top_srcdir)/neighsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
+tests_neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_neighsyncd_INCLUDES)
+tests_neighsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lboost_program_options
 
 ## response publisher unit tests
 

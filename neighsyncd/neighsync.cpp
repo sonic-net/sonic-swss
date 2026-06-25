@@ -14,6 +14,7 @@
 
 #include "neighsync.h"
 #include "warm_restart.h"
+#include "subintf.h"
 #include <algorithm>
 #include <linux/neighbour.h>
 
@@ -350,11 +351,18 @@ bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
 
-    bool isSubIntf = (port.find('.') != string::npos);
-
-    if (isSubIntf &&
-        (!port.compare(0, strlen("Ethernet"), "Ethernet") ||
-         !port.compare(0, strlen("PortChannel"), "PortChannel")))
+    /*
+     * VLAN sub-interfaces appear in the kernel with either a long-name
+     * (e.g. "Ethernet0.10", "PortChannel1.10") or a short-name
+     * (e.g. "Eth0.10", "Po1.10") format. Both forms are valid CONFIG_DB
+     * keys for VLAN_SUB_INTERFACE, and the kernel ifname matches whatever
+     * was used when "ip link add link <parent> name <subintf>" was invoked
+     * by intfmgrd. Use the same swss::subIntf parser that intfmgr /
+     * portsorch use, so any name those modules accept is also accepted
+     * here (and nothing more).
+     */
+    subIntf subif(port);
+    if (subif.isValid())
     {
         if (!m_cfgVlanSubInterfaceTable.get(port, values))
         {
