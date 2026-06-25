@@ -376,6 +376,7 @@ tests_neighsyncd_SOURCES = neighsyncd/neighsync_ut.cpp \
                            mock_table.cpp \
                            mock_hiredis.cpp \
                            mock_redisreply.cpp \
+                           $(top_srcdir)/lib/subintf.cpp \
                            $(top_srcdir)/neighsyncd/neighsync.cpp
 
 tests_neighsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/neighsyncd
