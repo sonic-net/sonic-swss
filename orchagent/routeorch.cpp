@@ -2091,6 +2091,17 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
                 return false;
             }
+
+            /* Verify RIF is not mid-VRF-migration.
+             * During VRF bind, the old RIF may still exist in the previous VRF
+             * if neighbor references prevent its removal. Retry until the RIF is
+             * recreated in the correct VRF. */
+            if (m_intfsOrch->isIntfChangeInProgress(nexthop.alias))
+            {
+                SWSS_LOG_INFO("Interface %s is being removed, retry route %s later",
+                        nexthop.alias.c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
         }
         else
         {
