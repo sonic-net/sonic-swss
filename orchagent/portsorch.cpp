@@ -429,10 +429,28 @@ const vector<sai_port_stat_t> wred_port_stat_ids =
     SAI_PORT_STAT_WRED_DROPPED_PACKETS
 };
 
+/* Used on platforms where WRED stats are exposed at the egress queue
+ * object (SAI_QUEUE_TYPE_UNICAST/MULTICAST/ALL). On these platforms
+ * the egress queue maintains both WRED-drop counters
+ * (SAI_QUEUE_STAT_WRED_DROPPED_*) and WRED-ECN-marked counters
+ * (SAI_QUEUE_STAT_WRED_ECN_MARKED_*) for packets and bytes. */
 static const vector<sai_queue_stat_t> wred_queue_stat_ids =
 {
     SAI_QUEUE_STAT_WRED_ECN_MARKED_PACKETS,
     SAI_QUEUE_STAT_WRED_ECN_MARKED_BYTES,
+    SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_WRED_DROPPED_BYTES
+};
+
+/* Used on platforms where WRED stats are exposed at the
+ * virtual-output-queue object (SAI_QUEUE_TYPE_UNICAST_VOQ). On these
+ * platforms WRED drops are counted at the ingress VOQ, so the
+ * WRED-drop counters (SAI_QUEUE_STAT_WRED_DROPPED_*) are exposed on
+ * the VOQ object. WRED ECN marking is performed at egress and the
+ * WRED-ECN-marked counters are exposed only on the egress queue
+ * object — not on the VOQ — and are therefore not registered here. */
+static const vector<sai_queue_stat_t> wred_voq_stat_ids =
+{
     SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
     SAI_QUEUE_STAT_WRED_DROPPED_BYTES
 };
@@ -9678,9 +9696,13 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
-*  Description: Top level API to Set WRED flex counters for Queues
+*  Description: Top level API to Set WRED flex counters for Queues.
+*               On VOQ systems, WRED drop counters are exposed at the
+*               ingress VOQ object. This function therefore registers both
+*               egress queue OIDs and (on VOQ switches) the per-port VOQ
+*               OIDs for WRED stats collection.
 **/
 void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
 {
@@ -9715,7 +9737,22 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
                 }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
-            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
+            if (gMySwitchType == "voq")
+            {
+                addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
+            }
+        }
+
+        if (it.second.m_type == Port::SYSTEM)
+        {
+            if (!queuesStateVector.count(it.second.m_alias))
+            {
+                auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
+            }
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
         }
     }
 
@@ -9724,25 +9761,37 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
 
 /****
 *  Func Name  : addWredQueueFlexCountersPerPort
-*  Parameters : port and Queuestate
+*  Parameters : port, Queuestate, voq (true for VOQ stats, false for egress queue stats)
 *  Returns    : void
-*  Description: Port level API to program flexcounter for queues
+*  Description: Port level API to program flexcounter for queues.
+*               When voq=true, registers VOQ OIDs (m_port_voq_ids) for stats.
+*               When voq=false, registers egress queue OIDs (m_queue_ids) for stats.
 **/
-void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState)
+void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
 {
-    /* Add stat counters to flex_counter */
+    std::vector<sai_object_id_t> queue_ids;
 
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    if (voq)
+    {
+        queue_ids = m_port_voq_ids[port.m_alias];
+    }
+    else
+    {
+        queue_ids = port.m_queue_ids;
+    }
+
+    for (size_t queueIndex = 0; queueIndex < queue_ids.size(); ++queueIndex)
     {
         sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
-        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        if (getQueueTypeAndIndex(queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            // VOQ counters are always enabled in VOQ systems
+            if ((gMySwitchType != "voq") && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, voq, queueType);
         }
     }
 }
@@ -9758,7 +9807,12 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
 
-    for (const auto& it: wred_queue_stat_ids)
+    /* Pick the stats list that matches where this platform exposes WRED
+     * counters: on VOQ chassis the WRED drop counters live at the VOQ
+     * object; on platforms that expose WRED at the egress queue the
+     * egress queue carries both WRED drop and WRED ECN-marked counters. */
+    const auto& stat_ids = voq ? wred_voq_stat_ids : wred_queue_stat_ids;
+    for (const auto& it: stat_ids)
     {
         counter_stats.emplace(sai_serialize_queue_stat(it));
     }
@@ -10331,6 +10385,23 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
     {
+        // Remove old mapping from memory map
+        m_portIdToSerdesId.erase(port_id);
+
+        // Remove old mapping from COUNTERS_DB
+        m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
+        SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
+                     port_attr.value.oid);
+
+        // Clear the phy port serdes countersIDList
+        Port p;
+        if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
+            flex_counters_orch->getPortPhySerdesAttrCountersState())
+        {
+            port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
+        }
+
+        // Remove SAI port serdes object
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -10340,24 +10411,6 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
-            }
-        }
-        else
-        {
-            // Remove old mapping from memory map
-            m_portIdToSerdesId.erase(port_id);
-
-            // Remove old mapping from COUNTERS_DB
-            m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
-            SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
-                         port_attr.value.oid);
-
-            //clear the phy port serdes countersIDList
-            Port p;
-            if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
-                flex_counters_orch->getPortPhySerdesAttrCountersState())
-            {
-                port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
             }
         }
     }
