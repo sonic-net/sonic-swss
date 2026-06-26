@@ -733,8 +733,12 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
 
     std::string ha_set_id = entry.ha_set_id().empty() ? key : entry.ha_set_id();
     auto ha_set_it = m_ha_set_entries.find(ha_set_id);
-    if (ha_set_it == m_ha_set_entries.end() ||
-        ha_set_it->second.metadata.owner() != dash::types::HA_OWNER_SWITCH)
+    if (ha_set_it == m_ha_set_entries.end())
+    {
+        SWSS_LOG_WARN("HA Set entry %s does not exist, still updating HA Scope state for %s",
+                      ha_set_id.c_str(), key.c_str());
+    }
+    else if (ha_set_it->second.metadata.owner() != dash::types::HA_OWNER_SWITCH)
     {
         return;
     }
@@ -809,6 +813,17 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
 
     std::vector<FieldValueTuple> fvs = {{"flow_reconcile_pending", "false"}};
     m_dpuStateDbHaScopeTable->set(key, fvs);
+
+    return true;
+}
+
+bool DashHaOrch::clearHaScopeBrainSplitRecoverPending(const std::string &key)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs = {{"brainsplit_recover_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+    SWSS_LOG_NOTICE("Cleared HA Scope brainsplit recover pending flag for %s", key.c_str());
 
     return true;
 }
@@ -948,6 +963,16 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         if (op == SET_COMMAND)
         {
             dash::ha_scope::HaScope entry;
+            bool brainSplitRecovered = false;
+
+            for (const auto &fieldValue : kfvFieldsValues(tuple))
+            {
+                if (fvField(fieldValue) == "brainsplit_recovered")
+                {
+                    brainSplitRecovered = fvValue(fieldValue) == "true" || fvValue(fieldValue) == "1";
+                    break;
+                }
+            }
 
             auto existing_it = m_ha_scope_entries.find(key);
             if (existing_it != m_ha_scope_entries.end())
@@ -978,6 +1003,10 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
 
             if (addHaScopeEntry(key, entry))
             {
+                if (brainSplitRecovered)
+                {
+                    clearHaScopeBrainSplitRecoverPending(key);
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else

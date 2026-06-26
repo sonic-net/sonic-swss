@@ -238,6 +238,17 @@ namespace routeorch_test
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             gDirectory.set(gPortsOrch);
 
+            TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+            TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+
+            vector<TableConnector> evpn_df_es_table_connectors = {
+                appDbDfTable,
+                confDbEvpnEsTable,
+            };
+
+            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+            gDirectory.set(gEvpnMhOrch);
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
@@ -257,8 +268,12 @@ namespace routeorch_test
             m_evpnNvoOrch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
             gDirectory.set(m_evpnNvoOrch);
 
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
             const int fdborch_pri = 20;
 
@@ -435,10 +450,6 @@ namespace routeorch_test
             delete gFlowCounterRouteOrch;
             gFlowCounterRouteOrch = nullptr;
 
-            // Drop directory references before deleting orchs registered there,
-            // so later tests cannot observe stale pointers.
-            gDirectory.m_values.clear();
-
             delete gRouteOrch;
             gRouteOrch = nullptr;
 
@@ -447,6 +458,9 @@ namespace routeorch_test
 
             delete gBufferOrch;
             gBufferOrch = nullptr;
+
+            delete gEvpnMhOrch;
+            gEvpnMhOrch = nullptr;
 
             delete m_muxOrch;
             m_muxOrch = nullptr;
@@ -1703,5 +1717,20 @@ namespace routeorch_test
         
         // desired_nhg_key is empty: route now directly points to NHG (no longer a temp route)
         ASSERT_EQ(it->second.desired_nhg_key.getSize(), 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrch_RemoveRoutePrefixRunsAsyncPublisherFlush)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"7.7.7.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
     }
 }

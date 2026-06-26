@@ -135,8 +135,8 @@ jobs:
       project: ${{ parameters.buildimage_artifact_project }}
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      runVersion: 'specific'
+      runId: 1141167
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
@@ -146,22 +146,11 @@ jobs:
       project: ${{ parameters.buildimage_artifact_project }}
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      runVersion: 'specific'
+      runId: 1141167
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
     displayName: "Download sonic-buildimage sonic-framework package"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.buildimage_artifact_project }}
-      pipeline: Azure.sonic-buildimage.common_libs
-      artifact: common-lib
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
-      path: $(Build.ArtifactStagingDirectory)/download
-      patterns: '**/target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb'
-    displayName: "Download sonic-buildimage libnexthopgroup package"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -183,7 +172,6 @@ jobs:
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
       find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
-      find $(Build.ArtifactStagingDirectory)/download -name 'libnexthopgroup_*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
       cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
       if [ -f $(Build.ArtifactStagingDirectory)/download/coverage.info ]; then
         cp -v $(Build.ArtifactStagingDirectory)/download/coverage.info $(Build.ArtifactStagingDirectory)/

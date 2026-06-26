@@ -141,6 +141,117 @@ void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
     return;
 }
 
+/**
+ * @brief Process FDB add notification to re-enable neighbor entries
+ *
+ * This function handles FDB add notifications, typically triggered when a MAC
+ * address moves or is learned on a new port. It searches for existing neighbor
+ * entries that match the FDB entry's MAC address and VLAN, and re-enables
+ * those neighbor entries if found.
+ *
+ * @param entry The FDB entry containing MAC address, VLAN ID, and port information
+ */
+void NeighOrch::processFDBAdd(const FdbEntry &entry)
+{
+    // Get Vlan object
+    Port vlan;
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+         SWSS_LOG_NOTICE("FdbOrch add notification: Failed to locate vlan port \
+                          from bv_id 0x%" PRIx64 ".", entry.bv_id);
+         return;
+    }
+
+    SWSS_LOG_INFO("Get fdb move notification for mac :%s , VLAN: %s",
+                   entry.mac.to_string().c_str(), vlan.m_alias.c_str());
+
+    // If the FDB entry MAC matches with neighbor/ARP entry MAC,
+    // and ARP entry incoming interface matches with VLAN name,
+    // re-enable neighbor/arp entry.
+    for (const auto &neighborEntry : m_syncdNeighbors)
+    {
+        if (neighborEntry.first.alias == vlan.m_alias &&
+            neighborEntry.second.mac == entry.mac)
+        {
+            enableNeighbor(neighborEntry.first);
+        }
+    }
+}
+
+/**
+ * @brief Process FDB delete notification to disable neighbor entries
+ *
+ * This function handles FDB delete notifications when a MAC address is removed
+ * from the FDB table. It searches for neighbor entries that match the deleted
+ * FDB entry's MAC address and VLAN, and disables those neighbor entries to
+ * prevent traffic from being forwarded to an invalid or unreachable destination.
+ *
+ * @param entry The FDB entry containing MAC address, VLAN ID, and port information
+ */
+void NeighOrch::processFDBDelete(const FdbEntry &entry)
+{
+    // Get Vlan object
+    Port vlan;
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+         SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port \
+                          from bv_id 0x%" PRIx64 ".", entry.bv_id);
+         return;
+    }
+
+    SWSS_LOG_INFO("Delete FDB for mac :%s , VLAN: %s",
+                   entry.mac.to_string().c_str(), vlan.m_alias.c_str());
+
+    // If the FDB entry MAC matches with neighbor/ARP entry MAC,
+    // and ARP entry incoming interface matches with VLAN name,
+    // del neighbor/arp entry.
+    for (const auto &neighborEntry : m_syncdNeighbors)
+    {
+        if (neighborEntry.first.alias == vlan.m_alias &&
+            neighborEntry.second.mac == entry.mac)
+        {
+            disableNeighbor(neighborEntry.first);
+        }
+    }
+}
+
+/**
+ * @brief Process FDB resolve notification to flush/resolve neighbor entries
+ *
+ * This function handles FDB resolve notifications when a MAC address needs to
+ * be resolved or refreshed in the neighbor table. It searches for neighbor entries
+ * that match the FDB entry's MAC address and VLAN, and triggers ARP resolution
+ * for those neighbors to ensure the neighbor entries are up-to-date and valid.
+ *
+ * @param entry The FDB entry containing MAC address, VLAN ID, and port information
+ */
+void NeighOrch::processFDBResolve(const FdbEntry &entry)
+{
+    // Get Vlan object
+    Port vlan;
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+        SWSS_LOG_ERROR("FdbOrch notification: Failed to locate vlan port \
+                            from bv_id 0x%" PRIx64 ".", entry.bv_id);
+        return;
+    }
+    SWSS_LOG_NOTICE("processFDBResolve: Resolving ARP for mac: %s, port: %s, VLAN: %s",
+                    entry.mac.to_string().c_str(), entry.port_name.c_str(), vlan.m_alias.c_str());
+
+    // If the FDB entry MAC matches with neighbor/ARP entry MAC,
+    // and ARP entry incoming interface matches with VLAN name,
+    // flush neighbor/arp entry.
+    for (const auto &neighborEntry : m_syncdNeighbors)
+    {
+        if (neighborEntry.first.alias == vlan.m_alias &&
+            neighborEntry.second.mac == entry.mac)
+        {
+            resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
+        }
+    }
+    return;
+}
+
 /*
  * Function Name: processFDBFlushUpdate
  * Description:
@@ -874,6 +985,18 @@ bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, NeighborEntry &neig
     return getNeighborEntry(nexthop, neighborEntry, macAddress);
 }
 
+bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, string vrf_name, NeighborEntry &neighborEntry, MacAddress &macAddress)
+{
+    string alias = m_intfsOrch->getRouterIntfsAlias(ipAddress, vrf_name);
+    if (alias.empty())
+    {
+        return false;
+    }
+
+    NextHopKey nexthop(ipAddress, alias);
+    return getNeighborEntry(nexthop, neighborEntry, macAddress);
+}
+
 void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1263,10 +1386,13 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     PortsOrch* ports_orch = gDirectory.get<PortsOrch*>();
     auto vlan_ports = ports_orch->getAllVlans();
 
+    bool is_alias_vlan = false;
+
     for (auto vlan_port: vlan_ports)
     {
         if (vlan_port == alias)
         {
+            is_alias_vlan = true;
             continue;
         }
         NeighborEntry temp_entry = { ip_address, vlan_port };
@@ -1307,7 +1433,12 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     bool hw_config = isHwConfigured(neighborEntry);
-    // Neighbor is ready to be programmed if it's a prefix-mode neighbor OR if it's active
+    /*
+     * Prefix-route mode programs neighbors with NO_HOST_ROUTE and controls
+     * active/standby forwarding through the explicit host prefix route.  Keep
+     * the neighbor programmed in both states so state transitions can update
+     * the prefix route between local and tunnel nexthops.
+     */
     bool nbr_add_ready = (prefix_route || is_nbr_active);
 
     if (gMySwitchType == "voq")
@@ -1315,6 +1446,34 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         if (!addVoqEncapIndex(alias, ip_address, neighbor_attrs))
         {
             return false;
+        }
+    }
+
+    if (is_alias_vlan)
+    {
+        Port vlanPort;
+        if (!m_portsOrch->getPort(alias, vlanPort))
+        {
+            SWSS_LOG_ERROR("Get Port from port alias(%s) failed!", alias.c_str());
+            return false;
+        }
+        if (vlanPort.m_vlan_info.vlan_oid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Get vlan oid from port alias(%s) failed!", alias.c_str());
+            return false;
+        }
+
+        FdbEntry entry;
+
+        entry.mac = macAddress;
+        entry.bv_id = vlanPort.m_vlan_info.vlan_oid;
+
+        if (m_fdbOrch->is_fdb_programmed_to_vxlan_tunnel(entry))
+        {
+            /* The fdb is still in vxlan port, just save neighbor info */
+            SWSS_LOG_NOTICE("Mac %s is still in vxlan port, skip hw programming!", macAddress.to_string().c_str());
+            m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
+            return true;
         }
     }
 
@@ -1475,10 +1634,14 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
     }
 
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+    if (neighborIt == m_syncdNeighbors.end())
     {
         return true;
     }
+
+    SWSS_LOG_INFO("Try to remove neighbor %s on %s",
+                   ip_address.to_string().c_str(), alias.c_str());
 
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
     {
