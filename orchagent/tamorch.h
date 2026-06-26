@@ -118,6 +118,13 @@ private:
                       const std::vector<swss::FieldValueTuple> &values,
                       sai_object_id_t &oid);
 
+    bool updateSaiTamInt(const std::string &name,
+                         sai_object_id_t oid,
+                         const std::vector<swss::FieldValueTuple> &values);
+    bool updateSaiTamReport(const std::string &name,
+                             sai_object_id_t oid,
+                             const std::vector<swss::FieldValueTuple> &values);
+
     bool removeSaiObject(sai_object_id_t oid, sai_object_type_t type);
 
     /* ACL activation for IFAv2 — creates ACL TABLE with
