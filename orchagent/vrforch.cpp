@@ -131,6 +131,13 @@ bool VRFOrch::addOperation(const Request& request)
             sai_status_t status = sai_virtual_router_api->set_virtual_router_attribute(router_id, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
+                if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                {
+                    SWSS_LOG_NOTICE("Skipping unsupported virtual router attribute %d for VRF %s",
+                                    attr.id, vrf_name.c_str());
+                    continue;
+                }
                 SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
                 task_process_status handle_status = handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
                 if (handle_status != task_success)
