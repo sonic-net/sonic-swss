@@ -57,7 +57,8 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
 {
     {"vxlan_sport", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT},
-    {"vxlan_mask",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK}
+    {"vxlan_mask", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK},
+    {"vxlan_security",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -165,6 +166,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchPortMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
@@ -503,6 +505,7 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
         return;
     }
 }
+
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -520,6 +523,24 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
+        sai_attr_capability_t capability;
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
+                                                SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY, &capability);
+        if (status == SAI_STATUS_SUCCESS) {
+            if (capability.create_implemented) {
+                attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
+                attr.value.booldata = false;
+                attrs.push_back(attr);
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("VXLAN UDP sport security attribute not supported for switch tunnel creation, skipping attribute creation");
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("VXLAN UDP sport security attribute query capability failed, rv:%d", status);
+        }
 
         status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
@@ -540,6 +561,21 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK:
             attr.value.u8 = to_uint<uint8_t>(value);
+            break;
+        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
+            if (value == "true")
+            {
+                attr.value.booldata = true;
+            }
+            else if (value == "false")
+            {
+                attr.value.booldata = false;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("vxlan_security invalid value '%s' (use string \"true\" or \"false\"); defaulting to false", value.c_str());
+                attr.value.booldata = false;
+            }
             break;
         default:
             SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
@@ -1917,6 +1953,87 @@ void SwitchOrch::querySwitchPortMirrorCapability()
             m_portEgressMirrorSupported = false;
         }
         SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchSamplePacketCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling samplepacket truncation
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SAMPLEPACKET,
+                            SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query samplepacket truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+        m_samplepacketTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "true");
+            m_samplepacketTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+            m_samplepacketTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
     set_switch_capability(fvVector);

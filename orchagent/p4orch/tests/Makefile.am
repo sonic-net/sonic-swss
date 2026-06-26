@@ -58,11 +58,13 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_crmorch.cpp \
 		       fake_flexcounterorch.cpp \
 		       fake_flowcounterrouteorch.cpp \
+		       fake_routeorch.cpp \
 		       fake_dbconnector.cpp \
 		       fake_producertable.cpp \
 		       fake_consumerstatetable.cpp \
 		       fake_subscriberstatetable.cpp \
 		       fake_notificationconsumer.cpp \
+		       fake_notificationconsumerstatsorch.cpp \
 		       fake_table.cpp \
 		       fake_aclorch.cpp \
 		       fake_zmqserver.cpp \
@@ -98,8 +100,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_next_hop.cpp \
 		       mock_sai_route.cpp \
 		       mock_sai_switch.cpp \
-                       mock_sai_tunnel.cpp \
-		       mock_sai_udf.cpp
+		       mock_sai_udf.cpp \
+		       mock_sai_tunnel.cpp
 
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)

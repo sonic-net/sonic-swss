@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "dbconnector.h"
 #include "copporch.h"
 #include "orch.h"
 #include "p4orch/acl_util.h"
@@ -13,6 +14,7 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
 
 extern "C"
 {
@@ -31,7 +33,7 @@ class AclRuleManager : public ObjectManagerInterface
   public:
     explicit AclRuleManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, CoppOrch *coppOrch,
                             ResponsePublisherInterface *publisher)
-        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_publisher(publisher), m_coppOrch(coppOrch),
+        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE"), m_publisher(publisher), m_coppOrch(coppOrch),
           m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0)),
           m_countersTable(std::make_unique<swss::Table>(
               m_countersDb.get(), std::string(COUNTERS_TABLE) + DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME))
@@ -159,6 +161,8 @@ class AclRuleManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4AclRule *acl_rule);
 
     P4OidMapper *m_p4OidMapper;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     P4AclRuleTables m_aclRuleTables;
     VRFOrch *m_vrfOrch;

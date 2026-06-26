@@ -309,7 +309,10 @@ ReturnCodeOr<std::vector<P4Replica>> deserializeReplicas(
 
 L3MulticastManager::L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
                                        ResponsePublisherInterface* publisher)
-    : m_p4OidMapper(mapper), m_vrfOrch(vrfOrch) {
+    : m_p4OidMapper(mapper),
+      m_vrfOrch(vrfOrch),
+      m_asic_db("ASIC_DB", 0),
+      m_asic_state_table(&m_asic_db, "ASIC_STATE") {
   SWSS_LOG_ENTER();
   assert(publisher != nullptr);
   m_publisher = publisher;
@@ -3273,13 +3276,11 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
           attrs.data(), /*countOnly=*/false);
   sai_object_id_t rif_oid = getRifOid(multicast_router_interface_entry);
 
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
   std::string key =
       sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTER_INTERFACE) + ":" +
       sai_serialize_object_id(rif_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
 
@@ -3290,7 +3291,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     return rif_str;
   }
 
-  // TODO(b/353398275): Remove this if block when kSetMulticastSrcMac removed
+  // TODO: Remove this if block when kSetMulticastSrcMac removed
   // Legacy action doesn't set a next hop.
   if (multicast_router_interface_entry->action == p4orch::kSetMulticastSrcMac) {
     return "";
@@ -3308,7 +3309,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
   std::string nh_key = sai_serialize_object_type(SAI_OBJECT_TYPE_NEXT_HOP) +
                        ":" + sai_serialize_object_id(nh_oid);
   std::vector<swss::FieldValueTuple> nh_values;
-  if (!table.get(nh_key, nh_values)) {
+  if (!m_asic_state_table.get(nh_key, nh_values)) {
     return std::string("ASIC DB key not found ") + nh_key;
   }
 
@@ -3331,7 +3332,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
       sai_serialize_object_type(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY) + ":" +
       sai_serialize_neighbor_entry(neigh_entry);
   std::vector<swss::FieldValueTuple> neigh_values;
-  if (!table.get(neigh_key, neigh_values)) {
+  if (!m_asic_state_table.get(neigh_key, neigh_values)) {
     return std::string("ASIC DB key not found ") + neigh_key;
   }
 
@@ -3375,12 +3376,10 @@ std::string L3MulticastManager::verifyL2MulticastRouterInterfaceStateAsicDb(
   sai_object_id_t bridge_port_oid =
       getBridgePortOid(multicast_router_interface_entry);
 
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_BRIDGE_PORT) +
                     ":" + sai_serialize_object_id(bridge_port_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
 
@@ -3467,9 +3466,6 @@ std::string L3MulticastManager::verifyMulticastGroupStateCache(
 std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
     const P4MulticastGroupEntry* multicast_group_entry) {
   // Confirm group settings.
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
-
   sai_object_id_t ipmc_group_oid = SAI_NULL_OBJECT_ID;
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
                         multicast_group_entry->multicast_group_id,
@@ -3477,7 +3473,7 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP) +
                     ":" + sai_serialize_object_id(ipmc_group_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
   // There are no IPMC group attributes to verify.  The attributes that do
@@ -3505,7 +3501,7 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
     key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
           sai_serialize_object_id(group_member_oid);
     values.clear();
-    if (!table.get(key, values)) {
+    if (!m_asic_state_table.get(key, values)) {
       return std::string("ASIC DB key not found ") + key;
     }
     std::string group_member_msg =
@@ -3521,9 +3517,6 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
 std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
     const P4MulticastGroupEntry* multicast_group_entry) {
   // Confirm group settings.
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
-
   sai_object_id_t l2mc_group_oid = SAI_NULL_OBJECT_ID;
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP,
                         multicast_group_entry->multicast_group_id,
@@ -3531,7 +3524,7 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_L2MC_GROUP) +
                     ":" + sai_serialize_object_id(l2mc_group_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
   // There are no L2MC group attributes to verify.  The attributes that do
@@ -3556,7 +3549,7 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
     key = sai_serialize_object_type(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER) + ":" +
           sai_serialize_object_id(group_member_oid);
     values.clear();
-    if (!table.get(key, values)) {
+    if (!m_asic_state_table.get(key, values)) {
       return std::string("ASIC DB key not found ") + key;
     }
     std::string group_member_msg =

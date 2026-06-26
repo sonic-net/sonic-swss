@@ -171,10 +171,7 @@ impl IpfixActor {
             if set_id >= 256 && set_length > 4 {
                 let data_length = set_length as usize - 4; // Exclude 4-byte set header
                 let data_start = offset + 4;
-                result.push_str(&format!(
-                    "        Data payload: {} bytes",
-                    data_length
-                ));
+                result.push_str(&format!("        Data payload: {} bytes", data_length));
 
                 // Show complete data payload
                 if data_length > 0 {
@@ -198,11 +195,7 @@ impl IpfixActor {
                                 .map(|b| format!("{:02x}", b))
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            result.push_str(&format!(
-                                "          {:04x}: {}\n",
-                                i * 16,
-                                chunk_hex
-                            ));
+                            result.push_str(&format!("          {:04x}: {}\n", i * 16, chunk_hex));
                         }
                     }
                 } else {
@@ -499,8 +492,8 @@ pub struct IpfixActor {
     temporary_templates_map: HashMap<u16, String>,
     /// Mapping from message key to template IDs for applied templates
     applied_templates_map: HashMap<String, Vec<u16>>,
-    /// Mapping from message key to object names for converting label IDs
-    object_names_map: HashMap<String, Vec<String>>,
+    /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
+    object_id_name_map: HashMap<String, HashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -524,7 +517,7 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
-            object_names_map: HashMap::new(),
+            object_id_name_map: HashMap::new(),
         }
     }
 
@@ -584,6 +577,15 @@ impl IpfixActor {
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
+    fn get_template_key(&self, template_id: u16) -> Option<&String> {
+        self.temporary_templates_map.get(&template_id).or_else(|| {
+            self.applied_templates_map
+                .iter()
+                .find(|(_, template_ids)| template_ids.contains(&template_id))
+                .map(|(msg_key, _)| msg_key)
+        })
+    }
+
     /// Processes IPFIX template messages and stores them for later use.
     ///
     /// # Arguments
@@ -608,8 +610,8 @@ impl IpfixActor {
         };
 
         debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}",
-            templates.key, templates.object_names
+            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
+            templates.key, templates.object_names, templates.object_ids
         );
 
         // Add detailed debug logging for template content if debug level is enabled
@@ -621,10 +623,46 @@ impl IpfixActor {
             }
         }
 
-        // Store object names if provided
-        if let Some(object_names) = &templates.object_names {
-            self.object_names_map
-                .insert(templates.key.clone(), object_names.clone());
+        if let (Some(object_names), Some(object_ids)) =
+            (&templates.object_names, &templates.object_ids)
+        {
+            if object_ids.len() == object_names.len() {
+                let mut lookup = HashMap::with_capacity(object_ids.len());
+                let mut has_duplicate_object_id = false;
+
+                for (object_id, object_name) in
+                    object_ids.iter().copied().zip(object_names.iter().cloned())
+                {
+                    if let Some(previous_name) = lookup.insert(object_id, object_name.clone()) {
+                        warn!(
+                            "IPFIX template key {} contains duplicate object_id {} ({} -> {}). Skipping object_id_name_map entry to avoid ambiguous label resolution.",
+                            templates.key,
+                            object_id,
+                            previous_name,
+                            object_name
+                        );
+                        has_duplicate_object_id = true;
+                        break;
+                    }
+                }
+
+                if has_duplicate_object_id {
+                    self.object_id_name_map.remove(&templates.key);
+                } else {
+                    self.object_id_name_map
+                        .insert(templates.key.clone(), lookup);
+                }
+            } else {
+                warn!(
+                    "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",
+                    templates.key,
+                    object_ids.len(),
+                    object_names.len()
+                );
+                self.object_id_name_map.remove(&templates.key);
+            }
+        } else {
+            self.object_id_name_map.remove(&templates.key);
         }
 
         let cache_ref = Self::get_cache();
@@ -692,8 +730,8 @@ impl IpfixActor {
         self.temporary_templates_map
             .retain(|_, msg_key| msg_key != key);
 
-        // Remove object names for this key
-        self.object_names_map.remove(key);
+        // Remove object metadata for this key
+        self.object_id_name_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -771,132 +809,117 @@ impl IpfixActor {
             });
 
             if should_drop_message {
-                debug!(
-                    "Dropping IPFIX data message because template was deleted or unknown"
-                );
+                debug!("Dropping IPFIX data message because template was deleted or unknown");
                 read_size += len as usize;
                 continue;
             }
-            let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
-            let mut observation_time: Option<u64>;
 
-            for record in datarecords {
-                observation_time = get_observation_time(record);
-                if observation_time.is_none() {
-                    debug!(
-                        "No observation time in record, use the last observer time {:?}",
-                        cache.last_observer_time
-                    );
-                    observation_time = cache.last_observer_time;
-                } else if let (Some(obs_time), Some(last_time)) =
-                    (observation_time, cache.last_observer_time)
-                {
-                    if obs_time > last_time {
+            for set in &data_message.sets {
+                let (template_id, datarecords) = match &set.records {
+                    ipfixrw::parser::Records::Data { set_id, data } => (*set_id, data),
+                    _ => continue,
+                };
+
+                let object_name_lookup = self
+                    .get_template_key(template_id)
+                    .and_then(|key| self.object_id_name_map.get(key));
+
+                let mut observation_time: Option<u64>;
+
+                for record in datarecords {
+                    observation_time = get_observation_time(record);
+                    if observation_time.is_none() {
+                        debug!(
+                            "No observation time in record, use the last observer time {:?}",
+                            cache.last_observer_time
+                        );
+                        observation_time = cache.last_observer_time;
+                    } else if let (Some(obs_time), Some(last_time)) =
+                        (observation_time, cache.last_observer_time)
+                    {
+                        if obs_time > last_time {
+                            cache.last_observer_time = observation_time;
+                        }
+                    } else {
+                        // If we have observation time but no last time, update it
                         cache.last_observer_time = observation_time;
                     }
-                } else {
-                    // If we have observation time but no last time, update it
-                    cache.last_observer_time = observation_time;
-                }
 
-                // If we still don't have observation time, skip this record
-                if observation_time.is_none() {
-                    warn!("No observation time available for record, skipping");
-                    continue;
-                }
-
-                // Collect final stats directly
-                let mut final_stats: Vec<SAIStat> = Vec::new();
-                let mut template_key: Option<String> = None;
-
-                // Debug: Log all fields in the record to understand what we're getting
-                debug!("Processing record with {} fields:", record.values.len());
-                for (key, val) in record.values.iter() {
-                    match key {
-                        DataRecordKey::Unrecognized(field_spec) => {
-                            debug!(
-                                "  Field ID: {}, Enterprise: {:?}, Length: {}, Value: {:?}",
-                                field_spec.information_element_identifier,
-                                field_spec.enterprise_number,
-                                field_spec.field_length,
-                                val
-                            );
-                        }
-                        _ => {
-                            debug!("  Key: {:?}, Value: {:?}", key, val);
-                        }
-                    }
-                }
-
-                for (key, val) in record.values.iter() {
-                    // Check if this is the observation time field or system time field
-                    let is_time_field = match key {
-                        DataRecordKey::Unrecognized(field_spec) => {
-                            let field_id = field_spec.information_element_identifier;
-                            let is_standard_field = field_spec.enterprise_number.is_none();
-
-                            (field_id == OBSERVATION_TIME_NANOSECONDS
-                                || field_id == OBSERVATION_TIME_SECONDS)
-                                && is_standard_field
-                        }
-                        _ => false,
-                    };
-
-                    if is_time_field {
-                        if let DataRecordKey::Unrecognized(field_spec) = key {
-                            debug!(
-                                "Skipping time field (ID: {})",
-                                field_spec.information_element_identifier
-                            );
-                        }
+                    // If we still don't have observation time, skip this record
+                    if observation_time.is_none() {
+                        warn!("No observation time available for record, skipping");
                         continue;
                     }
 
-                    match key {
-                        DataRecordKey::Unrecognized(field_spec) => {
-                            // Try to find the template key for this record to get object_names
-                            if template_key.is_none() {
-                                // Look up the template key from the field
-                                // We need to find which template this field belongs to
-                                for (_tid, msg_key) in &self.temporary_templates_map {
-                                    // This is a simplification - in reality we'd need to check
-                                    // if this specific field belongs to this template
-                                    template_key = Some(msg_key.clone());
-                                    break;
-                                }
-                                // Also check applied templates
-                                if template_key.is_none() {
-                                    for (msg_key, _) in &self.applied_templates_map {
-                                        template_key = Some(msg_key.clone());
-                                        break;
-                                    }
-                                }
+                    // Collect final stats directly
+                    let mut final_stats: Vec<SAIStat> = Vec::new();
+
+                    // Debug: Log all fields in the record to understand what we're getting
+                    debug!(
+                        "Processing record for template_id {} with {} fields:",
+                        template_id,
+                        record.values.len()
+                    );
+                    for (key, val) in record.values.iter() {
+                        match key {
+                            DataRecordKey::Unrecognized(field_spec) => {
+                                debug!(
+                                    "  Field ID: {}, Enterprise: {:?}, Length: {}, Value: {:?}",
+                                    field_spec.information_element_identifier,
+                                    field_spec.enterprise_number,
+                                    field_spec.field_length,
+                                    val
+                                );
                             }
-
-                            // Get object names for this template key
-                            let object_names = template_key
-                                .as_ref()
-                                .and_then(|key| self.object_names_map.get(key))
-                                .map(|names| names.as_slice())
-                                .unwrap_or(&[]);
-
-                            // Create SAIStat directly
-                            let stat = SAIStat::from_ipfix(field_spec, val, object_names);
-                            debug!("Created SAIStat: {:?}", stat);
-                            final_stats.push(stat);
+                            _ => {
+                                debug!("  Key: {:?}, Value: {:?}", key, val);
+                            }
                         }
-                        _ => continue,
                     }
+
+                    for (key, val) in record.values.iter() {
+                        // Check if this is the observation time field or system time field
+                        let is_time_field = match key {
+                            DataRecordKey::Unrecognized(field_spec) => {
+                                let field_id = field_spec.information_element_identifier;
+                                let is_standard_field = field_spec.enterprise_number.is_none();
+
+                                (field_id == OBSERVATION_TIME_NANOSECONDS
+                                    || field_id == OBSERVATION_TIME_SECONDS)
+                                    && is_standard_field
+                            }
+                            _ => false,
+                        };
+
+                        if is_time_field {
+                            if let DataRecordKey::Unrecognized(field_spec) = key {
+                                debug!(
+                                    "Skipping time field (ID: {})",
+                                    field_spec.information_element_identifier
+                                );
+                            }
+                            continue;
+                        }
+
+                        match key {
+                            DataRecordKey::Unrecognized(field_spec) => {
+                                let stat = SAIStat::from_ipfix(field_spec, val, object_name_lookup);
+                                debug!("Created SAIStat: {:?}", stat);
+                                final_stats.push(stat);
+                            }
+                            _ => continue,
+                        }
+                    }
+
+                    let saistats = SAIStatsMessage::new(SAIStats {
+                        observation_time: observation_time
+                            .expect("observation_time should be Some at this point"),
+                        stats: final_stats,
+                    });
+
+                    messages.push(saistats.clone());
+                    debug!("Record parsed {:?}", saistats);
                 }
-
-                let saistats = SAIStatsMessage::new(SAIStats {
-                    observation_time: observation_time
-                        .expect("observation_time should be Some at this point"),
-                    stats: final_stats,
-                });
-
-                messages.push(saistats.clone());
-                debug!("Record parsed {:?}", saistats);
             }
             read_size += len as usize;
             debug!(
@@ -964,11 +987,11 @@ impl Drop for IpfixActor {
 }
 
 /// IPFIX Information Element ID for observationTimeNanoseconds (Field ID 325).
-/// 
+///
 /// This field represents the absolute timestamp of the observation of the packet
-/// within a nanosecond resolution. The timestamp is based on the local time zone 
+/// within a nanosecond resolution. The timestamp is based on the local time zone
 /// of the Exporter and is represented as nanoseconds since the UNIX epoch.
-/// 
+///
 /// According to IANA IPFIX Information Elements Registry:
 /// - ElementId: 325
 /// - Data Type: dateTimeNanoseconds
@@ -977,11 +1000,11 @@ impl Drop for IpfixActor {
 const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 
 /// IPFIX Information Element ID for observationTimeSeconds (Field ID 322).
-/// 
+///
 /// This field represents the absolute timestamp of the observation of the packet
 /// within a second resolution. The timestamp is based on the local time zone
 /// of the Exporter and is represented as seconds since the UNIX epoch.
-/// 
+///
 /// According to IANA IPFIX Information Elements Registry:
 /// - ElementId: 322
 /// - Data Type: dateTimeSeconds  
@@ -990,7 +1013,7 @@ const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 const OBSERVATION_TIME_SECONDS: u16 = 322;
 
 /// Extracts observation time from an IPFIX data record.
-/// 
+///
 /// Converts timestamp to 64-bit nanoseconds following this priority:
 /// 1. If 64-bit nanoseconds field exists, use it directly
 /// 2. If 32-bit seconds and 32-bit nanoseconds fields exist, combine them
@@ -1014,15 +1037,24 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
             if field_spec.enterprise_number.is_none() {
                 match field_spec.information_element_identifier {
                     OBSERVATION_TIME_NANOSECONDS => {
-                        debug!("Found observation time nanoseconds field with value: {:?}", val);
+                        debug!(
+                            "Found observation time nanoseconds field with value: {:?}",
+                            val
+                        );
                         match val {
                             DataRecordValue::Bytes(bytes) => {
                                 if bytes.len() == 8 {
                                     full_nanoseconds_value = Some(NetworkEndian::read_u64(bytes));
-                                    debug!("Extracted 64-bit nanoseconds: {}", full_nanoseconds_value.unwrap());
+                                    debug!(
+                                        "Extracted 64-bit nanoseconds: {}",
+                                        full_nanoseconds_value.unwrap()
+                                    );
                                 } else if bytes.len() == 4 {
                                     nanoseconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!("Extracted 32-bit nanoseconds: {}", nanoseconds_value.unwrap());
+                                    debug!(
+                                        "Extracted 32-bit nanoseconds: {}",
+                                        nanoseconds_value.unwrap()
+                                    );
                                 }
                             }
                             DataRecordValue::U64(val) => {
@@ -1071,8 +1103,10 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
     // Priority 2: Combine 32-bit seconds and 32-bit nanoseconds
     if let (Some(seconds), Some(nanoseconds)) = (seconds_value, nanoseconds_value) {
         let combined_timestamp = (seconds as u64) * 1_000_000_000 + (nanoseconds as u64);
-        debug!("Combined timestamp from seconds({}) and nanoseconds({}): {}", 
-               seconds, nanoseconds, combined_timestamp);
+        debug!(
+            "Combined timestamp from seconds({}) and nanoseconds({}): {}",
+            seconds, nanoseconds, combined_timestamp
+        );
         return Some(combined_timestamp);
     }
 
@@ -1082,7 +1116,10 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("System time should be after Unix epoch")
         .as_nanos() as u64;
-    debug!("Using current UTC time as observation time: {}", current_time);
+    debug!(
+        "Using current UTC time as observation time: {}",
+        current_time
+    );
     Some(current_time)
 }
 
@@ -1167,6 +1204,130 @@ mod test {
         );
     }
 
+    #[test]
+    fn test_object_names_follow_template_id() {
+        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
+        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+
+        let template_256_bytes: [u8; 44] = [
+            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
+            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
+            0x80, 0x04,
+        ];
+
+        let template_257_bytes: [u8; 44] = [
+            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x01, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
+            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
+            0x80, 0x04,
+        ];
+
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_a"),
+            Arc::new(Vec::from(template_256_bytes)),
+            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+            Some(vec![1, 2]),
+        ));
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_b"),
+            Arc::new(Vec::from(template_257_bytes)),
+            Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
+            Some(vec![1, 2]),
+        ));
+
+        let valid_records_bytes: [u8; 144] = [
+            0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x03, 0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x04, 0x01, 0x01, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x07,
+        ];
+
+        let stats = actor.handle_record(Arc::new(Vec::from(valid_records_bytes)));
+        let stats: Vec<_> = stats
+            .into_iter()
+            .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
+            .collect();
+
+        let session_a_names = ["Ethernet0", "Ethernet1"];
+        let session_b_names = ["Ethernet8", "Ethernet12"];
+        let mut saw_session_a = false;
+        let mut saw_session_b = false;
+
+        for msg in &stats {
+            let names: Vec<&str> = msg.stats.iter().map(|s| s.object_name.as_str()).collect();
+
+            let only_session_a = names.iter().all(|name| session_a_names.contains(name));
+            let only_session_b = names.iter().all(|name| session_b_names.contains(name));
+
+            assert!(
+                only_session_a || only_session_b,
+                "record mixes object names from multiple templates: {:?}",
+                names
+            );
+
+            saw_session_a |= only_session_a;
+            saw_session_b |= only_session_b;
+        }
+
+        assert!(
+            saw_session_a,
+            "did not observe any stats for session A/template 256"
+        );
+        assert!(
+            saw_session_b,
+            "did not observe any stats for session B/template 257"
+        );
+    }
+
+    #[test]
+    fn test_template_update_without_object_names_clears_stale_mapping() {
+        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
+        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+
+        let template_bytes: [u8; 44] = [
+            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
+            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
+            0x80, 0x04,
+        ];
+
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_a"),
+            Arc::new(Vec::from(template_bytes)),
+            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+            Some(vec![1, 2]),
+        ));
+        let mut expected = HashMap::new();
+        expected.insert(1u16, "Ethernet0".to_string());
+        expected.insert(2u16, "Ethernet1".to_string());
+        assert_eq!(
+            actor.object_id_name_map.get("session_a"),
+            Some(&expected)
+        );
+
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_a"),
+            Arc::new(Vec::from(template_bytes)),
+            None,
+            None,
+        ));
+
+        assert!(
+            actor.object_id_name_map.get("session_a").is_none(),
+            "stale object_id_name_map entries should be cleared when a template update omits object metadata"
+        );
+    }
+
     #[tokio::test]
     async fn test_ipfix() {
         clear_logs(); // Clear any previous logs to ensure clean test state
@@ -1216,6 +1377,7 @@ mod test {
                 String::from("test_key"),
                 Arc::new(Vec::from(template_bytes)),
                 Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+                Some(vec![1, 2]),
             ))
             .await
             .unwrap();

@@ -9,6 +9,8 @@
 #include "flowcounterrouteorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
+#include "evpnmhorch.h"
+#include "l2nhgorch.h"
 #include "fdborch.h"
 #include "mirrororch.h"
 #define private public
@@ -76,6 +78,8 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 extern StpOrch *gStpOrch;
 extern MlagOrch *gMlagOrch;
 extern HFTelOrch *gHFTOrch;
+extern EvpnMhOrch *gEvpnMhOrch;
+extern L2NhgOrch *gL2NhgOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -105,6 +109,7 @@ extern sai_udf_api_t* sai_udf_api;
 extern sai_mpls_api_t* sai_mpls_api;
 extern sai_counter_api_t* sai_counter_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
+extern sai_mirror_api_t *sai_mirror_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_twamp_api_t* sai_twamp_api;
 extern sai_tam_api_t* sai_tam_api;
@@ -112,6 +117,7 @@ extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_dash_ha_api_t* sai_dash_ha_api;
+extern sai_dash_flow_api_t* sai_dash_flow_api;
 extern sai_stp_api_t* sai_stp_api;
 extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
@@ -123,3 +129,4 @@ extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
 extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
 extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
+extern sai_icmp_echo_api_t* sai_icmp_echo_api;
