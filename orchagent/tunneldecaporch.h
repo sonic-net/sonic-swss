@@ -82,6 +82,8 @@ public:
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
     std::string getDscpMode(const std::string &tunnelKey) const;
+    std::string getEcnMode(const std::string &tunnelKey) const;
+    std::string getEncapEcnMode(const std::string &tunnelKey) const;
     bool getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const;
     const SubnetDecapConfig &getSubnetDecapConfig() const
     {

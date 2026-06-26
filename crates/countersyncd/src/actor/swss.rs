@@ -1,14 +1,15 @@
 use super::super::message::ipfix::IPFixTemplatesMessage;
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
-use log::{debug, error, info};
-use std::sync::Arc;
+use log::{debug, error, info, warn};
+use std::{collections::HashMap, sync::Arc, thread};
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
+const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -27,6 +28,12 @@ const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEM
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
+}
+
+#[derive(Debug)]
+enum SwssEvent {
+    Update { key: String, session_data: SessionData },
+    Delete { key: String },
 }
 
 impl SwssActor {
@@ -58,86 +65,156 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
-    pub async fn run(mut actor: SwssActor) {
+    pub async fn run(actor: SwssActor) {
         info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
 
         #[cfg(test)]
-        let mut iteration_count = 0;
-        #[cfg(test)]
         const MAX_TEST_ITERATIONS: usize = 20;
 
-        loop {
-            #[cfg(test)]
-            {
-                iteration_count += 1;
-                if iteration_count > MAX_TEST_ITERATIONS {
-                    debug!(
-                        "SwssActor test mode reached maximum iterations ({}), terminating",
-                        MAX_TEST_ITERATIONS
-                    );
-                    break;
-                }
-            }
+        // Keep the SWSS table polling on a dedicated blocking thread so we don't park a Tokio worker.
+        let SwssActor {
+            mut session_table,
+            template_recipient,
+        } = actor;
+        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
 
-            // Use shorter timeout in test mode to make tests faster
-            #[cfg(test)]
-            let timeout = Duration::from_millis(50);
-            #[cfg(not(test))]
-            let timeout = Duration::from_secs(10);
+        let _reader_thread = match thread::Builder::new()
+            .name("countersyncd-swss".to_string())
+            .spawn(move || {
+                #[cfg(test)]
+                let mut iteration_count = 0;
 
-            match actor.session_table.read_data(timeout, false) {
-                Ok(select_result) => {
-                    match select_result {
-                        swss_common::SelectResult::Data => {
-                            // Data available, read it with pops()
-                            match actor.session_table.pops() {
-                                Ok(items) => {
-                                    for item in items {
-                                        debug!(
-                                            "SwssActor received: key={}, op={:?}",
-                                            item.key, item.operation
-                                        );
+                loop {
+                    if event_sender.is_closed() {
+                        debug!("SwssActor event receiver closed, terminating reader thread");
+                        break;
+                    }
 
-                                        let session_key = Self::extract_session_key(&item.key);
-                                        match item.operation {
-                                            KeyOperation::Set => {
-                                                actor
-                                                    .handle_session_update(
-                                                        &session_key,
-                                                        &item.field_values,
-                                                    )
-                                                    .await;
-                                            }
-                                            KeyOperation::Del => {
-                                                actor.handle_session_delete(&session_key).await;
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Error popping items from session table: {}", e);
+                    #[cfg(test)]
+                    {
+                        iteration_count += 1;
+                        if iteration_count > MAX_TEST_ITERATIONS {
+                            debug!(
+                                "SwssActor test mode reached maximum iterations ({}), terminating reader thread",
+                                MAX_TEST_ITERATIONS
+                            );
+                            break;
+                        }
+                    }
+
+                    #[cfg(test)]
+                    let timeout = Duration::from_millis(50);
+                    #[cfg(not(test))]
+                    let timeout = Duration::from_secs(10);
+
+                    match Self::blocking_collect_events(&mut session_table, timeout) {
+                        Ok(events) => {
+                            for event in events {
+                                if event_sender.blocking_send(event).is_err() {
+                                    debug!("SwssActor event receiver dropped, terminating reader thread");
+                                    return;
                                 }
                             }
                         }
-                        swss_common::SelectResult::Timeout => {
-                            tokio::task::yield_now().await; // Yield to allow other tasks to run after processing template
-                            debug!("Timeout waiting for session table updates");
-                        }
-                        swss_common::SelectResult::Signal => {
-                            debug!("Signal received while waiting for session table updates");
+                        Err(e) => {
+                            error!("Error reading from session table: {}", e);
+                            std::thread::sleep(Duration::from_millis(100));
                         }
                     }
                 }
+
+                #[cfg(test)]
+                debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
+            }) {
+                Ok(handle) => handle,
                 Err(e) => {
-                    error!("Error reading from session table: {}", e);
-                    // Small delay before retrying to avoid busy waiting on persistent errors
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    error!("Failed to spawn SwssActor reader thread: {}", e);
+                    return;
+                }
+            };
+
+        while let Some(event) = event_receiver.recv().await {
+            match event {
+                SwssEvent::Update { key, session_data } => {
+                    Self::process_session_update(&template_recipient, &key, &session_data).await;
+                }
+                SwssEvent::Delete { key } => {
+                    Self::process_session_delete(&template_recipient, &key).await;
                 }
             }
         }
 
-        #[cfg(test)]
-        debug!("SwssActor terminated after {} iterations", iteration_count);
+        debug!("SwssActor terminated");
+    }
+
+    fn blocking_collect_events(
+        session_table: &mut SubscriberStateTable,
+        timeout: Duration,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let mut events = Vec::new();
+
+        match session_table.read_data(timeout, false) {
+            Ok(select_result) => match select_result {
+                swss_common::SelectResult::Data => match session_table.pops() {
+                    Ok(items) => {
+                        for item in items {
+                            debug!(
+                                "SwssActor received: key={}, op={:?}",
+                                item.key, item.operation
+                            );
+
+                            let session_key = Self::extract_session_key(&item.key);
+                            match item.operation {
+                                KeyOperation::Set => events.push(SwssEvent::Update {
+                                    key: session_key,
+                                    session_data: Self::parse_session_data(&item.field_values),
+                                }),
+                                KeyOperation::Del => {
+                                    events.push(SwssEvent::Delete { key: session_key })
+                                }
+                            }
+                        }
+                        Ok(events)
+                    }
+                    Err(e) => {
+                        error!("Error popping items from session table: {}", e);
+                        Ok(events)
+                    }
+                },
+                swss_common::SelectResult::Timeout => {
+                    debug!("Timeout waiting for session table updates");
+                    Ok(events)
+                }
+                swss_common::SelectResult::Signal => {
+                    debug!("Signal received while waiting for session table updates");
+                    Ok(events)
+                }
+            },
+            Err(e) => Err(format!("Error reading from session table: {}", e)),
+        }
+    }
+
+    fn parse_session_data(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> SessionData {
+        let mut session_data = SessionData::default();
+
+        for (field, value) in field_values {
+            match field.as_str() {
+                "stream_status" => session_data.stream_status = value.to_string_lossy().to_string(),
+                "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
+                "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
+                "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
+                "session_config" => {
+                    session_data.session_config = value.as_bytes().to_vec();
+                }
+                _ => {
+                    debug!("Unknown field in session data: {} = {:?}", field, value);
+                }
+            }
+        }
+
+        session_data
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -162,6 +239,7 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session key (e.g., "test|PORT")  
     /// * `field_values` - HashMap of field-value pairs from the state DB
+    #[cfg(test)]
     async fn handle_session_update(
         &mut self,
         key: &str,
@@ -169,25 +247,7 @@ impl SwssActor {
     ) {
         debug!("Processing session update for key: {}", key);
 
-        // Parse session data from field-value pairs
-        let mut session_data = SessionData::default();
-
-        for (field, value) in field_values {
-            match field.as_str() {
-                "stream_status" => session_data.stream_status = value.to_string_lossy().to_string(),
-                "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
-                "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
-                "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
-                "session_config" => {
-                    // The session_config contains binary IPFIX template data
-                    // Convert CxxString to Vec<u8>
-                    session_data.session_config = value.as_bytes().to_vec();
-                }
-                _ => {
-                    debug!("Unknown field in session data: {} = {:?}", field, value);
-                }
-            }
-        }
+        let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
         if let Err(e) = self.validate_and_process_session(key, &session_data).await {
@@ -195,13 +255,57 @@ impl SwssActor {
         }
     }
 
+    async fn process_session_update(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        key: &str,
+        session_data: &SessionData,
+    ) {
+        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
+            error!("Failed to process session {}: {}", key, e);
+        }
+    }
+
+    async fn process_session_delete(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        key: &str,
+    ) {
+        info!("Session deleted: {}", key);
+
+        let delete_message = IPFixTemplatesMessage::delete(key.to_string());
+
+        match template_recipient.send(delete_message).await {
+            Ok(_) => {
+                info!("Successfully sent session deletion message for: {}", key);
+            }
+            Err(e) => {
+                error!("Failed to send session deletion message for {}: {}", key, e);
+            }
+        }
+
+        debug!("Session cleanup for {} completed", key);
+    }
+
     /// Validates session data and processes enabled IPFIX sessions
     ///
     /// # Arguments
     /// * `key` - Session identifier
     /// * `session_data` - Parsed session configuration
+    #[cfg(test)]
     async fn validate_and_process_session(
         &mut self,
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<(), String> {
+        Self::validate_and_send_session(&self.template_recipient, key, session_data).await
+    }
+
+    /// Validates session data and processes enabled IPFIX sessions
+    ///
+    /// # Arguments
+    /// * `key` - Session identifier
+    /// * `session_data` - Parsed session configuration
+    async fn validate_and_send_session(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
@@ -228,11 +332,10 @@ impl SwssActor {
             key, session_data.object_names, session_data.object_ids
         );
 
-        // Create IPFIX templates message
         let templates = Arc::new(session_data.session_config.clone());
 
         // Parse object_names if present
-        let object_names = if session_data.object_names.is_empty() {
+        let object_names: Option<Vec<String>> = if session_data.object_names.is_empty() {
             None
         } else {
             Some(
@@ -245,10 +348,53 @@ impl SwssActor {
             )
         };
 
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names);
+        let object_ids = if session_data.object_ids.is_empty() {
+            None
+        } else {
+            let mut parsed_object_ids = Vec::new();
+            for token in session_data.object_ids.split(',') {
+                let trimmed = token.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-        // Send to IPFIX actor
-        self.template_recipient
+                match trimmed.parse::<u16>() {
+                    Ok(object_id) => parsed_object_ids.push(object_id),
+                    Err(e) => {
+                        warn!(
+                            "Invalid object_ids entry '{}' for session {}: {}. Ignoring object_ids for this update",
+                            trimmed,
+                            key,
+                            e
+                        );
+                        parsed_object_ids.clear();
+                        break;
+                    }
+                }
+            }
+
+            if parsed_object_ids.is_empty() {
+                None
+            } else if let Some(names) = object_names.as_ref() {
+                if names.len() != parsed_object_ids.len() {
+                    warn!(
+                        "object_ids/object_names length mismatch for session {}: {} ids vs {} names. Ignoring object_ids for this update",
+                        key,
+                        parsed_object_ids.len(),
+                        names.len()
+                    );
+                    None
+                } else {
+                    Some(parsed_object_ids)
+                }
+            } else {
+                Some(parsed_object_ids)
+            }
+        };
+
+        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
+
+        template_recipient
             .send(message)
             .await
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
@@ -261,22 +407,9 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `key` - Session key that was deleted
+    #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
-        info!("Session deleted: {}", key);
-
-        // Send deletion message to IPFIX actor
-        let delete_message = IPFixTemplatesMessage::delete(key.to_string());
-
-        match self.template_recipient.send(delete_message).await {
-            Ok(_) => {
-                info!("Successfully sent session deletion message for: {}", key);
-            }
-            Err(e) => {
-                error!("Failed to send session deletion message for {}: {}", key, e);
-            }
-        }
-
-        debug!("Session cleanup for {} completed", key);
+        Self::process_session_delete(&self.template_recipient, key).await;
     }
 }
 
@@ -361,8 +494,10 @@ mod tests {
         // Verify object_names parsing
         let object_names = received_message
             .object_names
+            .as_ref()
             .expect("Should have object_names");
-        assert_eq!(object_names, vec!["Ethernet0", "Ethernet1", "Ethernet2"]);
+        assert_eq!(object_names, &vec!["Ethernet0", "Ethernet1", "Ethernet2"]);
+        assert_eq!(received_message.object_ids, Some(vec![1, 2, 3]));
     }
 
     #[tokio::test]
@@ -392,6 +527,7 @@ mod tests {
         assert!(!received_message.is_delete);
         assert!(received_message.templates.is_some());
         assert!(received_message.object_names.is_none());
+        assert_eq!(received_message.object_ids, Some(vec![1]));
     }
 
     #[tokio::test]
@@ -412,6 +548,7 @@ mod tests {
         assert!(received_message.is_delete);
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
+        assert!(received_message.object_ids.is_none());
     }
 
     #[tokio::test]
@@ -482,6 +619,7 @@ mod tests {
         assert!(!received_message.is_delete);
         assert!(received_message.templates.is_some());
         assert!(received_message.object_names.is_none());
+        assert_eq!(received_message.object_ids, Some(vec![1]));
     }
 
     #[test]
@@ -499,15 +637,19 @@ mod tests {
         let templates = Arc::new(vec![1, 2, 3, 4]);
         let object_names = Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]);
 
+        let object_ids = Some(vec![1, 2]);
+
         let message = IPFixTemplatesMessage::new(
             "test_key".to_string(),
             templates.clone(),
             object_names.clone(),
+            object_ids.clone(),
         );
 
         assert_eq!(message.key, "test_key");
         assert_eq!(message.templates, Some(templates));
         assert_eq!(message.object_names, object_names);
+        assert_eq!(message.object_ids, object_ids);
         assert!(!message.is_delete);
     }
 
@@ -518,6 +660,7 @@ mod tests {
         assert_eq!(message.key, "test_key");
         assert!(message.templates.is_none());
         assert!(message.object_names.is_none());
+        assert!(message.object_ids.is_none());
         assert!(message.is_delete);
     }
 
