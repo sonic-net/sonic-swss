@@ -280,6 +280,8 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    void cleanupVrfTable(sai_object_id_t vrf_id);
+    void cleanupEmptyVrfTables();
 
     void flushResponses() override;
 
