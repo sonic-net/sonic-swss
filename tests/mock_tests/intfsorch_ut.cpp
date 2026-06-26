@@ -148,8 +148,13 @@ namespace intfsorch_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
             gDirectory.set(gVrfOrch);
 
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
+
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
             const int fdborch_pri = 20;
 
@@ -162,7 +167,8 @@ namespace intfsorch_test
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                                   m_config_db.get());
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
@@ -393,5 +399,41 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchSagEnableDisable)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        entries.push_back({"GLOBAL", "SET", {{"gateway_mac", "02:03:04:05:06:07"}}});
+        auto sagConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_SAG_TABLE_NAME));
+        ASSERT_NE(sagConsumer, nullptr);
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"mtu", "9100"}, {"static_anycast_gateway", "true"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(intfConsumer, nullptr);
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_TRUE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"static_anycast_gateway", "false"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_FALSE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"GLOBAL", "DEL", {}});
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
     }
 }

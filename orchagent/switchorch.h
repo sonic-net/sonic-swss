@@ -21,6 +21,11 @@
 #define SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE                   "PATH_TRACING_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE                   "ICMP_OFFLOAD_CAPABLE"
 
+// Fast link-up capabilities
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE                    "FAST_LINKUP_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_POLLING_TIMER_RANGE        "FAST_LINKUP_POLLING_TIMER_RANGE"
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_GUARD_TIMER_RANGE          "FAST_LINKUP_GUARD_TIMER_RANGE"
+
 #define ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL 3600
 #define SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE          "ASIC_SDK_HEALTH_EVENT"
 #define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
@@ -28,6 +33,9 @@
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE            "PORT_INGRESS_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE  "PORT_INGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE   "PORT_EGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE     "SAMPLEPACKET_TRUNCATION_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
@@ -83,12 +91,16 @@ public:
     // Mirror capability interface for MirrorOrch
     bool isPortIngressMirrorSupported() const { return m_portIngressMirrorSupported; }
     bool isPortEgressMirrorSupported() const { return m_portEgressMirrorSupported; }
+    bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
+    bool isPortEgressSampleMirrorSupported() const { return m_portEgressSampleMirrorSupported; }
+    bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
 
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
     void doCfgSwitchTrimmingTableTask(Consumer &consumer);
+    void doCfgSwitchFastLinkupTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
@@ -96,6 +108,7 @@ private:
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
     void querySwitchPortMirrorCapability();
+    void querySwitchSamplePacketCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
@@ -108,6 +121,26 @@ private:
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
     void setSwitchIcmpOffloadCapability();
+
+    // Fast link-up
+    struct FastLinkupConfig
+    {
+        bool has_polling = false; uint16_t polling_time = 0;
+        bool has_guard = false; uint8_t guard_time = 0;
+        bool has_ber = false; uint8_t ber_threshold= 0;
+    };
+
+    struct FastLinkupCapabilities
+    {
+        bool supported = false;
+        bool has_polling_range = false;
+        bool has_guard_range = false;
+        uint16_t polling_min = 0, polling_max = 0;
+        uint16_t guard_min = 0, guard_max = 0;
+    };
+
+    void setFastLinkupCapability();
+    bool setSwitchFastLinkup(const FastLinkupConfig &cfg);
 
     // Switch trimming
     bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
@@ -158,6 +191,9 @@ private:
     // Port mirror capabilities
     bool m_portIngressMirrorSupported = false;
     bool m_portEgressMirrorSupported = false;
+    bool m_portIngressSampleMirrorSupported = false;
+    bool m_portEgressSampleMirrorSupported = false;
+    bool m_samplepacketTruncationSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
@@ -195,4 +231,7 @@ private:
     // Switch OA helper
     SwitchHelper swHlpr;
     SwitchTrimmingHelper trimHlpr;
+
+    // Fast link-up cache
+    FastLinkupCapabilities m_fastLinkupCap;
 };

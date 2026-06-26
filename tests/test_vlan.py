@@ -507,7 +507,7 @@ class TestVlan(object):
     def test_VlanGratArp(self, dvs):
         def arp_accept_enabled():
             rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
-            return (res.strip("\n") == "1", res)
+            return (res.strip("\n") == "2", res)
 
         def arp_accept_disabled():
             rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))

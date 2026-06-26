@@ -941,7 +941,79 @@ class TestVirtualChassis(object):
 
         flex_db = dvs.get_flex_db()
         flex_db.wait_for_n_keys("FLEX_COUNTER_TABLE:QUEUE_STAT_COUNTER", num_queues_to_be_polled)
- 
+
+    def test_voq_wred_queue_counter(self, vct):
+        """Verify WRED flex counter registration on a VOQ-chassis line card.
+
+        Exercises both registration paths in
+        PortsOrch::addWredQueueFlexCounters: the egress-queue path (all 4
+        WRED stats) and the per-port VOQ path (WRED_DROPPED_* only). The
+        WRED_ECN_MARKED_* counters are intentionally not registered on
+        the VOQ object because ECN marking on VOQ-chassis platforms is
+        reported at the egress queue object, not at the ingress VOQ.
+        """
+        if vct is None:
+            return
+        dvss = vct.dvss
+        dvs = None
+        for name in dvss.keys():
+            if "supervisor" in name:
+                continue
+            dvs = dvss[name]
+            break
+        assert dvs
+
+        _, _ = dvs.runcmd("counterpoll wredqueue enable")
+
+        # Layout matches test_voq_egress_queue_counter above
+        num_voqs_per_port = 8
+        num_queues_per_local_port = 20
+        num_ports_per_linecard = 32
+        num_local_ports = 32
+        num_linecards = 3
+        num_egress_queues = num_local_ports * num_queues_per_local_port
+        num_voqs = num_ports_per_linecard * num_voqs_per_port * num_linecards
+        num_queues_to_be_polled = num_voqs + num_egress_queues
+
+        flex_db = dvs.get_flex_db()
+        flex_db.wait_for_n_keys(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER",
+            num_queues_to_be_polled,
+        )
+
+        # Verify stat-list semantics: VOQ entries register only
+        # WRED_DROPPED_*; egress entries register all four.
+        counters_db = dvs.get_counters_db()
+        voq_name_map = counters_db.get_entry("COUNTERS_VOQ_NAME_MAP", "")
+        queue_name_map = counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        assert voq_name_map, "No VOQ name map populated on linecard"
+        assert queue_name_map, "No queue name map populated on linecard"
+
+        sample_voq_oid = next(iter(voq_name_map.values()))
+        voq_stat_list = flex_db.db_connection.hgetall(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER:" + sample_voq_oid
+        ).get("QUEUE_COUNTER_ID_LIST", "")
+        assert "WRED_DROPPED_PACKETS" in voq_stat_list
+        assert "WRED_DROPPED_BYTES" in voq_stat_list
+        assert "WRED_ECN_MARKED_PACKETS" not in voq_stat_list, \
+            "ECN-marked stat must not be registered on VOQ object"
+        assert "WRED_ECN_MARKED_BYTES" not in voq_stat_list
+
+        voq_oid_set = set(voq_name_map.values())
+        egress_oid = None
+        for oid in queue_name_map.values():
+            if oid not in voq_oid_set:
+                egress_oid = oid
+                break
+        assert egress_oid, "No egress-only queue OID found"
+        egress_stat_list = flex_db.db_connection.hgetall(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER:" + egress_oid
+        ).get("QUEUE_COUNTER_ID_LIST", "")
+        assert "WRED_DROPPED_PACKETS" in egress_stat_list
+        assert "WRED_DROPPED_BYTES" in egress_stat_list
+        assert "WRED_ECN_MARKED_PACKETS" in egress_stat_list
+        assert "WRED_ECN_MARKED_BYTES" in egress_stat_list
+
     def test_chassis_wred_profile_on_system_ports(self, vct):
         """Test whether wred profile is applied on system ports in VoQ chassis.
         """

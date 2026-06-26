@@ -315,7 +315,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateStatsIDs(stats_ids_set);
+        group.updateStatsIDs(std::move(stats_ids_set));
         m_groups.insert(itr, {sai_object_type, move(group)});
     }
     else
@@ -324,7 +324,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
         {
             return;
         }
-        itr->second.updateStatsIDs(stats_ids_set);
+        itr->second.updateStatsIDs(std::move(stats_ids_set));
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before update the stats
@@ -451,10 +451,14 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         m_groups.erase(itr);
     }
     m_sai_tam_tel_type_templates.erase(sai_object_type);
-    m_sai_tam_tel_type_states.erase(m_sai_tam_tel_type_objs[sai_object_type]);
-    m_sai_tam_tel_type_objs.erase(sai_object_type);
-    m_sai_tam_report_objs.erase(sai_object_type);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
+    {
+        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
+        m_sai_tam_tel_type_objs.erase(tel_type_itr);
+    }
+    m_sai_tam_report_objs.erase(sai_object_type);
     m_name_sai_map.erase(sai_object_type);
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
@@ -663,6 +667,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_REPORT_ATTR_REPORT_INTERVAL_UNIT;
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
+    attrs.push_back(attr);
 
     handleSaiCreateStatus(
         SAI_API_TAM,
@@ -709,14 +714,6 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     if (object_type == SAI_OBJECT_TYPE_PORT)
     {
         attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_INGRESS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_EGRESS;
         attr.value.booldata = true;
         attrs.push_back(attr);
     }
@@ -862,7 +859,7 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
-    attr.value.oid = stat_id;
+    attr.value.u32 = static_cast<uint32_t>(stat_id);
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_LABEL;
@@ -955,47 +952,36 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
         SWSS_LOG_THROW("The object type is not found");
     }
 
-    // Estimate the template size
-    auto counters = m_sai_tam_counter_subscription_objs.find(object_type);
-    if (counters == m_sai_tam_counter_subscription_objs.end())
-    {
-        SWSS_LOG_THROW("The counter subscription object is not found");
-    }
-    size_t counters_count = 0;
-    for (const auto &item : counters->second)
-    {
-        counters_count += item.second.size();
-    }
-
-    const size_t COUNTER_SIZE (8LLU);
-    const size_t IPFIX_TEMPLATE_MAX_SIZE (0xffffLLU);
-    const size_t IPFIX_HEADER_SIZE (16LLU);
-    const size_t IPFIX_TEMPLATE_METADATA_SIZE (12LLU);
-    const size_t IPFIX_TEMPLATE_MAX_STATS_COUNT (((IPFIX_TEMPLATE_MAX_SIZE - IPFIX_HEADER_SIZE - IPFIX_TEMPLATE_METADATA_SIZE) / COUNTER_SIZE) - 1LLU);
-    size_t estimated_template_size = (counters_count / IPFIX_TEMPLATE_MAX_STATS_COUNT + 1) * IPFIX_TEMPLATE_MAX_SIZE;
-
-    vector<uint8_t> buffer(estimated_template_size, 0);
-
-    sai_attribute_t attr;
+    // Query the required buffer size first by passing count=0 and list=nullptr,
+    // then allocate and fetch the actual data.
+    sai_attribute_t attr{};
     attr.id = SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES;
-    attr.value.u8list.count = static_cast<uint32_t>(buffer.size());
-    attr.value.u8list.list = buffer.data();
+    attr.value.u8list.count = 0;
+    attr.value.u8list.list = nullptr;
 
     auto status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
-    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_BUFFER_OVERFLOW)
     {
-        buffer.resize(attr.value.u8list.count);
-        attr.value.u8list.list = buffer.data();
-        status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
-    }
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_THROW("Failed to get the TAM telemetry type object %s attributes: %d",
+        SWSS_LOG_THROW("Failed to query the IPFIX template size for TAM telemetry type object %s: %d",
                        sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
     }
 
-    buffer.resize(attr.value.u8list.count);
+    vector<uint8_t> buffer;
+    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.u8list.count > 0)
+    {
+        buffer.resize(attr.value.u8list.count, 0);
+        attr.value.u8list.list = buffer.data();
+        status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_THROW("Failed to get the TAM telemetry type object %s attributes: %d",
+                           sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
+        }
+
+        // SAI may return fewer bytes than originally requested.
+        buffer.resize(attr.value.u8list.count);
+    }
 
     m_sai_tam_tel_type_templates[object_type] = move(buffer);
 }

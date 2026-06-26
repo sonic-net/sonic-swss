@@ -15,6 +15,7 @@
 #include "recorder.h"
 #include "response_publisher_interface.h"
 #include "table.h"
+#include "zmqserver.h"
 
 // This class performs two tasks when publish is called:
 // 1. Sends a notification into the redis channel.
@@ -22,7 +23,9 @@
 class ResponsePublisher : public ResponsePublisherInterface
 {
   public:
-    explicit ResponsePublisher(const std::string &dbName, bool buffered = false, bool db_write_thread = false);
+    explicit ResponsePublisher(const std::string& dbName, bool buffered = false,
+                               bool db_write_thread = false,
+                             swss::ZmqServer* zmqServer = nullptr);
 
     virtual ~ResponsePublisher();
 
@@ -49,6 +52,18 @@ class ResponsePublisher : public ResponsePublisherInterface
     void writeToDB(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
                    const std::string &op, bool replace = false) override;
 
+    void setEnableDbWriteAndNotify(bool enable_db_write_and_notify) override;
+
+    // With a state update thread: append to m_async_publish_pending; caller must call
+    // publishAsyncBatch() then flush() to enqueue work (batch + flush marker).
+    // Without a state update thread: synchronous publish().
+    void publishAsync(const std::string &table, const std::string &key,
+                      const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
+                      bool replace = false);
+
+    // Enqueue the current async batch as one queue item. No-op if empty or if no state update thread.
+    void publishAsyncBatch();
+
     /**
      * @brief Flush pending responses
      */
@@ -67,6 +82,16 @@ class ResponsePublisher : public ResponsePublisherInterface
     bool m_directDbWrite = false;
 
   private:
+    struct asyncPublishItem
+    {
+        std::string table;
+        std::string key;
+        std::vector<swss::FieldValueTuple> intent_attrs;
+        ReturnCode status;
+        bool replace;
+        std::string record_ts;
+    };
+
     struct entry
     {
         std::string table;
@@ -76,19 +101,27 @@ class ResponsePublisher : public ResponsePublisherInterface
         bool replace;
         bool flush;
         bool shutdown;
+        bool fullPublishBatch;
+        std::vector<asyncPublishItem> full_publish_batch;
 
-        entry()
+        entry() : replace(false), flush(false), shutdown(false), fullPublishBatch(false)
         {
         }
 
         entry(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
               const std::string &op, bool replace, bool flush, bool shutdown)
-            : table(table), key(key), values(values), op(op), replace(replace), flush(flush), shutdown(shutdown)
+            : table(table), key(key), values(values), op(op), replace(replace), flush(flush), shutdown(shutdown),
+              fullPublishBatch(false)
         {
         }
     };
 
-    void dbUpdateThread();
+    void stateUpdateThread();
+    void publishFullBatchFromThread(std::vector<asyncPublishItem> &&items);
+    void publishWrite(const std::string &table, const std::string &key,
+                      const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
+                      const std::vector<swss::FieldValueTuple> &state_attrs, bool replace,
+                      const std::string *record_ts, bool sync_publish);
     void writeToDBInternal(const std::string &table, const std::string &key,
                            const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace);
 
@@ -97,9 +130,17 @@ class ResponsePublisher : public ResponsePublisherInterface
     std::unique_ptr<swss::RedisPipeline> m_db_pipe;
 
     bool m_buffered{false};
-    // Thread to write to DB.
+  swss::ZmqServer* m_zmqServer;
+  std::unordered_map<std::string, std::vector<swss::KeyOpFieldsValuesTuple>>
+      responses;  // Cache the responses to send them together in flush(). Only
+                  // used when ZMQ is enabled.
+                  // When m_update_thread exists, responses is owned by the
+                  // update thread context only.
+    std::vector<asyncPublishItem> m_async_publish_pending;
+    // Thread to write to DB, notify and record.
     std::unique_ptr<std::thread> m_update_thread;
     std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
     std::condition_variable m_signal;
+    bool m_enable_db_write_and_notify{true};
 };
