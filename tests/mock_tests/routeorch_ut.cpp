@@ -1350,6 +1350,7 @@ namespace routeorch_test
         const NextHopKey &other_nh = temp_is_nh0 ? mpls_nh1 : mpls_nh0;
         EXPECT_FALSE(gNeighOrch->hasNextHop(other_nh))
             << "Non-temporary MPLS NH should be cleaned up: " << other_nh.to_string();
+    }
 
     TEST_F(RouteOrchTest, RouteOrchReachMaxNhgLimit)
     {
