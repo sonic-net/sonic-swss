@@ -67,6 +67,7 @@ public:
 private:
     bool tsa_enabled;
     bool bfd_offload;
+    bool software_bfd_forced;
     bool offload_supported(bool get_ipv6);
 
 };

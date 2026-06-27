@@ -738,6 +738,15 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     tsa_enabled = false;
     bool ipv6 = true;
     bfd_offload = (offload_supported(!ipv6) && offload_supported(ipv6));
+
+    string value;
+    Table systemDefaultsTable(db, "SYSTEM_DEFAULTS");
+    software_bfd_forced = (systemDefaultsTable.hget("software_bfd", "status", value)
+                           && value == "enabled");
+    if (software_bfd_forced)
+    {
+        SWSS_LOG_NOTICE("SYSTEM_DEFAULTS|software_bfd=enabled; software BFD path forced");
+    }
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
@@ -754,7 +763,7 @@ bool BgpGlobalStateOrch::getTsaState()
 bool BgpGlobalStateOrch::getSoftwareBfd()
 {
     SWSS_LOG_ENTER();
-    return !bfd_offload;
+    return software_bfd_forced || !bfd_offload;
 }
 
 bool BgpGlobalStateOrch::offload_supported(bool get_ipv6)
