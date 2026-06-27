@@ -715,11 +715,17 @@ ReturnCode AclRuleManager::validateAclRuleAppDbEntry(const P4AclRuleAppDbEntry &
 
 P4AclRule *AclRuleManager::getAclRule(const std::string &acl_table_name, const std::string &acl_rule_key)
 {
-    if (m_aclRuleTables[acl_table_name].find(acl_rule_key) == m_aclRuleTables[acl_table_name].end())
+    auto table_it = m_aclRuleTables.find(acl_table_name);
+    if (table_it == m_aclRuleTables.end())
     {
         return nullptr;
     }
-    return &m_aclRuleTables[acl_table_name][acl_rule_key];
+    auto rule_it = table_it->second.find(acl_rule_key);
+    if (rule_it == table_it->second.end())
+    {
+        return nullptr;
+    }
+    return &rule_it->second;
 }
 
 ReturnCode AclRuleManager::setAclRuleCounterStats(const P4AclRule &acl_rule)
