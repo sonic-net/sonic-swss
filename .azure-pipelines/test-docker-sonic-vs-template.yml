@@ -117,7 +117,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker lcov_cobertura
+      sudo pip3 install pytest pytest-rerunfailures exabgp docker lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
@@ -163,7 +163,7 @@ jobs:
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      params="--force-flaky"
+      params="--reruns 2 --reruns-delay 1"
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         cp $(Build.ArtifactStagingDirectory)/download/coverage.info ./
         cp $(Build.ArtifactStagingDirectory)/download/coverage.xml ./
@@ -189,7 +189,7 @@ jobs:
       echo $all_tests | xargs -n 1 | parallel -j${parallel} sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh \'"$IMAGE_NAME"\' \'"$params"\' "{}" $retry
       single_asic_voq_tests="test_portchannel.py test_neighbor.py test_route.py"
       parallel=3
-      echo $single_asic_voq_tests | xargs -n 1 | parallel -j${parallel} sudo ./run-tests.sh \'"$IMAGE_NAME"\' \'"--force-flaky --force-recreate-dvs --switch-mode=single_asic_voq_fs"\' "{}" $retry
+      echo $single_asic_voq_tests | xargs -n 1 | parallel -j${parallel} sudo ./run-tests.sh \'"$IMAGE_NAME"\' \'"--reruns 2 --reruns-delay 1 --force-recreate-dvs --switch-mode=single_asic_voq_fs"\' "{}" $retry
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
