@@ -187,6 +187,26 @@ namespace teamportsync_test
 
 namespace teamsync_test
 {
+    void resetTeamSyncMocks()
+    {
+        callback_sleep = NULL;
+        callback_team_init = NULL;
+        callback_team_change_handler = NULL;
+        callback_teamdctl_connect = NULL;
+        callback_teamdctl_config_get_raw_direct = NULL;
+        callback_teamdctl_disconnect = NULL;
+    }
+
+    void setTeamSyncSuccessMocks()
+    {
+        callback_sleep = cb_sleep;
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
+        callback_teamdctl_disconnect = cb_teamdctl_disconnect;
+    }
+
     /* Subclass to expose the protected addLag() for unit testing. */
     class TeamSyncUnderTest : public swss::TeamSync
     {

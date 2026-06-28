@@ -237,25 +237,6 @@ tests_portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GT
 tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lnl-3 -lnl-route-3 -lpthread
 
-## teamsyncd unit tests
-
-tests_teamsyncd_SOURCES = teamsyncd/teamsyncd_ut.cpp \
-                          teamsyncd/mock_libteam.cpp \
-                          $(top_srcdir)/lib/recorder.cpp \
-                          $(top_srcdir)/teamsyncd/teamsync.cpp \
-                          mock_dbconnector.cpp \
-                          common/mock_shell_command.cpp \
-                          mock_table.cpp \
-                          mock_hiredis.cpp \
-                          mock_redisreply.cpp
-
-tests_teamsyncd_INCLUDES = -I $(top_srcdir)/teamsyncd -I $(top_srcdir)/cfgmgr -I $(top_srcdir)/lib
-tests_teamsyncd_CXXFLAGS = -Wl,-wrap,if_nameindex -Wl,-wrap,if_freenameindex
-tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
-tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_teamsyncd_INCLUDES)
-tests_teamsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lnl-3 -lnl-route-3 -lpthread -lteam
-
 ## intfmgrd unit tests
 
 tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
@@ -368,13 +349,18 @@ tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredi
 
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
+                          teamsyncd/teamsyncd_ut.cpp \
+                          teamsyncd/mock_libteam.cpp \
+                          $(top_srcdir)/lib/recorder.cpp \
                           $(top_srcdir)/teamsyncd/teamsync.cpp \
                           mock_dbconnector.cpp \
+                          common/mock_shell_command.cpp \
                           mock_table.cpp \
                           mock_hiredis.cpp \
                           mock_redisreply.cpp
 
-tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
+tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_teamsyncd_CXXFLAGS = -Wl,-wrap,if_nameindex -Wl,-wrap,if_freenameindex
 tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
 tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \

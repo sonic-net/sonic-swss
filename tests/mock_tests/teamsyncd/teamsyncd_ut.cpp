@@ -1,10 +1,22 @@
+#include <chrono>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+
 #include "gtest/gtest.h"
 #define protected public
 #define private public
 #include "teamsync.h"
 #undef protected
-#undef private 
+#undef private
 #include "mock_table.h"
+
+namespace teamsync_test
+{
+    void setTeamSyncSuccessMocks();
+    void resetTeamSyncMocks();
+}
 
 namespace teamsyncd_ut
 {
@@ -19,15 +31,22 @@ namespace teamsyncd_ut
         void SetUp() override
         {
             testing_db::reset();
+            teamsync_test::setTeamSyncSuccessMocks();
             m_config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
+        }
+
+        void TearDown() override
+        {
+            teamsync_test::resetTeamSyncMocks();
+            testing_db::reset();
         }
     };
 
     TEST_F(TeamSyncdTest, testAddingLagOnWarmBootSetsStateDbFlag)
     {
-        swss::TeamSync sync(m_config_db.get(), m_state_db.get(), nullptr);
+        swss::TeamSync sync(m_app_db.get(), m_state_db.get(), nullptr);
         swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
 
         sync.m_warmstart = true;
