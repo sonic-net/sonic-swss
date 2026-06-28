@@ -1495,7 +1495,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     auto cleanup_mpls_nh = [this](const set<NextHopKey>& nh_set) {
         for (auto it : nh_set)
         {
-            if (it.isMplsNextHop() && (m_neighOrch->getNextHopRefCount(it) == 0))
+            if (it.isMplsNextHop() && m_neighOrch->hasNextHop(it) &&
+                (m_neighOrch->getNextHopRefCount(it) == 0))
             {
                 m_neighOrch->removeMplsNextHop(it);
             }
