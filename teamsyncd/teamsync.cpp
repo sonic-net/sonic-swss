@@ -184,7 +184,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         try
         {
             auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-            m_stateLagTable.set(lagName, fvVector);	    
+            m_stateLagTable.set(lagName, fvVector);
             m_teamSelectables[lagName] = sync;
             m_selectablesToAdd.insert(lagName);
         }
@@ -197,7 +197,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     }
     else
     {
-        m_stateLagTable.set(lagName, fvVector);	    
+        m_stateLagTable.set(lagName, fvVector);
     }
 }
 
