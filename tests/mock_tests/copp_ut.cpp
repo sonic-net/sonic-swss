@@ -35,7 +35,7 @@ TEST(CoppMgrTest, CoppTest)
     coppTable.set("queue1_group1",
                 {
                     {"cbs", "6100"},
-                    {"cir", "6000"},
+                    {"cir", "600"},
                     {"meter_type", "packets"},
                     {"mode", "sr_tcm"},
                     {"queue", "1"},
@@ -49,6 +49,6 @@ TEST(CoppMgrTest, CoppTest)
 
     string overide_val;
     coppTable.hget("queue1_group1", "cbs",overide_val);
-    EXPECT_EQ( overide_val, "6000");
+    EXPECT_EQ( overide_val, "600");
 }
 

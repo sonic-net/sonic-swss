@@ -34,8 +34,8 @@
 		    "queue": "1",
 		    "meter_type":"packets",
 		    "mode":"sr_tcm",
-		    "cir":"6000",
-		    "cbs":"6000",
+		    "cir":"600",
+		    "cbs":"600",
 		    "red_action":"drop"
 	    },
 	    "queue1_group2": {
@@ -99,6 +99,10 @@
 		    "trap_ids": "udld",
 		    "trap_group": "queue4_group3",
 		    "always_enabled": "true"
+	    },
+	    "ssh": {
+		    "trap_ids": "ssh",
+		    "trap_group": "queue4_group1"
 	    },
 	    "ip2me": {
 		    "trap_ids": "ip2me",

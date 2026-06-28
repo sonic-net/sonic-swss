@@ -113,8 +113,8 @@ copp_group_queue1_group1 = {
         "queue": "1",
         "meter_type":"packets",
         "mode":"sr_tcm",
-        "cir":"6000",
-        "cbs":"6000",
+        "cir":"600",
+        "cbs":"600",
         "red_action":"drop"
 }
 
@@ -171,6 +171,7 @@ copp_trap = {
         "lldp": ["lldp", copp_group_queue4_group3],
         "dhcp": ["dhcp;dhcpv6", copp_group_queue4_group3],
         "udld": ["udld", copp_group_queue4_group3, "always_enabled"],
+        "ssh": ["ssh", copp_group_queue4_group1],
         "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
         "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
         "sflow": ["sample_packet", copp_group_queue2_group1],
