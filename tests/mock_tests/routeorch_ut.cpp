@@ -1352,6 +1352,145 @@ namespace routeorch_test
             << "Non-temporary MPLS NH should be cleaned up: " << other_nh.to_string();
     }
 
+    /* Member-create failure where the member rollback removal also fails (member cleanup SAI-remove path). */
+    TEST_F(RouteOrchTest, RouteOrchNhgMemberCreateFailureMemberRemoveFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1.1.1.0/24", "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                                    {"nexthop", "10.0.0.2,10.0.0.3"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        const auto current_create_count = create_route_count;
+
+        auto create_members_with_second_failure = [](sai_object_id_t switch_id,
+                                                     uint32_t object_count,
+                                                     const uint32_t *attr_count,
+                                                     const sai_attribute_t **attr_list,
+                                                     sai_bulk_op_error_mode_t mode,
+                                                     sai_object_id_t *object_id,
+                                                     sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 2u) << "Unexpected bulk create NHG member count";
+
+            auto create_status = old_sai_next_hop_group_api->create_next_hop_group_members(
+                switch_id, 1, attr_count, attr_list, mode, object_id, object_statuses);
+            EXPECT_EQ(create_status, SAI_STATUS_SUCCESS);
+            EXPECT_EQ(object_statuses[0], SAI_STATUS_SUCCESS);
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID);
+
+            object_id[1] = SAI_NULL_OBJECT_ID;
+            object_statuses[1] = SAI_STATUS_INSUFFICIENT_RESOURCES;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        // Really remove the member but report failure to exercise the rollback failure path.
+        auto remove_member_in_use = [](uint32_t object_count,
+                                       const sai_object_id_t *object_id,
+                                       sai_bulk_op_error_mode_t mode,
+                                       sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 1u) << "Unexpected rollback NHG member remove count";
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID) << "Rollback received null NHG member id";
+
+            old_sai_next_hop_group_api->remove_next_hop_group_members(
+                object_count, object_id, mode, object_statuses);
+            object_statuses[0] = SAI_STATUS_OBJECT_IN_USE;
+            return SAI_STATUS_OBJECT_IN_USE;
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, _, _, _, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_members_with_second_failure));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(remove_member_in_use));
+        }
+
+        // Member-remove failure returns before group removal, so it is not reached here.
+        EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_)).Times(0);
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        NextHopGroupKey ecmp_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_FALSE(gRouteOrch->hasNextHopGroup(ecmp_nhg_key));
+    }
+
+    /* Member-create failure where member rollback succeeds but the group removal fails (group cleanup SAI-remove path). */
+    TEST_F(RouteOrchTest, RouteOrchNhgMemberCreateFailureGroupRemoveFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1.1.1.0/24", "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                                    {"nexthop", "10.0.0.2,10.0.0.3"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        const auto current_create_count = create_route_count;
+
+        auto create_members_with_second_failure = [](sai_object_id_t switch_id,
+                                                     uint32_t object_count,
+                                                     const uint32_t *attr_count,
+                                                     const sai_attribute_t **attr_list,
+                                                     sai_bulk_op_error_mode_t mode,
+                                                     sai_object_id_t *object_id,
+                                                     sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 2u) << "Unexpected bulk create NHG member count";
+
+            auto create_status = old_sai_next_hop_group_api->create_next_hop_group_members(
+                switch_id, 1, attr_count, attr_list, mode, object_id, object_statuses);
+            EXPECT_EQ(create_status, SAI_STATUS_SUCCESS);
+            EXPECT_EQ(object_statuses[0], SAI_STATUS_SUCCESS);
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID);
+
+            object_id[1] = SAI_NULL_OBJECT_ID;
+            object_statuses[1] = SAI_STATUS_INSUFFICIENT_RESOURCES;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto remove_created_member = [](uint32_t object_count,
+                                        const sai_object_id_t *object_id,
+                                        sai_bulk_op_error_mode_t mode,
+                                        sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 1u) << "Unexpected rollback NHG member remove count";
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID) << "Rollback received null NHG member id";
+
+            return old_sai_next_hop_group_api->remove_next_hop_group_members(
+                object_count, object_id, mode, object_statuses);
+        };
+
+        // Really remove the group but report failure to exercise the group-remove failure path.
+        auto remove_group_in_use = [](sai_object_id_t next_hop_group_id) -> sai_status_t {
+            old_sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+            return SAI_STATUS_OBJECT_IN_USE;
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, _, _, _, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_members_with_second_failure));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(remove_created_member));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_))
+                .Times(1)
+                .WillOnce(Invoke(remove_group_in_use));
+        }
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        NextHopGroupKey ecmp_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_FALSE(gRouteOrch->hasNextHopGroup(ecmp_nhg_key));
+    }
+
     TEST_F(RouteOrchTest, RouteOrchReachMaxNhgLimit)
     {
         // Test that covers the SWSS_LOG_INFO when NHG limit is reached (line 1488)

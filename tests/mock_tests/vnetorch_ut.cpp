@@ -478,4 +478,95 @@ namespace vnetorch_test
 
         m_vxlan_tunnel_orch->delTunnel(tunnel);
     }
+
+    /* Defensive: if member rollback fails, bail out (return false) before group removal. */
+    TEST_F(VnetOrchTest, VnetTunnelRouteEcmpMemberCleanupFailure)
+    {
+        ASSERT_NE(m_vnet_rt_orch, nullptr);
+
+        const string vnet = "VnetTest";
+        NextHopGroupKey ecmp_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+
+        m_vnet_rt_orch->vnet_tunnel_route_check_directly_connected[vnet] = true;
+
+        auto create_first_member = [](sai_object_id_t *next_hop_group_member_id,
+                                      sai_object_id_t switch_id,
+                                      uint32_t attr_count,
+                                      const sai_attribute_t *attr_list) -> sai_status_t {
+            auto status = old_sai_next_hop_group_api->create_next_hop_group_member(
+                next_hop_group_member_id, switch_id, attr_count, attr_list);
+            EXPECT_EQ(status, SAI_STATUS_SUCCESS);
+            EXPECT_NE(*next_hop_group_member_id, SAI_NULL_OBJECT_ID);
+            return status;
+        };
+
+        auto create_second_member_fail = [](sai_object_id_t *next_hop_group_member_id,
+                                            sai_object_id_t,
+                                            uint32_t,
+                                            const sai_attribute_t *) -> sai_status_t {
+            *next_hop_group_member_id = SAI_NULL_OBJECT_ID;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto cleanup_member_fail = [](sai_object_id_t) -> sai_status_t {
+            return SAI_STATUS_FAILURE;
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_member(_, _, _, _))
+                .Times(2)
+                .WillOnce(Invoke(create_first_member))
+                .WillOnce(Invoke(create_second_member_fail));
+            /* Rollback of the first member fails -> bail out before group removal. */
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_member(_))
+                .Times(1)
+                .WillOnce(Invoke(cleanup_member_fail));
+        }
+
+        EXPECT_FALSE(m_vnet_rt_orch->addNextHopGroup(vnet, ecmp_nhg_key, nullptr, "", true));
+        EXPECT_FALSE(m_vnet_rt_orch->hasNextHopGroup(vnet, ecmp_nhg_key));
+    }
+
+    /* Defensive: if group cleanup fails after a member create failure, return false. */
+    TEST_F(VnetOrchTest, VnetTunnelRouteEcmpGroupCleanupFailure)
+    {
+        ASSERT_NE(m_vnet_rt_orch, nullptr);
+
+        const string vnet = "VnetTest";
+        NextHopGroupKey ecmp_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+
+        m_vnet_rt_orch->vnet_tunnel_route_check_directly_connected[vnet] = true;
+
+        auto create_member_fail = [](sai_object_id_t *next_hop_group_member_id,
+                                     sai_object_id_t,
+                                     uint32_t,
+                                     const sai_attribute_t *) -> sai_status_t {
+            *next_hop_group_member_id = SAI_NULL_OBJECT_ID;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto cleanup_group_fail = [](sai_object_id_t) -> sai_status_t {
+            return SAI_STATUS_FAILURE;
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            /* First member fails; no members added yet. */
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_member(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_member_fail));
+            /* Group cleanup fails -> defensive return false. */
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_))
+                .Times(1)
+                .WillOnce(Invoke(cleanup_group_fail));
+        }
+
+        EXPECT_FALSE(m_vnet_rt_orch->addNextHopGroup(vnet, ecmp_nhg_key, nullptr, "", true));
+        EXPECT_FALSE(m_vnet_rt_orch->hasNextHopGroup(vnet, ecmp_nhg_key));
+    }
 }
