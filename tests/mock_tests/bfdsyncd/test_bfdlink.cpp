@@ -1,4 +1,5 @@
 #include "bfdsyncd/bfdlink.h"
+#include "bfdsyncd/bfdd/bfddp_packet.h"
 
 #include <swss/netdispatcher.h>
 #include "mock_table.h"
@@ -13,8 +14,8 @@ using ::testing::_;
 using ::testing::NiceMock;
 using ::testing::Return;
 
-#define STATE_UPDATE_MSG_LEN 36
-#define COUNTER_MSG_LEN 80
+#define STATE_UPDATE_MSG_LEN (sizeof(bfddp_message_header) + sizeof(bfddp_state_change))
+#define COUNTER_MSG_LEN (sizeof(bfddp_message_header) + sizeof(bfddp_session_counters))
 
 /* Use port 0 (kernel-assigned ephemeral) so parallel test runs and CI
  * environments where 50700 may be in use don't clash on bind(). */

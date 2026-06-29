@@ -331,11 +331,11 @@ void BfdLink::handleBfdDpMessage(size_t start)
 
     if (!bfd_msg_ok(&bmp->header))
     {
-        SWSS_LOG_ERROR("received an invalid BFD DP message, ver %d, type %s, msg_len %ld", bmp->header.version, bfd_dplane_messagetype2str((bfddp_message_type)type), msg_len);
+        SWSS_LOG_ERROR("received an invalid BFD DP message, ver %d, type %s, msg_len %zu", bmp->header.version, bfd_dplane_messagetype2str((bfddp_message_type)type), msg_len);
         return;
     }
 
-    SWSS_LOG_INFO("bfd dp message, ver %d, type %s, msg_len %ld", bmp->header.version, bfd_dplane_messagetype2str((bfddp_message_type)type), msg_len);
+    SWSS_LOG_INFO("bfd dp message, ver %d, type %s, msg_len %zu", bmp->header.version, bfd_dplane_messagetype2str((bfddp_message_type)type), msg_len);
 
     if ((type != DP_ADD_SESSION) && (type != DP_DELETE_SESSION) && (type != DP_REQUEST_SESSION_COUNTERS))
     {
