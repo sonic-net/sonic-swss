@@ -205,6 +205,54 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
+    def test_voq_switch_credit_watchdog(self, vct):
+        """Test credit watchdog SWITCH_TABLE configuration on VOQ switches.
+
+        The credit_watchdog and credit_watchdog_timer fields of SWITCH_TABLE:switch
+        in APPL_DB map to SAI_SWITCH_ATTR_CREDIT_WD and SAI_SWITCH_ATTR_CREDIT_WD_TIMER,
+        which are valid only for VOQ switches. This test verifies that on the line
+        cards (switch_type voq) the sets are programmed in the asic db.
+        """
+
+        if vct is None:
+            return
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Test only for line cards
+            if cfg_switch_type == "voq":
+                print("VOQ credit watchdog test for {}".format(name))
+
+                asic_db = dvs.get_asic_db()
+                switch_oid_key = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")[0]
+
+                app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+                switch_tbl = swsscommon.ProducerStateTable(app_db, "SWITCH_TABLE")
+
+                # Disable the credit watchdog and set the watchdog timer, then
+                # verify both sets reach the asic db
+                fvs = swsscommon.FieldValuePairs([("credit_watchdog", "0"),
+                                                  ("credit_watchdog_timer", "600")])
+                switch_tbl.set("switch", fvs)
+                asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
+                                             switch_oid_key,
+                                             {"SAI_SWITCH_ATTR_CREDIT_WD": "false",
+                                              "SAI_SWITCH_ATTR_CREDIT_WD_TIMER": "600"})
+
+                # Re-enable the credit watchdog (hardware default) and verify the update
+                fvs = swsscommon.FieldValuePairs([("credit_watchdog", "1")])
+                switch_tbl.set("switch", fvs)
+                asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
+                                             switch_oid_key,
+                                             {"SAI_SWITCH_ATTR_CREDIT_WD": "true"})
+
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
