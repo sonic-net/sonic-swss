@@ -880,13 +880,17 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
                     return false;
                 }
 
-                if (!isLocalEndpoint(vnet, nhop.first.ip_address))
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+
+            /* Remove all created tunnel next hops to avoid a refcount leak. */
+            for (auto& member : nhopgroup_members_set)
+            {
+                if (!isLocalEndpoint(vnet, member.second.ip_address))
                 {
-                    NextHopKey nexthop = nhop.first;
+                    NextHopKey nexthop = member.second;
                     vrf_obj->removeTunnelNextHop(nexthop);
                 }
-
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
 
             sai_status_t cleanup_status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);

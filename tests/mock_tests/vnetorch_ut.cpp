@@ -7,6 +7,7 @@
 #include "ut_helper.h"
 #define private public
 #include "vnetorch.h"
+#include "vxlanorch.h"
 #undef private
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
@@ -386,5 +387,95 @@ namespace vnetorch_test
         EXPECT_FALSE(m_vnet_rt_orch->addNextHopGroup(vnet, ecmp_nhg_key, nullptr, "", true));
         EXPECT_FALSE(m_vnet_rt_orch->hasNextHopGroup(vnet, ecmp_nhg_key));
         EXPECT_EQ(gRouteOrch->getNhgCount(), current_nhg_count);
+    }
+
+    /*
+     * Tunnel (non-local) variant: a member create failure must remove all
+     * created tunnel next hops so the refcount does not leak.
+     */
+    TEST_F(VnetOrchTest, VnetTunnelRouteEcmpMemberCreateFailureTunnelNhCleanup)
+    {
+        ASSERT_NE(m_vnet_rt_orch, nullptr);
+
+        const string vnet = "Vnet2000";
+        const string tunnel = "tunnel0";
+
+        /* Build the tunnel object directly (no SAI HW create) */
+        IpAddress src_ip("10.1.0.1");
+        IpAddress dst_ip("0.0.0.0");
+        VxlanTunnel *vtep = new VxlanTunnel(tunnel, src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+        m_vxlan_tunnel_orch->addTunnel(tunnel, vtep);
+        ASSERT_TRUE(m_vxlan_tunnel_orch->isTunnelExists(tunnel));
+
+        /* Build the VRF object directly (default scope => uses gVirtualRouterId) */
+        VNetInfo vnet_info = { tunnel, 2000, {}, "default", false, MacAddress() };
+        vector<sai_attribute_t> vr_attrs;
+        VNetVrfObject vrf_obj(vnet, vnet_info, vr_attrs);
+
+        /* Two remote tunnel endpoints; isLocalEndpoint() is false for this vnet */
+        NextHopGroupKey ecmp_nhg_key("100.0.0.1,100.0.0.2");
+
+        const auto current_nhg_count = gRouteOrch->getNhgCount();
+
+        int tunnel_nh_create = 0;
+        int tunnel_nh_remove = 0;
+        sai_object_id_t tunnel_nh_id = 0x1000;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .Times(2)
+            .WillRepeatedly(Invoke([&](sai_object_id_t *next_hop_id,
+                                       sai_object_id_t,
+                                       uint32_t,
+                                       const sai_attribute_t *) -> sai_status_t {
+                tunnel_nh_create++;
+                /* Unique id per endpoint, as real hardware does. */
+                *next_hop_id = tunnel_nh_id++;
+                return SAI_STATUS_SUCCESS;
+            }));
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop(_))
+            .Times(2)
+            .WillRepeatedly(Invoke([&](sai_object_id_t) -> sai_status_t {
+                tunnel_nh_remove++;
+                return SAI_STATUS_SUCCESS;
+            }));
+
+        auto create_member_fail = [](sai_object_id_t *next_hop_group_member_id,
+                                     sai_object_id_t,
+                                     uint32_t,
+                                     const sai_attribute_t *) -> sai_status_t {
+            *next_hop_group_member_id = SAI_NULL_OBJECT_ID;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto cleanup_group = [](sai_object_id_t next_hop_group_id) -> sai_status_t {
+            EXPECT_NE(next_hop_group_id, SAI_NULL_OBJECT_ID);
+            return old_sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            /* First member create fails; both tunnel next hops must be cleaned up. */
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_member(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_member_fail));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_))
+                .Times(1)
+                .WillOnce(Invoke(cleanup_group));
+        }
+
+        EXPECT_FALSE(m_vnet_rt_orch->addNextHopGroup(vnet, ecmp_nhg_key, &vrf_obj, "", false));
+        EXPECT_FALSE(m_vnet_rt_orch->hasNextHopGroup(vnet, ecmp_nhg_key));
+        EXPECT_EQ(gRouteOrch->getNhgCount(), current_nhg_count);
+
+        /* Every created tunnel next hop must have been removed (no refcount leak) */
+        EXPECT_EQ(tunnel_nh_create, 2);
+        EXPECT_EQ(tunnel_nh_remove, 2);
+
+        /* And nothing should remain in the tunnel's next hop table */
+        EXPECT_TRUE(vtep->nh_tunnels_.empty());
+
+        m_vxlan_tunnel_orch->delTunnel(tunnel);
     }
 }
