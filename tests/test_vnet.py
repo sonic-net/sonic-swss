@@ -3622,7 +3622,6 @@ class TestVnetOrch(object):
         nh_tbl    = swsscommon.Table(asic_db_conn, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
         rif_tbl   = swsscommon.Table(asic_db_conn, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         nhgm_tbl  = swsscommon.Table(asic_db_conn, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
-        counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         port_name_map = dvs.get_counters_db().get_entry("COUNTERS_PORT_NAME_MAP", "")
         port_name_map = dict(port_name_map)
 
