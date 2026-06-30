@@ -83,14 +83,6 @@ static void buildIpv4SessionWire(unsigned char *buf,
     memcpy(buf, &msg, BFD_WIRE_MSG_LEN);
 }
 
-static void addDefaultIpv6Session(MockBfdLink &bfd)
-{
-    unsigned char buf[BFD_WIRE_MSG_LEN];
-    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
-    memcpy(bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
-    bfd.handleBfdDpMessage(0);
-}
-
 class MockBfdLink : public BfdLink
 {
 public:
@@ -99,6 +91,14 @@ public:
     MOCK_METHOD(string, exec, (const char* cmd), (override));
     MOCK_METHOD(string, get_intf_mac, (const char* intf), (override));
 };
+
+static void addDefaultIpv6Session(MockBfdLink &bfd)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    memcpy(bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    bfd.handleBfdDpMessage(0);
+}
 
 
 class BfdSyncdTest : public ::testing::Test
