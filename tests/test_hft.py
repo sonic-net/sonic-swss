@@ -742,30 +742,30 @@ class TestHFT(object):
             object_names="egress_lossless_pool",
             object_counters="CURR_OCCUPANCY_BYTES",
         )
+        try:
+            time.sleep(5)
 
-        time.sleep(5)
-
-        for group_name in (port_group, buffer_pool_group):
-            key = f"{profile_name}|{group_name}"
-            status, fvs = state_tbl.get(key)
-            assert status, f"Expected STATE_DB entry for {key}"
-            entry = dict(fvs)
-            assert entry.get("session_type") == "ipfix", (
-                f"Expected session_type=ipfix for {key}, got {entry.get('session_type')}"
-            )
-            assert entry.get("session_config", ""), (
-                f"Expected non-empty session_config for {key}; entry={entry}"
-            )
-            assert entry.get("object_names", ""), (
-                f"Expected non-empty object_names for {key}; entry={entry}"
-            )
-            assert entry.get("object_ids", ""), (
-                f"Expected non-empty object_ids for {key}; entry={entry}"
-            )
-
-        self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
-        self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
-        self.delete_hft_profile(dvs, name=profile_name)
+            for group_name in (port_group, buffer_pool_group):
+                key = f"{profile_name}|{group_name}"
+                status, fvs = state_tbl.get(key)
+                assert status, f"Expected STATE_DB entry for {key}"
+                entry = dict(fvs)
+                assert entry.get("session_type") == "ipfix", (
+                    f"Expected session_type=ipfix for {key}, got {entry.get('session_type')}"
+                )
+                assert entry.get("session_config", ""), (
+                    f"Expected non-empty session_config for {key}; entry={entry}"
+                )
+                assert entry.get("object_names", ""), (
+                    f"Expected non-empty object_names for {key}; entry={entry}"
+                )
+                assert entry.get("object_ids", ""), (
+                    f"Expected non-empty object_ids for {key}; entry={entry}"
+                )
+        finally:
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
+            self.delete_hft_profile(dvs, name=profile_name)
 
     @pytest.mark.skip(
         reason=(
