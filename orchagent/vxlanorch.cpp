@@ -2550,7 +2550,7 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
     if (vrf_orch->isL3VniVlan(vni_id))
     {
-        SWSS_LOG_WARN("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, remote_vtep.c_str());
+        SWSS_LOG_INFO("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, remote_vtep.c_str());
         return false;
     }
 
@@ -2712,7 +2712,7 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
     if (vrf_orch->isL3VniVlan(vni_id))
     {
-        SWSS_LOG_WARN("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, end_point_ip.c_str());
+        SWSS_LOG_INFO("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, end_point_ip.c_str());
         return false;
     }
 
