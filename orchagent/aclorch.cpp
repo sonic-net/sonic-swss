@@ -2321,14 +2321,12 @@ bool AclRulePolicer::createRule()
 {
     SWSS_LOG_ENTER();
 
-    if (!AclRule::createRule())
-    {
-        return false;
-    }
-
-    // Hold a reference on the policer so it cannot be removed while this rule
-    // binds it. Bump only once per created rule to keep the count balanced
-    // across recreate cycles.
+    // Acquire the policer reference before creating the SAI ACL entry. Taking the
+    // reference first means a refcount failure (only if the policer no longer exists --
+    // effectively unreachable, as validate() already confirmed it) leaves nothing to
+    // undo: we never program a rule that points at a policer we could not pin. Bump
+    // only once per created rule to keep the count balanced across recreate cycles.
+    bool tookRef = false;
     if (!m_policerRefHeld)
     {
         if (!gPolicerOrch->increaseRefCount(m_policerName))
@@ -2338,6 +2336,17 @@ bool AclRulePolicer::createRule()
             return false;
         }
         m_policerRefHeld = true;
+        tookRef = true;
+    }
+
+    if (!AclRule::createRule())
+    {
+        if (tookRef)
+        {
+            gPolicerOrch->decreaseRefCount(m_policerName);
+            m_policerRefHeld = false;
+        }
+        return false;
     }
 
     return true;
