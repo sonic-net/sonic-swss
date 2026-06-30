@@ -27,6 +27,8 @@ enum class StatsMode
 enum class CounterType
 {
     PORT,
+    PORT_PHY_ATTR,
+    PORT_PHY_SERDES_ATTR,
     QUEUE,
     QUEUE_ATTR,
     PRIORITY_GROUP,
@@ -43,6 +45,7 @@ enum class CounterType
     DASH_METER,
     SRV6,
     SWITCH,
+    HA_SET,
 };
 
 extern bool gTraditionalFlexCounter;
@@ -65,7 +68,11 @@ class FlexCounterManager
                 const bool enabled,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
-        FlexCounterManager()
+        FlexCounterManager() :
+            stats_mode(StatsMode::READ),
+            polling_interval(0),
+            enabled(false),
+            is_gearbox(false)
         {}
 
         FlexCounterManager(

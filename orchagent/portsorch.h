@@ -29,6 +29,8 @@
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
+#define PORT_PHY_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_ATTR"
+#define PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_SERDES_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -133,6 +135,19 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
+extern const std::vector<sai_port_attr_t> port_phy_attr_ids;
+
+// Forward declaration for unit test friend class
+namespace portphyattr_test
+{
+class PortAttrTest;
+} // namespace portphyattr_test
+
+namespace portphyserdesattr_test
+{
+class PortSerdesAttrTest;
+} // namespace portphyserdesattr_test
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -143,6 +158,7 @@ public:
     bool isConfigDone();
     bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
+    bool setPortAdminStatusByAlias(const string &alias, bool up);
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -160,6 +176,7 @@ public:
     void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
+    bool getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
@@ -198,7 +215,9 @@ public:
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
     void createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void addPortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void deletePortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
@@ -206,12 +225,27 @@ public:
     void generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector);
     uint32_t getNumberOfPortSupportedPgCounters(string port);
     void createPortBufferPgCounters(const Port &port, string pgs);
+    void addPortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void removePortBufferPgCounters(const Port& port, string pgs);
+    void deletePortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
     void addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
 
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
+
+    void generatePortPhyAttrCounterMap();
+    void clearPortPhyAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
+    void queryPortPhyAttrCapabilities();
+    std::vector<sai_port_attr_t> getPortPhySupportedAttrs(sai_object_id_t port_id, const char* port_name);
+
+    sai_object_id_t getPortSerdesIdFromPortId(sai_object_id_t port_id);
+    void generatePortPhySerdesAttrCounterMap();
+    void clearPortPhySerdesAttrCounterMap();
+    const std::vector<sai_port_serdes_attr_t>& getPortPhySerdesAttrIds() const;
+    void queryPortPhySerdesAttrCapabilities();
+    std::vector<sai_port_serdes_attr_t> getPortPhySerdesSupportedAttrs(sai_object_id_t port_serdes_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
@@ -229,6 +263,8 @@ public:
 
     bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
     bool removeTunnel(Port tunnel);
+    bool addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid);
+    bool removeL2NexthopGroup(Port nhgPort);
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
@@ -238,7 +274,7 @@ public:
     bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
     void increaseBridgePortRefCount(Port &port);
     void decreaseBridgePortRefCount(Port &port);
-    bool getBridgePortReferenceCount(Port &port);
+    uint32_t getBridgePortReferenceCount(Port &port);
 
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
@@ -261,14 +297,17 @@ public:
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
+    bool isFrontPanelPort(Port& port);
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+    task_process_status setPortFastLinkupEnabled(Port &port, bool enable);
 
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
+    unique_ptr<Table> m_portSerdesIdToPortIdTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_systemPortTable;
@@ -296,6 +335,8 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_attr_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_serdes_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -314,6 +355,9 @@ private:
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
     // Supported FEC modes on the system side.
     std::map<sai_object_id_t, PortFecModeCapability_t> m_portSupportedFecModes;
+
+    // Port ID to Port Serdes ID mapping
+    std::map<sai_object_id_t, sai_object_id_t> m_portIdToSerdesId;
 
     bool m_initDone = false;
     bool m_isSendToIngressPortConfigured = false;
@@ -373,6 +417,7 @@ private:
     bool saiHwTxSignalSupported = false;
     bool saiTxReadyNotifySupported = false;
     bool m_supportsHostIfTxQueue = false;
+    bool m_fastLinkupPortAttrSupported = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
@@ -485,7 +530,7 @@ private:
     void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, sai_queue_type_t queueType);
 
     bool m_isWredQueueCounterMapGenerated = false;
-    void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
+    void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq = false);
     void addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, sai_queue_type_t queueType);
 
     bool m_isPriorityGroupMapGenerated = false;
@@ -500,6 +545,10 @@ private:
 
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
+
+    std::vector<sai_port_attr_t> m_supported_phy_attrs;
+
+    std::vector<sai_port_serdes_attr_t> m_supported_phy_serdes_attrs;
 
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
@@ -537,6 +586,9 @@ private:
                                 std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
+
+    bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
+                       std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
@@ -612,5 +664,9 @@ private:
     // Port OA helper
     PortHelper m_portHlpr;
     bool m_isWarmRestoreStage = false;
+
+    // Friend declaration for unit tests
+    friend class portphyattr_test::PortAttrTest;
+    friend class portphyserdesattr_test::PortSerdesAttrTest;
 };
 #endif /* SWSS_PORTSORCH_H */

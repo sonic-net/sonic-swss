@@ -127,5 +127,7 @@ private:
     bool handleSflowSessionDel(sai_object_id_t port_id);
     void sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir);
     void sflowExtractGlobalInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir, int32_t &drop_monitor_limit);
-
+    bool isSflowSamplePacket(sai_object_id_t oid);
+    bool isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_attr_t attr_id,
+                                    sai_object_id_t sample_id, const char* dir_name);
 };

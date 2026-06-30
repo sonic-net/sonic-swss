@@ -1,26 +1,48 @@
-use std::time::Duration;
-use std::pin::Pin;
-use tokio::{sync::mpsc::Receiver, sync::oneshot, select};
-use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
+use std::{
+    fmt::{Display, Formatter},
+    pin::Pin,
+    time::Duration,
+};
+use tokio::{
+    select,
+    sync::{mpsc::Receiver, oneshot},
+    time::{sleep_until, Instant as TokioInstant, Sleep},
+};
+use log::{debug, error, info, warn};
+use tonic::transport::{Channel, Endpoint};
+use opentelemetry::ExportError;
 use opentelemetry_proto::tonic::{
-    common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value, InstrumentationScope},
-    metrics::v1::{Metric, Gauge as ProtoGauge, ResourceMetrics, ScopeMetrics},
+    collector::metrics::v1::{
+        metrics_service_client::MetricsServiceClient,
+        ExportMetricsServiceRequest,
+    },
+    common::v1::{
+        any_value::Value,
+        AnyValue,
+        InstrumentationScope,
+        KeyValue as ProtoKeyValue,
+    },
+    metrics::v1::{
+        Gauge as ProtoGauge,
+        Metric,
+        ResourceMetrics,
+        ScopeMetrics,
+    },
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    saistats::SAIStatsMessage,
     otel::OtelMetrics,
+    saistats::SAIStatsMessage,
 };
-use log::{info, error, debug};
-use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
-use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
-use tonic::transport::Endpoint;
+use crate::utilities::{record_comm_stats, ChannelLabel};
+
+const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
+const MAX_BACKOFF_DELAY_SECS: u64 = 10;
+const MAX_EXPORT_RETRIES: u64 = 30;
 
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
 pub struct OtelActorConfig {
-    /// Whether to print statistics to console
-    pub print_to_console: bool,
     /// OpenTelemetry collector endpoint
     pub collector_endpoint: String,
     /// Max counters to accumulate before forcing an export
@@ -32,11 +54,27 @@ pub struct OtelActorConfig {
 impl Default for OtelActorConfig {
     fn default() -> Self {
         Self {
-            print_to_console: true,
             collector_endpoint: "http://localhost:4317".to_string(),
             max_counters_per_export: 10_000,
             flush_timeout: Duration::from_secs(1),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct OtelActorExportError(String);
+
+impl std::error::Error for OtelActorExportError {}
+
+impl ExportError for OtelActorExportError {
+    fn exporter_name(&self) -> &'static str {
+        "Otel client exporter"
+    }
+}
+
+impl Display for OtelActorExportError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -45,7 +83,7 @@ pub struct OtelActor {
     stats_receiver: Receiver<SAIStatsMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
-    client: MetricsServiceClient<tonic::transport::Channel>,
+    client: Option<MetricsServiceClient<Channel>>,
 
     // Pre-allocated reusable structures
     resource: ProtoResource,
@@ -55,12 +93,18 @@ pub struct OtelActor {
     buffer: Vec<OtelMetrics>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
-    
+
     // Statistics tracking
     messages_received: u64,
     exports_performed: u64,
     export_failures: u64,
     console_reports: u64,
+
+    // Reconnecting tracking
+    consecutive_failures: u64,
+
+    // Shutdown flag
+    should_shutdown: bool,
 }
 
 impl OtelActor {
@@ -70,8 +114,7 @@ impl OtelActor {
         config: OtelActorConfig,
         shutdown_notifier: oneshot::Sender<()>
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
-        let endpoint = config.collector_endpoint.parse::<Endpoint>()?;
-        let client = MetricsServiceClient::connect(endpoint).await?;
+        let client = None;
 
         // Pre-create reusable resource
         let resource = ProtoResource {
@@ -93,8 +136,7 @@ impl OtelActor {
         };
 
         info!(
-            "OtelActor initialized - console: {}, endpoint: {}",
-            config.print_to_console,
+            "OtelActor initialized - endpoint: {}",
             config.collector_endpoint
         );
 
@@ -114,43 +156,70 @@ impl OtelActor {
             exports_performed: 0,
             export_failures: 0,
             console_reports: 0,
+            consecutive_failures: 0,
+            should_shutdown: false,
         })
     }
 
     /// Main run loop
-    pub async fn run(mut self) {
+    pub async fn run(mut self) -> Result<(), Box<dyn ExportError>> {
         info!("OtelActor started");
 
         let mut flush_timer = Box::pin(sleep_until(self.flush_deadline));
+        let mut run_error: Option<Box<dyn ExportError>> = None;
 
         loop {
             select! {
                 stats_msg = self.stats_receiver.recv() => {
                     match stats_msg {
                         Some(stats) => {
-                            self.handle_stats_message(stats).await;
+                            record_comm_stats(
+                                ChannelLabel::IpfixToOtel,
+                                self.stats_receiver.len(),
+                            );
+                            if let Err(e) = self.handle_stats_message(stats).await {
+                                run_error = Some(e);
+                                break;
+                            }
                             self.reset_flush_timer(&mut flush_timer);
                         }
-                        None => {
+                        _none => {
                             info!("Stats receiver channel closed, shutting down OtelActor");
                             break;
                         }
                     }
                 }
                 _ = &mut flush_timer => {
-                    self.flush_buffer().await;
+                    if let Err(e) = self.flush_buffer().await {
+                        run_error = Some(e);
+                        break;
+                    }
                     self.reset_flush_timer(&mut flush_timer);
                 }
+            }
+
+            // Check for shutdown flag
+            if self.should_shutdown {
+                info!("Shutdown flag set, exiting Otel run loop");
+                break;
             }
         }
 
         // Flush any remaining buffered metrics before shutdown
-        self.flush_buffer().await;
+        if run_error.is_none() {
+            if let Err(e) = self.flush_buffer().await {
+                run_error = Some(e);
+            }
+        }
         self.shutdown().await;
+        match run_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Handle incoming SAI statistics message
-    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) {
+    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) -> Result<(), Box<dyn ExportError>>{
         self.messages_received += 1;
 
         debug!("Received SAI stats with {} entries, observation_time: {}",
@@ -162,7 +231,7 @@ impl OtelActor {
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
         let counters_in_message = stats.stats.len();
 
-        if self.config.print_to_console {
+        if log::log_enabled!(log::Level::Debug) {
             self.print_otel_metrics(&otel_metrics).await;
         }
 
@@ -176,15 +245,17 @@ impl OtelActor {
 
         // Force flush when counter threshold is reached
         if self.buffered_counters >= self.config.max_counters_per_export {
-            self.flush_buffer().await;
+            self.flush_buffer().await?;
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
         }
+
+        Ok(())
     }
 
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        info!(
+        debug!(
             "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
             otel_metrics.service_name,
@@ -197,33 +268,91 @@ impl OtelActor {
         );
 
         if !otel_metrics.is_empty() {
-            info!("Gauge Metrics:");
+            debug!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
                 let data_point = &gauge.data_points[0];
 
-                info!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                info!("Value: {}", data_point.value);
-                info!("Unit: {}", gauge.unit);
-                info!("Time: {}ns", data_point.time_unix_nano);
-                info!("Description: {}", gauge.description);
+                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
+                debug!("Value: {}", data_point.value);
+                debug!("Unit: {}", gauge.unit);
+                debug!("Time: {}ns", data_point.time_unix_nano);
+                debug!("Description: {}", gauge.description);
 
                 if !data_point.attributes.is_empty() {
-                    info!("Attributes:");
+                    debug!("Attributes:");
                     for attr in &data_point.attributes {
-                        info!("  - {}={}", attr.key, attr.value);
+                        debug!("  - {}={}", attr.key, attr.value);
                     }
                 }
 
                 debug!("Raw Gauge: {:#?}", gauge);
             }
         }
-        
+    }
+
+    // Exponential backoff
+    async fn backoff(&self, attempt: u64) {
+        let delay_secs = std::cmp::min(INITIAL_BACKOFF_DELAY_SECS * 2u64.pow(attempt as u32 - 1), MAX_BACKOFF_DELAY_SECS);
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+    }
+
+    // Get or create the Otel MetricsServiceClient
+    fn get_client(&mut self) -> Option<&mut MetricsServiceClient<Channel>> {
+        if self.client.is_none() {
+            let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Invalid Otel endpoint: {}", e);
+                    return None;
+                }
+            };
+
+            let channel = endpoint.connect_lazy();
+            self.client = Some(MetricsServiceClient::new(channel));
+        }
+
+        self.client.as_mut()
+    }
+
+    async fn send_request(
+        &mut self,
+        request: ExportMetricsServiceRequest,
+    ) -> Result<(), Box<dyn ExportError>> {
+        for attempt in 1..=MAX_EXPORT_RETRIES {
+            // Ensure we have a client
+            let client = match self.get_client() {
+                Some(c) => c, // Use existing or newly created client
+                _none => { // Failed to create client
+                    self.client = None;
+                    self.backoff(attempt).await; // Wait before retrying
+                    continue;
+                }
+            };
+
+            // Attempt to send the request
+            match client.export(request.clone()).await {
+                Ok(_) => { // Successful export
+                    self.exports_performed += 1;
+                    self.consecutive_failures = 0;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Export attempt {} failed: {}", attempt, e);
+                    self.client = None; // Drop broken client
+                    self.consecutive_failures += 1;
+                    self.backoff(attempt).await; // Wait before retrying
+                }
+            }
+        }
+
+        // All retries exhausted
+        Err(Box::new(OtelActorExportError("Max export retries exceeded".to_string())))
     }
 
     // Export buffered metrics to OpenTelemetry collector 
-    async fn flush_buffer(&mut self) {
+    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
         if self.buffer.is_empty() {
-            return;
+            return Ok(());
         }
 
         let mut proto_metrics: Vec<Metric> = Vec::new();
@@ -251,7 +380,7 @@ impl OtelActor {
         if proto_metrics.is_empty() {
             self.buffer.clear();
             self.buffered_counters = 0;
-            return;
+            return Ok(());
         }
 
         let resource_metrics = ResourceMetrics {
@@ -268,19 +397,21 @@ impl OtelActor {
             resource_metrics: vec![resource_metrics],
         };
 
-        match self.client.export(request).await {
-            Ok(_) => {
-                self.exports_performed += 1;
-                debug!("Exported buffered metrics to collector");
-            }
-            Err(e) => {
-                self.export_failures += 1;
-                error!("Failed to export metrics: {}", e);
-            }
+        // Send the export request
+        let result = self.send_request(request).await;
+
+        if let Err(e) = &result {
+            self.export_failures += 1;
+            error!(
+                "Failed to export buffered metrics (consecutive failures {}): {:?}",
+                self.consecutive_failures, e
+            );
         }
 
         self.buffer.clear();
         self.buffered_counters = 0;
+
+        result
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {

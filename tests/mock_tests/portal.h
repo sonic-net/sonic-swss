@@ -125,6 +125,36 @@ struct Portal
         {
             return obj.m_sflowDropMonitor.getDropMonitorCpuQueue(path);
         }
+
+        static bool sflowAddPort(SflowOrch &obj, sai_object_id_t sample_id,
+                                 sai_object_id_t port_id, std::string direction)
+        {
+            return obj.sflowAddPort(sample_id, port_id, direction);
+        }
+
+        static bool sflowUpdateSampleDirection(SflowOrch &obj, sai_object_id_t port_id,
+                                               std::string old_dir, std::string new_dir)
+        {
+            return obj.sflowUpdateSampleDirection(port_id, old_dir, new_dir);
+        }
+
+        static void seedSamplePacketOid(SflowOrch &obj, uint32_t rate, sai_object_id_t sample_id)
+        {
+            SflowSession s;
+            s.m_sample_id = sample_id;
+            s.ref_count = 0;
+            obj.m_sflowRateSampleMap[rate] = s;
+        }
+
+        static void seedPortInfo(SflowOrch &obj, sai_object_id_t port_id,
+                                 sai_object_id_t sample_id, std::string dir)
+        {
+            SflowPortInfo p;
+            p.admin_state = true;
+            p.m_sample_dir = dir;
+            p.m_sample_id = sample_id;
+            obj.m_sflowPortInfoMap[port_id] = p;
+        }
     };
 
     struct TwampOrchInternal

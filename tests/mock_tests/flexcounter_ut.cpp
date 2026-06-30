@@ -274,7 +274,13 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, uint32_t>>
+    enum class StartType
+    {
+        Cold,
+        Warm,
+    };
+
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, StartType>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -284,6 +290,7 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
         bool create_only_config_db_buffers;
+        StartType m_start_type;
 
         FlexCounterTest()
         {
@@ -310,7 +317,7 @@ namespace flexcounter_test
 
             gTraditionalFlexCounter = get<0>(GetParam());
             create_only_config_db_buffers = get<1>(GetParam());
-            gFlexCounterDelaySec = get<2>(GetParam());
+            m_start_type = get<2>(GetParam());
 
             if (gTraditionalFlexCounter)
             {
@@ -357,7 +364,17 @@ namespace flexcounter_test
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
 
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = true;
+            }
+
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = false;
+            }
 
             gDirectory.set(flexCounterOrch);
 
@@ -391,8 +408,14 @@ namespace flexcounter_test
             gPortsOrch->addExistingData(&portTable);
             static_cast<Orch *>(gPortsOrch)->doTask();
 
+
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
+
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
         }
 
         virtual void TearDown() override
@@ -424,9 +447,6 @@ namespace flexcounter_test
             gDirectory.m_values.clear();
 
             _unhook_sai_switch_api();
-
-            // reset flex counter delay sec
-            gFlexCounterDelaySec = 0;
         }
 
         static void SetUpTestCase()
@@ -537,6 +557,7 @@ namespace flexcounter_test
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
         auto firstPortName = ports.begin()->first;
+        auto firstPortValues = ports.begin()->second;
 
         // Create test buffer pool
         poolTable.set(
@@ -627,7 +648,7 @@ namespace flexcounter_test
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
-        if (gFlexCounterDelaySec > 0)
+        if (m_start_type == StartType::Warm)
         {
             // Expire timer
             flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
@@ -742,8 +763,39 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        auto it = ports.begin();
+        it++;
+        auto secondPortName= it->first;
+        auto secondPortValues = it->second;
+        Port secondPort;
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        auto second_oid = secondPort.m_port_id;
+
+
+        //Verify the Port Stats counter after DEL
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({secondPortName, "DEL",  {} });
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        auto ret = gPortsOrch->getPort(secondPortName, secondPort);
+        if (ret == true)
+        {
+           // Temporary work around since remove_port fails in sonic-sairedis/vslib in remove_internal due
+           // to switch_create doesn't seem to be calling create_internal for the ports when it is called from
+           // portsorch removePort->sai_port_api.remove_port
+            gPortsOrch->removePortFromLanesMap(secondPortName);
+            gPortsOrch->removePortFromPortListMap(secondPort.m_port_id);
+            gPortsOrch->m_portConfigMap.erase(secondPortName);
+            gPortsOrch->m_portList.erase(secondPortName);
+            gPortsOrch->saiOidToAlias.erase(secondPort.m_port_id);
+
+        }
+        ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
@@ -1001,16 +1053,14 @@ namespace flexcounter_test
         FlexCounterTests,
         FlexCounterTest,
         ::testing::Values(
-            // traditional_flex_counter, create_only_config_db_buffers, flex_counter_delay_sec
-            std::make_tuple(false, true, 0),
-            std::make_tuple(false, false, 0),
-            std::make_tuple(true, true, 0),
-            std::make_tuple(true, false, 0),
-            std::make_tuple(false, true, 120),
-            std::make_tuple(false, false, 120),
-            std::make_tuple(true, true, 120),
-            std::make_tuple(true, false, 120)
-        )
+            std::make_tuple(false, true, StartType::Cold),
+            std::make_tuple(false, false, StartType::Cold),
+            std::make_tuple(true, true, StartType::Cold),
+            std::make_tuple(true, false, StartType::Cold),
+            std::make_tuple(false, true, StartType::Warm),
+            std::make_tuple(false, false, StartType::Warm),
+            std::make_tuple(true, true, StartType::Warm),
+            std::make_tuple(true, false, StartType::Warm))
     );
 
     using namespace mock_orch_test;
@@ -1056,6 +1106,60 @@ namespace flexcounter_test
         /* This should delete the STATS */
         m_DashOrch->handleMeterFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestHaSetStatusUpdate)
+    {
+        vector<string> dash_ha_tables = {
+            APP_DASH_HA_SET_TABLE_NAME,
+            APP_DASH_HA_SCOPE_TABLE_NAME,
+            APP_BFD_SESSION_TABLE_NAME
+        };
+        m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+
+        auto consumer = unique_ptr<Consumer>(new Consumer(
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+            m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+        consumer->addToSync(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "HA_SET_1",
+                        SET_COMMAND,
+                        {
+                            {"version", "1"},
+                            {"vip_v4", "10.0.0.1"},
+                            {"vip_v6", "3:2::1:0"},
+                            {"owner", "dpu"},
+                            {"scope", "dpu"},
+                            {"local_npu_ip", "192.168.1.10"},
+                            {"local_ip", "192.168.2.1"},
+                            {"peer_ip", "192.168.2.2"},
+                            {"cp_data_channel_port", "4789"},
+                            {"dp_channel_dst_port", "4790"},
+                            {"dp_channel_src_port_min", "5000"},
+                            {"dp_channel_src_port_max", "6000"},
+                            {"dp_channel_probe_interval_ms", "1000"},
+                            {"dp_channel_probe_fail_threshold", "3"}
+                        }
+                    }
+                }
+            )
+        );
+        static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        ASSERT_NE(ha_set_entry, m_dashHaOrch->getHaSetEntries().end());
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        delete m_dashHaOrch;
+        m_dashHaOrch = nullptr;
     }
 
     TEST_F(StandaloneFCTest, TestCaching)

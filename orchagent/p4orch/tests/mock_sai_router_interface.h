@@ -23,6 +23,36 @@ class MockSaiRouterInterface
     MOCK_METHOD3(get_router_interface_attribute,
                  sai_status_t(_In_ sai_object_id_t router_interface_id, _In_ uint32_t attr_count,
                               _Inout_ sai_attribute_t *attr_list));
+
+    MOCK_METHOD7(create_router_interfaces,
+               sai_status_t(_In_ sai_object_id_t switch_id,
+                            _In_ uint32_t object_count,
+                            _In_ const uint32_t* attr_count,
+                            _In_ const sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_object_id_t* object_id,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD4(remove_router_interfaces,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_object_id_t* object_id,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD5(set_router_interfaces_attribute,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_object_id_t* object_id,
+                            _In_ const sai_attribute_t* attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD6(get_router_interfaces_attribute,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_object_id_t* object_id,
+                            _In_ const uint32_t* attr_count,
+                            _Inout_ sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
 };
 
 extern MockSaiRouterInterface *mock_sai_router_intf;
@@ -37,3 +67,23 @@ sai_status_t mock_set_router_interface_attribute(_In_ sai_object_id_t router_int
 
 sai_status_t mock_get_router_interface_attribute(_In_ sai_object_id_t router_interface_id, _In_ uint32_t attr_count,
                                                  _Inout_ sai_attribute_t *attr_list);
+
+sai_status_t mock_create_router_interfaces(
+    _In_ sai_object_id_t switch_id, _In_ uint32_t object_count,
+    _In_ const uint32_t* attr_count, _In_ const sai_attribute_t** attr_list,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_object_id_t* object_id,
+    _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_remove_router_interfaces(
+    _In_ uint32_t object_count, _In_ const sai_object_id_t* object_id,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_set_router_interfaces_attribute(
+    _In_ uint32_t object_count, _In_ const sai_object_id_t* object_id,
+    _In_ const sai_attribute_t* attr_list, _In_ sai_bulk_op_error_mode_t mode,
+    _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_get_router_interfaces_attribute(
+    _In_ uint32_t object_count, _In_ const sai_object_id_t* object_id,
+    _In_ const uint32_t* attr_count, _Inout_ sai_attribute_t** attr_list,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses);

@@ -846,19 +846,78 @@ bool MACsecMgr::unconfigureMACsec(
     const MKASession & session) const
 {
     SWSS_LOG_ENTER();
-    try
+
+    // Retry interface_remove a few times in case wpa_supplicant is slow to
+    // respond. This specifically targets the "command timed out" condition
+    // seen in the field, to reduce spurious Task PORT - SET failures.
+    static constexpr int MAX_INTERFACE_REMOVE_RETRIES = 3;
+
+    for (int attempt = 1; attempt <= MAX_INTERFACE_REMOVE_RETRIES; ++attempt)
     {
-        wpa_cli_exec_and_check(
-            session.sock,
-            "",
-            "",
-            "interface_remove",
-            port_name);
-    }
-    catch(const std::runtime_error & e)
-    {
-        SWSS_LOG_WARN("Disable MACsec fail : %s", e.what());
-        return false;
+        try
+        {
+            wpa_cli_exec_and_check(
+                session.sock,
+                "",
+                "",
+                "interface_remove",
+                port_name);
+
+            // Success on this attempt: no need to retry further.
+            return true;
+        }
+        catch (const std::runtime_error &e)
+        {
+            const std::string error_message = e.what();
+            // Best-effort cleanup semantics for interface_remove:
+            //
+            // 1. If wpa_cli returns "FAIL" for interface_remove, it typically means
+            //    the interface is already gone from wpa_supplicant. From
+            //    macsecmgr's perspective this is equivalent to a successful
+            //    unconfigure, so treat it as success to avoid spurious
+            //    Task PORT - SET failures.
+            if (error_message.find("-> FAIL") != std::string::npos)
+            {
+                SWSS_LOG_NOTICE(
+                    "interface_remove for port '%s' reported error '%s'; "
+                    "treating MACsec unconfigure as best-effort success",
+                    port_name.c_str(),
+                    error_message.c_str());
+                return true;
+            }
+
+            // 2. If the command times out, retry up to
+            //    MAX_INTERFACE_REMOVE_RETRIES times. If all retries still time
+            //    out, fall back to best-effort semantics: stopWPASupplicant()
+            //    will still be invoked by the caller and will tear down the
+            //    wpa_supplicant process (and its interfaces).
+            if (error_message.find("command timed out") != std::string::npos)
+            {
+                if (attempt < MAX_INTERFACE_REMOVE_RETRIES)
+                {
+                    SWSS_LOG_WARN(
+                        "interface_remove for port '%s' attempt %d/%d timed out: '%s'; retrying after 10 seconds",
+                        port_name.c_str(),
+                        attempt,
+                        MAX_INTERFACE_REMOVE_RETRIES,
+                        error_message.c_str());
+                    std::this_thread::sleep_for(std::chrono::seconds(10));
+                    continue;
+                }
+
+                SWSS_LOG_NOTICE(
+                    "interface_remove for port '%s' timed out after %d attempts: '%s'; "
+                    "ignoring timeouts and treating MACsec unconfigure as best-effort success",
+                    port_name.c_str(),
+                    MAX_INTERFACE_REMOVE_RETRIES,
+                    error_message.c_str());
+                return true;
+            }
+
+            // Any other error is treated as a real failure.
+            SWSS_LOG_WARN("Disable MACsec fail : %s", error_message.c_str());
+            return false;
+        }
     }
     return true;
 }

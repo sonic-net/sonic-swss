@@ -176,7 +176,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
-                        SWSS_LOG_NOTICE("Skip setting ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_DECAP_ECN_MODE is create only");
+                        SWSS_LOG_WARN("Skip setting ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_DECAP_ECN_MODE is create only");
                         valid = false;
                         break;
                     }
@@ -1445,6 +1445,28 @@ std::string TunnelDecapOrch::getDscpMode(const std::string &tunnelKey) const
         return "";
     }
     return iter->second.dscp_mode;
+}
+
+std::string TunnelDecapOrch::getEcnMode(const std::string &tunnelKey) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return "";
+    }
+    return iter->second.ecn_mode;
+}
+
+std::string TunnelDecapOrch::getEncapEcnMode(const std::string &tunnelKey) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return "";
+    }
+    return iter->second.encap_ecn_mode;
 }
 
 bool TunnelDecapOrch::getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const

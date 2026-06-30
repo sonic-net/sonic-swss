@@ -52,23 +52,44 @@ namespace dashhaorch_ut
     class DashHaOrchTestable : public DashHaOrch
     {
     public:
+        DashHaOrchTestable(swss::DBConnector* db, const std::vector<std::string>& tableNames,
+                           DashOrch* dash_orch, BfdOrch* bfd_orch,
+                           swss::DBConnector* app_state_db, swss::ZmqServer* zmqServer)
+            : DashHaOrch(db, tableNames, dash_orch, bfd_orch, app_state_db, zmqServer) {}
         void doTask(swss::NotificationConsumer &consumer) { DashHaOrch::doTask(consumer); }
+    };
+
+    class DashHaOrchAdminStateUnsupported : public DashHaOrchTestable
+    {
+    public:
+        DashHaOrchAdminStateUnsupported(swss::DBConnector* db, const std::vector<std::string>& tableNames,
+                                        DashOrch* dash_orch, BfdOrch* bfd_orch,
+                                        swss::DBConnector* app_state_db, swss::ZmqServer* zmqServer)
+            : DashHaOrchTestable(db, tableNames, dash_orch, bfd_orch, app_state_db, zmqServer) {}
+        bool isHaScopeAdminStateAttrSupported() override { return false; }
     };
 
     class DashHaOrchTest : public MockOrchTest
     {
     protected:
         std::unique_ptr<MockBfdOrch> m_mockBfdOrch;
+        shared_ptr<swss::DBConnector> m_dpu_state_db;
+
+        virtual DashHaOrch* CreateDashHaOrch(const vector<string>& dash_ha_tables)
+        {
+            return new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+        }
 
         void PostSetUp() override
         {
             m_mockBfdOrch = std::make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+            m_dpu_state_db = make_shared<swss::DBConnector>("DPU_STATE_DB", 0);
 
             vector<string> dash_ha_tables = {
                 APP_DASH_HA_SET_TABLE_NAME,
                 APP_DASH_HA_SCOPE_TABLE_NAME
             };
-            m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+            m_dashHaOrch = CreateDashHaOrch(dash_ha_tables);
             gDirectory.set(m_dashHaOrch);
             ut_orch_list.push_back((Orch **)&m_dashHaOrch);
         }
@@ -441,6 +462,38 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void SetHaScopeBrainSplitRecovered()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "active"},
+                                {"brainsplit_recovered", "true"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void ExpectHaScopeStateField(const std::string &field, const std::string &expected)
+        {
+            swss::Table state_table(m_dpu_state_db.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
+            std::string value;
+            ASSERT_TRUE(state_table.hget("HA_SET_1", field, value));
+            EXPECT_EQ(value, expected);
+        }
+
         void RandomTable()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
@@ -586,11 +639,11 @@ namespace dashhaorch_ut
 
         void HaSetEvent(sai_ha_set_event_t event_type)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_set_event_data_t event;
@@ -624,11 +677,11 @@ namespace dashhaorch_ut
                         sai_dash_ha_role_t ha_role,
                         sai_dash_ha_state_t ha_state)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_scope_event_data_t event;
@@ -974,6 +1027,11 @@ namespace dashhaorch_ut
 
         HaScopeEvent(SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED,
             SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        ExpectHaScopeStateField("brainsplit_recover_pending", "true");
+
+        SetHaScopeBrainSplitRecovered();
+
+        ExpectHaScopeStateField("brainsplit_recover_pending", "false");
 
         RemoveHaScope();
         RemoveHaSet();
@@ -1066,5 +1124,183 @@ namespace dashhaorch_ut
 
         RemoveHaScope();
         RemoveHaSet();
+    }
+
+    class DashHaOrchTestAdminStateUnsupported : public DashHaOrchTest
+    {
+    protected:
+        DashHaOrch* CreateDashHaOrch(const vector<string>& dash_ha_tables) override
+        {
+            return new DashHaOrchAdminStateUnsupported(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_mockBfdOrch.get(), m_dpu_app_state_db.get(), nullptr);
+        }
+    };
+
+    TEST_F(DashHaOrchTestAdminStateUnsupported, SetHaScopeDisabledWhenAdminStateAttrNotSupported)
+    {
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set).Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope).Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateHaScope();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute).Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        SetHaScopeHaRole("active");
+        EXPECT_FALSE(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.metadata.disabled());
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope).Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaScope();
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set).Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaSet();
+    }
+
+    class DashHaOrchTestSwitchOwner : public DashHaOrchTest
+    {
+    protected:
+        void CreateSwitchOwnerDpuScopeHaSet()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"vip_v4", "10.0.0.1"},
+                                {"vip_v6", "3:2::1:0"},
+                                {"owner", "switch"},
+                                {"scope", "dpu"},
+                                {"local_npu_ip", "192.168.1.10"},
+                                {"local_ip", "192.168.2.1"},
+                                {"peer_ip", "192.168.2.2"},
+                                {"cp_data_channel_port", "4789"},
+                                {"dp_channel_dst_port", "4790"},
+                                {"dp_channel_src_port_min", "5000"},
+                                {"dp_channel_src_port_max", "6000"},
+                                {"dp_channel_probe_interval_ms", "1000"},
+                                {"dp_channel_probe_fail_threshold", "3"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+    };
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSetRoleUpdatesStateDirectly)
+    {
+        CreateSwitchOwnerDpuScopeHaSet();
+        CreateHaScope();
+
+        // Initially ha_state should be DEAD
+        auto& scope_entry = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry.ha_state, SAI_DASH_HA_STATE_DEAD);
+
+        // Set role to active - since owner is switch, ha_state should be updated directly
+        SetHaScopeHaRole("active");
+
+        auto& scope_entry_after = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry_after.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(scope_entry_after.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        // Set role to standby - ha_state should follow
+        SetHaScopeHaRole("standby");
+
+        auto& scope_entry_standby = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry_standby.ha_state, SAI_DASH_HA_STATE_STANDBY);
+
+        // Set role to standalone - ha_state should follow
+        SetHaScopeHaRole("standalone");
+
+        auto& scope_entry_standalone = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry_standalone.ha_state, SAI_DASH_HA_STATE_STANDALONE);
+
+        // Set role to dead - ha_state should follow
+        SetHaScopeHaRole("dead");
+
+        auto& scope_entry_dead = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry_dead.ha_state, SAI_DASH_HA_STATE_DEAD);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerBfdSessionsProcessedOnRoleChange)
+    {
+        CreateSwitchOwnerDpuScopeHaSet();
+        CreateHaScope();
+
+        // Cache a BFD session while in dead state
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        // Set role to active - BFD sessions should be processed since state exits dead
+        SetHaScopeHaRole("active");
+
+        EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, DpuOwnerSetRoleDoesNotUpdateState)
+    {
+        // DPU owner (default CreateHaSet uses "dpu" owner)
+        CreateHaSet();
+        CreateHaScope();
+
+        auto& scope_entry = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry.ha_state, SAI_DASH_HA_STATE_DEAD);
+
+        // Set role to active - since owner is dpu, ha_state should NOT be updated directly
+        SetHaScopeHaRole("active");
+
+        auto& scope_entry_after = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        // ha_state remains DEAD because DPU owner waits for notification events
+        EXPECT_EQ(scope_entry_after.ha_state, SAI_DASH_HA_STATE_DEAD);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSetRoleUpdatesStateWhenHaSetMissing)
+    {
+        // Create switch-owner HA Set, then HA Scope.
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateSwitchOwnerDpuScopeHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_scope)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        CreateHaScope();
+
+        // Remove the HA Set while HA Scope still exists. This makes the HA Set
+        // lookup inside updateHaScopeStateForSwitchOwner fail.
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_set)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaSet();
+        ASSERT_TRUE(m_dashHaOrch->getHaSetEntries().find("HA_SET_1") == m_dashHaOrch->getHaSetEntries().end());
+
+        // Trigger a role change. The new code path should emit a warning that
+        // the HA Set is missing but still update the in-memory ha_state for the
+        // HA Scope entry (previously this path would silently early-return).
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_scope_attribute)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        SetHaScopeHaRole("active");
+
+        auto scope_it = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1");
+        ASSERT_NE(scope_it, m_dashHaOrch->getHaScopeEntries().end());
+        EXPECT_EQ(scope_it->second.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(scope_it->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, remove_ha_scope)
+            .Times(1).WillOnce(Return(SAI_STATUS_SUCCESS));
+        RemoveHaScope();
     }
 }

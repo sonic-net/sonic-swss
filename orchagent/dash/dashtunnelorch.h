@@ -4,8 +4,10 @@
 #include "dash_api/tunnel.pb.h"
 #include "bulker.h"
 #include "dbconnector.h"
+#include "redispipeline.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include "dashorch.h"
 
 struct DashTunnelEndpointEntry
 {
@@ -29,6 +31,8 @@ struct DashTunnelBulkContext
     std::deque<sai_status_t> tunnel_nhop_object_statuses;
     dash::tunnel::Tunnel metadata;
 
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
+
     DashTunnelBulkContext() {}
     DashTunnelBulkContext(const DashTunnelBulkContext&) = delete;
     DashTunnelBulkContext(DashTunnelBulkContext&&) = delete;
@@ -41,6 +45,7 @@ struct DashTunnelBulkContext
         tunnel_member_object_statuses.clear();
         tunnel_nhop_object_ids.clear();
         tunnel_nhop_object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -60,6 +65,7 @@ private:
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_member_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_nhop_bulker_;
     std::unordered_map<std::string, DashTunnelEntry> tunnel_table_;
+    std::unique_ptr<swss::RedisPipeline> m_resultPipeline;
     std::unique_ptr<swss::Table> dash_tunnel_result_table_;
 
     void doTask(ConsumerBase &consumer);
