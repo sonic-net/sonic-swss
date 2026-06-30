@@ -503,6 +503,16 @@ bool VxlanMgr::doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t)
         }
     }
 
+    // Guard against partial CONFIG_DB writes (UPSW-6435): if either vlan or
+    // vni is missing the entry was written with sequential HSET and the second
+    // field hasn't arrived yet.  Return false to retry on the next notification.
+    if (vlan.empty() || vni_id.empty())
+    {
+        SWSS_LOG_INFO("VXLAN_TUNNEL_MAP %s incomplete — vlan(%s) vni(%s), deferring",
+                      vxlanTunnelMapName.c_str(), vlan.c_str(), vni_id.c_str());
+        return false;
+    }
+
     // Check for VLAN or VNI if they are already mapped
     if (m_vlanMapCache.find(vlan) != m_vlanMapCache.end())
     {
