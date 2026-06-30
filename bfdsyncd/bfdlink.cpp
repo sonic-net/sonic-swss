@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cctype>
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -52,6 +54,27 @@ static bool parseUint32Field(const std::string &field, const std::string &value,
         SWSS_LOG_ERROR("Invalid %s value '%s': %s", field.c_str(), value.c_str(), e.what());
         return false;
     }
+}
+
+static bool parseStateDbKey(const std::string &k, std::string &vrf, std::string &intf, std::string &ip)
+{
+    size_t pos1 = k.find('|');
+    if (pos1 == std::string::npos)
+    {
+        return false;
+    }
+
+    vrf = k.substr(0, pos1);
+    std::string rest = k.substr(pos1 + 1);
+    size_t pos2 = rest.find('|');
+    if (pos2 == std::string::npos)
+    {
+        return false;
+    }
+
+    intf = rest.substr(0, pos2);
+    ip = rest.substr(pos2 + 1);
+    return !vrf.empty() && !intf.empty() && !ip.empty();
 }
 
 } // namespace
@@ -282,6 +305,8 @@ uint64_t BfdLink::readData()
 
         if (!bfd_msg_ok(hdr))
         {
+            SWSS_LOG_ERROR("Invalid BFD DP message header, dropping %zu buffered bytes", m_pos - start);
+            start = m_pos;
             break;
         }
 
@@ -407,7 +432,8 @@ void BfdLink::handleBfdDpMessage(size_t start)
     bfdkey_map = string("default|default|")+string(dst_addr);
 
     ifindex = ntohl(bm.data.session.ifindex);
-    memcpy(&ifname, bm.data.session.ifname, IFNAME_LEN);
+    memcpy(ifname, bm.data.session.ifname, IFNAME_LEN);
+    ifname[IFNAME_LEN - 1] = '\0';
 
     /* for link-local address only */
     if (ifindex != 0) {
@@ -640,20 +666,20 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
     char buf6[INET6_ADDRSTRLEN];
 
     std::string key;
-    std::string s = k;
-    size_t pos = s.find("|");
-    std::string vrf = s.substr(0, pos);
-    s.erase(0, pos+1);
-    pos = s.find("|");
-    std::string intf = s.substr(0, pos);
-    s.erase(0, pos+1);
-    std::string ip = s;
+    std::string vrf;
+    std::string intf;
+    std::string ip;
+    if (!parseStateDbKey(k, vrf, intf, ip))
+    {
+        SWSS_LOG_ERROR("invalid state db key format: %s", k.c_str());
+        return false;
+    }
 
     if (inet_pton(AF_INET6, ip.c_str(), &in6addr) == 1) /* success! */
     {
         if (inet_ntop(AF_INET6, &in6addr, buf6, sizeof(buf6)) != NULL)
         {
-            key = vrf + string("|") + intf+string("|") + string(buf6);
+            key = vrf + string("|") + intf + string("|") + string(buf6);
         }
         else
         {
@@ -669,7 +695,7 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
     {
         SWSS_LOG_ERROR("invalid ip address:  %s ", ip.c_str());
         return false;
-    };
+    }
     std::map<std::string, bfddp_message>::iterator it;
     SWSS_LOG_INFO("lookup key %s ", key.c_str());
     it = m_key2bfd.find(key);
@@ -748,6 +774,11 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
             uint32_t multiplier = 0;
             if (!parseUint32Field(field, value, multiplier))
             {
+                return false;
+            }
+            if (multiplier > UINT8_MAX)
+            {
+                SWSS_LOG_ERROR("remote_multiplier value %u exceeds uint8_t range", multiplier);
                 return false;
             }
             msg.data.state.detection_multiplier = static_cast<uint8_t>(multiplier);

@@ -396,3 +396,101 @@ TEST_F(BfdSyncdTest, BfdStateUpdateFromStateDb)
     m_bfd.bfdStateUpdate("default|Ethernet1_1|fe80::7a11:8ff:fe55:d400");
 }
 
+TEST_F(BfdSyncdTest, StateUpdateMalformedKeyFormat)
+{
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+
+    std::vector<FieldValueTuple> fieldValues = {{"state", "Up"}};
+    ASSERT_FALSE(m_bfd.handleBfdStateUpdate("default|Ethernet0", fieldValues));
+}
+
+TEST_F(BfdSyncdTest, StateUpdateRemoteMultiplierOverflow)
+{
+    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
+    addDefaultIpv6Session(m_bfd);
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+
+    std::vector<FieldValueTuple> fieldValues = {
+        {"state", "Up"},
+        {"remote_multiplier", "300"},
+    };
+    auto key = string("default|Ethernet1_1|fe80::7a11:8ff:fe55:d400");
+    ASSERT_FALSE(m_bfd.handleBfdStateUpdate(key, fieldValues));
+}
+
+TEST_F(BfdSyncdTest, UnsupportedMessageType)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = ECHO_REQUEST;
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdTest, Ipv4MultihopNoInterface)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    buildIpv4SessionWire(buf, sizeof(buf), DP_ADD_SESSION,
+                         "10.0.0.1", "10.0.0.2", 0, nullptr,
+                         300000, 300000, 3);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 1u);
+    ASSERT_EQ(keys[0], "default:default:10.0.0.2");
+
+    vector<FieldValueTuple> fieldValues;
+    app_bfd_session_table.get(keys[0], fieldValues);
+    bool hasDstMac = false;
+    for (const auto &fv : fieldValues)
+    {
+        if (fvField(fv) == "dst_mac")
+        {
+            hasDstMac = true;
+        }
+    }
+    ASSERT_FALSE(hasDstMac);
+}
+
+TEST_F(BfdSyncdTest, MacLookupFailureShortResponse)
+{
+    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("short"));
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 0u);
+}
+
+TEST_F(BfdSyncdTest, StateUpdateInvalidRemoteMinRx)
+{
+    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
+    addDefaultIpv6Session(m_bfd);
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+
+    std::vector<FieldValueTuple> fieldValues = {
+        {"state", "Up"},
+        {"remote_min_rx", "bad-value"},
+    };
+    auto key = string("default|Ethernet1_1|fe80::7a11:8ff:fe55:d400");
+    ASSERT_FALSE(m_bfd.handleBfdStateUpdate(key, fieldValues));
+}
+

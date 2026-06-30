@@ -261,8 +261,6 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             {
                 auto key = bfd_session_lookup[id].peer;
                 vector<FieldValueTuple> fvVector;
-                m_stateBfdSessionTable.get(key, fvVector);
-
                 fvVector.emplace_back("state", session_state_lookup.at(state));
 
                 // Update remote parameter after each state change

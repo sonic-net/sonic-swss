@@ -1,5 +1,10 @@
-#include <iostream>
+#include <cstdio>
+#include <cstdlib>
+#include <cctype>
+#include <getopt.h>
+#include <unistd.h>
 #include <inttypes.h>
+#include <iostream>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -33,7 +38,16 @@ int main(int argc, char **argv)
                 break;
             case 'p':
                 port_str = optarg;
-                sscanf(port_str, "%hd", &port);
+                {
+                    unsigned int parsed = 0;
+                    char extra = '\0';
+                    if ((sscanf(port_str, "%u%c", &parsed, &extra) != 1) || (parsed > 65535))
+                    {
+                        fprintf(stderr, "Invalid TCP port number: %s\n", port_str);
+                        return 1;
+                    }
+                    port = static_cast<unsigned short>(parsed);
+                }
                 break;
             case '?':
                 if (optopt == 'p')

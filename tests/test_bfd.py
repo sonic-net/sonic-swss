@@ -681,3 +681,26 @@ class TestBfd(object):
         time.sleep(1)
 
         assert len(self.get_exist_bfd_session() - bfdSessions) == 0
+
+    def test_bfd_state_change_remote_fields(self, dvs):
+        self.setup_db(dvs)
+
+        bfdSessions = self.get_exist_bfd_session()
+
+        fieldValues = {"local_addr": "10.0.0.1"}
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
+
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+        session = createdSessions.pop()
+
+        self.update_bfd_session_state(dvs, session, "Up")
+        time.sleep(2)
+
+        state = self.sdb.get_entry("BFD_SESSION_TABLE", "default|default|10.0.0.2")
+        assert state["state"] == "Up"
+        for remote_field in ("remote_discriminator", "remote_multiplier",
+                             "remote_min_rx", "remote_min_tx"):
+            if remote_field in state:
+                assert state[remote_field].isdigit()
