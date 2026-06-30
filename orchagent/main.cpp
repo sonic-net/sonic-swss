@@ -468,7 +468,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:R:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RM")) != -1)
     {
         switch (opt)
         {
