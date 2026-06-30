@@ -1,7 +1,5 @@
 import time
 
-import pytest
-
 from swsscommon import swsscommon
 
 
@@ -767,29 +765,109 @@ class TestHFT(object):
             self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
             self.delete_hft_profile(dvs, name=profile_name)
 
-    @pytest.mark.skip(
-        reason=(
-            "MIXED-mode end-to-end DVS test requires saivs to advertise "
-            "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE via "
-            "queryAttrEnumValuesCapability(TAM_TEL_TYPE, ATTR_MODE). "
-            "Today saivs returns SAI_STATUS_NOT_SUPPORTED for that query, "
-            "which the orchagent treats as a SINGLE_TYPE fallback per the "
-            "SAI spec default. Once sonic-sairedis lands MIXED-mode "
-            "capability advertisement, drop this skip and rely on the "
-            "HFTelOrch::DEFAULT_TEL_TYPE_MODE preference (currently "
-            "MIXED_TYPE when both modes are advertised), or force "
-            "MIXED-only via the saivs hook. Then assert: exactly one "
-            "tam_tel_type with SAI_TAM_TEL_TYPE_ATTR_MODE=MIXED_TYPE and "
-            "all three SWITCH_ENABLE_*_STATS set true; exactly one "
-            "tam_report; every tam_counter_subscription references the "
-            "same tel_type oid; the per-group "
-            "HIGH_FREQUENCY_TELEMETRY_SESSION entries carry *identical* "
-            "session_config bytes."
-        )
-    )
     def test_hft_mixed_mode_single_tel_type(self, dvs, testlog):
-        """Placeholder for the MIXED-mode end-to-end DVS test."""
-        pass
+        """MIXED-mode end-to-end DVS test.
+
+        Verifies that on a SAI advertising SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+        the orchagent produces a single shared sai_tam_tel_type and
+        sai_tam_report per profile (covering every configured object type),
+        and that the per-group HIGH_FREQUENCY_TELEMETRY_SESSION entries
+        carry the same combined IPFIX template buffer.
+
+        Requires saivs's MIXED-mode capability advertisement, which lands in
+        nvidia-sonic/sonic-sairedis#81. Until that PR merges this test will
+        fail in CI because saivs returns SAI_STATUS_NOT_SUPPORTED for the
+        SAI_TAM_TEL_TYPE_ATTR_MODE enum-capability query and the orchagent
+        falls back to SINGLE_TYPE.
+        """
+        profile_name = "test_mixed"
+        port_group = "PORT"
+        queue_group = "QUEUE"
+
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=port_group,
+            object_names="Ethernet0",
+            object_counters="IF_IN_OCTETS",
+        )
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=queue_group,
+            object_names="Ethernet0|0",
+            object_counters="BYTES",
+        )
+        try:
+            time.sleep(5)
+            asic_db = self.get_asic_db_objects(dvs)
+
+            # Exactly one sai_tam_tel_type with MODE=MIXED_TYPE and all three
+            # SWITCH_ENABLE_*_STATS set true.
+            assert len(asic_db["tam_tel_type"]) == 1, (
+                f"Expected exactly one tam_tel_type in MIXED mode, found "
+                f"{len(asic_db['tam_tel_type'])}: {list(asic_db['tam_tel_type'].keys())}"
+            )
+            tel_type_oid = next(iter(asic_db["tam_tel_type"].keys()))
+            tel_type = asic_db["tam_tel_type"][tel_type_oid]
+            assert tel_type.get("SAI_TAM_TEL_TYPE_ATTR_MODE") == \
+                "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE", (
+                    f"Expected MODE=MIXED_TYPE, got "
+                    f"{tel_type.get('SAI_TAM_TEL_TYPE_ATTR_MODE')}"
+                )
+            for attr in (
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS",
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS",
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS",
+            ):
+                assert tel_type.get(attr) == "true", (
+                    f"Expected {attr}=true on MIXED tel_type, got "
+                    f"{tel_type.get(attr)}"
+                )
+
+            # Exactly one sai_tam_report shared across the profile.
+            assert len(asic_db["tam_report"]) == 1, (
+                f"Expected exactly one tam_report in MIXED mode, found "
+                f"{len(asic_db['tam_report'])}"
+            )
+
+            # Every counter subscription references the single shared tel_type.
+            assert len(asic_db["tam_counter_subscription"]) >= 2, (
+                "Expected at least one subscription per group (PORT, QUEUE)"
+            )
+            for sub_oid, sub in asic_db["tam_counter_subscription"].items():
+                assert sub["SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE"] == \
+                    tel_type_oid, (
+                        f"Subscription {sub_oid} references "
+                        f"{sub['SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE']}, "
+                        f"expected the shared MIXED tel_type {tel_type_oid}"
+                    )
+
+            # Per-group SESSION rows must carry identical session_config bytes
+            # (the orchagent replicates the combined IPFIX template buffer).
+            state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+            state_tbl = swsscommon.Table(
+                state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE"
+            )
+            configs = {}
+            for grp in (port_group, queue_group):
+                key = f"{profile_name}|{grp}"
+                status, fvs = state_tbl.get(key)
+                assert status, f"Expected STATE_DB entry for {key}"
+                configs[grp] = dict(fvs).get("session_config", "")
+                assert configs[grp], (
+                    f"Expected non-empty session_config for {key}"
+                )
+            assert configs[port_group] == configs[queue_group], (
+                "Expected identical session_config bytes across per-group "
+                "SESSION entries in MIXED mode (orchagent replicates the "
+                "combined IPFIX template)"
+            )
+        finally:
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=queue_group)
+            self.delete_hft_profile(dvs, name=profile_name)
 
 
 # Add Dummy always-pass test at end as workaroud
