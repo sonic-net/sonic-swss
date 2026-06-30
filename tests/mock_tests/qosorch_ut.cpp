@@ -65,6 +65,29 @@ namespace qosorch_test
     bool testing_wred_thresholds;
     WredMapHandler::qos_wred_thresholds_t saiThresholds;
     qos_wred_max_drop_probability_t saiMaxDropProbabilities;
+    qos_wred_max_drop_probability_t saiEcnMarkProbabilities;
+    // When set, the WRED set-attribute stub rejects the optional ECN marking attributes to emulate
+    // a platform that does not support them, so a test can assert the base WRED is still created.
+    bool failEcnThresholdSet;
+    // Identifies the optional ECN marking attributes (mirrors the orchagent's file-local helper).
+    static bool isEcnThresholdAttrUt(sai_attr_id_t id)
+    {
+        switch (id)
+        {
+        case SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY:
+        case SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_YELLOW_MARK_PROBABILITY:
+        case SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD:
+        case SAI_WRED_ATTR_ECN_RED_MARK_PROBABILITY:
+            return true;
+        default:
+            return false;
+        }
+    }
     void _ut_stub_sai_check_wred_attributes(const sai_attribute_t &attr)
     {
         if (!testing_wred_thresholds)
@@ -107,6 +130,39 @@ namespace qosorch_test
         case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
             saiMaxDropProbabilities.red_max_drop_probability = attr.value.u32;
             break;
+        case SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_green_min_threshold || saiThresholds.ecn_green_min_threshold < attr.value.u32);
+            saiThresholds.ecn_green_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_green_max_threshold || saiThresholds.ecn_green_max_threshold > attr.value.u32);
+            saiThresholds.ecn_green_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_yellow_min_threshold || saiThresholds.ecn_yellow_min_threshold < attr.value.u32);
+            saiThresholds.ecn_yellow_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_yellow_max_threshold || saiThresholds.ecn_yellow_max_threshold > attr.value.u32);
+            saiThresholds.ecn_yellow_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_red_min_threshold || saiThresholds.ecn_red_min_threshold < attr.value.u32);
+            saiThresholds.ecn_red_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.ecn_red_max_threshold || saiThresholds.ecn_red_max_threshold > attr.value.u32);
+            saiThresholds.ecn_red_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY:
+            saiEcnMarkProbabilities.green_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_YELLOW_MARK_PROBABILITY:
+            saiEcnMarkProbabilities.yellow_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_ECN_RED_MARK_PROBABILITY:
+            saiEcnMarkProbabilities.red_max_drop_probability = attr.value.u32;
+            break;
         default:
             break;
         }
@@ -122,6 +178,12 @@ namespace qosorch_test
         ASSERT_EQ(oaThresholds.yellow_max_threshold, thresholds.yellow_max_threshold);
         ASSERT_EQ(oaThresholds.red_min_threshold, thresholds.red_min_threshold);
         ASSERT_EQ(oaThresholds.red_max_threshold, thresholds.red_max_threshold);
+        ASSERT_EQ(oaThresholds.ecn_green_min_threshold, thresholds.ecn_green_min_threshold);
+        ASSERT_EQ(oaThresholds.ecn_green_max_threshold, thresholds.ecn_green_max_threshold);
+        ASSERT_EQ(oaThresholds.ecn_yellow_min_threshold, thresholds.ecn_yellow_min_threshold);
+        ASSERT_EQ(oaThresholds.ecn_yellow_max_threshold, thresholds.ecn_yellow_max_threshold);
+        ASSERT_EQ(oaThresholds.ecn_red_min_threshold, thresholds.ecn_red_min_threshold);
+        ASSERT_EQ(oaThresholds.ecn_red_max_threshold, thresholds.ecn_red_max_threshold);
     }
 
     void updateWredProfileAndCheck(vector<FieldValueTuple> &thresholdsVector, WredMapHandler::qos_wred_thresholds_t &thresholdsValue)
@@ -197,6 +259,12 @@ namespace qosorch_test
         _In_ sai_object_id_t wred_id,
         _In_ const sai_attribute_t *attr)
     {
+        if (failEcnThresholdSet && isEcnThresholdAttrUt(attr->id))
+        {
+            // Emulate a platform that does not support this ECN marking attribute.
+            sai_set_wred_attribute_count++;
+            return SAI_STATUS_NOT_IMPLEMENTED;
+        }
         auto rc = old_set_wred_attribute(wred_id, attr);
         if (rc == SAI_STATUS_SUCCESS)
         {
@@ -1522,6 +1590,189 @@ namespace qosorch_test
         redProbabilities.red_max_drop_probability = 5;
         updateMaxDropProbabilityAndCheck("red", redProfile, redProbabilities);
 
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestWredEcnThresholds)
+    {
+        testing_wred_thresholds = true;
+        saiThresholds = {};
+        saiEcnMarkProbabilities = {};
+
+        // A profile carrying both WRED drop thresholds and independent ECN marking thresholds.
+        // The ECN thresholds sit below the drop thresholds ("mark before drop"). The orchagent
+        // must defer min/max ordering for the ECN thresholds just like the drop thresholds.
+        vector<FieldValueTuple> ecnSetVector = {
+            {"ecn", "ecn_all"},
+            {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "true"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "2097152"},
+            {"yellow_min_threshold", "1048577"},
+            {"yellow_max_threshold", "2097153"},
+            {"red_min_threshold", "1048578"},
+            {"red_max_threshold", "2097154"},
+            {"ecn_green_min_threshold", "524288"},
+            {"ecn_green_max_threshold", "1048576"},
+            {"ecn_green_mark_probability", "50"},
+            {"ecn_yellow_min_threshold", "524289"},
+            {"ecn_yellow_max_threshold", "1048577"},
+            {"ecn_yellow_mark_probability", "50"},
+            {"ecn_red_min_threshold", "524290"},
+            {"ecn_red_max_threshold", "1048578"},
+            {"ecn_red_mark_probability", "100"}
+        };
+        WredMapHandler::qos_wred_thresholds_t ecnThresholds = {
+            2097152, //green_max_threshold
+            1048576, //green_min_threshold
+            2097153, //yellow_max_threshold
+            1048577, //yellow_min_threshold
+            2097154, //red_max_threshold
+            1048578, //red_min_threshold
+            1048576, //ecn_green_max_threshold
+            524288,  //ecn_green_min_threshold
+            1048577, //ecn_yellow_max_threshold
+            524289,  //ecn_yellow_min_threshold
+            1048578, //ecn_red_max_threshold
+            524290   //ecn_red_min_threshold
+        };
+
+        updateWredProfileAndCheck(ecnSetVector, ecnThresholds);
+
+        // ECN mark probabilities are programmed to SAI as well.
+        ASSERT_EQ(saiEcnMarkProbabilities.green_max_drop_probability, 50u);
+        ASSERT_EQ(saiEcnMarkProbabilities.yellow_max_drop_probability, 50u);
+        ASSERT_EQ(saiEcnMarkProbabilities.red_max_drop_probability, 100u);
+
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestWredEcnThresholdsUnsupported)
+    {
+        // A platform that accepts the base WRED profile but does not support the per-WRED ECN
+        // marking attributes must still get a working WRED profile with its drop thresholds; the
+        // ECN marking attributes are best-effort and are skipped without failing the profile.
+        testing_wred_thresholds = true;
+        saiThresholds = {};
+        saiEcnMarkProbabilities = {};
+        failEcnThresholdSet = true;
+
+        vector<FieldValueTuple> ecnSetVector = {
+            {"ecn", "ecn_all"},
+            {"wred_green_enable", "true"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "2097152"},
+            {"ecn_green_min_threshold", "524288"},
+            {"ecn_green_max_threshold", "1048576"},
+            {"ecn_green_mark_probability", "50"}
+        };
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"AZURE", "SET", ecnSetVector});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Reset before the assertions so a failed assertion cannot leak the flag to other tests.
+        failEcnThresholdSet = false;
+
+        // The base WRED profile (drop thresholds) is programmed even though the ECN marking
+        // attributes were rejected by SAI.
+        ASSERT_EQ(saiThresholds.green_min_threshold, 1048576u);
+        ASSERT_EQ(saiThresholds.green_max_threshold, 2097152u);
+        // The unsupported ECN marking attributes were skipped, not programmed, and did not fail
+        // the WRED profile creation.
+        ASSERT_EQ(saiThresholds.ecn_green_min_threshold, 0u);
+        ASSERT_EQ(saiThresholds.ecn_green_max_threshold, 0u);
+        ASSERT_EQ(saiEcnMarkProbabilities.green_max_drop_probability, 0u);
+
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestWredEcnThresholdsModify)
+    {
+        // Create a WRED profile with independent ECN thresholds, then re-set it with raised ECN
+        // thresholds. The second update modifies the existing WRED profile, exercising the modify
+        // path that applies the ECN marking attributes via set_wred_attribute.
+        testing_wred_thresholds = true;
+
+        vector<FieldValueTuple> createVector = {
+            {"ecn", "ecn_all"},
+            {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "true"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "2097152"},
+            {"yellow_min_threshold", "1048577"},
+            {"yellow_max_threshold", "2097153"},
+            {"red_min_threshold", "1048578"},
+            {"red_max_threshold", "2097154"},
+            {"ecn_green_min_threshold", "524288"},
+            {"ecn_green_max_threshold", "1048576"},
+            {"ecn_green_mark_probability", "50"},
+            {"ecn_yellow_min_threshold", "524289"},
+            {"ecn_yellow_max_threshold", "1048577"},
+            {"ecn_yellow_mark_probability", "50"},
+            {"ecn_red_min_threshold", "524290"},
+            {"ecn_red_max_threshold", "1048578"},
+            {"ecn_red_mark_probability", "100"}
+        };
+        WredMapHandler::qos_wred_thresholds_t afterCreate = {
+            2097152, 1048576, 2097153, 1048577, 2097154, 1048578,
+            1048576, 524288, 1048577, 524289, 1048578, 524290
+        };
+        saiThresholds = {};
+        saiEcnMarkProbabilities = {};
+        updateWredProfileAndCheck(createVector, afterCreate);
+
+        vector<FieldValueTuple> modifyVector = {
+            {"ecn", "ecn_all"},
+            {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "true"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "2097152"},
+            {"yellow_min_threshold", "1048577"},
+            {"yellow_max_threshold", "2097153"},
+            {"red_min_threshold", "1048578"},
+            {"red_max_threshold", "2097154"},
+            {"ecn_green_min_threshold", "786432"},
+            {"ecn_green_max_threshold", "1572864"},
+            {"ecn_green_mark_probability", "60"},
+            {"ecn_yellow_min_threshold", "786433"},
+            {"ecn_yellow_max_threshold", "1572865"},
+            {"ecn_yellow_mark_probability", "60"},
+            {"ecn_red_min_threshold", "786434"},
+            {"ecn_red_max_threshold", "1572866"},
+            {"ecn_red_mark_probability", "100"}
+        };
+        WredMapHandler::qos_wred_thresholds_t afterModify = {
+            2097152, 1048576, 2097153, 1048577, 2097154, 1048578,
+            1572864, 786432, 1572865, 786433, 1572866, 786434
+        };
+        saiThresholds = {};
+        saiEcnMarkProbabilities = {};
+        updateWredProfileAndCheck(modifyVector, afterModify);
+        ASSERT_EQ(saiEcnMarkProbabilities.green_max_drop_probability, 60u);
+
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestWredEcnThresholdsInvalid)
+    {
+        // An ECN min threshold greater than the ECN max threshold is rejected by the handler and
+        // no WRED attribute is programmed.
+        testing_wred_thresholds = true;
+        vector<FieldValueTuple> invalidVector = {
+            {"ecn", "ecn_all"},
+            {"wred_green_enable", "true"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "2097152"},
+            {"ecn_green_min_threshold", "2097152"},
+            {"ecn_green_max_threshold", "1048576"}
+        };
+        updateWrongWredProfileAndCheck(invalidVector);
         testing_wred_thresholds = false;
     }
 
