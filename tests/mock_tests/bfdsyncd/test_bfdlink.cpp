@@ -262,7 +262,7 @@ TEST_F(BfdSyncdTest, StateUpdateWithRemoteFields)
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 
-    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1);
+    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1).WillOnce(Return(true));
 
     std::vector<FieldValueTuple> fieldValues = {
         {"state", "Down"},
