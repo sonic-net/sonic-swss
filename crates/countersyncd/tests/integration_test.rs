@@ -9,6 +9,7 @@ mod end_to_end_tests {
     };
 
     use countersyncd::actor::{
+        aggregator::AggregatorActor,
         ipfix::IpfixActor,
         stats_reporter::{StatsReporterActor, StatsReporterConfig},
     };
@@ -111,6 +112,8 @@ mod end_to_end_tests {
         // Create communication channels
         let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
         let (socket_sender, socket_receiver) = channel(10);
+        let (aggregator_config_sender, aggregator_config_receiver) = channel(10);
+        let (aggregator_stats_sender, aggregator_stats_receiver) = channel(100);
         let (saistats_sender, saistats_receiver) = channel(100);
 
         // Create test writer to capture output
@@ -119,7 +122,10 @@ mod end_to_end_tests {
 
         // Initialize actors
         let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
-        ipfix.add_recipient(saistats_sender);
+        ipfix.add_recipient(aggregator_stats_sender);
+
+        let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
+        aggregator.add_recipient(saistats_sender);
 
         let reporter_config = StatsReporterConfig {
             interval: Duration::from_millis(100), // Fast reporting for test
@@ -143,6 +149,10 @@ mod end_to_end_tests {
             StatsReporterActor::run(stats_reporter).await;
         });
 
+        let _aggregator_handle = spawn(async move {
+            AggregatorActor::run(aggregator).await;
+        });
+
         // Give actors time to start up
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -159,6 +169,13 @@ mod end_to_end_tests {
             .send(template_message)
             .await
             .expect("Failed to send template message");
+        aggregator_config_sender
+            .send(countersyncd::message::aggregator::AggregatorConfigMessage::new(
+                "test_session|PORT".to_string(),
+                None,
+            ))
+            .await
+            .expect("Failed to send aggregator config message");
 
         println!("Sent IPFIX template to IpfixActor");
 
@@ -219,6 +236,8 @@ mod end_to_end_tests {
         // This test focuses on the IPFIX -> SAI stats portion of the pipeline
         let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
         let (socket_sender, socket_receiver) = channel(10);
+        let (aggregator_config_sender, aggregator_config_receiver) = channel(10);
+        let (aggregator_stats_sender, aggregator_stats_receiver) = channel(100);
         let (saistats_sender, saistats_receiver) = channel(100);
 
         let test_writer = TestWriter::new();
@@ -226,7 +245,10 @@ mod end_to_end_tests {
 
         // Setup IPFIX actor
         let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
-        ipfix.add_recipient(saistats_sender);
+        ipfix.add_recipient(aggregator_stats_sender);
+
+        let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
+        aggregator.add_recipient(saistats_sender);
 
         // Setup stats reporter
         let reporter_config = StatsReporterConfig {
@@ -251,6 +273,10 @@ mod end_to_end_tests {
             StatsReporterActor::run(stats_reporter).await;
         });
 
+        let _aggregator_handle = spawn(async move {
+            AggregatorActor::run(aggregator).await;
+        });
+
         // Give actors time to start
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -267,6 +293,13 @@ mod end_to_end_tests {
             .send(template_message)
             .await
             .expect("Failed to send template message");
+        aggregator_config_sender
+            .send(countersyncd::message::aggregator::AggregatorConfigMessage::new(
+                "direct_test".to_string(),
+                None,
+            ))
+            .await
+            .expect("Failed to send aggregator config message");
 
         // Give time for template processing
         tokio::time::sleep(Duration::from_millis(100)).await;
