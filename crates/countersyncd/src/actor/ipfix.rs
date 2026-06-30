@@ -502,6 +502,12 @@ pub struct IpfixActor {
     /// template_id - the orchagent guarantees labels are unique per profile
     /// so the union of their object_id_name_map entries has no collisions.
     session_template_ids: HashMap<String, BTreeSet<u16>>,
+    /// Lazily populated cache of the per-template_id aggregated label lookup.
+    /// Avoids rebuilding the union over `session_template_ids` /
+    /// `object_id_name_map` for every IPFIX data set on the hot record path.
+    /// Cleared in full whenever any of those inputs changes (see
+    /// `invalidate_aggregated_lookup_cache`).
+    aggregated_lookup_cache: HashMap<u16, HashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -527,6 +533,7 @@ impl IpfixActor {
             applied_templates_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
             session_template_ids: HashMap::new(),
+            aggregated_lookup_cache: HashMap::new(),
         }
     }
 
@@ -557,6 +564,9 @@ impl IpfixActor {
                 .or_default()
                 .insert(record.template_id);
         });
+        // session_template_ids changed, so any cached aggregated lookups are
+        // stale.
+        self.invalidate_aggregated_lookup_cache();
     }
 
     /// Returns true if the template is still known (temporary or applied).
@@ -608,6 +618,32 @@ impl IpfixActor {
     /// entry), so this returns multiple keys. Callers can safely union the
     /// per-session object_id_name_map entries because the orchagent guarantees
     /// labels are unique per profile.
+    /// Returns the aggregated label lookup for `template_id`, populating the
+    /// cache on miss. Callers must invalidate via
+    /// `invalidate_aggregated_lookup_cache` whenever the underlying
+    /// `session_template_ids` or `object_id_name_map` changes.
+    fn aggregated_lookup_for(&mut self, template_id: u16) -> &HashMap<u16, String> {
+        if !self.aggregated_lookup_cache.contains_key(&template_id) {
+            let lookup: HashMap<u16, String> = self
+                .all_template_keys_for(template_id)
+                .into_iter()
+                .filter_map(|key| self.object_id_name_map.get(key))
+                .flat_map(|m| m.iter().map(|(k, v)| (*k, v.clone())))
+                .collect();
+            self.aggregated_lookup_cache.insert(template_id, lookup);
+        }
+        self.aggregated_lookup_cache
+            .get(&template_id)
+            .expect("aggregated_lookup_cache entry was just inserted")
+    }
+
+    /// Drops every entry from the aggregated label lookup cache. Cheap, and
+    /// strictly more conservative than per-template_id invalidation - rebuilt
+    /// lazily on the next lookup.
+    fn invalidate_aggregated_lookup_cache(&mut self) {
+        self.aggregated_lookup_cache.clear();
+    }
+
     fn all_template_keys_for(&self, template_id: u16) -> Vec<&String> {
         self.session_template_ids
             .iter()
@@ -694,6 +730,11 @@ impl IpfixActor {
         } else {
             self.object_id_name_map.remove(&templates.key);
         }
+        // object_id_name_map changed in every branch above; aggregated lookups
+        // built from it are now stale. insert_temporary_template below will
+        // also invalidate, but doing it here makes the dependency explicit and
+        // is cheap (the cache is empty in the common path).
+        self.invalidate_aggregated_lookup_cache();
 
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
@@ -763,6 +804,8 @@ impl IpfixActor {
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
         self.session_template_ids.remove(key);
+        // Both inputs to the aggregated lookup were just modified.
+        self.invalidate_aggregated_lookup_cache();
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -858,17 +901,15 @@ impl IpfixActor {
                 // any contributing session resolve. The orchagent guarantees
                 // labels are unique per profile, so the union has no
                 // collisions. SINGLE mode resolves to a single-session union
-                // - same result as the prior single-key lookup.
-                let aggregated_lookup: HashMap<u16, String> = self
-                    .all_template_keys_for(template_id)
-                    .into_iter()
-                    .filter_map(|key| self.object_id_name_map.get(key))
-                    .flat_map(|m| m.iter().map(|(k, v)| (*k, v.clone())))
-                    .collect();
+                // - same result as the prior single-key lookup. Cached per
+                // template_id and invalidated whenever the underlying maps
+                // change, so we pay the union cost once per (template_id,
+                // session-set) rather than once per data set.
+                let aggregated_lookup = self.aggregated_lookup_for(template_id);
                 let object_name_lookup = if aggregated_lookup.is_empty() {
                     None
                 } else {
-                    Some(&aggregated_lookup)
+                    Some(aggregated_lookup)
                 };
 
                 let mut observation_time: Option<u64>;
