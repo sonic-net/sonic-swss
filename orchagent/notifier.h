@@ -9,6 +9,10 @@ public:
     {
     }
 
+    // Delegate priority to the wrapped NotificationConsumer (pri=100)
+    // so that Select dispatches notifications before table consumers (pri=0).
+    int getPri() const override { return getSelectable()->getPri(); }
+
     swss::NotificationConsumer *getNotificationConsumer() const
     {
         return static_cast<swss::NotificationConsumer *>(getSelectable());
