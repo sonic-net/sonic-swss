@@ -136,7 +136,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'specific'
-      runId: 1152313
+      runId: 1152802
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
@@ -147,7 +147,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'specific'
-      runId: 1152313
+      runId: 1152802
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
     displayName: "Download sonic-buildimage sonic-framework package"
