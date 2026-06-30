@@ -355,8 +355,7 @@ tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 
 ## neighsyncd unit tests
 
-tests_neighsyncd_SOURCES = swss_ut_main.cpp \
-                           neighsyncd/neighsync_ut.cpp \
+tests_neighsyncd_SOURCES = neighsyncd/neighsync_ut.cpp \
                            mock_dbconnector.cpp \
                            mock_table.cpp \
                            mock_hiredis.cpp \
@@ -370,7 +369,7 @@ tests_neighsyncd_INCLUDES = -I$(top_srcdir)/neighsyncd -I$(top_srcdir)/lib -I$(t
 tests_neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
 tests_neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_neighsyncd_INCLUDES)
 tests_neighsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
-        -lswsscommon -lswsscommon -lgtest -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lboost_program_options
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main -lboost_program_options
 
 ## response publisher unit tests
 
