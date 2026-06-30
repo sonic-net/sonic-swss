@@ -2097,6 +2097,13 @@ namespace aclorch_test
         sai_switch_api = &new_sai_switch_api;
         sai_switch_api->get_switch_attribute = getSwitchAttributePacketColor;
 
+        // Restore the global SAI switch API on every exit path (including an
+        // early return from a failed ASSERT_* below) so TearDown() never
+        // dereferences the stack-allocated override above.
+        struct SaiSwitchApiRestore {
+            ~SaiSwitchApiRestore() { sai_switch_api = old_sai_switch_api_packet_color; }
+        } saiSwitchApiRestore;
+
         auto orch = createAclOrch();
 
         const string aclTableTypeName = "PACKET_COLOR_TABLE_TYPE";
@@ -2181,8 +2188,6 @@ namespace aclorch_test
             })
         );
         ASSERT_EQ(orch->getAclRule(aclTableName, "PACKET_COLOR_RULE_INVALID"), nullptr);
-
-        sai_switch_api = old_sai_switch_api_packet_color;
     }
 
     sai_switch_api_t *old_sai_switch_api_no_packet_color;
