@@ -637,3 +637,47 @@ class TestBfd(object):
         time.sleep(5)
         keys = self.sdb.get_keys("BFD_SESSION_TABLE")
         assert len(keys) == 0
+
+    def test_addRemoveBfdSession_src_mac(self, dvs):
+        self.setup_db(dvs)
+
+        bfdSessions = self.get_exist_bfd_session()
+
+        fieldValues = {
+            "local_addr": "10.0.0.1",
+            "dst_mac": "00:02:03:04:05:06",
+            "src_mac": "00:11:22:33:44:55",
+        }
+        self.create_bfd_session("default:Ethernet0:10.0.0.2", fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
+
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+
+        session = createdSessions.pop()
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID": "false",
+            "SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS": "00:02:03:04:05:06",
+            "SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS": "00:11:22:33:44:55",
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        self.remove_bfd_session("default:Ethernet0:10.0.0.2")
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+
+    def test_bfd_state_change_unknown_session(self, dvs):
+        self.setup_db(dvs)
+
+        bfdSessions = self.get_exist_bfd_session()
+        ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+        fvp = swsscommon.FieldValuePairs()
+        ntf_data = '[{"bfd_session_id":"oid:0xdeadbeef","session_state":"SAI_BFD_SESSION_STATE_UP"}]'
+        ntf.send("bfd_session_state_change", ntf_data, fvp)
+        time.sleep(1)
+
+        assert len(self.get_exist_bfd_session() - bfdSessions) == 0
