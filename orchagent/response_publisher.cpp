@@ -139,7 +139,7 @@ void ResponsePublisher::publishWrite(const std::string &table, const std::string
     intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
     std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
 
-    if (m_enable_db_write_and_notify) {
+    if (m_enable_notify) {
       if (m_zmqServer != nullptr) {
         auto intent_attrs_zmq_copy = intent_attrs;
         // Add status code and error message as the first field-value-pair.
@@ -147,8 +147,8 @@ void ResponsePublisher::publishWrite(const std::string &table, const std::string
                                   PrependedComponent(status) + status.message());
         intent_attrs_zmq_copy.insert(intent_attrs_zmq_copy.begin(), fvs);
         // Queue the response.
-        responses[table].push_back(
-            swss::KeyOpFieldsValuesTuple{key, SET_COMMAND, intent_attrs_zmq_copy});
+        responses[table].push_back(swss::KeyOpFieldsValuesTuple{
+	    key, SET_COMMAND, intent_attrs_zmq_copy});
       } else {
         // Sends the response to the notification channel.
         swss::NotificationProducer notificationProducer{
@@ -159,22 +159,13 @@ void ResponsePublisher::publishWrite(const std::string &table, const std::string
 
     RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr(), record_ts);
 
-    // Write to the DB only if: m_enable_db_write_and_notify is true and:
+    // Write to the DB only if: m_enable_db_write is true and:
     // 1) A write operation is being performed and state attributes are specified.
     // 2) OR a successful delete operation.
-    if (m_enable_db_write_and_notify &&
-         ((intent_attrs.size() && state_attrs.size()) ||
-         (status.ok() && !intent_attrs.size()))) {
-            const auto op = intent_attrs.size() ? SET_COMMAND : DEL_COMMAND;
-            if (sync_publish)
-            {
-                writeToDBInternal(table, key, state_attrs, op, replace);
-                RecordDBWrite(table, key, state_attrs, op, record_ts);
-            }
-            else
-            {
-                writeToDB(table, key, state_attrs, op, replace);
-            }
+    if (m_enable_db_write && ((intent_attrs.size() && state_attrs.size()) ||
+                            (status.ok() && !intent_attrs.size()))) {
+      writeToDB(table, key, state_attrs,
+		intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
     }
 }
 
@@ -408,8 +399,17 @@ void ResponsePublisher::stateUpdateThread()
     }
 }
 
-void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify)
-{
-    m_enable_db_write_and_notify = enable_db_write_and_notify;
+void ResponsePublisher::setWarmbootStateOnFailure(const std::string& app_name,
+                                                  bool set_on_fail) {
+  m_app_name = app_name;
+  m_set_warmboot_state_fail = set_on_fail;
+}
+
+void ResponsePublisher::setEnableDbWrite(bool enable) {
+  m_enable_db_write = enable;
+}
+
+void ResponsePublisher::setEnableNotify(bool enable) {
+  m_enable_notify = enable;
 }
 
