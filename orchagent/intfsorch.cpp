@@ -109,6 +109,23 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         m_tableVoqSystemInterfaceTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME));
     }
 
+    DBConnector cfgDb("CONFIG_DB", 0);
+    Table crmCfgTable(&cfgDb, "CRM");
+    std::string maxSviStr;
+    if (crmCfgTable.hget("Config", "max_svi_capacity", maxSviStr) && !maxSviStr.empty())
+    {
+        try
+        {
+            m_maxSviCapacity = std::stoul(maxSviStr);
+            SWSS_LOG_NOTICE("SVI/RIF creation hard-cap set to %u (from CRM|Config.max_svi_capacity)", m_maxSviCapacity);
+        }
+        catch (...)
+        {
+            SWSS_LOG_WARN("Invalid max_svi_capacity value '%s', ignoring", maxSviStr.c_str());
+            m_maxSviCapacity = 0;
+        }
+    }
+
     if (gPortsOrch)
     {
         gPortsOrch->attach(this);
@@ -1366,6 +1383,14 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         attrs.push_back(attr);
     }
 
+    if (m_maxSviCapacity > 0 && m_rifCount >= m_maxSviCapacity)
+    {
+        SWSS_LOG_ERROR("RIF creation REJECTED for %s: current RIF count %u >= max_svi_capacity %u. "
+                       "Increase limit via 'platform sonic crm max-svi-capacity' or reduce SVI scale.",
+                       port.m_alias.c_str(), m_rifCount, m_maxSviCapacity);
+        return false;
+    }
+
     sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1378,11 +1403,14 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
     }
 
     port.m_vr_id = vrf_id;
+    m_rifCount++;
 
     gPortsOrch->setPort(port.m_alias, port);
     m_rifsToAdd.push_back(port);
 
-    SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
+    SWSS_LOG_NOTICE("Create router interface %s MTU %u (RIF count: %u/%u)",
+                    port.m_alias.c_str(), port.m_mtu,
+                    m_rifCount, m_maxSviCapacity);
 
     if(isChassisDbInUse())
     {
@@ -1448,7 +1476,13 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     port.m_mpls = false;
     gPortsOrch->setPort(port.m_alias, port);
 
-    SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
+    if (m_rifCount > 0)
+    {
+        m_rifCount--;
+    }
+
+    SWSS_LOG_NOTICE("Remove router interface for port %s (RIF count: %u/%u)",
+                    port.m_alias.c_str(), m_rifCount, m_maxSviCapacity);
 
     if(isChassisDbInUse())
     {

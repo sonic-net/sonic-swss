@@ -38,6 +38,8 @@ public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
+    uint32_t getRifCount() const { return m_rifCount; }
+    uint32_t getMaxSviCapacity() const { return m_maxSviCapacity; }
     void update(SubjectType, void *) override;
     bool isPrefixSubnet(const IpPrefix&, const string&);
     bool isInbandIntfInMgmtVrf(const string& alias);
@@ -81,6 +83,9 @@ private:
 
     SelectableTimer* m_updateMapsTimer = nullptr;
     std::vector<Port> m_rifsToAdd;
+
+    uint32_t m_rifCount = 0;
+    uint32_t m_maxSviCapacity = 0;
 
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
