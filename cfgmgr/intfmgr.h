@@ -79,6 +79,10 @@ private:
     bool enableIpv6Flag(const std::string&);
 
     bool m_replayDone {false};
+    uint32_t m_replayCount {0};
+
+    static constexpr uint32_t REPLAY_THROTTLE_BATCH = 100;
+    static constexpr uint32_t REPLAY_THROTTLE_DELAY_US = 2000000;
 };
 
 }
