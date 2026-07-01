@@ -314,6 +314,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/test_routesync.cpp \
                          fpmsyncd/receive_srv6_steer_routes_ut.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
+                         fpmsyncd/nhgmgr_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fpmsyncd/fpmsyncd_evpn_mh_ut.cpp \
                          fake_netlink.cpp \
@@ -325,6 +326,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/lib/orch_zmq_config.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
+                         $(top_srcdir)/fpmsyncd/nhgmgr.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
@@ -332,7 +334,7 @@ tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
 tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+        -lswsscommon -lswsscommon -lnexthopgroup -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
 ## fdbsyncd unit tests
 
