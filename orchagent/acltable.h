@@ -14,6 +14,11 @@ extern "C" {
 #define ACL_TABLE_TYPE         "TYPE"
 #define ACL_TABLE_PORTS        "PORTS"
 #define ACL_TABLE_SERVICES     "SERVICES"
+#define ACL_TABLE_PRIORITY     "PRIORITY"
+
+// Default ACL table group member priority, used when no PRIORITY is configured.
+// Preserves the historical hardcoded value for backward compatibility.
+#define ACL_TABLE_GROUP_MEMBER_DEFAULT_PRIORITY 100
 
 #define ACL_TABLE_TYPE_MATCHES      "MATCHES"
 #define ACL_TABLE_TYPE_BPOINT_TYPES "BIND_POINTS"
