@@ -510,8 +510,8 @@ protected:
 class AclTable
 {
 public:
-    AclTable(AclOrch *pAclOrch, string id) noexcept;
-    AclTable(AclOrch *pAclOrch) noexcept;
+    AclTable(AclOrch *pAclOrch, string id);
+    AclTable(AclOrch *pAclOrch);
 
     AclTable() = default;
     ~AclTable() = default;

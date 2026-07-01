@@ -1347,7 +1347,7 @@ bool NatMgr::setDynamicNatIptablesRulesWithAcl(const string &opCmd, const string
             else
             {
                 /* Rules for Double NAT */
-                if (keys.size() > 1)
+                if (keys.size() > 2)
                 {
                     cmds = std::string("")
                        + IPTABLES_CMD + " -t nat " + "-" + opCmd + " POSTROUTING -p tcp" + srcIpAddressString + " -d " + keys[0]
@@ -1382,7 +1382,7 @@ bool NatMgr::setDynamicNatIptablesRulesWithAcl(const string &opCmd, const string
             }
             else
             {
-                if (keys.size() > 1)
+                if (keys.size() > 2)
                 {
                     /* Rules for Double NAT */
                     cmds = std::string("")
@@ -1424,7 +1424,7 @@ bool NatMgr::setDynamicNatIptablesRulesWithAcl(const string &opCmd, const string
         }
         else
         {
-            if (keys.size() > 1)
+            if (keys.size() > 2)
             {
                 /* Rules for Double NAT */
                 cmds = std::string("")

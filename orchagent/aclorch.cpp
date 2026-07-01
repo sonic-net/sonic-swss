@@ -2846,12 +2846,12 @@ void AclRuleUnderlaySetDscp::onUpdate(SubjectType, void *)
     // Do nothing
 }
 
-AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch), id(id)
+AclTable::AclTable(AclOrch *pAclOrch, string id) : m_pAclOrch(pAclOrch), id(id)
 {
 
 }
 
-AclTable::AclTable(AclOrch *pAclOrch) noexcept : m_pAclOrch(pAclOrch)
+AclTable::AclTable(AclOrch *pAclOrch) : m_pAclOrch(pAclOrch)
 {
 
 }
@@ -4448,6 +4448,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
         {
             SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata for action %s",
                            action_name.c_str());
+            return;
         }
 
         if (!meta->isenum)

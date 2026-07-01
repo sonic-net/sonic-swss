@@ -2317,7 +2317,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
 
     const auto tunnel_map_entry_name = request.getKeyString(1);
-    vrf_map_entry_t entry;
+    vrf_map_entry_t entry{};
     try
     {
         entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
