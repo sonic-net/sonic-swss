@@ -112,7 +112,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_TC,                               SAI_ACL_ENTRY_ATTR_ACTION_SET_TC }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -2064,6 +2065,19 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             return false;
         }
         actionData.parameter.oid = param_id;
+    }
+    else if (attr_name == ACTION_TC)
+    {
+        try
+        {
+            actionData.parameter.u8 = to_uint<uint8_t>(attr_value);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid traffic class value '%s' for action %s: %s",
+                           attr_value.c_str(), attr_name.c_str(), e.what());
+            return false;
+        }
     }
     else
     {
