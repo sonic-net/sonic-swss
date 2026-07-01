@@ -649,10 +649,16 @@ bool WredMapHandler::ecnThresholdSupported()
         {
             supported = capability.set_implemented;
         }
-        else
+        else if (query_status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             supported = true;
             SWSS_LOG_NOTICE("Per-WRED ECN marking threshold capability query is not implemented "
+                            "(status:%d); assuming supported", query_status);
+        }
+        else
+        {
+            supported = true;
+            SWSS_LOG_NOTICE("Per-WRED ECN marking threshold capability query failed "
                             "(status:%d); assuming supported", query_status);
         }
 
@@ -1004,7 +1010,7 @@ void WredMapHandler::applyEcnThresholdAttributes(sai_object_id_t sai_object,
         sai_status_t status = sai_wred_api->set_wred_attribute(sai_object, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("ECN marking attribute id:%d is not supported on this platform (status:%d); "
+            SWSS_LOG_WARN("Failed to set ECN marking attribute id:%d (status:%d); "
                           "ignoring the ECN marking threshold for this wred profile", attr.id, status);
         }
     }

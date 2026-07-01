@@ -162,8 +162,8 @@ private:
     static qos_wred_thresholds_store_t m_wredProfiles;
 
     // Set by convertFieldValuesToAttributes() when a WRED profile carries any independent ECN
-    // marking threshold; consumed by add/modifyQosItem() to apply the optional ECN marking
-    // attributes (which also enables the switch-level ECT control).
+    // marking configuration (thresholds and/or probabilities); consumed by add/modifyQosItem()
+    // to apply the optional ECN marking attributes (which also enables the switch-level ECT control).
     bool m_ecnThresholdConfigured = false;
 };
 
