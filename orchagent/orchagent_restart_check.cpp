@@ -121,6 +121,7 @@ int main(int argc, char **argv)
     std::string op = "orchagent";
 
     int retries = 0;
+    std::string failReason = "orchagent did not respond";
 
     while (retries <= retryCount)
     {
@@ -143,19 +144,23 @@ int main(int argc, char **argv)
             {
                 SWSS_LOG_NOTICE("RESTARTCHECK failed, %s is not ready for warm restart with status %s",
                         op_ret.c_str(), data.c_str());
+                failReason = "orchagent is not ready for warm restart, pending tasks remain (status: " + data + ")";
             }
         }
         else if (result == swss::Select::TIMEOUT)
         {
             SWSS_LOG_NOTICE("RESTARTCHECK for %s timed out", op_ret.c_str());
+            failReason = "timed out waiting for orchagent to respond; it may be busy processing tasks "
+                    "(e.g. large-scale routes), try increasing the wait time (-w) or retry count (-r)";
         }
         else
         {
             SWSS_LOG_NOTICE("RESTARTCHECK for %s error", op_ret.c_str());
+            failReason = "error while waiting for a response from orchagent";
         }
         retries++;
         values_ret.clear();
     }
-    std::cout << "RESTARTCHECK failed" << std::endl;
+    std::cout << "RESTARTCHECK failed: " << failReason << std::endl;
     return EXIT_FAILURE;
 }
