@@ -15,6 +15,8 @@
 #include <netlink/route/link.h>
 #include <netlink/route/nexthop.h>
 #include <linux/nexthop.h>
+
+#include <chrono>
 #include <linux/lwtunnel.h>
 #include <linux/seg6_iptunnel.h>
 #include <sys/stat.h>
@@ -50,6 +52,8 @@ public:
                                std::string& , std::string&,
                                std::string&), (override));
     MOCK_METHOD(bool, getIfName, (int, char *, size_t), (override));
+
+    int getLinkCacheCount() const { return nl_cache_nitems(m_link_cache); }
 };
 class MockFpm : public FpmInterface
 {
@@ -5096,4 +5100,182 @@ TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
 
     rtnl_route_put(test_route);
 
+}
+
+/*
+ * Helper: walk m_link_cache and return the highest ifindex currently present.
+ * Returns 0 if the cache is null or empty.
+ * Used to derive a collision-free ifindex range for synthetic test links:
+ * the host kernel cache already contains real interfaces (lo, eth0, …) at
+ * low ifindexes.  nl_cache_include() matches by ifindex, so using the same
+ * ifindexes would silently replace those baseline entries and make count /
+ * delete assertions host-dependent.  Starting above the current maximum
+ * guarantees the synthetic links are always new entries.
+ */
+static int getCacheMaxIfindex(struct nl_cache *cache)
+{
+    int max_idx = 0;
+    if (!cache)
+        return max_idx;
+    for (struct nl_object *obj = nl_cache_get_first(cache);
+         obj != nullptr;
+         obj = nl_cache_get_next(obj))
+    {
+        int idx = rtnl_link_get_ifindex((struct rtnl_link *)obj);
+        if (idx > max_idx)
+            max_idx = idx;
+    }
+    return max_idx;
+}
+
+TEST_F(FpmSyncdResponseTest, OnMsg_BulkNewDel_1kVlan_1kVXLAN_NoRouteProcessing)
+{
+    using clock = std::chrono::steady_clock;
+    using ms    = std::chrono::milliseconds;
+    using us    = std::chrono::microseconds;
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(_, _, _)).Times(0);
+
+    /*
+     * Derive a collision-free ifindex base.
+     * Vlan  links: base + 0    .. base + 999   (1000 entries)
+     * VXLAN links: base + 1000 .. base + 1999  (1000 entries)
+     */
+    const int base = getCacheMaxIfindex(m_mockRouteSync.m_link_cache) + 1;
+
+    /*
+     * Seed one dummy link entry first, then clone from it. This avoids
+     * dependency on pre-existing kernel cache content while still using a
+     * fully-parsed object with valid libnl metadata for nl_cache_include().
+     */
+    const int dummy_ifindex = base + 5000;
+    {
+        struct rtnl_link *dummy = rtnl_link_alloc();
+        ASSERT_NE(dummy, nullptr);
+        rtnl_link_set_ifindex(dummy, dummy_ifindex);
+        rtnl_link_set_name(dummy, "VlanTemplate");
+
+        struct nl_msg *msg = nullptr;
+        ASSERT_EQ(rtnl_link_build_add_request(dummy, NLM_F_CREATE, &msg), 0);
+        ASSERT_EQ(nl_cache_parse_and_add(m_mockRouteSync.m_link_cache, msg), 0);
+        nlmsg_free(msg);
+        rtnl_link_put(dummy);
+    }
+
+    struct rtnl_link *template_link = rtnl_link_get(m_mockRouteSync.m_link_cache, dummy_ifindex);
+    ASSERT_NE(template_link, nullptr);
+    struct nl_object *template_obj = (struct nl_object *)template_link;
+
+    const int initial_count = m_mockRouteSync.getLinkCacheCount();
+
+    /* ------------------------------------------------------------------ */
+    /* Phase 1: RTM_NEWLINK                                                */
+    /* ------------------------------------------------------------------ */
+    auto t_add_vlan_start = clock::now();
+
+    for (int i = 0; i < 1000; i++)
+    {
+        struct nl_object *obj = nl_object_clone(template_obj);
+        ASSERT_NE(obj, nullptr);
+        struct rtnl_link *link = (struct rtnl_link *)obj;
+        rtnl_link_set_ifindex(link, base + i);
+        string name = "Vlan" + to_string(i + 2);
+        rtnl_link_set_name(link, name.c_str());
+        m_mockRouteSync.onMsg(RTM_NEWLINK, obj);
+        rtnl_link_put(link);
+    }
+
+    auto t_add_vlan_end = clock::now();
+    auto add_vlan_us    = std::chrono::duration_cast<us>(t_add_vlan_end - t_add_vlan_start).count();
+
+    auto t_add_vxlan_start = clock::now();
+
+    for (int i = 0; i < 1000; i++)
+    {
+        struct nl_object *obj = nl_object_clone(template_obj);
+        ASSERT_NE(obj, nullptr);
+        struct rtnl_link *link = (struct rtnl_link *)obj;
+        rtnl_link_set_ifindex(link, base + 1000 + i);
+        string name = "VXLAN-" + to_string(i + 2);
+        rtnl_link_set_name(link, name.c_str());
+        m_mockRouteSync.onMsg(RTM_NEWLINK, obj);
+        rtnl_link_put(link);
+    }
+
+    auto t_add_vxlan_end = clock::now();
+    auto add_vxlan_us    = std::chrono::duration_cast<us>(t_add_vxlan_end - t_add_vxlan_start).count();
+    auto add_total_us    = add_vlan_us + add_vxlan_us;
+    auto add_total_ms    = std::chrono::duration_cast<ms>(t_add_vxlan_end - t_add_vlan_start).count();
+
+    EXPECT_EQ(m_mockRouteSync.getLinkCacheCount(), initial_count + 2000)
+        << "Expected cache to grow by 2000 after RTM_NEWLINK phase.";
+
+    /* ------------------------------------------------------------------ */
+    /* Phase 2: RTM_DELLINK                                                */
+    /* ------------------------------------------------------------------ */
+    auto t_del_vlan_start = clock::now();
+
+    for (int i = 0; i < 1000; i++)
+    {
+        struct rtnl_link *link = rtnl_link_alloc();
+        ASSERT_NE(link, nullptr);
+        rtnl_link_set_ifindex(link, base + i);
+        string name = "Vlan" + to_string(i + 2);
+        rtnl_link_set_name(link, name.c_str());
+        m_mockRouteSync.onMsg(RTM_DELLINK, (struct nl_object *)link);
+        rtnl_link_put(link);
+    }
+
+    auto t_del_vlan_end = clock::now();
+    auto del_vlan_us    = std::chrono::duration_cast<us>(t_del_vlan_end - t_del_vlan_start).count();
+
+    auto t_del_vxlan_start = clock::now();
+
+    for (int i = 0; i < 1000; i++)
+    {
+        struct rtnl_link *link = rtnl_link_alloc();
+        ASSERT_NE(link, nullptr);
+        rtnl_link_set_ifindex(link, base + 1000 + i);
+        string name = "VXLAN-" + to_string(i + 2);
+        rtnl_link_set_name(link, name.c_str());
+        m_mockRouteSync.onMsg(RTM_DELLINK, (struct nl_object *)link);
+        rtnl_link_put(link);
+    }
+
+    auto t_del_vxlan_end = clock::now();
+    auto del_vxlan_us    = std::chrono::duration_cast<us>(t_del_vxlan_end - t_del_vxlan_start).count();
+    auto del_total_us    = del_vlan_us + del_vxlan_us;
+    auto del_total_ms    = std::chrono::duration_cast<ms>(t_del_vxlan_end - t_del_vlan_start).count();
+
+    EXPECT_EQ(m_mockRouteSync.getLinkCacheCount(), initial_count)
+        << "Expected cache to return to initial count after RTM_DELLINK phase.";
+
+    std::cout << "onMsg RTM_NEWLINK bulk performance\n"
+              << "  1000 Vlan  events (Vlan2..Vlan1001)    : "
+              << add_vlan_us  << " us  (" << (add_vlan_us  / 1000) << " us/event avg)\n"
+              << "  1000 VXLAN events (VXLAN-2..VXLAN-1001): "
+              << add_vxlan_us << " us  (" << (add_vxlan_us / 1000) << " us/event avg)\n"
+              << "  Total 2000 events                      : "
+              << add_total_us << " us  (" << add_total_ms << " ms)\n";
+
+    std::cout << "onMsg RTM_DELLINK bulk performance\n"
+              << "  1000 Vlan  events (Vlan2..Vlan1001)    : "
+              << del_vlan_us  << " us  (" << (del_vlan_us  / 1000) << " us/event avg)\n"
+              << "  1000 VXLAN events (VXLAN-2..VXLAN-1001): "
+              << del_vxlan_us << " us  (" << (del_vxlan_us / 1000) << " us/event avg)\n"
+              << "  Total 2000 events                      : "
+              << del_total_us << " us  (" << del_total_ms << " ms)\n";
+
+    EXPECT_LT(add_total_ms, 10000)
+        << "RTM_NEWLINK: 2000 events took " << add_total_ms << " ms, expected < 10000 ms.";
+    EXPECT_LT(del_total_ms, 10000)
+        << "RTM_DELLINK: 2000 events took " << del_total_ms << " ms, expected < 10000 ms.";
+
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<string> keys;
+    route_table.getKeys(keys);
+    EXPECT_TRUE(keys.empty())
+        << "RTM_NEWLINK/DELLINK events must not write any route to APP_DB.";
+
+    rtnl_link_put(template_link);
 }
