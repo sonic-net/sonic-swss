@@ -81,6 +81,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashportmaporch_ut.cpp \
                 dashmeterorch_ut.cpp \
                 twamporch_ut.cpp \
+                llrorch_ut.cpp \
                 stporch_ut.cpp \
                 srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
@@ -200,6 +201,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
                 $(top_srcdir)/orchagent/twamporch.cpp \
+                $(top_srcdir)/orchagent/llrorch.cpp \
                 $(top_srcdir)/orchagent/stporch.cpp \
                 $(top_srcdir)/orchagent/nexthopkey.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelorch.cpp \
