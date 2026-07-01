@@ -12,6 +12,7 @@
 #include "saitypes.h"
 
 #include <cstddef>
+#include <utility>
 
 namespace
 {
@@ -26,6 +27,8 @@ namespace
     };
 
     static thread_local Hook g_hook = Hook::None;
+
+    static thread_local sai_enum_cap_ut::EnumValuesCapabilityOverride g_enumValuesOverride;
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -66,6 +69,12 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Inout_ sai_s32_list_t* enum_values_capability)
     {
+        if (g_enumValuesOverride)
+        {
+            return g_enumValuesOverride(switch_id, object_type, attr_id,
+                                        enum_values_capability);
+        }
+
         const bool is_icmp_stats_mode = (object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
                 && (attr_id == SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
 
@@ -144,5 +153,29 @@ namespace icmporch_sai_wrap_ut
     IcmpSaiHookGuard::~IcmpSaiHookGuard()
     {
         setIcmpSaiHookNone();
+    }
+}
+
+namespace sai_enum_cap_ut
+{
+    void setEnumValuesCapabilityOverride(EnumValuesCapabilityOverride fn)
+    {
+        g_enumValuesOverride = std::move(fn);
+    }
+
+    void clearEnumValuesCapabilityOverride()
+    {
+        g_enumValuesOverride = nullptr;
+    }
+
+    EnumValuesCapabilityOverrideGuard::EnumValuesCapabilityOverrideGuard(
+            EnumValuesCapabilityOverride fn)
+    {
+        setEnumValuesCapabilityOverride(std::move(fn));
+    }
+
+    EnumValuesCapabilityOverrideGuard::~EnumValuesCapabilityOverrideGuard()
+    {
+        clearEnumValuesCapabilityOverride();
     }
 }
