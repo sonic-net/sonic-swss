@@ -413,7 +413,6 @@ namespace routeorch_test
         void TearDown() override
         {
             RestoreSaiApis();
-            DEINIT_SAI_API_MOCK(next_hop_group);
             DEINIT_SAI_API_MOCK(route);
             DEINIT_SAI_API_MOCK(next_hop_group);
 

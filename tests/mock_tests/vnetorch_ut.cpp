@@ -262,6 +262,9 @@ namespace vnetorch_test
             DEINIT_SAI_API_MOCK(next_hop);
             DEINIT_SAI_API_MOCK(next_hop_group);
 
+            auto *mux_orch = gDirectory.get<MuxOrch*>();
+            delete mux_orch;
+
             gDirectory.m_values.clear();
 
             delete gCrmOrch;

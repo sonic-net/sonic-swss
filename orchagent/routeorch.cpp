@@ -1643,8 +1643,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         auto nhgm_id = nhgm_ids[i];
         if (nhgm_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
-                           next_hop_group_id, nhgm_ids[i], status);
+            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member[%zu] with next_hop_id %" PRIx64,
+                           next_hop_group_id, i, nhid);
             vector<sai_status_t> statuses(i);
             for (size_t j = 0; j < i; j++)
             {
