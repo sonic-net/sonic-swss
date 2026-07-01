@@ -2061,6 +2061,307 @@ namespace aclorch_test
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
     }
 
+    sai_switch_api_t *old_sai_switch_api_set_tc;
+
+    // Override SAI get_switch_attribute so that the ASIC reports SET_TC
+    // (and PACKET_ACTION) as supported ACL actions for both stages.
+    sai_status_t getSwitchAttributeSetTc(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                         _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch (attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 2;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_SET_TC;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = false;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_set_tc->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    // Verify that the generic (CONFIG_DB) ACL path programs
+    // SAI_ACL_ENTRY_ATTR_ACTION_SET_TC with the right uint8 traffic class value
+    // for the TC_ACTION rule action, and that invalid values are rejected.
+    TEST_F(AclOrchTest, AclRuleSetTcAction)
+    {
+        // Report SET_TC as a supported ACL action.
+        old_sai_switch_api_set_tc = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeSetTc;
+
+        // Restore the global SAI switch API on every exit path (including an
+        // early return from a failed ASSERT_* below) so TearDown() never
+        // dereferences the stack-allocated override above.
+        struct SaiSwitchApiRestore {
+            ~SaiSwitchApiRestore() { sai_switch_api = old_sai_switch_api_set_tc; }
+        } saiSwitchApiRestore;
+
+        auto orch = createAclOrch();
+
+        const string aclTableTypeName = "TC_TABLE_TYPE";
+        const string aclTableName = "TC_TABLE";
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableTypeName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                        { ACL_TABLE_TYPE_ACTIONS, ACTION_TC }
+                    }
+                }
+            })
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, aclTableTypeName },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS }
+                    }
+                }
+            })
+        );
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        const vector<pair<string, uint8_t>> tcValues = {
+            { "0",   0   },
+            { "1",   1   },
+            { "7",   7   },
+            { "255", 255 }
+        };
+
+        for (const auto &tc : tcValues)
+        {
+            const string aclRuleName = "TC_RULE_" + tc.first;
+            orch->doAclRuleTask(
+                deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "999" },
+                            { MATCH_SRC_IP, "1.2.3.4/32" },
+                            { ACTION_TC, tc.first }
+                        }
+                    }
+                })
+            );
+
+            auto rule = orch->getAclRule(aclTableName, aclRuleName);
+            ASSERT_NE(rule, nullptr);
+
+            const auto &actions = Portal::AclRuleInternal::getActions(rule);
+            auto it = actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_TC);
+            ASSERT_NE(it, actions.end());
+            ASSERT_TRUE(it->second.getSaiAttr().value.aclaction.enable);
+            ASSERT_EQ(it->second.getSaiAttr().value.aclaction.parameter.u8, tc.second);
+        }
+
+        // Invalid traffic class values must be rejected (rule not created):
+        // out-of-range (> 255) and non-numeric.
+        for (const string &badTc : { string("256"), string("ABC") })
+        {
+            const string aclRuleName = "TC_RULE_INVALID_" + badTc;
+            orch->doAclRuleTask(
+                deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "998" },
+                            { MATCH_SRC_IP, "1.2.3.5/32" },
+                            { ACTION_TC, badTc }
+                        }
+                    }
+                })
+            );
+            ASSERT_EQ(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+        }
+    }
+
+    // Verify that TC_ACTION composes with a forwarding action: a rule carrying both
+    // PACKET_ACTION (FORWARD) and TC_ACTION is created, and BOTH SAI actions are programmed.
+    // Regression for AclRulePacket::validate() treating SET_TC as an exclusive action (which
+    // would reject a rule that both forwards a packet and sets its traffic class).
+    TEST_F(AclOrchTest, AclRuleSetTcActionComposeForward)
+    {
+        // Report SET_TC and PACKET_ACTION as supported ACL actions.
+        old_sai_switch_api_set_tc = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeSetTc;
+
+        struct SaiSwitchApiRestore {
+            ~SaiSwitchApiRestore() { sai_switch_api = old_sai_switch_api_set_tc; }
+        } saiSwitchApiRestore;
+
+        auto orch = createAclOrch();
+
+        const string aclTableTypeName = "TC_TABLE_TYPE";
+        const string aclTableName = "TC_TABLE";
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableTypeName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                        { ACL_TABLE_TYPE_ACTIONS, string(ACTION_PACKET_ACTION) + comma + ACTION_TC }
+                    }
+                }
+            })
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, aclTableTypeName },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS }
+                    }
+                }
+            })
+        );
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        const string aclRuleName = "TC_RULE_FORWARD";
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName + "|" + aclRuleName,
+                    SET_COMMAND,
+                    {
+                        { RULE_PRIORITY, "999" },
+                        { MATCH_SRC_IP, "1.2.3.4/32" },
+                        { ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD },
+                        { ACTION_TC, "3" }
+                    }
+                }
+            })
+        );
+
+        // The composed rule must be created (validate() must not treat SET_TC as exclusive).
+        auto rule = orch->getAclRule(aclTableName, aclRuleName);
+        ASSERT_NE(rule, nullptr);
+
+        const auto &actions = Portal::AclRuleInternal::getActions(rule);
+
+        // Both actions are programmed: SET_TC with the configured traffic class ...
+        auto tcIt = actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_TC);
+        ASSERT_NE(tcIt, actions.end());
+        ASSERT_TRUE(tcIt->second.getSaiAttr().value.aclaction.enable);
+        ASSERT_EQ(tcIt->second.getSaiAttr().value.aclaction.parameter.u8, 3);
+
+        // ... and PACKET_ACTION set to FORWARD.
+        auto paIt = actions.find(SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION);
+        ASSERT_NE(paIt, actions.end());
+        ASSERT_TRUE(paIt->second.getSaiAttr().value.aclaction.enable);
+        ASSERT_EQ(paIt->second.getSaiAttr().value.aclaction.parameter.s32, SAI_PACKET_ACTION_FORWARD);
+    }
+
+    sai_switch_api_t *old_sai_switch_api_no_set_tc;
+
+    // Override SAI get_switch_attribute so that the ASIC does NOT advertise
+    // SET_TC (only PACKET_ACTION is supported).
+    sai_status_t getSwitchAttributeNoSetTc(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                           _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch (attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 1;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 1;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = false;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_no_set_tc->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    // When the ASIC does not advertise SET_TC, an ACL table whose type lists
+    // TC_ACTION must be rejected: AclOrch validates every table action against
+    // the queried switch capability on table creation.
+    TEST_F(AclOrchTest, AclTableSetTcActionNotSupported)
+    {
+        old_sai_switch_api_no_set_tc = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeNoSetTc;
+
+        // Restore the global SAI switch API on every exit path (including an
+        // early return from a failed ASSERT_* below) so TearDown() never
+        // dereferences the stack-allocated override above.
+        struct SaiSwitchApiRestore {
+            ~SaiSwitchApiRestore() { sai_switch_api = old_sai_switch_api_no_set_tc; }
+        } saiSwitchApiRestore;
+
+        auto orch = createAclOrch();
+
+        const string aclTableTypeName = "TC_UNSUP_TABLE_TYPE";
+        const string aclTableName = "TC_UNSUP_TABLE";
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableTypeName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                        { ACL_TABLE_TYPE_ACTIONS, string(ACTION_PACKET_ACTION) + comma + ACTION_TC }
+                    }
+                }
+            })
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, aclTableTypeName },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS }
+                    }
+                }
+            })
+        );
+
+        // The table is rejected because SET_TC is not a supported action.
+        ASSERT_EQ(orch->getAclTable(aclTableName), nullptr);
+    }
+
     TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
     {
         const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";

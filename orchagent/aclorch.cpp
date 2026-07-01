@@ -112,7 +112,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_TC,                               SAI_ACL_ENTRY_ATTR_ACTION_SET_TC }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -2217,6 +2218,19 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    else if (attr_name == ACTION_TC)
+    {
+        try
+        {
+            actionData.parameter.u8 = to_uint<uint8_t>(attr_value);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid traffic class value '%s' for action %s: %s",
+                           attr_value.c_str(), attr_name.c_str(), e.what());
+            return false;
+        }
+    }
     else
     {
         return false;
@@ -2322,7 +2336,31 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
+    {
+        return false;
+    }
+
+    // A packet rule must carry at least one action.
+    if (m_actions.empty())
+    {
+        return false;
+    }
+
+    // SET_TC is a composable QoS action: it assigns the traffic class of a matched packet and
+    // may accompany a single forwarding/terminating action (e.g. FORWARD/DROP/REDIRECT) rather
+    // than being exclusive. Exclude it from the single exclusive-action check so a rule may both
+    // forward and set the traffic class. (COUNTER is tracked separately and always composes.)
+    size_t nonComposableActions = 0;
+    for (const auto& action : m_actions)
+    {
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_TC)
+        {
+            nonComposableActions++;
+        }
+    }
+
+    if (nonComposableActions > 1)
     {
         return false;
     }
