@@ -218,6 +218,12 @@ public:
     } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
+        std::string type;
+        uint32_t count;
+        bool is_set = false;
+    } serdes_settings_sync_status;
+
+    struct {
         swss::Port::Role value;
         bool is_set = false;
     } role; // Port role
