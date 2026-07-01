@@ -696,7 +696,14 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_update()
 
 void IcmpSaiSessionHandler::on_state_change(uint32_t count, sai_icmp_echo_session_state_notification_t *data)
 {
-    // we do not use this registered notification handler
-    // as it is called in a separate thread of sairedis
+    extern sai_redis_communication_mode_t gRedisCommunicationMode;
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer icmpNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_icmp_echo_session_state_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        icmpNotifier.send("icmp_echo_session_state_change", sdata, values);
+    }
 }
 
