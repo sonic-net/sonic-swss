@@ -41,7 +41,7 @@ parameters:
 
 - name: buildimage_artifact_pipeline
   type: string
-  default: 'Azure.sonic-buildimage.official.vs'
+  default: 'Azure.sonic-buildimage'
 
 - name: buildimage_artifact_branch
   type: string
@@ -136,7 +136,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'specific'
-      runId: 1141167
+      runId: 1154037
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
@@ -147,7 +147,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'specific'
-      runId: 1141167
+      runId: 1154037
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
     displayName: "Download sonic-buildimage sonic-framework package"
