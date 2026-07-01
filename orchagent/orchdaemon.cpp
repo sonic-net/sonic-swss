@@ -921,6 +921,18 @@ bool OrchDaemon::init()
     return true;
 }
 
+bool OrchDaemon::hasPendingTasks() const
+{
+    for (const Orch *o : m_orchList)
+    {
+        if (o->hasPendingTasks())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Flush redis through sairedis interface */
 void OrchDaemon::flush()
 {
@@ -1057,6 +1069,21 @@ void OrchDaemon::start(long heartBeatInterval)
                     for (Orch *o : m_orchList)
                         o->doTask();
                 }
+            }
+            else if (hasPendingTasks())
+            {
+                /* Without ring buffer, the SELECT_TIMEOUT branch otherwise just
+                 * flushes the sairedis pipeline and `continue`s. That leaves
+                 * entries which returned task_need_retry (or its bool-pattern
+                 * equivalent in routeorch/neighorch/fdborch) stuck in m_toSync
+                 * until an unrelated external event fires the per-orch doTask
+                 * sweep after c->execute(). On a quiescent system that gap can
+                 * be indefinitely long. Opportunistically sweep here when any
+                 * orch has pending tasks so transient SAI conditions
+                 * (TABLE_FULL freeing up later, dependencies becoming ready)
+                 * get periodic re-attempts. */
+                for (Orch *o : m_orchList)
+                    o->doTask();
             }
 
             continue;
