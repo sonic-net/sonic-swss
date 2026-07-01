@@ -148,6 +148,43 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
     set_switch_capability(fvVector);
 }
 
+void SwitchOrch::set_switch_bfd_next_hop_capability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_attr_capability_t use_next_hop_cap;
+    sai_attr_capability_t next_hop_id_cap;
+    bool capable = false;
+
+    sai_status_t use_nh_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                                SAI_BFD_SESSION_ATTR_USE_NEXT_HOP,
+                                                                &use_next_hop_cap);
+    sai_status_t nh_id_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                               SAI_BFD_SESSION_ATTR_NEXT_HOP_ID,
+                                                               &next_hop_id_cap);
+    if (use_nh_status == SAI_STATUS_SUCCESS && nh_id_status == SAI_STATUS_SUCCESS &&
+        use_next_hop_cap.create_implemented &&
+        next_hop_id_cap.create_implemented && next_hop_id_cap.set_implemented)
+    {
+        capable = true;
+        SWSS_LOG_INFO("SAI_BFD nexthop injection (USE_NEXT_HOP and NEXT_HOP_ID) are implemented");
+    }
+    else
+    {
+        if (use_nh_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_USE_NEXT_HOP %x", use_nh_status);
+        }
+        if (nh_id_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_NEXT_HOP_ID %x", nh_id_status);
+        }
+        SWSS_LOG_INFO("SAI_BFD nexthop injection is not fully implemented");
+    }
+
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, capable ? "true" : "false");
+    set_switch_capability(fvVector);
+}
+
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
@@ -165,6 +202,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
