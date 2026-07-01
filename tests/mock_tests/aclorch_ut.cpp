@@ -15,10 +15,12 @@ extern Srv6Orch  *gSrv6Orch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
+extern PolicerOrch *gPolicerOrch;
 extern VRFOrch *gVrfOrch;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_policer_api_t *sai_policer_api;
 extern sai_hash_api_t *sai_hash_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
@@ -325,6 +327,7 @@ namespace aclorch_test
             sai_api_query(SAI_API_MPLS, (void **)&sai_mpls_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
             sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
+            sai_api_query(SAI_API_POLICER, (void **)&sai_policer_api);
 
             sai_attribute_t attr;
 
@@ -447,14 +450,15 @@ namespace aclorch_test
                 TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
             };
             TableConnector stateDbStorm(m_state_db.get(), "BUM_STORM_CAPABILITY");
-            PolicerOrch *policer_orch = new PolicerOrch(policer_tables, gPortsOrch);
+            ASSERT_EQ(gPolicerOrch, nullptr);
+            gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
 
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
             TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
 
             ASSERT_EQ(gMirrorOrch, nullptr);
             gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
-                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch, gSwitchOrch);
+                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
 
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
@@ -471,6 +475,8 @@ namespace aclorch_test
             gSwitchOrch = nullptr;
             delete gMirrorOrch;
             gMirrorOrch = nullptr;
+            delete gPolicerOrch;
+            gPolicerOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
             delete gFlowCounterRouteOrch;
@@ -1328,6 +1334,158 @@ namespace aclorch_test
             ASSERT_EQ(it_rule, acl_table.rules.end());
             ASSERT_TRUE(validateLowerLayerDb(orch.get()));
         }
+    }
+
+    // An ACL rule with POLICER_ACTION referencing a POLICER entry is realized as
+    // SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER. A rule referencing a policer that
+    // does not exist yet is deferred (relies on the m_toSync retry) and not created.
+    TEST_F(AclOrchTest, AclRule_Policer_Action)
+    {
+        const string aclTableTypeName = "TEST_POLICER_TYPE";
+        const string aclTableName     = "TEST_POLICER_TABLE";
+        const string aclRuleName      = "TEST_POLICER_RULE";
+        const string policerName      = "test_policer";
+
+        auto orch = createAclOrch();
+
+        // Create a policer so POLICER_ACTION can resolve its OID.
+        auto policerConsumer = unique_ptr<Consumer>(new Consumer(
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            gPolicerOrch, CFG_POLICER_TABLE_NAME));
+        policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
+            { { policerName, SET_COMMAND,
+                { { "METER_TYPE", "packets" }, { "MODE", "sr_tcm" },
+                  { "CIR", "100" }, { "CBS", "100" }, { "RED_PACKET_ACTION", "drop" } } } }));
+        static_cast<Orch *>(gPolicerOrch)->doTask(*policerConsumer);
+        ASSERT_TRUE(gPolicerOrch->policerExists(policerName));
+
+        // Custom table type advertising the SRC_IP match and the policer action.
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableTypeName, SET_COMMAND,
+                    { { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                      { ACL_TABLE_TYPE_ACTIONS, ACTION_POLICER_ACTION },
+                      { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT } } } }));
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName, SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "policer table" },
+                      { ACL_TABLE_TYPE, aclTableTypeName },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } }));
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        // Rule referencing the existing policer is created and carries SET_POLICER.
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName + "|" + aclRuleName, SET_COMMAND,
+                    { { MATCH_SRC_IP, "1.1.1.1/32" },
+                      { ACTION_POLICER_ACTION, policerName } } } }));
+
+        auto rule = orch->getAclRule(aclTableName, aclRuleName);
+        ASSERT_TRUE(rule);
+        const auto &actions = Portal::AclRuleInternal::getActions(rule);
+        ASSERT_NE(actions.find(SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER), actions.end());
+
+        // Deleting the rule releases the policer reference it held
+        // (exercises AclRulePolicer::removeRule()).
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName + "|" + aclRuleName, DEL_COMMAND, {} } }));
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        // Rule referencing a non-existent policer is deferred, not created.
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName + "|" + "MISSING_POLICER_RULE", SET_COMMAND,
+                    { { MATCH_SRC_IP, "2.2.2.2/32" },
+                      { ACTION_POLICER_ACTION, "no_such_policer" } } } }));
+        ASSERT_FALSE(orch->getAclRule(aclTableName, "MISSING_POLICER_RULE"));
+
+        // A POLICER_ACTION with an empty policer name is rejected by
+        // AclRulePolicer::validateAddAction() and the rule is not created.
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName + "|" + "EMPTY_POLICER_RULE", SET_COMMAND,
+                    { { MATCH_SRC_IP, "3.3.3.3/32" },
+                      { ACTION_POLICER_ACTION, "" } } } }));
+        ASSERT_FALSE(orch->getAclRule(aclTableName, "EMPTY_POLICER_RULE"));
+
+        // A POLICER_ACTION rule with no match/range fails AclRulePolicer::
+        // validate() (needs at least one match and exactly one action).
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName + "|" + "NOMATCH_POLICER_RULE", SET_COMMAND,
+                    { { ACTION_POLICER_ACTION, policerName } } } }));
+        ASSERT_FALSE(orch->getAclRule(aclTableName, "NOMATCH_POLICER_RULE"));
+    }
+
+    // If the SAI ACL entry creation fails after the policer reference has been
+    // acquired, AclRulePolicer::createRule() must roll that reference back so the
+    // policer is not leaked. A still-referenced policer cannot be deleted, so a
+    // successful delete afterwards proves the reference count returned to zero.
+    TEST_F(AclOrchTest, AclRule_Policer_CreateFailureReleasesRef)
+    {
+        const string aclTableTypeName = "TEST_POLICER_FAIL_TYPE";
+        const string aclTableName     = "TEST_POLICER_FAIL_TABLE";
+        const string aclRuleName      = "TEST_POLICER_FAIL_RULE";
+        const string policerName      = "test_policer_fail";
+
+        auto orch = createAclOrch();
+
+        // Create a policer so POLICER_ACTION can resolve its OID.
+        auto policerConsumer = unique_ptr<Consumer>(new Consumer(
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            gPolicerOrch, CFG_POLICER_TABLE_NAME));
+        policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
+            { { policerName, SET_COMMAND,
+                { { "METER_TYPE", "packets" }, { "MODE", "sr_tcm" },
+                  { "CIR", "100" }, { "CBS", "100" }, { "RED_PACKET_ACTION", "drop" } } } }));
+        static_cast<Orch *>(gPolicerOrch)->doTask(*policerConsumer);
+        ASSERT_TRUE(gPolicerOrch->policerExists(policerName));
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableTypeName, SET_COMMAND,
+                    { { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                      { ACL_TABLE_TYPE_ACTIONS, ACTION_POLICER_ACTION },
+                      { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT } } } }));
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                { { aclTableName, SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "policer table" },
+                      { ACL_TABLE_TYPE, aclTableTypeName },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } }));
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        // Force SAI ACL entry creation to fail so AclRule::createRule() returns
+        // false *after* AclRulePolicer::createRule() has taken the policer ref.
+        {
+            auto spy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_ENTRY>(&sai_acl_api->create_acl_entry);
+            spy->callFake([&](sai_object_id_t *, sai_object_id_t, uint32_t,
+                              const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_FAILURE;
+            });
+
+            orch->doAclRuleTask(
+                deque<KeyOpFieldsValuesTuple>(
+                    { { aclTableName + "|" + aclRuleName, SET_COMMAND,
+                        { { MATCH_SRC_IP, "1.1.1.1/32" },
+                          { ACTION_POLICER_ACTION, policerName } } } }));
+        }
+
+        // The rule was not created.
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        // The policer reference taken before the failed entry creation was
+        // released: deleting the policer now succeeds (it is no longer referenced).
+        policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
+            { { policerName, DEL_COMMAND, {} } }));
+        static_cast<Orch *>(gPolicerOrch)->doTask(*policerConsumer);
+        ASSERT_FALSE(gPolicerOrch->policerExists(policerName));
     }
 
     // When received ACL table/rule SET_COMMAND, orchagent can create corresponding ACL table/rule
