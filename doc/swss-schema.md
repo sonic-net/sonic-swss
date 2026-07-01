@@ -442,6 +442,18 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     wred_green_enable       = "true" / "false"
     wred_yellow_enable      = "true" / "false"
     wred_red_enable         = "true" / "false"
+    ; optional independent ECN marking thresholds ("mark before drop"), applied best-effort where the
+    ; platform supports them; each color requires that color enabled in "ecn"
+    ecn_green_min_threshold     = byte_count
+    ecn_green_max_threshold     = byte_count
+    ecn_green_mark_probability  = percentage
+    ecn_yellow_min_threshold    = byte_count
+    ecn_yellow_max_threshold    = byte_count
+    ecn_yellow_mark_probability = percentage
+    ecn_red_min_threshold       = byte_count
+    ecn_red_max_threshold       = byte_count
+    ecn_red_mark_probability    = percentage
+    percentage                  = 1*DIGIT     ; 0..100 (percent)
 
     Example:
     127.0.0.1:6379> hgetall "WRED_PROFILE_TABLE:AZURE"

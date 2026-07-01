@@ -62,6 +62,16 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
+const string ecn_green_min_threshold_field_name     = "ecn_green_min_threshold";
+const string ecn_green_max_threshold_field_name     = "ecn_green_max_threshold";
+const string ecn_green_mark_probability_field_name  = "ecn_green_mark_probability";
+const string ecn_yellow_min_threshold_field_name    = "ecn_yellow_min_threshold";
+const string ecn_yellow_max_threshold_field_name    = "ecn_yellow_max_threshold";
+const string ecn_yellow_mark_probability_field_name = "ecn_yellow_mark_probability";
+const string ecn_red_min_threshold_field_name       = "ecn_red_min_threshold";
+const string ecn_red_max_threshold_field_name       = "ecn_red_max_threshold";
+const string ecn_red_mark_probability_field_name    = "ecn_red_mark_probability";
+
 class QosMapHandler
 {
 public:
@@ -113,6 +123,19 @@ public:
 protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
+    // Enable SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE (capability-gated, idempotent) so that
+    // the independent ECN marking thresholds take effect for ECT traffic on platforms that
+    // support it. Platforms without the capability are left untouched.
+    bool enableEcnEctThreshold();
+    // Apply the optional per-WRED ECN marking attributes (independent thresholds/probabilities)
+    // best-effort after the base WRED profile has been programmed: enables the switch-level ECT
+    // control and sets each ECN attribute, logging and skipping any the platform rejects so the
+    // base WRED profile is never failed by an unsupported ECN attribute.
+    void applyEcnThresholdAttributes(sai_object_id_t sai_object, const vector<sai_attribute_t> &ecn_attributes);
+    // Capability-gated (queried once, cached) check for the per-WRED ECN threshold/mark
+    // attributes. When unsupported, the ECN threshold fields are ignored so that WRED profile
+    // creation keeps working unchanged on platforms that do not implement them.
+    bool ecnThresholdSupported();
 private:
     void appendThresholdToAttributeList(sai_attr_id_t type,
                                         sai_uint32_t threshold,
@@ -127,10 +150,21 @@ private:
         sai_uint32_t yellow_min_threshold;
         sai_uint32_t red_max_threshold;
         sai_uint32_t red_min_threshold;
+        sai_uint32_t ecn_green_max_threshold;
+        sai_uint32_t ecn_green_min_threshold;
+        sai_uint32_t ecn_yellow_max_threshold;
+        sai_uint32_t ecn_yellow_min_threshold;
+        sai_uint32_t ecn_red_max_threshold;
+        sai_uint32_t ecn_red_min_threshold;
     } qos_wred_thresholds_t;
     typedef map<string, qos_wred_thresholds_t> qos_wred_thresholds_store_t;
 
     static qos_wred_thresholds_store_t m_wredProfiles;
+
+    // Set by convertFieldValuesToAttributes() when a WRED profile carries any independent ECN
+    // marking configuration (thresholds and/or probabilities); consumed by add/modifyQosItem()
+    // to apply the optional ECN marking attributes (which also enables the switch-level ECT control).
+    bool m_ecnThresholdConfigured = false;
 };
 
 
