@@ -579,10 +579,10 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     }
 
     DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
-    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ?
-                                     entry.metadata.v4_meter_policy_id() : "";
-    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ?
-                                     entry.metadata.v6_meter_policy_id() : "";
+    const string v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ?
+                                    entry.metadata.v4_meter_policy_id() : "";
+    const string v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ?
+                                    entry.metadata.v6_meter_policy_id() : "";
 
     if (!v4_meter_policy.empty())
     {
@@ -911,10 +911,10 @@ bool DashOrch::removeEniObject(const string& eni)
         }
     }
 
-    const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ?
-                                     entry.metadata.v4_meter_policy_id() : "";
-    const string &v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ?
-                                     entry.metadata.v6_meter_policy_id() : "";
+    const string v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ?
+                                    entry.metadata.v4_meter_policy_id() : "";
+    const string v6_meter_policy  = entry.metadata.has_v6_meter_policy_id() ?
+                                    entry.metadata.v6_meter_policy_id() : "";
 
     if (!v4_meter_policy.empty())
     {

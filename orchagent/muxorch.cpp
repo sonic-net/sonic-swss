@@ -1131,6 +1131,7 @@ MuxAclHandler::~MuxAclHandler(void)
     if (rule == nullptr)
     {
         SWSS_LOG_THROW("ACL Rule does not exist for port %s, rule %s", alias_.c_str(), rule_name.c_str());
+        return;
     }
 
     vector<sai_object_id_t> port_set = rule->getInPorts();

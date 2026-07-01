@@ -341,7 +341,7 @@ NvgreTunnel::NvgreTunnel(std::string tunnelName, IpAddress srcIp) :
     createNvgreTunnel();
 }
 
-NvgreTunnel::~NvgreTunnel()
+NvgreTunnel::~NvgreTunnel() noexcept(false)
 {
     removeNvgreTunnel();
     removeNvgreMappers();

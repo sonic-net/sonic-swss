@@ -408,6 +408,7 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     if (rule == nullptr)
     {
         SWSS_LOG_THROW("ACL Rule does not exist for rule %s", m_strRule.c_str());
+        return;
     }
 
     vector<sai_object_id_t> port_set = rule->getInPorts();

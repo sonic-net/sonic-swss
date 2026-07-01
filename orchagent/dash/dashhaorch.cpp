@@ -199,7 +199,7 @@ HaScopeEntry DashHaOrch::getHaScopeForEni(const std::string& eni)
 
     if (m_ha_scope_entries.empty())
     {
-        HaScopeEntry emptyEntry;
+        HaScopeEntry emptyEntry{};
         emptyEntry.ha_scope_id = SAI_NULL_OBJECT_ID;
         return emptyEntry;
     }

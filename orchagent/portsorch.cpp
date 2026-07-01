@@ -1253,6 +1253,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
     addedPorts.reserve(portList.size());
 
     std::vector<PortAttrValue_t> attrValueList;
+    std::vector<std::vector<sai_object_id_t>> tamObjectsList;
     std::vector<std::vector<sai_attribute_t>> attrDataList;
     std::vector<std::uint32_t> attrCountList;
     std::vector<const sai_attribute_t*> attrPtrList;
@@ -1397,14 +1398,14 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
 
                 if (m_ptTam != SAI_NULL_OBJECT_ID)
                 {
-                    vector<sai_object_id_t> tam_objects_list;
-                    tam_objects_list.push_back(m_ptTam);
+                    tamObjectsList.emplace_back(1, m_ptTam);
                     attr.id = SAI_PORT_ATTR_TAM_OBJECT;
-                    attr.value.objlist.count = (uint32_t)tam_objects_list.size();
-                    attr.value.objlist.list = tam_objects_list.data();
+                    attr.value.objlist.count = (uint32_t)tamObjectsList.back().size();
+                    attr.value.objlist.list = tamObjectsList.back().data();
 
                     m_ptTamRefCount++;
                     m_portPtTam[cit.key] = m_ptTam;
+                    attrList.push_back(attr);
                 }
             }
 

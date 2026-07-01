@@ -42,7 +42,7 @@ class NvgreTunnel
 {
 public:
     NvgreTunnel(std::string tunnelName, IpAddress srcIp);
-    ~NvgreTunnel();
+    ~NvgreTunnel() noexcept(false);
 
     bool isTunnelMapExists(const std::string& name) const
     {

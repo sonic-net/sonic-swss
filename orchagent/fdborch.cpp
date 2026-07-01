@@ -450,7 +450,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
             {
-                FdbData fdbData;
+                FdbData fdbData{};
                 fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
                 fdbData.type = update.type;
                 fdbData.origin = existing_entry->second.origin;
