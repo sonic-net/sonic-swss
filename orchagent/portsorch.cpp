@@ -6411,8 +6411,23 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 std::string port_hostname = (pos != std::string::npos) ? lag_alias.substr(0, pos) : lag_alias;
                 if (gMyHostName == port_hostname)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    if (!gMultiAsicVoq)
+                    {
+                        SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (single-asic voq)", lag_alias.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    std::string rest = (pos != std::string::npos) ? lag_alias.substr(pos + 1) : "";
+                    size_t pos2 = rest.find('|');
+                    std::string port_asic = (pos2 != std::string::npos) ? rest.substr(0, pos2) : rest;
+                    SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
+                                   lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+                    if (port_asic == gMyAsicName)
+                    {
+                        SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
                 }
             }
             SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
