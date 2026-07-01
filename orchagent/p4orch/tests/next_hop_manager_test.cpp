@@ -1619,7 +1619,7 @@ TEST_F(NextHopManagerTest, DrainStopOnFirstFailureCreate) {
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
                       Eq(kfvFieldsValues(app_db_entry_3)),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
   EXPECT_NE(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
   EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("2")));
@@ -1667,7 +1667,7 @@ TEST_F(NextHopManagerTest, DrainStopOnFirstFailureDel) {
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(del_app_db_entry_3)),
                       Eq(kfvFieldsValues(del_app_db_entry_3)),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
   EXPECT_EQ(nullptr,
             GetNextHopEntry(KeyGenerator::generateNextHopKey(kNextHopId)));
