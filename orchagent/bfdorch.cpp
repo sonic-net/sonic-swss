@@ -333,7 +333,7 @@ void BfdOrch::update(SubjectType type, void *cntx)
     updateNextHopId(update->entry.alias, update->entry.ip_address, next_hop_id);
 }
 
-void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_id_t next_hop_id)
+void BfdOrch::updateNextHopId(const string& alias, const IpAddress& peer_address, sai_object_id_t next_hop_id)
 {
     const string key = get_app_db_key("default", alias, peer_address);
     if (bfd_inject_next_hop_lookup.find(key) == bfd_inject_next_hop_lookup.end())
@@ -563,6 +563,13 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     {
         if (!dst_mac_provided)
         {
+            if (vrf_name != "default")
+            {
+                SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported for nexthop injection",
+                               key.c_str());
+                return true;
+            }
+
             attr.id = SAI_BFD_SESSION_ATTR_USE_NEXT_HOP;
             attr.value.booldata = true;
             attrs.emplace_back(attr);
