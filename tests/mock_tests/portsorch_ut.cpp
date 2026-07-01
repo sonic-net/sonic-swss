@@ -685,6 +685,10 @@ namespace portsorch_test
 
             gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
 
+            // Default the SI-settings admin gate OFF for tests; the dedicated gate tests
+            // enable it explicitly. This keeps legacy admin/serdes tests behaving as before.
+            gPortsOrch->m_xcvrdSiSyncExpected = false;
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
@@ -1481,7 +1485,8 @@ namespace portsorch_test
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
                 { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
                 { "custom_serdes_attrs", custom_serdes_attrs     },
-                { "media_type",    "backplane"                   }
+                { "media_type",    "backplane"                   },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1"      }
             }
         }};
         std::deque<KeyOpFieldsValuesTuple> kfvList1 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "" }}}};
@@ -1646,7 +1651,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "txpolarity",    "0x1,0x0,0x1,0x0"          },
-                { "rxpolarity",    "0x0,0x1,0x0,0x1"          }
+                { "rxpolarity",    "0x0,0x1,0x0,0x1"          },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -1734,7 +1740,8 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "idriver"     , "0x6,0x6,0x6,0x6" }
+                { "idriver"     , "0x6,0x6,0x6,0x6" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1" }
             }
         }};
 
@@ -1757,9 +1764,26 @@ namespace portsorch_test
         std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
-        // Verify admin-disable then admin-enable
-        ASSERT_EQ(_sai_set_admin_state_down_count, ++down_call_count);
-        ASSERT_EQ(_sai_set_admin_state_up_count, ++up_call_count);
+        // SI settings are applied while the MAC is down (the gate guarantees this), so the
+        // link is never bounced during serdes apply: no admin-disable, no admin-enable.
+        ASSERT_EQ(_sai_set_admin_state_down_count, down_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, up_call_count);
+
+        // Verify orchagent acknowledged the notification with SI_SYNC_DONE:<N> in STATE_DB
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> ackValues;
+        statePortTable.get("Ethernet0", ackValues);
+        bool found_sync_done = false;
+        for (const auto &fv : ackValues)
+        {
+            if (fvField(fv) == "si_settings_ack")
+            {
+                found_sync_done = true;
+                ASSERT_EQ(fvValue(fv), "SI_SYNC_DONE:1");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_sync_done);
 
         // Configure non-serdes attribute that does not trigger admin state change
         std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
@@ -1860,7 +1884,8 @@ namespace portsorch_test
                 { "gb_system_main",  "0x95,0x96,0x97,0x98" },
                 { "gb_system_post1", "0x45,0x46,0x47,0x48" },
                 { "gb_system_post2", "0x55,0x56,0x57,0x58" },
-                { "gb_system_post3", "0x65,0x66,0x67,0x68" }
+                { "gb_system_post3", "0x65,0x66,0x67,0x68" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -1966,7 +1991,8 @@ namespace portsorch_test
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
                 { "gb_line_main",  "0x90,0x91,0x92,0x93" },
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -2043,7 +2069,8 @@ namespace portsorch_test
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
                 { "gb_line_main",  "0x90,0x91,0x92,0x93" },
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -2115,7 +2142,8 @@ namespace portsorch_test
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
                 { "gb_line_main",  "0x90,0x91,0x92,0x93" },
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1" }
             }
         }};
 
@@ -2182,7 +2210,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
-                { "gb_line_main",  "0x90,0x91,0x92,0x93" }
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1" }
             }
         }};
 
@@ -2273,7 +2302,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_settings_notification","SI_SETTINGS_NOTIFIED:1" }
             }
         }};
 
@@ -2311,6 +2341,338 @@ namespace portsorch_test
         set_admin_status_failures = 0;
 
         _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies SI_SETTINGS_DEFAULT serdes sync status handling
+     * This tests the code path where xcvrd requests default SI settings
+     */
+    TEST_F(PortsOrchTest, PortSerdesConfigSiSettingsDefault)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Generate port config with SI_SETTINGS_DEFAULT status
+        // This simulates xcvrd requesting default settings during warm restart
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "si_settings_notification","SI_SETTINGS_DEFAULT:5" }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify that the SI settings sync status was updated in STATE_DB
+        // The format should be "SI_SETTINGS_DEFAULT:5"
+        std::vector<swss::FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+
+        bool found_si_settings_notification = false;
+        for (const auto &fv : values)
+        {
+            if (fvField(fv) == "si_settings_ack")
+            {
+                found_si_settings_notification = true;
+                ASSERT_EQ(fvValue(fv), "SI_SETTINGS_DEFAULT:5");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_si_settings_notification);
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
+     * Helper: bring up the base default ports (PortConfigDone) for the SI-gate tests.
+     */
+    static void _setupBasePorts(Table &portTable, PortsOrch *orch)
+    {
+        auto &ports = defaultPortList;
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+        orch->addExistingData(&portTable);
+        static_cast<Orch*>(orch)->doTask();
+    }
+
+    /*
+     * SI gate: admin-up is held until SI is notified, then replayed (single clean bring-up).
+     */
+    TEST_F(PortsOrchTest, PortSiGateDeferReplay)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // enable the SI-settings admin gate
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // admin-up arrives before any SI notification -> held down (deferred)
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_FALSE(p.m_admin_state_up);
+        ASSERT_TRUE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        // SI NOTIFIED arrives -> ack SI_SYNC_DONE and replay the deferred admin-up
+        std::deque<KeyOpFieldsValuesTuple> kfvNotified = {{
+            "Ethernet0", SET_COMMAND, { { "si_settings_notification", "SI_SETTINGS_NOTIFIED:1" } }
+        }};
+        consumer->addToSync(kfvNotified);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+        ASSERT_FALSE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        std::vector<swss::FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool found_ack = false;
+        for (const auto &fv : values)
+        {
+            if (fvField(fv) == "si_settings_ack")
+            {
+                found_ack = true;
+                ASSERT_EQ(fvValue(fv), "SI_SYNC_DONE:1");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_ack);
+
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
+     * SI gate: SI_SETTINGS_UNAVAIL (no SI for this port) releases the gate and brings the
+     * port up without programming serdes.
+     */
+    TEST_F(PortsOrchTest, PortSiGateUnavail)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_FALSE(p.m_admin_state_up);
+
+        // UNAVAIL is counterless and releases the gate.
+        std::deque<KeyOpFieldsValuesTuple> kfvUnavail = {{
+            "Ethernet0", SET_COMMAND, { { "si_settings_notification", "SI_SETTINGS_UNAVAIL" } }
+        }};
+        consumer->addToSync(kfvUnavail);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        std::vector<swss::FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool found_ack = false;
+        for (const auto &fv : values)
+        {
+            if (fvField(fv) == "si_settings_ack")
+            {
+                found_ack = true;
+                ASSERT_EQ(fvValue(fv), "SI_SETTINGS_UNAVAIL");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_ack);
+
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
+     * SI gate: an explicit admin-down clears a pending deferral, so a later SI notification
+     * must NOT bring the port up.
+     */
+    TEST_F(PortsOrchTest, PortSiGateAdminDownClearsDefer)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // admin-up -> deferred
+        std::deque<KeyOpFieldsValuesTuple> kfvUp = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvUp);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        // admin-down -> deferral cleared
+        std::deque<KeyOpFieldsValuesTuple> kfvDown = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "down" } }
+        }};
+        consumer->addToSync(kfvDown);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_FALSE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        // SI NOTIFIED -> must NOT bring the port up (last admin intent was down)
+        std::deque<KeyOpFieldsValuesTuple> kfvNotified = {{
+            "Ethernet0", SET_COMMAND, { { "si_settings_notification", "SI_SETTINGS_NOTIFIED:1" } }
+        }};
+        consumer->addToSync(kfvNotified);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_FALSE(p.m_admin_state_up);
+
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
+     * SI gate disabled (xcvrd not expected to run): admin-up proceeds immediately, no defer.
+     */
+    TEST_F(PortsOrchTest, PortSiGateNotExpected)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = false;   // gate disabled
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+        ASSERT_FALSE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
+     * SI gate: new SI settings arriving on an already-up MAC (e.g. a new transceiver was
+     * inserted) must be applied on a down port - the MAC is bounced down then back up.
+     */
+    TEST_F(PortsOrchTest, PortSiGateReapplyOnUpPort)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Bring the port up: admin-up is deferred, then released by the first NOTIFIED.
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> kfvNotified1 = {{
+            "Ethernet0", SET_COMMAND, { { "si_settings_notification", "SI_SETTINGS_NOTIFIED:1" } }
+        }};
+        consumer->addToSync(kfvNotified1);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // New transceiver -> new SI settings on the already-up MAC.
+        std::deque<KeyOpFieldsValuesTuple> kfvNotified2 = {{
+            "Ethernet0", SET_COMMAND, {
+                { "idriver", "0x6,0x6,0x6,0x6" },
+                { "si_settings_notification", "SI_SETTINGS_NOTIFIED:2" }
+            }
+        }};
+        consumer->addToSync(kfvNotified2);
+
+        _hook_sai_port_api();
+        uint32_t down_call_count = _sai_set_admin_state_down_count;
+        uint32_t up_call_count = _sai_set_admin_state_up_count;
+
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        // The MAC was bounced (down to apply SI, then back up).
+        ASSERT_EQ(_sai_set_admin_state_down_count, down_call_count + 1);
+        ASSERT_EQ(_sai_set_admin_state_up_count, up_call_count + 1);
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // New serdes was programmed and acknowledged with the new counter.
+        std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
+
+        std::vector<swss::FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+        bool found_ack = false;
+        for (const auto &fv : values)
+        {
+            if (fvField(fv) == "si_settings_ack")
+            {
+                found_ack = true;
+                ASSERT_EQ(fvValue(fv), "SI_SYNC_DONE:2");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_ack);
+
         cleanupPorts(gPortsOrch);
     }
 

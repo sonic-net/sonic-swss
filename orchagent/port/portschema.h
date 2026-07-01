@@ -58,6 +58,12 @@
 #define PORT_PT_TIMESTAMP_TEMPLATE_3 "template3"
 #define PORT_PT_TIMESTAMP_TEMPLATE_4 "template4"
 
+#define PORT_SI_SETTINGS_DEFAULT        "SI_SETTINGS_DEFAULT"
+#define PORT_SI_SETTINGS_NOTIFIED       "SI_SETTINGS_NOTIFIED"
+// SI_SETTINGS_UNAVAIL carries no counter (xcvrd has no SI settings for this port).
+#define PORT_SI_SETTINGS_UNAVAIL        "SI_SETTINGS_UNAVAIL"
+#define PORT_SI_SYNC_DONE               "SI_SYNC_DONE"
+
 #define PORT_ALIAS                 "alias"
 #define PORT_INDEX                 "index"
 #define PORT_LANES                 "lanes"
@@ -107,4 +113,5 @@
 #define PORT_MODE                  "mode"
 #define PORT_UNRELIABLE_LOS        "unreliable_los"
 #define PORT_MEDIA_TYPE            "media_type"
+#define PORT_SI_SYNC_SETTINGS      "si_settings_notification"
 #define PORT_FAST_LINKUP           "fast_linkup"
