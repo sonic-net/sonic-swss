@@ -673,6 +673,8 @@ class TestBfd(object):
     def test_addRemoveBfdSession_nexthop(self, dvs):
         self.setup_db(dvs)
 
+        self.sdb.wait_for_field_match("SWITCH_CAPABILITY", "switch", {"BFD_NEXT_HOP_CAPABLE": "true"})
+
         bfdSessions = self.get_exist_bfd_session()
 
         fieldValues = {"local_addr": "10.0.0.1"}
