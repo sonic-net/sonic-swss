@@ -13,10 +13,16 @@ use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
 use countersyncd::actor::counter_db::{CounterDBActor, CounterDBConfig};
+use countersyncd::actor::aggregator::AggregatorActor;
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
 use countersyncd::actor::stats_reporter::{OutputWriter, StatsReporterActor, StatsReporterConfig};
-use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsMessage};
+use countersyncd::message::{
+    buffer::SocketBufferMessage,
+    aggregator::{AggregatorConfigMessage, AggregatorStatsMessage},
+    ipfix::IPFixTemplatesMessage,
+    saistats::SAIStatsMessage,
+};
 
 mod ipfix_bench_data;
 use ipfix_bench_data::{PreparedDataset, datasets, randomize_record, rng_for_template};
@@ -116,15 +122,15 @@ fn seed_port_name_map(port_count: usize) {
 async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_counter: Arc<AtomicU64>) -> (Duration, usize, u64) {
     let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
+    let (aggregator_config_tx, aggregator_config_rx) = mpsc::channel::<AggregatorConfigMessage>(prepared.template_messages.len() + 4);
+    let (aggregator_stats_tx, aggregator_stats_rx) = mpsc::channel::<AggregatorStatsMessage>(1024);
     let (counter_tx, counter_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (otel_tx, otel_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (stats_tx, stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
     let (otel_done_tx, otel_done_rx) = oneshot::channel();
 
     let mut ipfix = IpfixActor::new(template_rx, buffer_rx);
-    ipfix.add_recipient(counter_tx.clone());
-    ipfix.add_recipient(otel_tx.clone());
-    ipfix.add_recipient(stats_tx.clone());
+    ipfix.add_recipient(aggregator_stats_tx);
 
     // Run IpfixActor on a dedicated thread with its own runtime to satisfy thread-local requirements
     let ipfix_handle = spawn_blocking(move || {
@@ -133,6 +139,12 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
             IpfixActor::run(ipfix).await;
         });
     });
+
+    let mut aggregator = AggregatorActor::new(aggregator_config_rx, aggregator_stats_rx);
+    aggregator.add_recipient(counter_tx.clone());
+    aggregator.add_recipient(otel_tx.clone());
+    aggregator.add_recipient(stats_tx.clone());
+    let aggregator_handle = tokio::spawn(async move { AggregatorActor::run(aggregator).await });
 
     let counter_cfg = CounterDBConfig {
         interval: Duration::from_millis(100),
@@ -164,6 +176,10 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
             .send(message.clone())
             .await
             .expect("template send should succeed");
+        aggregator_config_tx
+            .send(AggregatorConfigMessage::new(message.key.clone(), None))
+            .await
+            .expect("aggregator config send should succeed");
     }
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -200,6 +216,8 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     drop(template_tx);
 
     let _ = ipfix_handle.await.expect("ipfix join");
+    drop(aggregator_config_tx);
+    let _ = aggregator_handle.await;
 
     // Allow at least one counter DB write tick before closing the channel
     tokio::time::sleep(counter_interval * 2).await;
