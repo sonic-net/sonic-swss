@@ -10144,6 +10144,23 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
     {
+        // Remove old mapping from memory map
+        m_portIdToSerdesId.erase(port_id);
+
+        // Remove old mapping from COUNTERS_DB
+        m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
+        SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
+                     port_attr.value.oid);
+
+        // Clear the phy port serdes countersIDList
+        Port p;
+        if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
+            flex_counters_orch->getPortPhySerdesAttrCountersState())
+        {
+            port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
+        }
+
+        // Remove SAI port serdes object
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -10153,24 +10170,6 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
-            }
-        }
-        else
-        {
-            // Remove old mapping from memory map
-            m_portIdToSerdesId.erase(port_id);
-
-            // Remove old mapping from COUNTERS_DB
-            m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
-            SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
-                         port_attr.value.oid);
-
-            //clear the phy port serdes countersIDList
-            Port p;
-            if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
-                flex_counters_orch->getPortPhySerdesAttrCountersState())
-            {
-                port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
             }
         }
     }
