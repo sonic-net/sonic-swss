@@ -1512,7 +1512,7 @@ auto create_route(const char* dst_addr_str)
     return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
 }
 
-auto create_unreachable_route(const char* dst_addr_str, int family)
+auto create_unreachable_route(const char* dst_addr_str, uint8_t family)
 {
     rtnl_route* route = rtnl_route_alloc();
     auto dst_addr = create_nl_addr(dst_addr_str);

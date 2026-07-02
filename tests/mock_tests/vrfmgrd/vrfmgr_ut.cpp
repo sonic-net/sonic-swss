@@ -72,9 +72,9 @@ namespace
     public:
         using VrfMgr::VrfMgr;
 
-        swss::Consumer *getConsumer(const std::string &tableName)
+        Consumer *getConsumer(const std::string &tableName)
         {
-            return dynamic_cast<swss::Consumer *>(getExecutor(tableName));
+            return dynamic_cast<Consumer *>(getExecutor(tableName));
         }
     };
 
@@ -131,7 +131,7 @@ namespace
         {
             auto *consumer = manager.getConsumer(KERNEL_VRF_FALLBACK_TABLE);
             ASSERT_NE(consumer, nullptr);
-            consumer->m_toSync[key] = swss::KeyOpFieldsValuesTuple(key, op, values);
+            consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, op, values));
             manager.doTask();
         }
 
@@ -279,8 +279,8 @@ namespace
         auto *consumer = manager->getConsumer(CFG_VRF_TABLE_NAME);
         ASSERT_NE(consumer, nullptr);
         mockCallArgs.clear();
-        consumer->m_toSync["VrfNew"] =
-            swss::KeyOpFieldsValuesTuple("VrfNew", SET_COMMAND, { { "empty", "empty" } });
+        consumer->addToSync(
+            swss::KeyOpFieldsValuesTuple("VrfNew", SET_COMMAND, { { "empty", "empty" } }));
 
         manager->doTask();
 
@@ -296,8 +296,8 @@ namespace
         auto *consumer = manager->getConsumer(CFG_VNET_TABLE_NAME);
         ASSERT_NE(consumer, nullptr);
         mockCallArgs.clear();
-        consumer->m_toSync["VnetNew"] =
-            swss::KeyOpFieldsValuesTuple("VnetNew", SET_COMMAND, { { "empty", "empty" } });
+        consumer->addToSync(
+            swss::KeyOpFieldsValuesTuple("VnetNew", SET_COMMAND, { { "empty", "empty" } }));
 
         manager->doTask();
 
