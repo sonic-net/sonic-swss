@@ -116,7 +116,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
     {
         try
         {
-            m_maxSviCapacity = std::stoul(maxSviStr);
+            m_maxSviCapacity = static_cast<uint32_t>(std::stoul(maxSviStr));
             SWSS_LOG_NOTICE("SVI/RIF creation hard-cap set to %u (from CRM|Config.max_svi_capacity)", m_maxSviCapacity);
         }
         catch (...)
