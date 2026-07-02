@@ -15,6 +15,13 @@
 #define MGMT_VRF_TABLE_ID 6000
 #define MGMT_VRF          "mgmt"
 
+/*
+ * Emit a SWSS_LOG_WARN every N deferrals of a VNET delete waiting on
+ * VNetOrch's STATE_VRF_OBJECT_TABLE handshake. Chosen to be visible
+ * (sustained backlog) without flooding logs on transient races.
+ */
+#define VNET_DEL_DEFER_WARN_THRESHOLD 20
+
 using namespace swss;
 
 VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
@@ -314,7 +321,7 @@ void VrfMgr::doTask(Consumer &consumer)
             /*
              * Delay delLink until vrf object deleted in orchagent to ensure fpmsyncd can get vrf ifname.
              * Now state VRF_TABLE|Vrf represent vrf exist in appDB, if it exist vrf device is always effective.
-             * VRFOrch add/del state VRF_OBJECT_TABLE|Vrf to represent object existence. VNETOrch is not do so now.
+             * VRFOrch/VNETOrch add/del state VRF_OBJECT_TABLE|Vrf to represent object existence.
              */
             if (consumer.getTableName() == CFG_VXLAN_EVPN_NVO_TABLE_NAME)
             {
@@ -347,8 +354,60 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
-                m_appVnetTableProducer.del(vrfName);
-                m_stateVrfTable.del(vrfName);
+                vector<FieldValueTuple> temp;
+
+                if (m_stateVrfTable.get(vrfName, temp))
+                {
+                    /*
+                     * Invariant: when m_stateVrfTable says the VNET device
+                     * exists, VNetOrch must have observed our APP_DB add and
+                     * populated STATE_VRF_OBJECT_TABLE. If isVrfObjExist() is
+                     * false here, either VNetOrch has not yet processed the
+                     * addOperation, or the state row was never written. In
+                     * either case, defer until VNetOrch catches up; emit a
+                     * rate-limited warn after a sustained backlog so a
+                     * silent infinite-defer (e.g. orchagent stuck or the
+                     * STATE_VRF_OBJECT_TABLE write was skipped) does not
+                     * go unnoticed.
+                     */
+                    if (!isVrfObjExist(vrfName))
+                    {
+                        auto& retries = m_vnetDelRetries[vrfName];
+                        if (++retries % VNET_DEL_DEFER_WARN_THRESHOLD == 0)
+                        {
+                            SWSS_LOG_WARN("VNET '%s' delete deferred %u times "
+                                "waiting for VNetOrch to populate "
+                                "STATE_VRF_OBJECT_TABLE",
+                                vrfName.c_str(), retries);
+                        }
+                        it++;
+                        continue;
+                    }
+
+                    m_appVnetTableProducer.del(vrfName);
+                    m_stateVrfTable.del(vrfName);
+                }
+
+                /*
+                 * Wait for VNetOrch to clear STATE_VRF_OBJECT_TABLE after it
+                 * processes the APP_DB delete above. Same rate-limited warn
+                 * to surface a stuck handshake.
+                 */
+                if (isVrfObjExist(vrfName))
+                {
+                    auto& retries = m_vnetDelRetries[vrfName];
+                    if (++retries % VNET_DEL_DEFER_WARN_THRESHOLD == 0)
+                    {
+                        SWSS_LOG_WARN("VNET '%s' delete deferred %u times "
+                            "waiting for VNetOrch to clear "
+                            "STATE_VRF_OBJECT_TABLE",
+                            vrfName.c_str(), retries);
+                    }
+                    it++;
+                    continue;
+                }
+
+                m_vnetDelRetries.erase(vrfName);
             }
 
             if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
