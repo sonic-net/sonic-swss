@@ -196,28 +196,14 @@ struct CachedObjects
             auto counter_ids = FlexCounterManager::serializeCounterStats(counter_stats);
             auto counter_type_it = FlexCounterManager::counter_id_field_lookup.find(counter_type);
 
-            // Temporary fix for SNMP PFC counter issue: disable bulk init requests for PORT counters
-            // This forces each port to be processed individually, avoiding capability mismatch
-            // for different ports in bulk requests
-            if (counter_type == CounterType::PORT)
+            auto counter_keys = group_name + ":";
+            for (const auto& oid: pending_sai_objects)
             {
-                for (const auto& oid: pending_sai_objects)
-                {
-                    auto counter_key = group_name + ":" + sai_serialize_object_id(oid);
-                    startFlexCounterPolling(switch_id, counter_key, counter_ids, counter_type_it->second);
-                }
+                counter_keys += sai_serialize_object_id(oid) + ",";
             }
-            else
-            {
-                auto counter_keys = group_name + ":";
-                for (const auto& oid: pending_sai_objects)
-                {
-                    counter_keys += sai_serialize_object_id(oid) + ",";
-                }
-                counter_keys.pop_back();
+            counter_keys.pop_back();
 
-                startFlexCounterPolling(switch_id, counter_keys, counter_ids, counter_type_it->second);
-            }
+            startFlexCounterPolling(switch_id, counter_keys, counter_ids, counter_type_it->second);
         }
 
         /* Clear all cached entries after flush */
