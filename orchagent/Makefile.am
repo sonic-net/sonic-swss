@@ -80,6 +80,7 @@ orchagent_SOURCES = \
             fdborch.cpp \
             macmoveguard.cpp \
             aclorch.cpp \
+            udforch.cpp \
             pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
             pbh/pbhmgr.cpp \
