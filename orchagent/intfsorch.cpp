@@ -116,8 +116,23 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
     {
         try
         {
-            m_maxSviCapacity = static_cast<uint32_t>(std::stoul(maxSviStr));
-            SWSS_LOG_NOTICE("SVI/RIF creation hard-cap set to %u (from CRM|Config.max_svi_capacity)", m_maxSviCapacity);
+            size_t pos = 0;
+            unsigned long parsed = std::stoul(maxSviStr, &pos);
+            if (pos != maxSviStr.size())
+            {
+                SWSS_LOG_WARN("max_svi_capacity '%s' has trailing characters, ignoring", maxSviStr.c_str());
+                m_maxSviCapacity = 0;
+            }
+            else if (parsed == 0 || parsed > UINT32_MAX)
+            {
+                SWSS_LOG_WARN("max_svi_capacity %lu out of valid range (1-%u), ignoring", parsed, UINT32_MAX);
+                m_maxSviCapacity = 0;
+            }
+            else
+            {
+                m_maxSviCapacity = static_cast<uint32_t>(parsed);
+                SWSS_LOG_NOTICE("SVI/RIF creation hard-cap set to %u (from CRM|Config.max_svi_capacity)", m_maxSviCapacity);
+            }
         }
         catch (...)
         {
