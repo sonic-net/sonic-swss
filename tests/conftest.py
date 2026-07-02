@@ -45,7 +45,14 @@ NUM_PORTS = 32
 FABRIC_NUM_PORTS = 16
 
 SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
-DEFAULT_DVS_SERVICE_READY_TIMEOUT = int(os.environ.get("DVS_SERVICE_READY_TIMEOUT", "180"))
+
+def get_dvs_service_ready_timeout():
+    try:
+        return int(os.environ.get("DVS_SERVICE_READY_TIMEOUT", "180"))
+    except ValueError:
+        return 180
+
+DEFAULT_DVS_SERVICE_READY_TIMEOUT = get_dvs_service_ready_timeout()
 
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
