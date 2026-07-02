@@ -63,6 +63,7 @@ jobs:
       ls -A1 | xargs -I{} sudo rm -rf {}
     displayName: "Clean workspace"
   - checkout: self
+  - template: merge-target-branch.yml
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.docker_sonic_vs_name }}
