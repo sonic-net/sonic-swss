@@ -1512,6 +1512,19 @@ auto create_route(const char* dst_addr_str)
     return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
 }
 
+auto create_unreachable_route(const char* dst_addr_str, int family)
+{
+    rtnl_route* route = rtnl_route_alloc();
+    auto dst_addr = create_nl_addr(dst_addr_str);
+    rtnl_route_set_dst(route, dst_addr.get());
+    rtnl_route_set_type(route, RTN_UNREACHABLE);
+    rtnl_route_set_protocol(route, RTPROT_KERNEL);
+    rtnl_route_set_family(route, family);
+    rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+    rtnl_route_set_table(route, RT_TABLE_MAIN);
+    return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
+}
+
 rtnl_nexthop* create_nexthop(const char* gateway_str)
 {
     static int idx = 1; // interface index
@@ -4550,6 +4563,85 @@ TEST_F(FpmSyncdResponseTest, TestOnRouteMsg_DeleteWithVrf)
 
     // Should be deleted
     EXPECT_FALSE(routeTable.get("Vrf200:10.34.4.0/24", result));
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnMsg_UnreachableIpv4DoesNotMutateRouteTable)
+{
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    const string key = "VrfFallback:0.0.0.0/0";
+    const vector<FieldValueTuple> expected = {
+        {"nexthop", "192.0.2.1"},
+        {"ifname", "Ethernet0"},
+        {"protocol", "bgp"},
+    };
+    routeTable.set(key, expected);
+
+    auto route = create_unreachable_route("0.0.0.0/0", AF_INET);
+
+    m_routeSync.onMsg(RTM_NEWROUTE, (nl_object*)route.get());
+    m_routeSync.onMsg(RTM_DELROUTE, (nl_object*)route.get());
+
+    vector<FieldValueTuple> actual;
+    ASSERT_TRUE(routeTable.get(key, actual));
+    EXPECT_EQ(actual, expected);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnMsg_UnreachableIpv6DoesNotMutateRouteTable)
+{
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    const string key = "VrfFallback:::/0";
+    const vector<FieldValueTuple> expected = {
+        {"nexthop", "2001:db8::1"},
+        {"ifname", "Ethernet0"},
+        {"protocol", "bgp"},
+    };
+    routeTable.set(key, expected);
+
+    auto route = create_unreachable_route("::/0", AF_INET6);
+
+    m_routeSync.onMsg(RTM_NEWROUTE, (nl_object*)route.get());
+    m_routeSync.onMsg(RTM_DELROUTE, (nl_object*)route.get());
+
+    vector<FieldValueTuple> actual;
+    ASSERT_TRUE(routeTable.get(key, actual));
+    EXPECT_EQ(actual, expected);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnMsg_UnreachableVnetRouteDoesNotMutateVnetTables)
+{
+    Table routeTable(m_db.get(), APP_VNET_RT_TABLE_NAME);
+    Table tunnelTable(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+    const string key = "VnetFallback:0.0.0.0/0";
+    const vector<FieldValueTuple> routeExpected = {
+        {"nexthop", "192.0.2.1"},
+        {"ifname", "Ethernet0"},
+    };
+    const vector<FieldValueTuple> tunnelExpected = {
+        {"endpoint", "198.51.100.1"},
+    };
+    routeTable.set(key, routeExpected);
+    tunnelTable.set(key, tunnelExpected);
+
+    auto route = create_unreachable_route("0.0.0.0/0", AF_INET);
+
+    m_routeSync.onMsg(RTM_NEWROUTE, (nl_object*)route.get());
+    m_routeSync.onMsg(RTM_DELROUTE, (nl_object*)route.get());
+
+    vector<FieldValueTuple> actual;
+    ASSERT_TRUE(routeTable.get(key, actual));
+    EXPECT_EQ(actual, routeExpected);
+    ASSERT_TRUE(tunnelTable.get(key, actual));
+    EXPECT_EQ(actual, tunnelExpected);
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnMsg_UnreachableNewRouteKeepsOffloadReply)
+{
+    auto route = create_unreachable_route("0.0.0.0/0", AF_INET);
+    m_routeSync.setSuppressionEnabled(false);
+
+    EXPECT_CALL(m_mockFpm, send(_)).WillOnce(Return(true));
+
+    m_routeSync.onMsg(RTM_NEWROUTE, (nl_object*)route.get());
 }
 
 // Test default route (0.0.0.0/0)
