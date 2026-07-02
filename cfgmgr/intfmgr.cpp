@@ -1,5 +1,4 @@
 #include <string.h>
-#include <unistd.h>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -285,8 +284,8 @@ void IntfMgr::buildIntfReplayList(void)
     SWSS_LOG_INFO("Found %zu Total Intfs to be replayed", totalReplay);
     if (totalReplay > 1000)
     {
-        SWSS_LOG_NOTICE("Large replay set (%zu entries): throttling enabled — %u entries per batch, %ums pause between batches",
-                        totalReplay, REPLAY_THROTTLE_BATCH, REPLAY_THROTTLE_DELAY_US / 1000);
+        SWSS_LOG_NOTICE("Large replay set (%zu entries): throttling enabled — %u entries per batch, yielding to select loop between batches",
+                        totalReplay, REPLAY_THROTTLE_BATCH);
     }
 }
 
@@ -1228,9 +1227,9 @@ void IntfMgr::doTask(Consumer &consumer)
             m_replayCount++;
             if (m_replayCount % REPLAY_THROTTLE_BATCH == 0)
             {
-                SWSS_LOG_NOTICE("Replay throttle: %u entries processed, pausing %ums to let orchagent/syncd drain (%zu pending)",
-                                m_replayCount, REPLAY_THROTTLE_DELAY_US / 1000, m_pendingReplayIntfList.size());
-                usleep(REPLAY_THROTTLE_DELAY_US);
+                SWSS_LOG_NOTICE("Replay throttle: %u entries processed, yielding to select loop (%zu pending)",
+                                m_replayCount, m_pendingReplayIntfList.size());
+                break;
             }
         }
     }
