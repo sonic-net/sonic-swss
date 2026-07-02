@@ -280,7 +280,13 @@ void IntfMgr::buildIntfReplayList(void)
     m_cfgLagIntfTable.getKeys(intfList);
     std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
 
-    SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
+    size_t totalReplay = m_pendingReplayIntfList.size();
+    SWSS_LOG_INFO("Found %zu Total Intfs to be replayed", totalReplay);
+    if (totalReplay > 1000)
+    {
+        SWSS_LOG_NOTICE("Large replay set (%zu entries): throttling enabled — %u entries per batch, yielding to select loop between batches",
+                        totalReplay, REPLAY_THROTTLE_BATCH);
+    }
 }
 
 void IntfMgr::setWarmReplayDoneState()
@@ -1215,6 +1221,17 @@ void IntfMgr::doTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+
+        if (!m_replayDone && WarmStart::isWarmStart())
+        {
+            m_replayCount++;
+            if (m_replayCount % REPLAY_THROTTLE_BATCH == 0)
+            {
+                SWSS_LOG_NOTICE("Replay throttle: %u entries processed, yielding to select loop (%zu pending)",
+                                m_replayCount, m_pendingReplayIntfList.size());
+                break;
+            }
+        }
     }
 
     if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
