@@ -652,7 +652,12 @@ Stores rules associated with a specific ACL table on the switch.
     mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
     policer_action = 1*255VCHAR                ; name of a POLICER table entry used to
-                                               ; meter/rate-limit packets matching this rule
+                                               ; meter/rate-limit packets matching this rule.
+                                               ; The ACL table's type must advertise POLICER_ACTION
+                                               ; in its ACTIONS -- i.e. use a custom ACL_TABLE_TYPE;
+                                               ; the built-in L3/L3V6 types do not include it.
+                                               ; May compose with a packet/redirect action on the
+                                               ; same rule (e.g. rate-limit + forward).
 
     ether_type    = h16                        ; Ethernet type field
 
