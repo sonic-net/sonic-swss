@@ -62,6 +62,24 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
+const string threshold_mode_field_name          = "threshold_mode";
+const string threshold_mode_absolute             = "absolute";
+const string threshold_mode_relative             = "relative";
+
+const string green_min_threshold_pct_field_name  = "green_min_threshold_pct";
+const string green_max_threshold_pct_field_name  = "green_max_threshold_pct";
+const string yellow_min_threshold_pct_field_name = "yellow_min_threshold_pct";
+const string yellow_max_threshold_pct_field_name = "yellow_max_threshold_pct";
+const string red_min_threshold_pct_field_name    = "red_min_threshold_pct";
+const string red_max_threshold_pct_field_name    = "red_max_threshold_pct";
+
+const string ecn_green_min_threshold_pct_field_name  = "ecn_green_min_threshold_pct";
+const string ecn_green_max_threshold_pct_field_name  = "ecn_green_max_threshold_pct";
+const string ecn_yellow_min_threshold_pct_field_name = "ecn_yellow_min_threshold_pct";
+const string ecn_yellow_max_threshold_pct_field_name = "ecn_yellow_max_threshold_pct";
+const string ecn_red_min_threshold_pct_field_name    = "ecn_red_min_threshold_pct";
+const string ecn_red_max_threshold_pct_field_name    = "ecn_red_max_threshold_pct";
+
 class QosMapHandler
 {
 public:
