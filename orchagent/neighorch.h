@@ -104,6 +104,9 @@ public:
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
 
+    bool addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id);
+    bool removeIpinipTunnelNextHop(const NextHopKey& nh);
+
     bool ifChangeInformNextHop(const string &, bool);
     
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
@@ -134,6 +137,14 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+
+    /*
+     * Number of producers (e.g. MuxOrch, TunnelDecapOrch) that have registered
+     * a given IPinIP tunnel NextHopKey. Multiple producers may register the same
+     * {ip, tunnel_name} key, so the synced entry must survive until the last
+     * producer unregisters it.
+     */
+    std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
 
     std::set<NextHopKey> m_neighborToResolve;
 

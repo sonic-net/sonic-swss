@@ -2208,6 +2208,87 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     return true;
 }
 
+bool NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (!nh.isTunnelNextHop())
+    {
+        SWSS_LOG_ERROR("NextHopKey is not a tunnel NH: %s", nh.to_string().c_str());
+        return false;
+    }
+
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Invalid SAI OID for tunnel NH %s", nh.to_string().c_str());
+        return false;
+    }
+
+    auto it = m_syncdNextHops.find(nh);
+    if (it != m_syncdNextHops.end())
+    {
+        /* Multiple producers may register the same key; flag OID
+         * conflicts and track registrants. */
+        if (it->second.next_hop_id != nh_id)
+        {
+            SWSS_LOG_ERROR("IPinIP tunnel NH %s already registered with OID 0x%" PRIx64
+                           ", ignoring conflicting OID 0x%" PRIx64,
+                           nh.to_string().c_str(), it->second.next_hop_id, nh_id);
+        }
+
+        uint32_t reg_refs = ++m_ipinipTunnelNextHopRegRefs[nh];
+        SWSS_LOG_INFO("IPinIP tunnel NH already registered: %s (registrants=%u)",
+                      nh.to_string().c_str(), reg_refs);
+        return true;
+    }
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = nh_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nh] = next_hop_entry;
+    m_ipinipTunnelNextHopRegRefs[nh] = 1;
+
+    SWSS_LOG_NOTICE("Registered IPinIP tunnel NH %s (OID 0x%" PRIx64 ")",
+                    nh.to_string().c_str(), nh_id);
+    return true;
+}
+
+bool NeighOrch::removeIpinipTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_syncdNextHops.find(nh);
+    if (it == m_syncdNextHops.end())
+    {
+        SWSS_LOG_ERROR("IPinIP tunnel NH not found: %s", nh.to_string().c_str());
+        return false;
+    }
+
+    if (it->second.ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Cannot remove still-referenced IPinIP tunnel NH %s (ref_count=%d)",
+                       nh.to_string().c_str(), it->second.ref_count);
+        return false;
+    }
+
+    /* Erase only when the last producer unregisters. */
+    auto reg_it = m_ipinipTunnelNextHopRegRefs.find(nh);
+    if (reg_it != m_ipinipTunnelNextHopRegRefs.end() && reg_it->second > 1)
+    {
+        uint32_t reg_refs = --reg_it->second;
+        SWSS_LOG_INFO("IPinIP tunnel NH %s still has %u registrant(s), deferring removal",
+                      nh.to_string().c_str(), reg_refs);
+        return true;
+    }
+
+    m_ipinipTunnelNextHopRegRefs.erase(nh);
+    m_syncdNextHops.erase(it);
+
+    SWSS_LOG_NOTICE("Unregistered IPinIP tunnel NH %s", nh.to_string().c_str());
+    return true;
+}
+
 void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

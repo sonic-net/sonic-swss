@@ -3,6 +3,7 @@
 #include "tunneldecaporch.h"
 #include "portsorch.h"
 #include "crmorch.h"
+#include "neighorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "qosorch.h"
@@ -26,6 +27,7 @@ extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
 extern QosOrch*         gQosOrch;
+extern NeighOrch*       gNeighOrch;
 
 TunnelDecapOrch::TunnelDecapOrch(
     DBConnector *appDb, DBConnector *stateDb,
@@ -1277,17 +1279,7 @@ sai_object_id_t TunnelDecapOrch::getNextHopTunnel(std::string tunnelKey, IpAddre
         return SAI_NULL_OBJECT_ID;
     }
 
-    return nh->second[ipAddr].nh_id;
-}
-
-int TunnelDecapOrch::incNextHopRef(std::string tunnelKey, IpAddress& ipAddr)
-{
-    return (++ tunnelNhs[tunnelKey][ipAddr].ref_count);
-}
-
-int TunnelDecapOrch::decNextHopRef(std::string tunnelKey, IpAddress& ipAddr)
-{
-    return (-- tunnelNhs[tunnelKey][ipAddr].ref_count);
+    return it->second;
 }
 
 sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr)
@@ -1302,7 +1294,6 @@ sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAd
     if ((nhid = getNextHopTunnel(tunnelKey, ipAddr)) != SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_INFO("NH tunnel already exist '%s'", ipAddr.to_string().c_str());
-        incNextHopRef(tunnelKey, ipAddr);
         return nhid;
     }
 
@@ -1350,7 +1341,13 @@ sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAd
             gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
         }
 
-        tunnelNhs[tunnelKey][ipAddr] = { next_hop_id, 1 };
+        tunnelNhs[tunnelKey][ipAddr] = next_hop_id;
+
+        NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+        if (gNeighOrch)
+        {
+            gNeighOrch->addIpinipTunnelNextHop(nhKey, next_hop_id);
+        }
     }
 
     return next_hop_id;
@@ -1371,11 +1368,19 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
         return true;
     }
 
-    if (decNextHopRef(tunnelKey, ipAddr))
+    NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+
+    // NeighOrch owns the authoritative consumer refcount for this NH.
+    // If routes/NHG/neighbors still reference it, do not delete in SAI; that
+    // would leave NeighOrch with a stale next_hop_id.
+    if (gNeighOrch && gNeighOrch->hasNextHop(nhKey) &&
+        gNeighOrch->getNextHopRefCount(nhKey) > 0)
     {
-        SWSS_LOG_NOTICE("Tunnel NH referenced, decremented ref count %s, ip %s",
-                         tunnelKey.c_str(), ipAddr.to_string().c_str());
-        return true;
+        SWSS_LOG_NOTICE("Tunnel NH %s ip %s still referenced by NeighOrch "
+                        "(ref_count=%d), deferring removal",
+                        tunnelKey.c_str(), ipAddr.to_string().c_str(),
+                        gNeighOrch->getNextHopRefCount(nhKey));
+        return false;
     }
 
     sai_status_t status = sai_next_hop_api->remove_next_hop(nhid);
@@ -1413,6 +1418,12 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
     }
 
     tunnelNhs[tunnelKey].erase(ipAddr);
+
+    if (gNeighOrch && !gNeighOrch->removeIpinipTunnelNextHop(nhKey))
+    {
+        SWSS_LOG_WARN("Failed to unregister IPinIP tunnel next hop %s ip %s from NeighOrch",
+                      tunnelKey.c_str(), ipAddr.to_string().c_str());
+    }
 
     return true;
 }
