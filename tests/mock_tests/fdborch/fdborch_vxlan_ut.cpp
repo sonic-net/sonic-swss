@@ -932,7 +932,7 @@ namespace fdborch_vxlan_ut
         attrs.push_back(attr);
 
         attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
-        attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_ALL;
+        attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
         attrs.push_back(attr);
 
         EXPECT_CALL(*mock_sai_fdb_api, flush_fdb_entries(_, _, _))
