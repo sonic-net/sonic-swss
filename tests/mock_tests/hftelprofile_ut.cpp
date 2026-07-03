@@ -368,6 +368,21 @@ namespace hftelprofile_ut
                   set<sai_stat_id_t>({SAI_PORT_STAT_IF_OUT_OCTETS}));
     }
 
+    TEST_F(SetStatsIDsTest, DelObjectSAIIDMissingTypeDoesNotInsertMap)
+    {
+        SetStatsIDsStub s;
+        s.init();
+
+        HFTelGroup group("port");
+        group.updateObjects({"Ethernet0"});
+        group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
+
+        EXPECT_TRUE(s.p->m_name_sai_map.empty());
+        EXPECT_FALSE(s.p->delObjectSAIID(SAI_OBJECT_TYPE_PORT, "Ethernet0"));
+        EXPECT_TRUE(s.p->m_name_sai_map.empty());
+    }
+
     struct SaiAttrTest : public ::testing::Test
     {
         sai_tam_api_t ut_api;
