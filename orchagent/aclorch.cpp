@@ -5742,7 +5742,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     }
                     catch (const std::exception &e)
                     {
-                        SWSS_LOG_ERROR("Exception parsing ACL rule priority '%s' for rule %s in table %s: %s",
+                        SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s: %s",
                                      prioStr.c_str(), rule_id.c_str(), table_id.c_str(), e.what());
                         invalidPriority = true;
                     }
@@ -5751,8 +5751,8 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
             if (invalidPriority)
             {
-                // Treat invalid priority as invalid entry: log and skip processing this rule
-                it++;
+                // Treat invalid priority as invalid entry: skip processing this rule
+                it = consumer.m_toSync.erase(it);
                 continue;
             }
             setRules.push_back(entry);
@@ -5793,7 +5793,14 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
     // Note: All DEL operations are processed before SET operations
     // to facilitate priority-based sorting and ensure correct rule re-programming.
-    // Process DEL rules first (in ascending priority order)
+    //
+    // Safety invariant: the RuleEntry objects below hold iterators (entry.iter) into
+    // consumer.m_toSync that were captured during the collection loop above. This is
+    // safe because m_toSync is a std::map: erasing one element only invalidates the
+    // iterator to that element, leaving all other captured iterators valid. m_toSync
+    // is also keyed by rule key and holds a single op per key, so no two RuleEntry
+    // objects ever reference the same map node. Erasing one entry here therefore never
+    // invalidates the iterator of any other entry we still have to process.
     for (auto& entry : delRules)
     {
         it = entry.iter;
