@@ -1666,19 +1666,44 @@ class TestMuxTunnelBase():
             self.DEFAULT_TUNNEL_PARAMS
         )
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def setup_peer_switch(self, dvs):
+        # Add PEER_SWITCH once per class and restart neighsyncd so it re-reads the
+        # dual-ToR role (neighsyncd caches it at startup).
         config_db = dvs.get_config_db()
         config_db.create_entry(
             self.CONFIG_PEER_SWITCH,
             self.PEER_SWITCH_HOST,
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
+        self._restart_neighsyncd(dvs)
 
         yield
 
         config_db = dvs.get_config_db()
         config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
+
+    @pytest.fixture
+    def remove_peer_switch(self, dvs, setup_peer_switch):
+        # Drop PEER_SWITCH and restart neighsyncd for a true no-peer state; restore on teardown.
+        config_db = dvs.get_config_db()
+        config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
+
+        yield
+
+        config_db.create_entry(
+            self.CONFIG_PEER_SWITCH,
+            self.PEER_SWITCH_HOST,
+            self.DEFAULT_PEER_SWITCH_PARAMS
+        )
+        self._restart_neighsyncd(dvs)
+
+    def _restart_neighsyncd(self, dvs):
+        # Restart neighsyncd so it re-reads the PEER_SWITCH (dual-ToR) role.
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart neighsyncd'])
+        time.sleep(3)
 
     @pytest.fixture(params=['IPv4', 'IPv6'])
     def ip_version(self, request):
@@ -2018,7 +2043,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_neighbor_miss_no_peer(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            neighbor_cleanup, testlog
+            remove_peer_switch, neighbor_cleanup, testlog
     ):
         """
         test neighbor miss with no peer switch configured
