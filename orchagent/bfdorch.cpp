@@ -563,12 +563,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     {
         if (!dst_mac_provided)
         {
-            if (vrf_name != "default")
-            {
-                SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported for nexthop injection",
-                               key.c_str());
-                return true;
-            }
 
             attr.id = SAI_BFD_SESSION_ATTR_USE_NEXT_HOP;
             attr.value.booldata = true;
@@ -592,13 +586,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             {
                 SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
                 return false;
-            }
-
-            if (vrf_name != "default")
-            {
-                SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
-                                key.c_str());
-                return true;
             }
 
             attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
