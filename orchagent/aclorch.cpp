@@ -5819,10 +5819,19 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             continue;
         }
 
+        bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
         if (removeAclRule(table_id, rule_id))
         {
             removeAclRuleStatus(table_id, rule_id);
             consumer.m_toSync.erase(it);
+
+            /* Notify retry cache that resources may have been freed for this table,
+             * but only if the rule actually existed (i.e., ASIC resources were freed).
+             * This lets rules parked on SAI resource exhaustion be retried. */
+            if (ruleExisted)
+            {
+                notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+            }
         }
         else
         {
