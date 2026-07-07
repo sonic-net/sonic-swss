@@ -517,12 +517,25 @@ class TestNeighbor(object):
 
     @pytest.fixture
     def setup_peer_switch(self, dvs):
+        # Add PEER_SWITCH and restart neighsyncd so it re-reads the dual-ToR
+        # role (neighsyncd caches it at startup). Restore on teardown.
         config_db = dvs.get_config_db()
         config_db.create_entry(
             self.CONFIG_PEER_SWITCH,
             self.PEER_SWITCH_HOST,
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
+        self._restart_neighsyncd(dvs)
+
+        yield
+
+        config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
+
+    def _restart_neighsyncd(self, dvs):
+        # Restart neighsyncd so it re-reads the PEER_SWITCH (dual-ToR) role.
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart neighsyncd'])
+        time.sleep(3)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
