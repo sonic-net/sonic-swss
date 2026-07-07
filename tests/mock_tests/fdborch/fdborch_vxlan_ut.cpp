@@ -28,6 +28,8 @@ extern redisReply *mockReply;
 
 namespace fdborch_vxlan_ut
 {
+    DEFINE_SAI_API_MOCK(neighbor);
+
     sai_route_api_t ut_sai_route_api;
     sai_route_api_t *pold_sai_route_api;
 
@@ -211,6 +213,7 @@ namespace fdborch_vxlan_ut
             gDirectory.set(gRouteOrch);
 
             INIT_SAI_API_MOCK(fdb);
+            INIT_SAI_API_MOCK(neighbor);
             MockSaiApis();
         }
 
@@ -351,6 +354,16 @@ namespace fdborch_vxlan_ut
         m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id = bridge_port_id;
         m_portsOrch->saiOidToAlias[bridge_port_id] = NHG_REMOTE;
         m_portsOrch->m_portList[VLAN40].m_members.insert(VXLAN_REMOTE);
+    }
+
+    void learnNeighbor(DBConnector *appDb, const string &vlan, const string &ip, const string &mac)
+    {
+        Table neigh_table = Table(appDb, APP_NEIGH_TABLE_NAME);
+        string key = vlan + neigh_table.getTableNameSeparator() + ip;
+        neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });
+        gNeighOrch->addExistingData(&neigh_table);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        neigh_table.del(key);
     }
 
 
@@ -496,6 +509,50 @@ namespace fdborch_vxlan_ut
         /* Make sure fdb_count is decremented as expected */
         ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 0);
         ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 0);
+    }
+
+    TEST_F(VxlanFdbOrchTest, RemoteMacAddAfterNeighborDoesNotDisableNeighbor)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpVxlanPort(m_portsOrch.get());
+        setUpVxlanMember(m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+
+        const string ip = "100.1.1.47";
+        const string mac = "00:11:01:00:00:2e";
+        NeighborEntry neighbor(ip, VLAN40);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        learnNeighbor(m_app_db.get(), VLAN40, ip, mac);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set(VLAN40 + vxlanFdbTable.getTableNameSeparator() + mac, {
+            { "vni", "40" },
+            { "type", "dynamic" },
+            { "remote_vtep", "1.1.1.1" }
+        });
+
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
     }
 
     TEST_F(VxlanFdbOrchTest, DISABLED_RemoteMacLearnAddDeleteForNhg)
