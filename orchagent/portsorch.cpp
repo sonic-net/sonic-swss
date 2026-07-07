@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -11,7 +14,9 @@
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
+#ifdef INCLUDE_STP
 #include "stporch.h"
+#endif
 
 #include <inttypes.h>
 #include <cassert>
@@ -61,7 +66,9 @@ extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern SwitchOrch *gSwitchOrch;
+#ifdef INCLUDE_STP
 extern StpOrch *gStpOrch;
+#endif
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
 extern string gMySwitchType;
@@ -7289,8 +7296,10 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
     
+#ifdef INCLUDE_STP
     /* Remove STP ports before bridge port deletion*/
-    gStpOrch->removeStpPorts(port);
+    if (gStpOrch) gStpOrch->removeStpPorts(port);
+#endif
 
     //Flush the FDB entires corresponding to the port
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -7433,11 +7442,12 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
-    /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
+#ifdef INCLUDE_STP
     if(vlan.m_stp_id != -1)
     {
-        gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
+        if (gStpOrch) gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
     }
+#endif
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)

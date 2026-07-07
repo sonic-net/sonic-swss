@@ -56,7 +56,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 sfloworh_ut.cpp \
-                tunneldecaporch_ut.cpp \
                 ut_saihelper.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
@@ -82,21 +81,11 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
-                dashenifwdorch_ut.cpp \
-                dashorch_ut.cpp \
-                dashvnetorch_ut.cpp \
-                dashhaorch_ut.cpp \
-                dashrouteorch_ut.cpp \
-                dashportmaporch_ut.cpp \
-                twamporch_ut.cpp \
-                stporch_ut.cpp \
-                srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
                 portphyserdesattr_ut.cpp \
                 hftelprofile_ut.cpp \
                 mock_orch_test.cpp \
-                mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
@@ -111,8 +100,38 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
-                $(top_srcdir)/cfgmgr/coppmgr.cpp \
-                $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
+                $(top_srcdir)/cfgmgr/coppmgr.cpp
+
+if INCLUDE_TUNNELDECAP
+tests_SOURCES += tunneldecaporch_ut.cpp
+endif
+
+
+if INCLUDE_TWAMP
+tests_SOURCES += twamporch_ut.cpp
+endif
+
+if INCLUDE_STP
+tests_SOURCES += stporch_ut.cpp
+endif
+
+if INCLUDE_SRV6
+tests_SOURCES += srv6orch_ut.cpp
+endif
+
+if INCLUDE_DASH
+tests_SOURCES += dashenifwdorch_ut.cpp \
+                dashorch_ut.cpp \
+                dashvnetorch_ut.cpp \
+                dashhaorch_ut.cpp \
+                dashrouteorch_ut.cpp \
+                dashportmaporch_ut.cpp \
+                mock_dash_orch_test.cpp
+endif
+
+if INCLUDE_P4RT
+tests_SOURCES += $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
+endif
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN) $(tests_INCLUDES) \
@@ -120,7 +139,11 @@ tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFL
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
 tests_LDADD = $(top_builddir)/orchagent/libswssorchagent.a $(LDFLAGS_ASAN) \
         $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf
+
+if INCLUDE_DASH
+tests_LDADD += -ldashapi
+endif
 
 ## portsyncd unit tests
 
@@ -188,8 +211,6 @@ tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/test_routesync.cpp \
-                         fpmsyncd/receive_srv6_steer_routes_ut.cpp \
-                         fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fpmsyncd/ut_helpers_drain_barrier.cpp \
                          fpmsyncd/test_drain_barrier_state.cpp \
@@ -208,6 +229,11 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp \
                          $(top_srcdir)/fpmsyncd/warmreboot_handler.cpp
+
+if INCLUDE_SRV6
+tests_fpmsyncd_SOURCES += fpmsyncd/receive_srv6_steer_routes_ut.cpp \
+                          fpmsyncd/receive_srv6_mysids_ut.cpp
+endif
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name

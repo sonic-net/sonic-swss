@@ -8,7 +8,11 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
+if INCLUDE_P4RT
 SUBDIRS = p4orch/tests
+else
+SUBDIRS =
+endif
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -67,30 +71,20 @@ libswssorchagent_a_SOURCES = \
             notifications.cpp \
             nhgorch.cpp \
             nhgbase.cpp \
-            cbf/cbfnhgorch.cpp  \
-            cbf/nhgmaporch.cpp \
             routeorch.cpp \
-            mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
             fabricportsorch.cpp \
-            fgnhgorch.cpp \
             copporch.cpp \
-            tunneldecaporch.cpp \
             qosorch.cpp \
             buffer/bufferhelper.cpp \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
             aclorch.cpp \
-            pbh/pbhcap.cpp \
-            pbh/pbhcnt.cpp \
-            pbh/pbhmgr.cpp \
-            pbh/pbhrule.cpp \
-            pbhorch.cpp \
             saihelper.cpp \
             saiattr.cpp \
             switch/switch_capabilities.cpp \
@@ -107,27 +101,89 @@ libswssorchagent_a_SOURCES = \
             vxlanorch.cpp \
             tunneltermhelper.cpp \
             vnetorch.cpp \
-            dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
             policerorch.cpp \
             sfloworch.cpp \
-            chassisorch.cpp \
             debugcounterorch.cpp \
             tamorch.cpp \
-            natorch.cpp \
-            mlagorch.cpp \
-            isolationgrouporch.cpp \
-            muxorch.cpp \
-            macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
-            icmporch.cpp \
-            srv6orch.cpp \
             response_publisher.cpp \
-            nvgreorch.cpp \
             zmqorch.cpp \
-            dash/dashenifwdorch.cpp \
+            arsorch.cpp \
+            nexthopkey.cpp \
+            high_frequency_telemetry/hftelorch.cpp \
+            high_frequency_telemetry/hftelprofile.cpp \
+            high_frequency_telemetry/counternameupdater.cpp \
+            high_frequency_telemetry/hftelutils.cpp \
+            high_frequency_telemetry/hftelgroup.cpp
+
+libswssorchagent_a_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
+libswssorchagent_a_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+
+if INCLUDE_CBF
+libswssorchagent_a_SOURCES += cbf/cbfnhgorch.cpp cbf/nhgmaporch.cpp
+endif
+
+if INCLUDE_FGNHG
+libswssorchagent_a_SOURCES += fgnhgorch.cpp
+endif
+
+if INCLUDE_TUNNELDECAP
+libswssorchagent_a_SOURCES += tunneldecaporch.cpp
+endif
+
+if INCLUDE_NAT
+libswssorchagent_a_SOURCES += natorch.cpp
+endif
+
+if INCLUDE_MLAG
+libswssorchagent_a_SOURCES += mlagorch.cpp
+endif
+
+if INCLUDE_MUX
+libswssorchagent_a_SOURCES += muxorch.cpp
+endif
+
+if INCLUDE_MACSEC
+libswssorchagent_a_SOURCES += macsecorch.cpp macsecpost.cpp
+endif
+
+if INCLUDE_DTEL
+libswssorchagent_a_SOURCES += dtelorch.cpp
+endif
+
+if INCLUDE_STP
+libswssorchagent_a_SOURCES += stporch.cpp
+endif
+
+if INCLUDE_ISOGRP
+libswssorchagent_a_SOURCES += isolationgrouporch.cpp
+endif
+
+if INCLUDE_PBH
+libswssorchagent_a_SOURCES += pbh/pbhcap.cpp \
+            pbh/pbhcnt.cpp \
+            pbh/pbhmgr.cpp \
+            pbh/pbhrule.cpp \
+            pbhorch.cpp
+endif
+
+if INCLUDE_NVGRE
+libswssorchagent_a_SOURCES += nvgreorch.cpp
+endif
+
+if INCLUDE_TWAMP
+libswssorchagent_a_SOURCES += twamporch.cpp
+endif
+
+if INCLUDE_ICMP
+libswssorchagent_a_SOURCES += icmporch.cpp
+endif
+
+if INCLUDE_DASH
+libswssorchagent_a_SOURCES += dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
@@ -139,20 +195,22 @@ libswssorchagent_a_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
-            dash/dashportmaporch.cpp \
-            twamporch.cpp \
-            stporch.cpp \
-            arsorch.cpp \
-            nexthopkey.cpp \
-            macsecpost.cpp \
-            high_frequency_telemetry/hftelorch.cpp \
-            high_frequency_telemetry/hftelprofile.cpp \
-            high_frequency_telemetry/counternameupdater.cpp \
-            high_frequency_telemetry/hftelutils.cpp \
-            high_frequency_telemetry/hftelgroup.cpp
+            dash/dashportmaporch.cpp
+endif
 
-libswssorchagent_a_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
-libswssorchagent_a_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+if INCLUDE_SRV6
+libswssorchagent_a_SOURCES += srv6orch.cpp
+endif
+
+if INCLUDE_MPLS
+libswssorchagent_a_SOURCES += mplsrouteorch.cpp
+endif
+
+if INCLUDE_CHASSIS
+libswssorchagent_a_SOURCES += chassisorch.cpp
+endif
+
+if INCLUDE_P4RT
 libswssorchagent_a_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \
 		     p4orch/p4oidmapper.cpp \
@@ -169,6 +227,7 @@ libswssorchagent_a_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/mirror_session_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
+endif
 
 libswssorchagent_a_CPPFLAGS = $(ORCH_CPPFLAGS)
 
@@ -181,7 +240,12 @@ orchagent_SOURCES = \
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(ORCH_CPPFLAGS)
-orchagent_LDADD = libswssorchagent.a $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
+orchagent_LDADD = libswssorchagent.a $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ljemalloc
+
+if INCLUDE_DASH
+orchagent_LDADD += -ldashapi
+endif
+
 
 routeresync_SOURCES = routeresync.cpp \
              $(top_srcdir)/lib/orch_zmq_config.cpp
@@ -204,4 +268,3 @@ orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp
 routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp
 orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
-

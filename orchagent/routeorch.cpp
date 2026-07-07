@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
@@ -661,11 +664,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
     string table_name = consumer.getTableName();
 
+#ifdef INCLUDE_MPLS
     if (table_name == APP_LABEL_ROUTE_TABLE_NAME)
     {
         doLabelTask(consumer);
         return;
     }
+#endif
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
     auto it = consumer.m_toSync.begin();

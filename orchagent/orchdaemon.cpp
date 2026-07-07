@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
@@ -46,7 +49,9 @@
 #include "mlagorch.h"
 #include "muxorch.h"
 #include "macsecorch.h"
+#ifdef INCLUDE_P4RT
 #include "p4orch/p4orch.h"
+#endif
 #include "bfdorch.h"
 #include "icmporch.h"
 #include "srv6orch.h"
@@ -56,7 +61,10 @@
 #include "arsorch.h"
 #include "dtelorch.h"
 #include "fgnhgorch.h"
+#ifdef INCLUDE_CHASSIS
 #include "chassisorch.h"
+#endif
+#ifdef INCLUDE_DASH
 #include "dash/dashenifwdorch.h"
 #include "dash/dashaclorch.h"
 #include "dash/dashorch.h"
@@ -66,6 +74,7 @@
 #include "dash/dashhaorch.h"
 #include "dash/dashmeterorch.h"
 #include "dash/dashportmaporch.h"
+#endif
 #include "high_frequency_telemetry/hftelorch.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
@@ -116,7 +125,9 @@ IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
 ArsOrch    *gArsOrch;
 CoppOrch *gCoppOrch;
+#ifdef INCLUDE_P4RT
 P4Orch *gP4Orch;
+#endif
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
@@ -280,9 +291,11 @@ bool OrchDaemon::init()
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
     gDirectory.set(gBfdOrch);
 
+#ifdef INCLUDE_ICMP
     TableConnector stateDbIcmpSessionTable(m_stateDb, STATE_ICMP_ECHO_SESSION_TABLE_NAME);
     gIcmpOrch = new IcmpOrch(m_applDb, APP_ICMP_ECHO_SESSION_TABLE_NAME, stateDbIcmpSessionTable);
     gDirectory.set(gIcmpOrch);
+#endif
 
     static const  vector<string> route_pattern_tables = {
         CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
@@ -290,6 +303,7 @@ bool OrchDaemon::init()
     gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
     gDirectory.set(gFlowCounterRouteOrch);
 
+#ifdef INCLUDE_STP
     vector<string> stp_tables = {
         APP_STP_VLAN_INSTANCE_TABLE_NAME,
         APP_STP_PORT_STATE_TABLE_NAME,
@@ -298,6 +312,7 @@ bool OrchDaemon::init()
     };
     gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
     gDirectory.set(gStpOrch);
+#endif
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -324,17 +339,20 @@ bool OrchDaemon::init()
     gBfdMonitorOrch = new BfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gDirectory.set(gBfdMonitorOrch);
 
+#ifdef INCLUDE_CHASSIS
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
     };
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
+#endif
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
     gDirectory.set(gIntfsOrch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
 
+#ifdef INCLUDE_FGNHG
     const int fgnhgorch_pri = 15;
 
     vector<table_name_with_pri_t> fgnhg_tables = {
@@ -345,7 +363,9 @@ bool OrchDaemon::init()
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
+#endif
 
+#ifdef INCLUDE_SRV6
     TableConnector srv6_sid_list_table(m_applDb, APP_SRV6_SID_LIST_TABLE_NAME);
     TableConnector srv6_my_sid_table(m_applDb, APP_SRV6_MY_SID_TABLE_NAME);
     TableConnector pic_context_table(m_applDb, APP_PIC_CONTEXT_TABLE_NAME);
@@ -360,6 +380,7 @@ bool OrchDaemon::init()
 
     gSrv6Orch = new Srv6Orch(m_configDb, m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
+#endif
 
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {
@@ -371,18 +392,33 @@ bool OrchDaemon::init()
     auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
     auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
 
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch,
+#ifdef INCLUDE_FGNHG
+        gFgNhgOrch,
+#else
+        nullptr,
+#endif
+#ifdef INCLUDE_SRV6
+        gSrv6Orch,
+#else
+        nullptr,
+#endif
+        route_zmq_sever);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
+#ifdef INCLUDE_CBF
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
+#endif
 
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
 
+#ifdef INCLUDE_TUNNELDECAP
     vector<string> tunnel_tables = {
         APP_TUNNEL_DECAP_TABLE_NAME,
         APP_TUNNEL_DECAP_TERM_TABLE_NAME
     };
     gTunneldecapOrch = new TunnelDecapOrch(m_applDb, m_stateDb, m_configDb, tunnel_tables);
     gDirectory.set(gTunneldecapOrch);
+#endif
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
@@ -395,11 +431,12 @@ bool OrchDaemon::init()
     EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
     gDirectory.set(evpn_nvo_orch);
 
+#ifdef INCLUDE_NVGRE
     NvgreTunnelOrch *nvgre_tunnel_orch = new NvgreTunnelOrch(m_configDb, CFG_NVGRE_TUNNEL_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_orch);
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
-
+#endif
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -458,14 +495,6 @@ bool OrchDaemon::init()
         appDbAclTableType,
     };
 
-    vector<string> dtel_tables = {
-        CFG_DTEL_TABLE_NAME,
-        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
-        CFG_DTEL_INT_SESSION_TABLE_NAME,
-        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
-        CFG_DTEL_EVENT_TABLE_NAME
-    };
-
     vector<string> wm_tables = {
         CFG_WATERMARK_TABLE_NAME,
         CFG_FLEX_COUNTER_TABLE_NAME
@@ -501,6 +530,7 @@ bool OrchDaemon::init()
     };
     gTamOrch = new TamOrch(m_configDb, tam_tables);
 
+#ifdef INCLUDE_NAT
     const int natorch_base_pri = 50;
 
     vector<table_name_with_pri_t> nat_tables = {
@@ -513,7 +543,9 @@ bool OrchDaemon::init()
     };
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
+#endif
 
+#ifdef INCLUDE_MUX
     vector<string> mux_tables = {
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
@@ -526,7 +558,9 @@ bool OrchDaemon::init()
 
     MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_st_orch);
+#endif
 
+#ifdef INCLUDE_MACSEC
     vector<string> macsec_app_tables = {
         APP_MACSEC_PORT_TABLE_NAME,
         APP_MACSEC_EGRESS_SC_TABLE_NAME,
@@ -536,8 +570,11 @@ bool OrchDaemon::init()
     };
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
+#endif
 
+#ifdef INCLUDE_CBF
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
+#endif
 
     vector<string> ars_cfg_tables = {
         CFG_ARS_TABLE_NAME,
@@ -572,7 +609,50 @@ bool OrchDaemon::init()
     //       at NHG creation time (write-once in mlnx_sai_nexthopgroup.c:1522).
     // ArsOrch depends only on gPortsOrch (position 3) for port OIDs, which
     // is already processed by this point.
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gArsOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gTamOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gArsOrch, gIntfsOrch, gNeighOrch,
+#ifdef INCLUDE_CBF
+        gNhgMapOrch,
+#endif
+        gNhgOrch,
+#ifdef INCLUDE_CBF
+        gCbfNhgOrch,
+#endif
+#ifdef INCLUDE_FGNHG
+        gFgNhgOrch,
+#endif
+        gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch,
+#ifdef INCLUDE_TUNNELDECAP
+        gTunneldecapOrch,
+#endif
+        sflow_orch, gDebugCounterOrch, gTamOrch,
+#ifdef INCLUDE_MACSEC
+        gMacsecOrch,
+#endif
+        bgp_global_state_orch, gBfdOrch,
+#ifdef INCLUDE_ICMP
+        gIcmpOrch,
+#endif
+#ifdef INCLUDE_SRV6
+        gSrv6Orch,
+#endif
+#ifdef INCLUDE_MUX
+        gMuxOrch, mux_cb_orch,
+#endif
+        gMonitorOrch, gBfdMonitorOrch,
+#ifdef INCLUDE_STP
+        gStpOrch
+#endif
+    };
+
+    DTelOrch *dtel_orch = nullptr;
+#ifdef INCLUDE_DTEL
+    vector<string> dtel_tables = {
+        CFG_DTEL_TABLE_NAME,
+        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
+        CFG_DTEL_INT_SESSION_TABLE_NAME,
+        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
+        CFG_DTEL_EVENT_TABLE_NAME
+    };
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -598,33 +678,38 @@ bool OrchDaemon::init()
         }
     }
 
-    DTelOrch *dtel_orch = NULL;
     if (initialize_dtel)
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
+#endif
 
     gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
         gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
+#ifdef INCLUDE_MLAG
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },
         { CFG_MCLAG_INTF_TABLE_NAME }
     };
     gMlagOrch = new MlagOrch(m_configDb, mlag_tables);
+#endif
 
+#ifdef INCLUDE_ISOGRP
     TableConnector appDbIsoGrpTbl(m_applDb, APP_ISOLATION_GROUP_TABLE_NAME);
     vector<TableConnector> iso_grp_tbl_ctrs = {
         appDbIsoGrpTbl
     };
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
+#endif
 
     //
     // Policy Based Hashing (PBH) orchestrator
     //
 
+#ifdef INCLUDE_PBH
     TableConnector cfgDbPbhTable(m_configDb, CFG_PBH_TABLE_TABLE_NAME);
     TableConnector cfgDbPbhRuleTable(m_configDb, CFG_PBH_RULE_TABLE_NAME);
     TableConnector cfgDbPbhHashTable(m_configDb, CFG_PBH_HASH_TABLE_NAME);
@@ -638,12 +723,17 @@ bool OrchDaemon::init()
     };
 
     gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
+#endif
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
+#ifdef INCLUDE_PBH
     m_orchList.push_back(gPbhOrch);
+#endif
+#ifdef INCLUDE_CHASSIS
     m_orchList.push_back(chassis_frontend_orch);
+#endif
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
@@ -666,12 +756,22 @@ bool OrchDaemon::init()
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
+#ifdef INCLUDE_NAT
     m_orchList.push_back(gNatOrch);
+#endif
+#ifdef INCLUDE_MLAG
     m_orchList.push_back(gMlagOrch);
+#endif
+#ifdef INCLUDE_ISOGRP
     m_orchList.push_back(gIsoGrpOrch);
+#endif
+#ifdef INCLUDE_MUX
     m_orchList.push_back(mux_st_orch);
+#endif
+#ifdef INCLUDE_NVGRE
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
+#endif
 
     if (m_fabricEnabled)
     {
@@ -685,12 +785,14 @@ bool OrchDaemon::init()
         m_orchList.push_back(gFabricPortsOrch);
     }
 
+#ifdef INCLUDE_DASH
     if (gMySwitchSubType == "SmartSwitch")
     {
         DashEniFwdOrch *dash_eni_fwd_orch = new DashEniFwdOrch(m_configDb, m_applDb, APP_DASH_ENI_FORWARD_TABLE, gNeighOrch);
         gDirectory.set(dash_eni_fwd_orch);
         m_orchList.push_back(dash_eni_fwd_orch);
     }
+#endif
 
     vector<string> flex_counter_tables = {
         CFG_FLEX_COUNTER_TABLE_NAME,
@@ -917,14 +1019,18 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
+#ifdef INCLUDE_P4RT
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
+#endif
 
+#ifdef INCLUDE_TWAMP
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
     TableConnector stateDbTwampTable(m_stateDb, STATE_TWAMP_SESSION_TABLE_NAME);
     TwampOrch *twamp_orch = new TwampOrch(confDbTwampTable, stateDbTwampTable, gSwitchOrch, gPortsOrch, vrf_orch);
     m_orchList.push_back(twamp_orch);
+#endif
 
     if (HFTelOrch::isSupportedHFTel(gSwitchId))
     {
@@ -1158,9 +1264,11 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         o->bake();
     }
 
+#ifdef INCLUDE_MUX
     // let's cache the neighbor updates in mux orch and
     // process them after everything being settled.
     gMuxOrch->enableCachingNeighborUpdate();
+#endif
 
     /*
      * Three iterations are needed.
@@ -1188,8 +1296,10 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         }
     }
 
+#ifdef INCLUDE_MUX
     gMuxOrch->updateCachedNeighbors();
     gMuxOrch->disableCachingNeighborUpdate();
+#endif
 
     // MirrorOrch depends on everything else being settled before it can run,
     // and mirror ACL rules depend on MirrorOrch, so run these two at the end
@@ -1380,6 +1490,7 @@ bool DpuOrchDaemon::init()
     SWSS_LOG_NOTICE("DpuOrchDaemon init...");
     OrchDaemon::init();
 
+#ifdef INCLUDE_DASH
     // Enable the gNMI service to send DASH events to orchagent via the ZMQ channel.
     ZmqServer *dash_zmq_server = nullptr;
     if (get_feature_status(ORCH_NORTHBOND_DASH_ZMQ_ENABLED, true))
@@ -1462,6 +1573,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
+#endif
 
     return true;
 }

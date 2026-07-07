@@ -1,8 +1,12 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include "tokenize.h"
 #include "qosorch.h"
 #include "logger.h"
 #include "crmorch.h"
 #include "sai_serialize.h"
+#include "saiwredcustom.h"
 #include "cbf/nhgmaporch.h"
 
 #include <inttypes.h>
@@ -1199,7 +1203,11 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
 {
     SWSS_LOG_ENTER();
 
+#ifdef INCLUDE_CBF
     sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
+#else
+    sai_uint8_t max_num_fcs = UINT8_MAX;
+#endif
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -1293,7 +1301,11 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
 {
     SWSS_LOG_ENTER();
 
+#ifdef INCLUDE_CBF
     sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
+#else
+    sai_uint8_t max_num_fcs = UINT8_MAX;
+#endif
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;

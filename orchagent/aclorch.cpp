@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <inttypes.h>
 #include <limits.h>
 #include <unordered_map>
@@ -6,7 +9,9 @@
 #include "switchorch.h"
 #include "portsorch.h"
 #include "mirrororch.h"
+#ifdef INCLUDE_DTEL
 #include "dtelorch.h"
+#endif
 #include "neighorch.h"
 #include "routeorch.h"
 #include "vxlanorch.h"
@@ -136,6 +141,7 @@ static acl_rule_attr_lookup_t aclMirrorStageLookup =
     { ACTION_MIRROR_EGRESS_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS},
 };
 
+#ifdef INCLUDE_DTEL
 static acl_rule_attr_lookup_t aclDTelActionLookup =
 {
     { ACTION_DTEL_FLOW_OP,                  SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
@@ -145,6 +151,7 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
     { ACTION_DTEL_FLOW_SAMPLE_PERCENT,      SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
     { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
+#endif
 
 static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
@@ -166,6 +173,7 @@ static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
     { ACTION_DSCP,                          SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP}
 };
 
+#ifdef INCLUDE_DTEL
 static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 {
     { DTEL_FLOW_OP_NOP,                SAI_ACL_DTEL_FLOW_OP_NOP },
@@ -173,6 +181,7 @@ static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
     { DTEL_FLOW_OP_INT,                SAI_ACL_DTEL_FLOW_OP_INT },
     { DTEL_FLOW_OP_IOAM,               SAI_ACL_DTEL_FLOW_OP_IOAM }
 };
+#endif
 
 static acl_stage_type_lookup_t aclStageLookUp =
 {
@@ -830,7 +839,9 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
 
         auto l3Action = aclL3ActionLookup.find(action);
         auto mirrorAction = aclMirrorStageLookup.find(action);
+#ifdef INCLUDE_DTEL
         auto dtelAction = aclDTelActionLookup.find(action);
+#endif
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
         auto innerAction = aclInnerActionLookup.find(action);
@@ -846,10 +857,12 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         {
             saiActionAttr = mirrorAction->second;
         }
+#ifdef INCLUDE_DTEL
         else if (dtelAction != aclDTelActionLookup.end())
         {
             saiActionAttr = dtelAction->second;
         }
+#endif
         else if (otherAction != aclOtherActionLookup.end())
         {
             saiActionAttr = otherAction->second;
@@ -1820,6 +1833,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
         }
+#ifdef INCLUDE_DTEL
         else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
             if (!dtel)
@@ -1829,6 +1843,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
 
             return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
         }
+#endif
     }
 
     if (!aclRule)
@@ -3403,6 +3418,7 @@ bool AclTable::clear()
     return true;
 }
 
+#ifdef INCLUDE_DTEL
 AclRuleDTelWatchListEntry::AclRuleDTelWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
         AclRule(aclOrch, rule, table),
         m_pDTelOrch(dtel)
@@ -3641,6 +3657,7 @@ bool AclRuleDTelWatchListEntry::update(const AclRule& rule)
     SWSS_LOG_ERROR("Updating DTEL watch list rule is currently not implemented");
     return false;
 }
+#endif
 
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
     m_oid(oid), m_refCnt(0), m_min(min), m_max(max), m_type(type)
@@ -4355,9 +4372,11 @@ void AclOrch::queryAclActionCapability()
     queryAclActionAttrEnumValues(ACTION_PACKET_ACTION,
                                  aclL3ActionLookup,
                                  aclPacketActionLookup);
+#ifdef INCLUDE_DTEL
     queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
                                  aclDTelActionLookup,
                                  aclDTelFlowOpTypeLookup);
+#endif
 }
 
 void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
@@ -4377,7 +4396,11 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup,
+#ifdef INCLUDE_DTEL
+                                  aclDTelActionLookup,
+#endif
+                                  metadataActionLookup, aclInnerActionLookup})
     {
         for (const auto& it: action_map)
         {
@@ -4524,23 +4547,27 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
 
+#ifdef INCLUDE_DTEL
     if (m_dTelOrch)
     {
         m_dTelOrch->attach(this);
         createDTelWatchListTables();
     }
+#endif
 }
 
 AclOrch::~AclOrch()
 {
     m_mirrorOrch->detach(this);
 
+#ifdef INCLUDE_DTEL
     if (m_dTelOrch)
     {
         m_dTelOrch->detach(this);
     }
 
     deleteDTelWatchListTables();
+#endif
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -6262,6 +6289,7 @@ sai_status_t AclOrch::bindAclTable(AclTable &aclTable, bool bind)
     return status;
 }
 
+#ifdef INCLUDE_DTEL
 void AclOrch::createDTelWatchListTables()
 {
     SWSS_LOG_ENTER();
@@ -6313,6 +6341,7 @@ void AclOrch::deleteDTelWatchListTables()
 
     removeAclTable(TABLE_TYPE_DTEL_FLOW_WATCHLIST);
 }
+#endif
 
 void AclOrch::registerFlexCounter(const AclRule& rule)
 {

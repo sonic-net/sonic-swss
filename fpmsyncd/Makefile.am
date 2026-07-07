@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(FPM_PATH) -I $(top_srcdir)/lib
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart $(FPM_INCLUDES) -I $(top_srcdir)/lib
 
 bin_PROGRAMS = fpmsyncd fpmsyncd_restart_check
 
