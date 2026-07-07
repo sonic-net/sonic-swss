@@ -1177,7 +1177,13 @@ bool TunnelDecapOrch::setIpAttribute(string tunnel_name, string src_ip_str)
 bool TunnelDecapOrch::removeDecapTunnel(string table_name, string key)
 {
     sai_status_t status;
-    TunnelEntry *tunnel_info = &tunnelTable.find(key)->second;
+    auto it = tunnelTable.find(key);
+    if (it == tunnelTable.end())
+    {
+        SWSS_LOG_ERROR("Tunnel %s not found.", key.c_str());
+        return false;
+    }
+    TunnelEntry *tunnel_info = &it->second;
 
     if (tunnel_info->tunnel_term_info.size() > 0)
     {
