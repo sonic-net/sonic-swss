@@ -4788,12 +4788,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    // Invalid config for this port: drop the task and stop
+                    // tracking it as pending, so one bad port can't keep
+                    // allPortsReady() false and block every other port.
+                    SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
 
                 if (!m_portHlpr.validatePortConfig(pCfg))
                 {
+                    SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4808,6 +4815,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
