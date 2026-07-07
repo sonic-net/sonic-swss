@@ -32,6 +32,10 @@ namespace fdborch_vxlan_ut
 
     sai_route_api_t ut_sai_route_api;
     sai_route_api_t *pold_sai_route_api;
+    sai_router_interface_api_t ut_sai_router_intfs_api;
+    sai_router_interface_api_t *pold_sai_router_intfs_api;
+    sai_next_hop_api_t ut_sai_next_hop_api;
+    sai_next_hop_api_t *pold_sai_next_hop_api;
 
     sai_status_t _ut_stub_sai_create_route_entry(
         _In_ const sai_route_entry_t *route_entry,
@@ -43,6 +47,39 @@ namespace fdborch_vxlan_ut
 
     sai_status_t _ut_stub_sai_remove_route_entry(
         _In_ const sai_route_entry_t *route_entry)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_create_router_interface(
+        _Out_ sai_object_id_t *router_interface_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        *router_interface_id = 0x6000000000040;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_remove_router_interface(
+        _In_ sai_object_id_t router_interface_id)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_create_next_hop(
+        _Out_ sai_object_id_t *next_hop_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        static sai_object_id_t nh_id_counter = 0x6000000000041;
+        *next_hop_id = nh_id_counter++;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_remove_next_hop(
+        _In_ sai_object_id_t next_hop_id)
     {
         return SAI_STATUS_SUCCESS;
     }
@@ -78,11 +115,33 @@ namespace fdborch_vxlan_ut
             auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
+            attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            gMacAddress = attr.value.mac;
+
+            attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            gVirtualRouterId = attr.value.oid;
+
             ut_sai_route_api = *sai_route_api;
             pold_sai_route_api = sai_route_api;
             ut_sai_route_api.create_route_entry = _ut_stub_sai_create_route_entry;
             ut_sai_route_api.remove_route_entry = _ut_stub_sai_remove_route_entry;
             sai_route_api = &ut_sai_route_api;
+
+            ut_sai_router_intfs_api = *sai_router_intfs_api;
+            pold_sai_router_intfs_api = sai_router_intfs_api;
+            ut_sai_router_intfs_api.create_router_interface = _ut_stub_sai_create_router_interface;
+            ut_sai_router_intfs_api.remove_router_interface = _ut_stub_sai_remove_router_interface;
+            sai_router_intfs_api = &ut_sai_router_intfs_api;
+
+            ut_sai_next_hop_api = *sai_next_hop_api;
+            pold_sai_next_hop_api = sai_next_hop_api;
+            ut_sai_next_hop_api.create_next_hop = _ut_stub_sai_create_next_hop;
+            ut_sai_next_hop_api.remove_next_hop = _ut_stub_sai_remove_next_hop;
+            sai_next_hop_api = &ut_sai_next_hop_api;
 
             m_config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -111,6 +170,7 @@ namespace fdborch_vxlan_ut
                 { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
             };
             m_portsOrch = std::make_shared<PortsOrch>(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gDirectory.set(m_portsOrch.get());
 
             // 3) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
@@ -271,6 +331,8 @@ namespace fdborch_vxlan_ut
 
             gDirectory.m_values.clear();
             sai_route_api = pold_sai_route_api;
+            sai_router_intfs_api = pold_sai_router_intfs_api;
+            sai_next_hop_api = pold_sai_next_hop_api;
             RestoreSaiApis();
             ut_helper::uninitSaiApi();
         }
@@ -534,9 +596,10 @@ namespace fdborch_vxlan_ut
 
         const string ip = "100.1.1.47";
         const string mac = "00:11:01:00:00:2e";
-        NeighborEntry neighbor(ip, VLAN40);
+        NeighborEntry neighbor(ip, string(VLAN40));
 
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry)
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
         learnNeighbor(m_app_db.get(), VLAN40, ip, mac);
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
         ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
@@ -544,9 +607,9 @@ namespace fdborch_vxlan_ut
         EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
         Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
         vxlanFdbTable.set(VLAN40 + vxlanFdbTable.getTableNameSeparator() + mac, {
-            { "vni", "40" },
-            { "type", "dynamic" },
-            { "remote_vtep", "1.1.1.1" }
+            { string("vni"), string("40") },
+            { string("type"), string("dynamic") },
+            { string("remote_vtep"), string("1.1.1.1") }
         });
 
         gFdbOrch->addExistingData(&vxlanFdbTable);
