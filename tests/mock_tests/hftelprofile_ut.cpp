@@ -630,4 +630,29 @@ namespace hftelprofile_ut
         EXPECT_EQ(orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"], msg.m_oid);
         EXPECT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
     }
+
+    TEST_F(LocallyNotifyStartedProfileTest, UnrelatedObjectDeleteDoesNotRecommitStartedProfile)
+    {
+        ProfileStub profileStub;
+        profileStub.init();
+
+        ASSERT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        ASSERT_TRUE(profileStub.p->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        ASSERT_TRUE(profileStub.p->canBeUpdated(SAI_OBJECT_TYPE_PORT));
+        ASSERT_THROW(profileStub.p->tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
+
+        shared_ptr<HFTelProfile> profile(profileStub.p, [](HFTelProfile *) {});
+        OrchStub orchStub;
+        orchStub.init(profile);
+        orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"] = 0x1000000000002ULL;
+
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = "COUNTERS_PORT_NAME_MAP";
+        msg.m_operation = CounterNameMapUpdater::DEL;
+        msg.m_counter_name = "Ethernet4";
+
+        EXPECT_NO_THROW(orchStub.p->locallyNotify(msg));
+        EXPECT_EQ(orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT].count("Ethernet4"), 0);
+        EXPECT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+    }
 }
