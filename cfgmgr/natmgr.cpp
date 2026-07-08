@@ -5718,8 +5718,16 @@ void NatMgr::enableNatFeature(void)
     SWSS_LOG_INFO("Adding Dynamic NAT rules");
     addDynamicNatRules();
 
-    /* Add full-cone PRE-ROUTING DNAT rule in the kernel */
-    setFullConeDnatIptablesRule(ADD);
+    /* Add full-cone PRE-ROUTING DNAT rule in the kernel only if
+     * a dynamic NAT pool with a port range is configured */
+    for (auto it = m_natPoolInfo.begin(); it != m_natPoolInfo.end(); it++)
+    {
+        if (!(*it).second.port_range.empty() && ((*it).second.port_range != "NULL"))
+        {
+           setFullConeDnatIptablesRule(ADD);
+           break;
+        }
+    }
 
     SWSS_LOG_INFO("NAT Refresh timer start ");
     m_natRefreshTimer->start();
@@ -5756,8 +5764,16 @@ void NatMgr::disableNatFeature(void)
     m_appNatGlobalTableProducer.set(appKey, fvVector);
     SWSS_LOG_INFO("Disabled NAT Admin Mode to APPL_DB");
 
-    /* Delete full-cone PRE-ROUTING DNAT rule in the kernel */
-    setFullConeDnatIptablesRule(DELETE);
+    /* Delete full-cone PRE-ROUTING DNAT rule in the kernel only if
+     * a dynamic NAT pool with a port range was configured */
+    for (auto it = m_natPoolInfo.begin(); it != m_natPoolInfo.end(); it++)
+    {
+         if (!(*it).second.port_range.empty() && ((*it).second.port_range != "NULL"))
+         {
+            setFullConeDnatIptablesRule(DELETE);
+            break;
+         }
+    }
 
     SWSS_LOG_INFO("NAT Refresh timer stop ");
     m_natRefreshTimer->stop();
