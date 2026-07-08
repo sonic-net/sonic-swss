@@ -2086,10 +2086,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if (fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) {
-            /* Try to remvoe local neighbor entry if exists
-            * Since this mac is at the remote vxlan side now
-            */
+        if ((fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) &&
+            macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
+            (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
+            /* Try to remove the local neighbor entry if a local MAC moved to
+             * the remote VXLAN side now.
+             */
             gNeighOrch->processFDBDelete(entry);
         }
     }
