@@ -248,4 +248,121 @@ namespace orchdaemon_test
         orchd->disableRingBuffer();
     }
 
+    // Two distinct Orch subclasses that intentionally share the same consumer
+    // table name. This mirrors the real situation where CFG_FLEX_COUNTER_TABLE
+    // is registered as a consumer in both WatermarkOrch and FlexCounterOrch.
+    // Their demangled class names must be present in the STATE_DB key so the
+    // two rows do not collide.
+    class QueueDepthTestOrchA : public Orch
+    {
+      public:
+        QueueDepthTestOrchA(DBConnector *db, const std::vector<std::string> &tables)
+            : Orch(db, tables) {}
+        void doTask(Consumer &) override {}
+    };
+
+    class QueueDepthTestOrchB : public Orch
+    {
+      public:
+        QueueDepthTestOrchB(DBConnector *db, const std::vector<std::string> &tables)
+            : Orch(db, tables) {}
+        void doTask(Consumer &) override {}
+    };
+
+    static void seedPendingTask(Orch *o, const std::string &table, const std::string &key)
+    {
+        auto *c = dynamic_cast<ConsumerBase *>(o->getExecutor(table));
+        ASSERT_NE(c, nullptr);
+        swss::KeyOpFieldsValuesTuple kfvt{key, SET_COMMAND, {{"f", "v"}}};
+        c->addToSync(kfvt);
+    }
+
+    TEST_F(OrchDaemonTest, PublishQueueDepth)
+    {
+        // Sanity: the publisher table was created in the daemon constructor.
+        ASSERT_NE(orchd->m_queueDepthTable, nullptr);
+
+        // Build two Orchs whose consumers intentionally share a table name.
+        const std::string kSharedTable = "QUEUE_DEPTH_UT_DUP_TABLE";
+        const std::string kOrchAOnly   = "QUEUE_DEPTH_UT_A_ONLY";
+        const std::string kOrchBOnly   = "QUEUE_DEPTH_UT_B_ONLY";
+        auto orchA = std::make_shared<QueueDepthTestOrchA>(
+            &appl_db, std::vector<std::string>{kSharedTable, kOrchAOnly});
+        auto orchB = std::make_shared<QueueDepthTestOrchB>(
+            &appl_db, std::vector<std::string>{kSharedTable, kOrchBOnly});
+
+        // Pre-seed a stale row to verify it gets removed once the orch is no
+        // longer in m_orchList. (Simulates a row left over from a previous
+        // orchagent run that registered a now-removed consumer.)
+        const std::string kStaleKey = "GhostOrch|GHOST_TABLE";
+        orchd->m_queueDepthTable->set(
+            kStaleKey, {{"pending_count", "42"}, {"orch", "GhostOrch"}, {"consumer", "GHOST_TABLE"}});
+        orchd->m_lastPublishedQueueKeys.insert(kStaleKey);
+
+        // Seed different pending counts so we can tell the two rows apart.
+        seedPendingTask(orchA.get(), kSharedTable, "k1");
+        seedPendingTask(orchA.get(), kSharedTable, "k2");  // OrchA: 2 pending
+        seedPendingTask(orchA.get(), kOrchAOnly,   "ka");  // OrchA-only: 1
+        seedPendingTask(orchB.get(), kSharedTable, "k3");  // OrchB: 1 pending
+        // OrchB's kOrchBOnly consumer stays empty; should still publish 0.
+
+        orchd->m_orchList.push_back(orchA.get());
+        orchd->m_orchList.push_back(orchB.get());
+
+        orchd->publishQueueDepth();
+
+        const std::string kKeyAShared =
+            std::string("orchdaemon_test::QueueDepthTestOrchA|") + kSharedTable;
+        const std::string kKeyBShared =
+            std::string("orchdaemon_test::QueueDepthTestOrchB|") + kSharedTable;
+        const std::string kKeyAOnly =
+            std::string("orchdaemon_test::QueueDepthTestOrchA|") + kOrchAOnly;
+        const std::string kKeyBOnly =
+            std::string("orchdaemon_test::QueueDepthTestOrchB|") + kOrchBOnly;
+
+        // Both Orchs' rows for the shared table must coexist — the per-Orch
+        // class name in the key prevents the collision Copilot called out.
+        std::string val;
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyAShared, "pending_count", val));
+        EXPECT_EQ(val, "2");
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyBShared, "pending_count", val));
+        EXPECT_EQ(val, "1");
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyAOnly, "pending_count", val));
+        EXPECT_EQ(val, "1");
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyBOnly, "pending_count", val));
+        EXPECT_EQ(val, "0");
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyAShared, "orch", val));
+        EXPECT_EQ(val, "orchdaemon_test::QueueDepthTestOrchA");
+        ASSERT_TRUE(orchd->m_queueDepthTable->hget(kKeyAShared, "consumer", val));
+        EXPECT_EQ(val, kSharedTable);
+
+        // Stale key from prior cycle (not in current snapshot) must be gone.
+        EXPECT_FALSE(orchd->m_queueDepthTable->hget(kStaleKey, "pending_count", val));
+
+        // Now drop OrchB from m_orchList and re-publish. OrchB's rows should
+        // be DELed; OrchA's rows should remain.
+        orchd->m_orchList.pop_back();
+        orchd->publishQueueDepth();
+
+        EXPECT_TRUE(orchd->m_queueDepthTable->hget(kKeyAShared, "pending_count", val));
+        EXPECT_FALSE(orchd->m_queueDepthTable->hget(kKeyBShared, "pending_count", val));
+        EXPECT_FALSE(orchd->m_queueDepthTable->hget(kKeyBOnly, "pending_count", val));
+
+        // Cleanup so subsequent tests start from an empty publisher table.
+        orchd->m_orchList.clear();
+        orchd->publishQueueDepth();
+    }
+
+    TEST_F(OrchDaemonTest, PublishQueueDepthEmptyOrchListIsNoOp)
+    {
+        ASSERT_NE(orchd->m_queueDepthTable, nullptr);
+        ASSERT_TRUE(orchd->m_orchList.empty());
+
+        // Nothing should crash and nothing should be written.
+        orchd->publishQueueDepth();
+        std::vector<std::string> keys;
+        orchd->m_queueDepthTable->getKeys(keys);
+        EXPECT_TRUE(keys.empty());
+    }
+
 }
