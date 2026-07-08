@@ -248,4 +248,116 @@ namespace orchdaemon_test
         orchd->disableRingBuffer();
     }
 
+    // Helper: push one SET tuple into the consumer's m_toSync so
+    // ConsumerBase::hasPendingTasks() returns true. Mirrors what the real
+    // ProducerStateTable hop does when an upstream daemon writes APPL_DB.
+    static void hasPendingSeedTask(Orch *o, const std::string &table, const std::string &key)
+    {
+        auto *c = dynamic_cast<ConsumerBase *>(o->getExecutor(table));
+        ASSERT_NE(c, nullptr);
+        swss::KeyOpFieldsValuesTuple kfvt{key, SET_COMMAND, {{"f", "v"}}};
+        c->addToSync(kfvt);
+    }
+
+    TEST_F(OrchDaemonTest, ConsumerBaseHasPendingTasks)
+    {
+        // ConsumerBase::hasPendingTasks is an inline !m_toSync.empty() check.
+        // Verify both the empty and non-empty states.
+        std::vector<std::string> tables{"HPT_TABLE_A"};
+        auto orch = std::make_shared<Orch>(&appl_db, tables);
+
+        auto *c = dynamic_cast<ConsumerBase *>(orch->getExecutor("HPT_TABLE_A"));
+        ASSERT_NE(c, nullptr);
+
+        // Fresh consumer: m_toSync is empty -> hasPendingTasks() == false.
+        EXPECT_FALSE(c->hasPendingTasks());
+
+        // After addToSync, m_toSync grows -> hasPendingTasks() == true.
+        swss::KeyOpFieldsValuesTuple kfvt{"key1", SET_COMMAND, {{"f", "v"}}};
+        c->addToSync(kfvt);
+        EXPECT_TRUE(c->hasPendingTasks());
+
+        // Drain m_toSync; the consumer is empty again.
+        c->m_toSync.clear();
+        EXPECT_FALSE(c->hasPendingTasks());
+    }
+
+    TEST_F(OrchDaemonTest, OrchHasPendingTasks)
+    {
+        // Orch::hasPendingTasks() walks m_consumerMap and returns true iff
+        // any ConsumerBase in the Orch has a non-empty m_toSync.
+        std::vector<std::string> tables{"HPT_TABLE_A", "HPT_TABLE_B"};
+        auto orch = std::make_shared<Orch>(&appl_db, tables);
+
+        // All consumers fresh -> no pending tasks.
+        EXPECT_FALSE(orch->hasPendingTasks());
+
+        // Seed one consumer; the Orch now reports pending.
+        hasPendingSeedTask(orch.get(), "HPT_TABLE_A", "k1");
+        EXPECT_TRUE(orch->hasPendingTasks());
+
+        // Seed the other consumer; still true.
+        hasPendingSeedTask(orch.get(), "HPT_TABLE_B", "k1");
+        EXPECT_TRUE(orch->hasPendingTasks());
+
+        // Drain only TABLE_A; TABLE_B still has work -> still true.
+        auto *cA = dynamic_cast<ConsumerBase *>(orch->getExecutor("HPT_TABLE_A"));
+        ASSERT_NE(cA, nullptr);
+        cA->m_toSync.clear();
+        EXPECT_TRUE(orch->hasPendingTasks());
+
+        // Drain TABLE_B too -> false.
+        auto *cB = dynamic_cast<ConsumerBase *>(orch->getExecutor("HPT_TABLE_B"));
+        ASSERT_NE(cB, nullptr);
+        cB->m_toSync.clear();
+        EXPECT_FALSE(orch->hasPendingTasks());
+    }
+
+    TEST_F(OrchDaemonTest, OrchDaemonHasPendingTasks)
+    {
+        // OrchDaemon::hasPendingTasks() iterates m_orchList. It gates the new
+        // SELECT_TIMEOUT retry sweep added in this PR: when there is no ring
+        // buffer and at least one orch has pending tasks, doTask() runs on
+        // every orch in m_orchList. Idle systems with empty queues stay cheap.
+
+        // Empty m_orchList -> no pending tasks.
+        ASSERT_TRUE(orchd->m_orchList.empty());
+        EXPECT_FALSE(orchd->hasPendingTasks());
+
+        std::vector<std::string> tablesA{"HPT_DAEMON_A"};
+        std::vector<std::string> tablesB{"HPT_DAEMON_B"};
+        auto orchA = std::make_shared<Orch>(&appl_db, tablesA);
+        auto orchB = std::make_shared<Orch>(&appl_db, tablesB);
+
+        orchd->m_orchList.push_back(orchA.get());
+        orchd->m_orchList.push_back(orchB.get());
+
+        // Both Orchs fresh, no pending tasks -> daemon reports false.
+        EXPECT_FALSE(orchd->hasPendingTasks());
+
+        // Pending in the second Orch only — daemon must still report true,
+        // i.e. the iteration must not short-circuit at the first empty Orch.
+        hasPendingSeedTask(orchB.get(), "HPT_DAEMON_B", "k1");
+        EXPECT_TRUE(orchd->hasPendingTasks());
+
+        // Pending in the first Orch as well -> still true.
+        hasPendingSeedTask(orchA.get(), "HPT_DAEMON_A", "k1");
+        EXPECT_TRUE(orchd->hasPendingTasks());
+
+        // Drain orchB only -> orchA still has work -> still true.
+        auto *cB = dynamic_cast<ConsumerBase *>(orchB->getExecutor("HPT_DAEMON_B"));
+        ASSERT_NE(cB, nullptr);
+        cB->m_toSync.clear();
+        EXPECT_TRUE(orchd->hasPendingTasks());
+
+        // Drain orchA -> all queues empty -> false again.
+        auto *cA = dynamic_cast<ConsumerBase *>(orchA->getExecutor("HPT_DAEMON_A"));
+        ASSERT_NE(cA, nullptr);
+        cA->m_toSync.clear();
+        EXPECT_FALSE(orchd->hasPendingTasks());
+
+        // Cleanup so subsequent fixture-shared tests start from a clean list.
+        orchd->m_orchList.clear();
+    }
+
 }
