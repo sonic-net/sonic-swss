@@ -1227,7 +1227,8 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     int rc;
 
     len = msgLen + (offsetof(struct STP_IPC_MSG, data));
-    SWSS_LOG_INFO("tx_msg len %d msglen %d", (int)len, msgLen);
+    SWSS_LOG_INFO( "tx_msg len %d msglen %d for proto_mode %d",
+                   (int)len, msgLen, l2ProtoEnabled );
 
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
@@ -1238,6 +1239,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    tx_msg->proto_mode  = l2ProtoEnabled;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
