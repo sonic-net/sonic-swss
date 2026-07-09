@@ -974,8 +974,6 @@ void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
 
-    Recorder::Instance().sairedis.setRotate(false);
-
     ring_thread = std::thread(&OrchDaemon::popRingBuffer, this);
 
     for (Orch *o : m_orchList)
