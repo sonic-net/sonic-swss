@@ -40,9 +40,15 @@
 #include "flexcounterorch.h"
 #include "watermarkorch.h"
 #include "policerorch.h"
+#ifdef INCLUDE_SFLOW
 #include "sfloworch.h"
+#endif
+#ifdef INCLUDE_DEBUG_COUNTER
 #include "debugcounterorch.h"
+#endif
+#ifdef INCLUDE_TAM
 #include "tamorch.h"
+#endif
 #include "directory.h"
 #include "natorch.h"
 #include "isolationgrouporch.h"
@@ -131,8 +137,12 @@ P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
+#ifdef INCLUDE_DEBUG_COUNTER
 DebugCounterOrch *gDebugCounterOrch;
+#endif
+#ifdef INCLUDE_TAM
 TamOrch *gTamOrch;
+#endif
 MonitorOrch *gMonitorOrch;
 BfdMonitorOrch *gBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
@@ -502,13 +512,16 @@ bool OrchDaemon::init()
 
     WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
+#ifdef INCLUDE_SFLOW
     vector<string> sflow_tables = {
             APP_SFLOW_TABLE_NAME,
             APP_SFLOW_SESSION_TABLE_NAME,
             APP_SFLOW_SAMPLE_RATE_TABLE_NAME
     };
     SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
+#endif
 
+#ifdef INCLUDE_DEBUG_COUNTER
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,
         CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
@@ -516,7 +529,9 @@ bool OrchDaemon::init()
     };
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
+#endif
 
+#ifdef INCLUDE_TAM
     /* IFAv2 / TAM-INT — see sonic-tam-int.yang for the schema and
      * engineering-notes/network-visibility-int-ifa/00-proposal.md for
      * the rollout plan. Global enable: DEVICE_METADATA|localhost.tam_int_enable. */
@@ -529,6 +544,7 @@ bool OrchDaemon::init()
         TAM_FLOW_TABLE_NAME
     };
     gTamOrch = new TamOrch(m_configDb, tam_tables);
+#endif
 
 #ifdef INCLUDE_NAT
     const int natorch_base_pri = 50;
@@ -624,7 +640,15 @@ bool OrchDaemon::init()
 #ifdef INCLUDE_TUNNELDECAP
         gTunneldecapOrch,
 #endif
-        sflow_orch, gDebugCounterOrch, gTamOrch,
+#ifdef INCLUDE_SFLOW
+        sflow_orch,
+#endif
+#ifdef INCLUDE_DEBUG_COUNTER
+        gDebugCounterOrch,
+#endif
+#ifdef INCLUDE_TAM
+        gTamOrch,
+#endif
 #ifdef INCLUDE_MACSEC
         gMacsecOrch,
 #endif

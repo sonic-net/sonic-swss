@@ -656,6 +656,7 @@ namespace portsorch_test
             ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>), nullptr);
             gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
 
+#ifdef INCLUDE_MLAG
             vector<string> mlag_tables = {
                 { CFG_MCLAG_TABLE_NAME },
                 { CFG_MCLAG_INTF_TABLE_NAME }
@@ -663,7 +664,9 @@ namespace portsorch_test
 
             ASSERT_EQ(gMlagOrch, nullptr);
             gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
+#endif
 
+#ifdef INCLUDE_DEBUG_COUNTER
             vector<string> debug_counter_tables = {
                 CFG_DEBUG_COUNTER_TABLE_NAME,
                 CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
@@ -672,6 +675,7 @@ namespace portsorch_test
 
            ASSERT_EQ(gDebugCounterOrch, nullptr);
            gDebugCounterOrch = new DebugCounterOrch(m_config_db.get(), debug_counter_tables, 1000);
+#endif
         }
 
         virtual void TearDown() override
@@ -695,8 +699,10 @@ namespace portsorch_test
             gFdbOrch = nullptr;
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
+#ifdef INCLUDE_DEBUG_COUNTER
             delete gDebugCounterOrch;
             gDebugCounterOrch = nullptr;
+#endif
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
@@ -707,8 +713,10 @@ namespace portsorch_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
+#ifdef INCLUDE_MLAG
             delete gMlagOrch;
             gMlagOrch = nullptr;
+#endif
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }
@@ -4005,6 +4013,7 @@ namespace portsorch_test
 	_unhook_sai_switch_api();
     }
 
+#ifdef INCLUDE_DEBUG_COUNTER
     TEST_F(PortsOrchTest, DebugDropMonitorToggle)
     {
         // setup the tables with data
@@ -4083,6 +4092,7 @@ namespace portsorch_test
         ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
         entries.clear();
     }
+#endif
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
     {

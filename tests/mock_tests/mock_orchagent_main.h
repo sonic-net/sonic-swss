@@ -61,7 +61,9 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+#ifdef INCLUDE_DEBUG_COUNTER
 extern DebugCounterOrch *gDebugCounterOrch;
+#endif
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
@@ -79,8 +81,12 @@ extern BfdOrch *gBfdOrch;
 extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+#ifdef INCLUDE_STP
 extern StpOrch *gStpOrch;
+#endif
+#ifdef INCLUDE_MLAG
 extern MlagOrch *gMlagOrch;
+#endif
 extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 

@@ -341,7 +341,9 @@ private:
     void updateDefRouteState(string ip, bool add=false);
 
     void doTask(ConsumerBase& consumer);
+#ifdef INCLUDE_MPLS
     void doLabelTask(ConsumerBase& consumer);
+#endif
 
     const NhgBase &getNhg(const std::string& nhg_index);
 

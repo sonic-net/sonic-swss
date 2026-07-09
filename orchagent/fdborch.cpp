@@ -15,7 +15,9 @@
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#ifdef INCLUDE_MLAG
 #include "mlagorch.h"
+#endif
 #include "vxlanorch.h"
 #include "directory.h"
 
@@ -23,7 +25,9 @@ extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern CrmOrch *        gCrmOrch;
+#ifdef INCLUDE_MLAG
 extern MlagOrch*        gMlagOrch;
+#endif
 extern Directory<Orch*> gDirectory;
 
 const int FdbOrch::fdborch_pri = 20;

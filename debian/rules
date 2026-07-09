@@ -42,6 +42,7 @@ ifeq ($(SONIC_BUILD_PROFILE), ai_fabric)
 	configure_opts += --disable-mlag --disable-gearsyncd --disable-chassis
 	configure_opts += --disable-pbh --disable-nvgre --disable-twamp --disable-icmp-offload
 	configure_opts += --disable-cbf --disable-mpls
+	configure_opts += --disable-debug-counter --disable-multi-asic-vendor
 	configure_opts += --disable-tests
 endif
 

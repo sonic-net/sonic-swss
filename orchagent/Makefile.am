@@ -104,9 +104,6 @@ libswssorchagent_a_SOURCES = \
             flexcounterorch.cpp \
             watermarkorch.cpp \
             policerorch.cpp \
-            sfloworch.cpp \
-            debugcounterorch.cpp \
-            tamorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
             response_publisher.cpp \
@@ -244,6 +241,18 @@ orchagent_LDADD = libswssorchagent.a $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthre
 
 if INCLUDE_DASH
 orchagent_LDADD += -ldashapi
+endif
+
+if INCLUDE_SFLOW
+libswssorchagent_a_SOURCES += sfloworch.cpp
+endif
+
+if INCLUDE_DEBUG_COUNTER
+libswssorchagent_a_SOURCES += debugcounterorch.cpp
+endif
+
+if INCLUDE_TAM
+libswssorchagent_a_SOURCES += tamorch.cpp
 endif
 
 

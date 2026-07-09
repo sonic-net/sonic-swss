@@ -292,6 +292,55 @@ if test x$enable_hft = xtrue; then
     AC_DEFINE(INCLUDE_HFT, 1, [Include High Frequency Telemetry])
 fi
 
+
+AC_ARG_ENABLE(sflow,
+[  --enable-sflow          Enable sFlow orch (default: yes)],
+[case "${enableval}" in
+	yes) enable_sflow=true ;;
+	no)  enable_sflow=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-sflow) ;;
+esac],[enable_sflow=true])
+AM_CONDITIONAL(INCLUDE_SFLOW, test x$enable_sflow = xtrue)
+if test x$enable_sflow = xtrue; then
+    AC_DEFINE(INCLUDE_SFLOW, 1, [Include sFlow orch])
+fi
+
+AC_ARG_ENABLE(tam,
+[  --enable-tam            Enable TAM orch (default: yes)],
+[case "${enableval}" in
+	yes) enable_tam=true ;;
+	no)  enable_tam=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-tam) ;;
+esac],[enable_tam=true])
+AM_CONDITIONAL(INCLUDE_TAM, test x$enable_tam = xtrue)
+if test x$enable_tam = xtrue; then
+    AC_DEFINE(INCLUDE_TAM, 1, [Include TAM orch])
+fi
+
+AC_ARG_ENABLE(debug-counter,
+[  --enable-debug-counter  Enable DebugCounter orch (default: yes)],
+[case "${enableval}" in
+	yes) enable_debug_counter=true ;;
+	no)  enable_debug_counter=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-debug-counter) ;;
+esac],[enable_debug_counter=true])
+AM_CONDITIONAL(INCLUDE_DEBUG_COUNTER, test x$enable_debug_counter = xtrue)
+if test x$enable_debug_counter = xtrue; then
+    AC_DEFINE(INCLUDE_DEBUG_COUNTER, 1, [Include DebugCounter orch])
+fi
+
+AC_ARG_ENABLE(multi-asic-vendor,
+[  --enable-multi-asic-vendor Enable multi-vendor PFCWD handlers (default: yes)],
+[case "${enableval}" in
+	yes) enable_multi_asic_vendor=true ;;
+	no)  enable_multi_asic_vendor=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-multi-asic-vendor) ;;
+esac],[enable_multi_asic_vendor=true])
+AM_CONDITIONAL(INCLUDE_MULTI_ASIC_VENDOR, test x$enable_multi_asic_vendor = xtrue)
+if test x$enable_multi_asic_vendor = xtrue; then
+    AC_DEFINE(INCLUDE_MULTI_ASIC_VENDOR, 1, [Include multi-vendor PFCWD handlers])
+fi
+
 AC_ARG_ENABLE(tests,
 [  --enable-tests          Build test programs (default: yes)],
 [case "${enableval}" in

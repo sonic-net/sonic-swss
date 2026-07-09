@@ -13,7 +13,9 @@
 
 #include "bufferorch.h"
 #include "copporch.h"
+#ifdef INCLUDE_MACSEC
 #include "macsecorch.h"
+#endif
 #include "portsorch.h"
 #include "intfsorch.h"
 #include "pfcwdorch.h"
@@ -22,8 +24,12 @@
 #include "srv6orch.h"
 #endif
 #include "switchorch.h"
+#ifdef INCLUDE_DEBUG_COUNTER
 #include "debugcounterorch.h"
+#endif
+#ifdef INCLUDE_CHASSIS
 #include "fabricportsorch.h"
+#endif
 #include "vxlanorch.h"
 
 #ifdef INCLUDE_DASH
