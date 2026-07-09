@@ -1053,15 +1053,11 @@ int main(int argc, char **argv)
      * in the reverse-order loop have already freed buffers those threads still
      * reference, corrupting the heap.
      *
-     * Drain the async swss recorder so pending records flush, then _exit() to
-     * let the kernel reclaim the rest of the process without the destructor
-     * chain.
+     * Instead, drain the async swss recorder so pending records flush, then
+     * _exit() to let the kernel reclaim the rest of the process without the
+     * destructor chain.
      */
-    if (gOrchShutdownRequested != 0)
-    {
-        Recorder::Instance().swss.setAsync(false);
-        _exit(0);
-    }
+    exit_if_graceful_shutdown_requested();
 
     return 0;
 }
