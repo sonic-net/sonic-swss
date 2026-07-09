@@ -101,8 +101,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -814,6 +812,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     {
         STP_VLAN_MEM_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
+        msg.priority  = -1;
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -847,8 +846,6 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
         if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
         {
             int8_t tagging_mode = TAGGED_MODE;
-            msg.priority = -1;
-            msg.path_cost = 0;
 
             if (op == SET_COMMAND)
             {
