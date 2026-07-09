@@ -35,8 +35,8 @@ struct ArsProfileEntry
     uint32_t        quantizationType  = 0;
     uint32_t        profileLinkUtilThreshold = 0;
     uint32_t        profileIdleTime   = 0;
-    // Per-band congestion thresholds (in Mbps) that feed
-    // SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD.
+    // Per-band congestion thresholds (in bytes, since SAI v2511.36.0.0) that
+    // feed SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD.
     // Required for Mellanox SAI to program the SDK congestion threshold via
     // sx_api_ar_congestion_threshold_set — the gating check in
     // are_ars_profile_thresholds_configured() only returns true when at least

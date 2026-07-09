@@ -2166,9 +2166,9 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     // thresholds avoids this and works in both runtime and apply-view paths.
     //
     // When all three bands are zero, auto-fill with conservative defaults
-    // (1/2/4 Gbps) so flowlet works out of the box. Non-zero quant-band
-    // values at CREATE tell Mellanox SAI to call
-    // sx_api_ar_congestion_threshold_set (non-hardened mode).
+    // so flowlet works out of the box. Non-zero quant-band values at CREATE
+    // tell Mellanox SAI to call sx_api_ar_congestion_threshold_set (non-hardened
+    // mode). Unit is bytes since SAI v2511.36.0.0 (was cells previously).
     uint32_t qb0 = entry.quantBand0MinThreshold;
     uint32_t qb1 = entry.quantBand1MinThreshold;
     uint32_t qb2 = entry.quantBand2MinThreshold;
@@ -2178,9 +2178,10 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         // rejects them during SET with SAI_STATUS_INVALID_PARAMETER. The
         // deferred-OID reuse path calls updateArsProfileAttr (SET), so
         // defaults must be within the SET-safe range (matching ucli defaults).
-        qb0 = 10;
-        qb1 = 20;
-        qb2 = 50;
+        // On Spectrum-4 (192-byte cells): 2560→14, 5120→27, 12800→67 cells.
+        qb0 = 2560;
+        qb1 = 5120;
+        qb2 = 12800;
         SWSS_LOG_NOTICE("ARS: profile '%s' quant-band thresholds incomplete or "
                         "non-monotonic (%u/%u/%u) — using SET-safe defaults "
                         "(%u/%u/%u); final values will be applied via SET "
@@ -5071,9 +5072,12 @@ void ArsOrch::createDefaultProfileIfNeeded()
     // SAI_STATUS_INVALID_PARAMETER. The deferred-OID reuse path uses SET,
     // so defaults must be within the SET-safe range. These values match
     // the ucli defaults (lb_adaptive_profile.py).
-    entry.quantBand0MinThreshold = 10;
-    entry.quantBand1MinThreshold = 20;
-    entry.quantBand2MinThreshold = 50;
+    // Unit is bytes since SAI v2511.36.0.0 (was cells previously).
+    // On Spectrum-4 (SN5610), cell size = 192 bytes. These map to
+    // ceil(2560/192)=14, ceil(5120/192)=27, ceil(12800/192)=67 cells.
+    entry.quantBand0MinThreshold = 2560;
+    entry.quantBand1MinThreshold = 5120;
+    entry.quantBand2MinThreshold = 12800;
     if (!createArsProfile(kDefaultName, entry))
     {
         SWSS_LOG_WARN("ARS: failed to auto-create default profile — "
