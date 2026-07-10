@@ -664,18 +664,33 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             }
             else if (field == buffer_xon_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
@@ -683,12 +698,22 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             }
             else if (field == buffer_size_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
                 attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_dynamic_th_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 if (SAI_NULL_OBJECT_ID != sai_object)
                 {
                     // We should skip the profile's threshold type when setting a profile's attribute because it's create only.
@@ -707,6 +732,11 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             }
             else if (field == buffer_static_th_field_name)
             {
+                if (value.empty())
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s has empty %s value", object_name.c_str(), field.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
                 if (SAI_NULL_OBJECT_ID != sai_object)
                 {
                     // We should skip the profile's threshold type when setting a profile's attribute because it's create only.

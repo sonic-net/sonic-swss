@@ -2399,4 +2399,131 @@ namespace buffermgrdyn_test
         EXPECT_EQ(m_dynamicBuffer->m_shpProfilesToCheck.size(), profileCheckListSizeBefore)
             << "Should not add profiles to check list when SHP size unchanged";
     }
+
+    /*
+     * UPSW-6660: Verify that a buffer profile created without dynamic_th
+     * gets the platform default from DEFAULT_LOSSLESS_BUFFER_PARAMETER.
+     * Previously, missing dynamic_th caused an empty string to reach
+     * APPL_DB, crashing bufferorch via stol("").
+     *
+     * 1. Initialize pools, default lossless parameter (default_dynamic_th=0)
+     * 2. Create a lossless buffer profile WITHOUT dynamic_th (only pool, size, xoff, xon)
+     * 3. Verify the profile is accepted and APPL_DB contains dynamic_th with
+     *    the default value ("0"), not an empty string
+     * 4. Create a lossy profile WITHOUT dynamic_th (only pool, size)
+     * 5. Verify the lossy profile also gets the default dynamic_th
+     */
+    TEST_F(BufferMgrDynTest, BufferMgrTestMissingDynamicThDefaultFallback)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+        StartBufferManager();
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+        InitBufferPool();
+
+        // Create a lossless profile WITHOUT dynamic_th (reproduces UPSW-6660)
+        bufferProfileTable.set("lossless_no_th_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"size", "500000"},
+                                   {"xoff", "200000"},
+                                   {"xon", "100000"}
+                               });
+        m_dynamicBuffer->addExistingData(&bufferProfileTable);
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+        // Profile should exist in the lookup
+        ASSERT_NE(m_dynamicBuffer->m_bufferProfileLookup.find("lossless_no_th_profile"),
+                  m_dynamicBuffer->m_bufferProfileLookup.end());
+
+        // The threshold_mode should be inherited from the pool (dynamic)
+        auto &losslessProfile = m_dynamicBuffer->m_bufferProfileLookup["lossless_no_th_profile"];
+        ASSERT_EQ(losslessProfile.threshold_mode, "dynamic_th");
+
+        // APPL_DB should have the profile with default dynamic_th ("0"), not empty
+        ASSERT_TRUE(appBufferProfileTable.get("lossless_no_th_profile", fieldValues));
+        bool found_dynamic_th = false;
+        for (auto &fv : fieldValues)
+        {
+            if (fvField(fv) == "dynamic_th")
+            {
+                ASSERT_FALSE(fvValue(fv).empty())
+                    << "dynamic_th must not be empty in APPL_DB (would crash bufferorch)";
+                ASSERT_EQ(fvValue(fv), "0")
+                    << "dynamic_th should default to platform default_dynamic_th";
+                found_dynamic_th = true;
+            }
+        }
+        ASSERT_TRUE(found_dynamic_th)
+            << "dynamic_th field must be present in APPL_DB even when omitted from CONFIG_DB";
+
+        // Create a lossy (non-lossless) profile WITHOUT dynamic_th
+        bufferProfileTable.set("lossy_no_th_profile",
+                               {
+                                   {"pool", "egress_lossy_pool"},
+                                   {"size", "0"}
+                               });
+        m_dynamicBuffer->addExistingData(&bufferProfileTable);
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+        ASSERT_NE(m_dynamicBuffer->m_bufferProfileLookup.find("lossy_no_th_profile"),
+                  m_dynamicBuffer->m_bufferProfileLookup.end());
+
+        // APPL_DB should also have dynamic_th defaulted for the lossy profile
+        fieldValues.clear();
+        ASSERT_TRUE(appBufferProfileTable.get("lossy_no_th_profile", fieldValues));
+        found_dynamic_th = false;
+        for (auto &fv : fieldValues)
+        {
+            if (fvField(fv) == "dynamic_th")
+            {
+                ASSERT_FALSE(fvValue(fv).empty())
+                    << "dynamic_th must not be empty in APPL_DB for lossy profile";
+                ASSERT_EQ(fvValue(fv), "0");
+                found_dynamic_th = true;
+            }
+        }
+        ASSERT_TRUE(found_dynamic_th)
+            << "dynamic_th field must be present in APPL_DB for lossy profile";
+    }
+
+    /*
+     * UPSW-6660: Verify that a buffer profile created without dynamic_th
+     * and without any platform default is NOT written to APPL_DB (early
+     * return path). This covers the case where DEFAULT_LOSSLESS_BUFFER_PARAMETER
+     * does not provide default_dynamic_th.
+     */
+    TEST_F(BufferMgrDynTest, BufferMgrTestMissingDynamicThNoDefaultSkipsApplDb)
+    {
+        vector<FieldValueTuple> fieldValues;
+
+        // Deliberately NOT calling InitDefaultLosslessParameter() so
+        // m_defaultThreshold remains empty
+        InitMmuSize();
+        StartBufferManager();
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+        InitBufferPool();
+
+        // Create a profile WITHOUT dynamic_th and no platform default
+        bufferProfileTable.set("no_default_no_th_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"size", "500000"},
+                                   {"xoff", "200000"},
+                                   {"xon", "100000"}
+                               });
+        m_dynamicBuffer->addExistingData(&bufferProfileTable);
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+        // APPL_DB should NOT have this profile (skipped due to empty threshold)
+        ASSERT_FALSE(appBufferProfileTable.get("no_default_no_th_profile", fieldValues))
+            << "Profile with empty threshold and no platform default must not reach APPL_DB";
+    }
 }

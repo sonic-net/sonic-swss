@@ -898,7 +898,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     vector<FieldValueTuple> fvVector;
 
-    const string &&mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
+    const string mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
 
     if (profile.lossless)
     {
@@ -914,7 +914,31 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     }
     fvVector.emplace_back("size", profile.size);
     fvVector.emplace_back("pool", profile.pool_name);
-    fvVector.emplace_back(mode, profile.threshold);
+
+    // UPSW-6660: When dynamic_th is absent from CONFIG_DB, fall back to the
+    // platform default from DEFAULT_LOSSLESS_BUFFER_PARAMETER.  The SONiC
+    // design doc specifies this behavior: "If only headroom parameters are
+    // provided, the dynamic_th will be taken from default_dynamic_th."
+    // Without this, an empty string reaches APPL_DB and bufferorch crashes
+    // on stol("").
+    string thresholdValue = profile.threshold;
+    if (thresholdValue.empty() &&
+        mode == buffer_dynamic_th_field_name &&
+        !m_defaultThreshold.empty())
+    {
+        thresholdValue = m_defaultThreshold;
+        SWSS_LOG_NOTICE("Buffer profile %s has no %s configured, using platform default %s",
+                         name.c_str(), mode.c_str(), thresholdValue.c_str());
+    }
+
+    if (thresholdValue.empty())
+    {
+        SWSS_LOG_ERROR("Buffer profile %s has empty threshold and no platform default available, skipping APPL_DB write",
+                        name.c_str());
+        return;
+    }
+
+    fvVector.emplace_back(mode, thresholdValue);
 
     m_applBufferProfileTable.set(name, fvVector);
     m_stateBufferProfileTable.set(name, fvVector);
