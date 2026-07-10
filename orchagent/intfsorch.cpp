@@ -506,11 +506,6 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             return false;
         }
 
-        if (gNeighOrch)
-        {
-            gNeighOrch->flushNeighborsOnIntf(alias);
-        }
-
         if (it_intfs->second.ref_count > 0)
         {
             return false;
