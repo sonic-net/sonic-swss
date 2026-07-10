@@ -2379,6 +2379,21 @@ task_process_status MACsecOrch::createMACsecSA(
     SWSS_LOG_NOTICE("MACsec SA %s is created.", port_sci_an.c_str());
 
     recover.clear();
+
+    // If the port is a LAG member, clear the MACsec-down suppression only once
+    // the MACsec data plane is up in both directions. MKA installs the egress
+    // SA before the ingress SA, so gating on both prevents lifting suppression
+    // while inbound traffic would still fail ICV validation. teamsyncd drives
+    // the actual SAI re-enable once LACP selects the member.
+    if (bothDirectionsUp(*ctx.get_macsec_port()))
+    {
+        Port port;
+        if (m_port_orch->getPort(port_name, port))
+        {
+            m_port_orch->setLagMemberState(port, true);
+        }
+    }
+
     return task_success;
 }
 
@@ -2425,6 +2440,20 @@ task_process_status MACsecOrch::deleteMACsecSA(
             SWSS_LOG_WARN("Cannot change the ACL entry action from MACsec flow to packet action");
             result = task_failed;
         }
+
+        // Disable the LAG member only once the MACsec data plane is fully down in
+        // both directions. Deleting the last SA on one SC while the other
+        // direction still has active SAs (asymmetric teardown / rekey) must not
+        // drop the member prematurely -- symmetric with createMACsecSA gating on
+        // bothDirectionsUp().
+        if (bothDirectionsDown(*ctx.get_macsec_port()))
+        {
+            Port port;
+            if (m_port_orch->getPort(port_name, port))
+            {
+                m_port_orch->setLagMemberState(port, false);
+            }
+        }
     }
 
 
@@ -2439,6 +2468,30 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     SWSS_LOG_NOTICE("MACsec SA %s is deleted.", port_sci_an.c_str());
     return result;
+}
+
+bool MACsecOrch::bothDirectionsUp(const MACsecPort &macsec_port) const
+{
+    return hasActiveSaInDirection(macsec_port.m_egress_scs) &&
+           hasActiveSaInDirection(macsec_port.m_ingress_scs);
+}
+
+bool MACsecOrch::bothDirectionsDown(const MACsecPort &macsec_port) const
+{
+    return !hasActiveSaInDirection(macsec_port.m_egress_scs) &&
+           !hasActiveSaInDirection(macsec_port.m_ingress_scs);
+}
+
+bool MACsecOrch::hasActiveSaInDirection(const std::map<sai_uint64_t, MACsecSC> &scs) const
+{
+    for (const auto &sc : scs)
+    {
+        if (!sc.second.m_sa_ids.empty())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool MACsecOrch::createMACsecSA(

@@ -213,6 +213,21 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
+<<<<<<< HEAD
+=======
+    /* PHY port admin state is overriden by parent LAG admin-down */
+    bool                m_lag_forced_admin_down = false;
+    /* MACsec data-plane state for a LAG member. Set false when the last
+     * MACsec SA on the port is torn down (session timeout) so a teamsyncd
+     * refresh of APP_LAG_MEMBER_TABLE does not silently re-enable the member
+     * while MACsec is down.
+     *
+     * Known limitation: this intent is in-memory only and defaults true. If
+     * orchagent/swss restarts (e.g. warm reboot) while MACsec is down, the
+     * member comes back enabled before its SAs are re-established. It is not
+     * reconciled from STATE_DB MACsec SA presence on init. */
+    bool                m_macsec_sa_active = true;
+>>>>>>> 2a3f104c (NOS-10638: Disable LAG member forwarding on MACsec session down (#717))
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_nexthop_group_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;

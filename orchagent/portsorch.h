@@ -295,6 +295,7 @@ public:
     bool decrFdbCount(const string& alias, int count);
 
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
+    void setLagMemberState(Port &port, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
     bool isFrontPanelPort(Port& port);

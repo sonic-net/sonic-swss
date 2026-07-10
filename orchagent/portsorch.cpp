@@ -6519,6 +6519,16 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             /* Sync an enabled member */
             if (status == "enabled")
             {
+                /* If the MACsec data plane on this member is down, suppress the
+                 * teamsyncd-driven re-enable. MACsec controls collection and
+                 * distribution directly until its SAs are re-established. */
+                if (!port.m_macsec_sa_active)
+                {
+                    SWSS_LOG_NOTICE("Skip enabling LAG member %s: MACsec SA inactive",
+                                    port.m_alias.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
                 /* enable collection first, distribution-only mode
                  * is not supported on Mellanox platform
                  */
@@ -11559,6 +11569,78 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
     if (p.m_mtu)
     {
         setPortMtu(p, p.m_mtu);
+    }
+
+    /*
+     * When MACsec is enabled on a port, the MACsec hardware will drop traffic
+     * until the SAs are established. Thus, the MACsec data plane is considered
+     * down (false). When MACsec is disabled on the port, the port returns to
+     * normal cleartext forwarding, so the MACsec data plane constraint is lifted (true).
+     */
+    setLagMemberState(p, !enabled);
+}
+
+void PortsOrch::setLagMemberState(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    /* Nothing to do if the intent is unchanged. Both MACsec SCs going empty on
+     * a session timeout would otherwise drive a redundant disable (and a
+     * duplicate SAI write + log notice) per direction. */
+    if (port.m_macsec_sa_active == enabled)
+    {
+        return;
+    }
+
+    /* Persist the MACsec data-plane intent so that a later teamsyncd refresh
+     * of APP_LAG_MEMBER_TABLE (handled in doLagMemberTask) does not silently
+     * re-enable the member while MACsec is down. Always update this, including
+     * for ports that are not yet (or no longer) LAG members. */
+    port.m_macsec_sa_active = enabled;
+    auto it = m_portList.find(port.m_alias);
+    if (it != m_portList.end())
+    {
+        it->second.m_macsec_sa_active = enabled;
+    }
+
+    const bool is_lag_member = (port.m_lag_member_id != SAI_NULL_OBJECT_ID);
+
+    if (!enabled && is_lag_member)
+    {
+        /* Flap the host interface oper status to force teamd to instantly drop
+         * the LAG member (bypassing the 90s LACP timeout) without permanently
+         * holding carrier down (which would block wpa_supplicant EAPOL). Only
+         * flap LAG members -- doing so on a standalone port would drop routing
+         * adjacencies. */
+        if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+        {
+            SWSS_LOG_NOTICE("Flapping host interface %s to force teamd LACP reset due to MACsec down",
+                            port.m_alias.c_str());
+            setHostIntfsOperStatus(port, false);
+            setHostIntfsOperStatus(port, true);
+        }
+
+        /* Disable collection/distribution directly via SAI rather than writing
+         * APP_LAG_MEMBER_TABLE, to avoid a write race with teamsyncd. */
+        bool distribution_ok = setDistributionOnLagMember(port, false);
+        bool collection_ok = setCollectionOnLagMember(port, false);
+
+        if (!collection_ok || !distribution_ok)
+        {
+            SWSS_LOG_ERROR("Failed to disable collection/distribution on LAG member %s",
+                           port.m_alias.c_str());
+            return;
+        }
+
+        SWSS_LOG_NOTICE("MACsec disabled LAG member %s", port.m_alias.c_str());
+    }
+    else if (enabled && is_lag_member)
+    {
+        /* MACsec data plane is up again. Clear the suppression flag and let
+         * teamsyncd's status=enabled refresh drive SAI re-enable once LACP
+         * completes, avoiding hashing to a member before teamd selects it. */
+        SWSS_LOG_NOTICE("MACsec SA active on %s; awaiting teamsyncd to re-enable LAG member",
+                        port.m_alias.c_str());
     }
 }
 
