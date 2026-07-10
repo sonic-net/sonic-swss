@@ -2088,7 +2088,7 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         // ECN field is 2 bits (RFC 3168): 0=Non-ECT, 1=ECT(1), 2=ECT(0), 3=CE
         if (val > 3)
         {
-            SWSS_LOG_ERROR("ECN_ACTION value %u is out of range (0-3)", val);
+            SWSS_LOG_ERROR("ECN_ACTION value %u is out of range (0-3)", (unsigned int)val);
             return false;
         }
 
