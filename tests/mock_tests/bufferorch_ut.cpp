@@ -1030,12 +1030,16 @@ namespace bufferorch_test
      * optional CONFIG_DB fields are absent. Without the empty-value
      * guards, processBufferProfile calls stol("") which throws
      * std::invalid_argument and crashes orchagent.
+     *
+     * task_invalid_entry is consumed (not retried), so dumpPendingTasks
+     * will be empty. The test verifies the profile is NOT created in SAI
+     * (no entry in buffer type maps) and orchagent doesn't crash.
      */
     TEST_F(BufferOrchTest, BufferOrchTestEmptyNumericFieldsRejected)
     {
         _hook_sai_apis();
-        std::deque<KeyOpFieldsValuesTuple> entries;
         Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        auto &profileMap = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME]);
 
         // Profile with empty dynamic_th (the original UPSW-6660 crash)
         bufferProfileTable.set("empty_th_profile",
@@ -1047,18 +1051,10 @@ namespace bufferorch_test
         gBufferOrch->addExistingData(&bufferProfileTable);
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        // The profile should be rejected (not programmed to SAI)
-        vector<string> ts;
-        gBufferOrch->dumpPendingTasks(ts);
-        ASSERT_FALSE(ts.empty())
-            << "Profile with empty dynamic_th should be rejected, not programmed";
-
-        // Clean up pending tasks
-        entries.push_back({"empty_th_profile", "DEL", {}});
-        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gBufferOrch)->doTask();
-        entries.clear();
+        // task_invalid_entry is consumed, so no pending tasks — but the
+        // profile must NOT have been created in SAI
+        ASSERT_EQ(profileMap.find("empty_th_profile"), profileMap.end())
+            << "Profile with empty dynamic_th must not be created in SAI";
 
         // Profile with empty size
         bufferProfileTable.set("empty_size_profile",
@@ -1070,15 +1066,8 @@ namespace bufferorch_test
         gBufferOrch->addExistingData(&bufferProfileTable);
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        ts.clear();
-        gBufferOrch->dumpPendingTasks(ts);
-        ASSERT_FALSE(ts.empty())
-            << "Profile with empty size should be rejected, not programmed";
-
-        // Clean up
-        entries.push_back({"empty_size_profile", "DEL", {}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(profileMap.find("empty_size_profile"), profileMap.end())
+            << "Profile with empty size must not be created in SAI";
 
         _unhook_sai_apis();
     }

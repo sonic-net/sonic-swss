@@ -898,7 +898,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     vector<FieldValueTuple> fvVector;
 
-    const string &&mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
+    const string mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
 
     if (profile.lossless)
     {
@@ -922,7 +922,9 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     // Without this, an empty string reaches APPL_DB and bufferorch crashes
     // on stol("").
     string thresholdValue = profile.threshold;
-    if (thresholdValue.empty() && !m_defaultThreshold.empty())
+    if (thresholdValue.empty() &&
+        mode == buffer_dynamic_th_field_name &&
+        !m_defaultThreshold.empty())
     {
         thresholdValue = m_defaultThreshold;
         SWSS_LOG_NOTICE("Buffer profile %s has no %s configured, using platform default %s",
