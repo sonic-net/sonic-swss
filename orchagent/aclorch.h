@@ -28,8 +28,12 @@
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
+#define MATCH_SRC_IP_MASK       "SRC_IP_MASK"
+#define MATCH_DST_IP_MASK       "DST_IP_MASK"
 #define MATCH_SRC_IPV6          "SRC_IPV6"
 #define MATCH_DST_IPV6          "DST_IPV6"
+#define MATCH_SRC_IPV6_MASK     "SRC_IPV6_MASK"
+#define MATCH_DST_IPV6_MASK     "DST_IPV6_MASK"
 #define MATCH_L4_SRC_PORT       "L4_SRC_PORT"
 #define MATCH_L4_DST_PORT       "L4_DST_PORT"
 #define MATCH_ETHER_TYPE        "ETHER_TYPE"
@@ -54,6 +58,7 @@
 #define MATCH_INNER_SRC_MAC     "INNER_SRC_MAC"
 #define MATCH_INNER_DST_MAC     "INNER_DST_MAC"
 #define MATCH_INNER_SRC_IP      "INNER_SRC_IP"
+#define MATCH_INNER_SRC_IPV6    "INNER_SRC_IPV6"
 #define MATCH_BTH_OPCODE        "BTH_OPCODE"
 #define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
 #define MATCH_TUNNEL_TERM       "TUNNEL_TERM"
@@ -331,6 +336,8 @@ public:
     virtual bool enableCounter();
     virtual bool disableCounter();
 
+    sai_status_t getLastSaiStatus() const { return m_lastSaiStatus; }
+
     string getId() const;
     string getTableId() const;
     sai_object_id_t getOid() const;
@@ -338,8 +345,10 @@ public:
     bool hasCounter() const;
     vector<sai_object_id_t> getInPorts() const;
     bool getCreateCounter() const;
+    uint32_t getPriority() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
+
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
                                         MirrorOrch *mirror,
                                         DTelOrch *dtel,
@@ -387,9 +396,15 @@ protected:
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
+    sai_status_t m_lastSaiStatus = SAI_STATUS_SUCCESS;
+
+    std::map<std::string, std::string> m_pendingIpFields;
+    std::map<std::string, std::string> m_pendingIpMasks;
 
 private:
+    friend class AclOrch;
     bool m_createCounter;
+    bool processPendingIpFields();
 };
 
 class AclRulePacket: public AclRule

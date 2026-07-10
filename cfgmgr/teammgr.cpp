@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <signal.h>
+#include <netlink/route/link.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -328,7 +329,6 @@ void TeamMgr::cleanTeamProcesses()
 void TeamMgr::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -346,6 +346,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
+            string sys_mac;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -390,6 +391,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     SWSS_LOG_INFO("Get fast_rate `%s`",
                                   fast_rate ? "true" : "false");
                 }
+                else if (fvField(i) == "system_mac")
+                {
+                    sys_mac = fvValue(i);
+                    SWSS_LOG_INFO("Get sys_mac %s.", sys_mac.c_str());
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
@@ -416,6 +422,17 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 setLagTpid(alias, tpid);
                 SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
+            }
+            if (!sys_mac.empty())
+            {
+                if (setLagSysmac(alias, sys_mac))
+                {
+                    SWSS_LOG_NOTICE("Successfully configured %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to configure %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -744,6 +761,107 @@ int TeamMgr::sendIpcToTeamd(const std::string& command, const std::vector<std::s
     SWSS_LOG_INFO("Response from teamd to teammgrd: %s", buffer);
 
     return task_success;
+
+int TeamMgr::update_kernel(const string &alias, const string &system_mac)
+{
+    struct rtnl_link *link;
+    struct rtnl_link *orig_link;
+    int err = 0;
+    struct nl_addr *nl_addr;
+    MacAddress sys_mac(system_mac);
+    struct nl_sock * sockk = nl_socket_alloc();
+    uint32_t ifindex = if_nametoindex(alias.c_str());
+    uint8_t *addr = const_cast<uint8_t *>(sys_mac.getMac());
+
+    if (sockk == NULL) {
+        SWSS_LOG_ERROR("Failed to allocate netlink socket.\n");
+        return -1;
+    }
+    if (nl_connect(sockk, NETLINK_ROUTE) < 0) {
+        SWSS_LOG_ERROR("Failed to connect to netlink.\n");
+        nl_socket_free(sockk);
+        return -1;
+    }
+
+    link = rtnl_link_alloc();
+    if (!link) {
+        SWSS_LOG_ERROR("Unable to create link");
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -ENOMEM;
+    }
+    SWSS_LOG_NOTICE("ifindex %d, mac %02x:%02x:%02x:%02x:%02x:%02x, err %d",
+                ifindex, addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], err);
+    void *mac = (void *)addr;
+    nl_addr = nl_addr_build(AF_UNSPEC, mac, ETHER_ADDR_LEN);
+    if (!nl_addr)
+    {
+        SWSS_LOG_ERROR("Error in update_kernel");
+        err = -ENOMEM;
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return err;
+    }
+
+    rtnl_link_set_addr(link, nl_addr);
+    nl_addr_put(nl_addr); // Release our reference; link now owns the addr
+
+    if (rtnl_link_get_kernel(sockk, 0, alias.c_str(), &orig_link) < 0) {
+        SWSS_LOG_ERROR("Failed to get link for interface %d.\n", ifindex);
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -1;
+    }
+    /* The 4th arg of rtnl_link_change() is a netlink flags bitmask, not the
+     * interface index. The target interface is already identified by
+     * orig_link, so pass 0 here. */
+    if (rtnl_link_change(sockk, orig_link, link, 0) < 0) {
+        SWSS_LOG_ERROR("Failed to change the MAC address.\n");
+        rtnl_link_put(orig_link);
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -1;
+    }
+
+    SWSS_LOG_NOTICE("Successfully changed the MAC address of the interface %d.\n", ifindex);
+
+    rtnl_link_put(orig_link);
+    rtnl_link_put(link);
+    nl_close(sockk);
+    nl_socket_free(sockk);
+    return err;
+}
+
+bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
+{
+    vector<FieldValueTuple> fvs;
+    stringstream    cmd;
+    if (sys_mac == "None") {
+        sys_mac = m_mac.to_string();
+    }
+    FieldValueTuple fv("system_mac", sys_mac);
+    fvs.push_back(fv);
+
+    //update in kernel first
+    int err = this->update_kernel(alias, sys_mac);
+    if (err != 0)
+    {
+        SWSS_LOG_ERROR("Failed to update kernel for %s with system_mac %s, error %d",
+                       alias.c_str(), sys_mac.c_str(), err);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Successfully updated kernel for %s with system_mac %s",
+                    alias.c_str(), sys_mac.c_str());
+
+    //Update in APP_DB only after successful kernel update
+    m_appLagTable.set(alias, fvs);
+    //Update in State_DB only after successful kernel update
+    m_stateLagTable.set(alias, fvs);
+    return true;
 }
 
 task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)

@@ -502,5 +502,117 @@ namespace portphyserdesattr_test
         // Cleanup
         gPortsOrch->clearPortPhySerdesAttrCounterMap();
     }
+
+    // Covers clearPortPhySerdesAttrCounterMap() when a PHY port has no serdes OID (WARN path).
+    TEST_F(PortSerdesAttrTest, ClearPortPhySerdesAttrCounterMap_NoSerdesObject)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        sai_object_id_t phy_port_id = SAI_NULL_OBJECT_ID;
+        for (const auto &it : gPortsOrch->m_portList)
+        {
+            if (it.second.m_type == Port::Type::PHY)
+            {
+                phy_port_id = it.second.m_port_id;
+                gPortsOrch->m_portIdToSerdesId.erase(phy_port_id);
+                break;
+            }
+        }
+        ASSERT_NE(phy_port_id, SAI_NULL_OBJECT_ID);
+
+        gPortsOrch->clearPortPhySerdesAttrCounterMap();
+    }
+
+    /*
+     * Regression test for sonic-buildimage#25165: if a port's configuration
+     * fails to parse (here, a serdes value missing the "0x" prefix), the port
+     * must not be left stranded in m_pendingPortSet. Otherwise allPortsReady()
+     * stays false forever and orchagent stops making progress on every other
+     * port.
+     */
+    TEST_F(PortSerdesAttrTest, ParseFailureDoesNotStrandPendingPort)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        const std::string alias = "Ethernet0";
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort(alias, p));
+
+        // Emulate the warm-reboot bake() path, which pre-loads every port into
+        // m_pendingPortSet; allPortsReady() (and thus all further processing)
+        // is gated on this set draining.
+        gPortsOrch->m_pendingPortSet.emplace(alias);
+        ASSERT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 1u);
+
+        // Push an update carrying an unparseable serdes value, which makes
+        // PortHelper::parsePortConfig() fail for this port.
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ alias, "SET", { { "idriver", "0" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // The bad port must be dropped from the pending set instead of being
+        // stranded there forever.
+        EXPECT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 0u);
+    }
+
+    /*
+     * Same regression (sonic-buildimage#25165) for the not-yet-created port
+     * path: a parse failure in the !portExists branch of doPortTask must also
+     * drop the port from m_pendingPortSet.
+     */
+    TEST_F(PortSerdesAttrTest, ParseFailureNewPortDropsPending)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        const std::string alias = "Ethernet512";
+        ASSERT_EQ(gPortsOrch->m_portList.count(alias), 0u); // not yet created
+
+        gPortsOrch->m_pendingPortSet.emplace(alias);
+        ASSERT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 1u);
+
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ alias, "SET", { { "idriver", "0" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        EXPECT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 0u);
+    }
+
+    /*
+     * Same regression (sonic-buildimage#25165) for the validation-failure
+     * path: a not-yet-created port whose config parses but fails
+     * validatePortConfig (missing mandatory lanes/speed) must also be dropped
+     * from m_pendingPortSet.
+     */
+    TEST_F(PortSerdesAttrTest, ValidateFailureNewPortDropsPending)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        const std::string alias = "Ethernet513";
+        ASSERT_EQ(gPortsOrch->m_portList.count(alias), 0u); // not yet created
+
+        gPortsOrch->m_pendingPortSet.emplace(alias);
+        ASSERT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 1u);
+
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        // Parses fine but misses mandatory lanes/speed, so validatePortConfig()
+        // returns false.
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ alias, "SET", { { "admin_status", "up" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        EXPECT_EQ(gPortsOrch->m_pendingPortSet.count(alias), 0u);
+    }
 } // namespace portphyserdesattr_test
 

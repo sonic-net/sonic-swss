@@ -63,6 +63,7 @@ jobs:
       ls -A1 | xargs -I{} sudo rm -rf {}
     displayName: "Clean workspace"
   - checkout: self
+  - template: merge-target-branch.yml
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.docker_sonic_vs_name }}
@@ -89,10 +90,8 @@ jobs:
       path: $(Build.ArtifactStagingDirectory)/download
       artifact: common-lib
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
-        target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
     displayName: "Download libyang from common lib"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -135,10 +134,19 @@ jobs:
       sudo .azure-pipelines/build_and_install_module.sh
 
       # Install libyang packages from downloaded artifacts
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+      sudo apt-get  install -y \
+        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang3_*.deb \
+        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+
+      # python3-libyang's bookworm .deb pins python3 (>= 3.11~, << 3.12)
+      # and the sonictest pool host runs Ubuntu 22.04 (python 3.10), so the
+      # .deb won't install regardless of resolver. Build the Python bindings
+      # from PyPI instead — same fallback as the inline amd64/ubuntu-22.04
+      # job. --no-build-isolation + apt's python3-cffi sidesteps a cffi
+      # version-mismatch Exception that jammy's pip 22.0.2 build-isolation
+      # env otherwise triggers.
+      sudo apt-get install -y python3-cffi
+      sudo pip3 install --no-build-isolation 'libyang==3.3.0'
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb

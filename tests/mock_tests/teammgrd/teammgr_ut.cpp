@@ -12,6 +12,11 @@ using namespace testing;  // <-- Needed to use EXPECT_CALL, DoAll, Return, etc.
 using namespace boost::mpl::placeholders;  // Optional, if using Boost placeholders
 
 std::function<int(const std::string &, const std::vector<std::string> &)> g_mock_send_ipc_to_teamd;
+#include <net/if.h>
+#include <netlink/addr.h>
+#include <netlink/netlink.h>
+#include <netlink/route/link.h>
+#include <netlink/socket.h>
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
@@ -20,6 +25,99 @@ static std::map<std::string, std::FILE*> pidFiles;
 
 static int (*callback_kill)(pid_t pid, int sig) = NULL;
 static std::pair<bool, FILE*> (*callback_fopen)(const char *pathname, const char *mode) = NULL;
+static bool mock_nl_socket_alloc_fail = false;
+static int mock_nl_connect_result = 0;
+static bool mock_rtnl_link_alloc_fail = false;
+static bool mock_nl_addr_build_fail = false;
+static int mock_rtnl_link_get_kernel_result = 0;
+static int mock_rtnl_link_change_result = 0;
+static std::string mock_if_nametoindex_name;
+static std::vector<std::string> mock_kernel_mac_updates;
+
+extern "C" {
+
+struct nl_sock *__wrap_nl_socket_alloc(void)
+{
+    if (mock_nl_socket_alloc_fail)
+    {
+        return nullptr;
+    }
+    static char fake_sock_mem[256];
+    return reinterpret_cast<struct nl_sock *>(fake_sock_mem);
+}
+
+void __wrap_nl_socket_free(struct nl_sock *)
+{
+}
+
+int __wrap_nl_connect(struct nl_sock *, int)
+{
+    return mock_nl_connect_result;
+}
+
+void __wrap_nl_close(struct nl_sock *)
+{
+}
+
+unsigned int __wrap_if_nametoindex(const char *ifname)
+{
+    mock_if_nametoindex_name = ifname;
+    return 17;
+}
+
+struct rtnl_link *__wrap_rtnl_link_alloc(void)
+{
+    if (mock_rtnl_link_alloc_fail)
+    {
+        return nullptr;
+    }
+    static char fake_link_mem[256];
+    return reinterpret_cast<struct rtnl_link *>(fake_link_mem);
+}
+
+void __wrap_rtnl_link_put(struct rtnl_link *)
+{
+}
+
+struct nl_addr *__wrap_nl_addr_build(int, const void *buf, size_t size)
+{
+    const auto *mac = reinterpret_cast<const uint8_t *>(buf);
+    char text[18];
+    snprintf(text, sizeof(text), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    mock_kernel_mac_updates.emplace_back(text);
+
+    if (mock_nl_addr_build_fail)
+    {
+        return nullptr;
+    }
+
+    static char fake_addr_mem[256];
+    return reinterpret_cast<struct nl_addr *>(fake_addr_mem);
+}
+
+void __wrap_nl_addr_put(struct nl_addr *)
+{
+}
+
+void __wrap_rtnl_link_set_addr(struct rtnl_link *, struct nl_addr *)
+{
+}
+
+int __wrap_rtnl_link_get_kernel(struct nl_sock *, int, const char *, struct rtnl_link **result)
+{
+    static char fake_orig_link_mem[256];
+    *result = reinterpret_cast<struct rtnl_link *>(fake_orig_link_mem);
+    return mock_rtnl_link_get_kernel_result;
+}
+
+int __wrap_rtnl_link_change(struct nl_sock *, struct rtnl_link *, struct rtnl_link *, int flags)
+{
+    EXPECT_EQ(flags, 0);
+    return mock_rtnl_link_change_result;
+}
+
+}
 
 int send_ipc_to_teamd(const std::string &method, const std::vector<std::string> &args)
 {
@@ -181,6 +279,14 @@ namespace teammgr_ut
             mockCallArgs.clear();
             mockKillCommands.clear();
             pidFiles.clear();
+            mock_nl_socket_alloc_fail = false;
+            mock_nl_connect_result = 0;
+            mock_rtnl_link_alloc_fail = false;
+            mock_nl_addr_build_fail = false;
+            mock_rtnl_link_get_kernel_result = 0;
+            mock_rtnl_link_change_result = 0;
+            mock_if_nametoindex_name.clear();
+            mock_kernel_mac_updates.clear();
             callback = cb;
             callback_kill = cb_kill;
             callback_fopen = cb_fopen;
@@ -309,5 +415,138 @@ namespace teammgr_ut
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
+    TEST_F(TeamMgrTest, testSetLagSysmacUpdatesKernelAppAndState)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+
+        std::string sys_mac = "02:03:04:05:06:07";
+        EXPECT_TRUE(teammgr.setLagSysmac("PortChannel100", sys_mac));
+
+        EXPECT_EQ(mock_if_nametoindex_name, "PortChannel100");
+        ASSERT_EQ(mock_kernel_mac_updates.size(), 1u);
+        EXPECT_EQ(mock_kernel_mac_updates[0], "02:03:04:05:06:07");
+
+        swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
+        swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        ASSERT_TRUE(appLagTable.get("PortChannel100", values));
+        ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(fvField(values[0]), "system_mac");
+        EXPECT_EQ(fvValue(values[0]), "02:03:04:05:06:07");
+
+        values.clear();
+        ASSERT_TRUE(stateLagTable.get("PortChannel100", values));
+        ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(fvField(values[0]), "system_mac");
+        EXPECT_EQ(fvValue(values[0]), "02:03:04:05:06:07");
+    }
+
+    TEST_F(TeamMgrTest, testSetLagSysmacNoneUsesDeviceMac)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+
+        std::string sys_mac = "None";
+        EXPECT_TRUE(teammgr.setLagSysmac("PortChannel101", sys_mac));
+        EXPECT_EQ(sys_mac, "01:23:45:67:89:ab");
+
+        ASSERT_EQ(mock_kernel_mac_updates.size(), 1u);
+        EXPECT_EQ(mock_kernel_mac_updates[0], "01:23:45:67:89:ab");
+    }
+
+    TEST_F(TeamMgrTest, testSetLagSysmacKernelFailureDoesNotPublish)
+    {
+        mock_rtnl_link_change_result = -1;
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+
+        std::string sys_mac = "02:03:04:05:06:07";
+        EXPECT_FALSE(teammgr.setLagSysmac("PortChannel102", sys_mac));
+
+        swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
+        swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_FALSE(appLagTable.get("PortChannel102", values));
+        EXPECT_FALSE(stateLagTable.get("PortChannel102", values));
+    }
+
+    TEST_F(TeamMgrTest, testSetLagSysmacKernelFailureModes)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
+        swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
+
+        auto expectFailure = [&](const std::string &alias) {
+            std::vector<swss::FieldValueTuple> values;
+            std::string sys_mac = "02:03:04:05:06:07";
+            EXPECT_FALSE(teammgr.setLagSysmac(alias, sys_mac));
+            EXPECT_FALSE(appLagTable.get(alias, values));
+            values.clear();
+            EXPECT_FALSE(stateLagTable.get(alias, values));
+        };
+
+        mock_nl_socket_alloc_fail = true;
+        expectFailure("PortChannel110");
+        mock_nl_socket_alloc_fail = false;
+
+        mock_nl_connect_result = -1;
+        expectFailure("PortChannel111");
+        mock_nl_connect_result = 0;
+
+        mock_rtnl_link_alloc_fail = true;
+        expectFailure("PortChannel112");
+        mock_rtnl_link_alloc_fail = false;
+
+        mock_nl_addr_build_fail = true;
+        expectFailure("PortChannel113");
+        mock_nl_addr_build_fail = false;
+
+        mock_rtnl_link_get_kernel_result = -1;
+        expectFailure("PortChannel114");
+        mock_rtnl_link_get_kernel_result = 0;
+    }
+
+    TEST_F(TeamMgrTest, testDoLagTaskHandlesSystemMacFailure)
+    {
+        mock_rtnl_link_get_kernel_result = -1;
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel115", {
+            {"admin_status", "up"},
+            {"mtu", "9100"},
+            {"system_mac", "02:03:04:05:06:07"}
+        });
+
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+
+        swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_FALSE(stateLagTable.get("PortChannel115", values));
+    }
+
+    TEST_F(TeamMgrTest, testDoLagTaskProgramsSystemMac)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel103", {
+            {"admin_status", "up"},
+            {"mtu", "9100"},
+            {"learn_mode", "drop"},
+            {"tpid", "0x8100"},
+            {"fast_rate", "true"},
+            {"system_mac", "02:03:04:05:06:07"}
+        });
+
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+
+        ASSERT_EQ(mock_kernel_mac_updates.size(), 1u);
+        EXPECT_EQ(mock_kernel_mac_updates[0], "02:03:04:05:06:07");
+
+        swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        ASSERT_TRUE(appLagTable.get("PortChannel103", values));
+        EXPECT_TRUE(std::any_of(values.begin(), values.end(), [](const auto &fv) {
+            return fvField(fv) == "system_mac" && fvValue(fv) == "02:03:04:05:06:07";
+        }));
     }
 }

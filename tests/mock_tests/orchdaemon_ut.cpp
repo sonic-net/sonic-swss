@@ -8,8 +8,12 @@
 #include "mock_sai_switch.h"
 #include "saihelper.h"
 
+#include <csignal>
+
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
+
+extern volatile sig_atomic_t gOrchShutdownRequested;
 
 namespace orchdaemon_test
 {
@@ -128,6 +132,35 @@ namespace orchdaemon_test
         orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
     }
 
+    TEST_F(OrchDaemonTest, RingThreadTeardownSafeWhenRingDisabled)
+    {
+        // Reproduces the scenario fixed alongside PR #4400's graceful
+        // shutdown path: OrchDaemon::start() always launches ring_thread,
+        // but popRingBuffer() returns immediately when gRingBuffer is null
+        // (ring mode disabled). The destructor must not dereference the
+        // null gRingBuffer while tearing down a joinable ring_thread.
+
+        // Ring mode intentionally left disabled: do NOT call enableRingBuffer.
+        EXPECT_EQ(orchd->gRingBuffer, nullptr);
+
+        // Mimic OrchDaemon::start() unconditionally launching the ring thread.
+        orchd->ring_thread = std::thread(&OrchDaemon::popRingBuffer, orchd);
+
+        // popRingBuffer() returns immediately when gRingBuffer is null, but
+        // ring_thread stays joinable until the destructor joins it.
+        while (!orchd->ring_thread.joinable())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_TRUE(orchd->ring_thread.joinable());
+
+        // Destructor must be safe in this state (previously null-deref'd).
+        delete orchd;
+
+        // Restore fixture invariants for the remaining test cases.
+        orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
+    }
+
     TEST_F(OrchDaemonTest, PushRingBuffer)
     {
         orchd->enableRingBuffer();
@@ -217,6 +250,55 @@ namespace orchdaemon_test
         orchd->flush();
 
         orchd->disableRingBuffer();
+    }
+
+    static int gMockExitCallCount;
+    static int gMockExitStatus;
+
+    static void mock_exit_fn(int status)
+    {
+        gMockExitCallCount++;
+        gMockExitStatus = status;
+    }
+
+    class GracefulShutdownExitTest : public ::testing::Test
+    {
+        protected:
+            void SetUp() override
+            {
+                gMockExitCallCount = 0;
+                gMockExitStatus = -1;
+                gOrchShutdownRequested = 0;
+            }
+
+            void TearDown() override
+            {
+                gOrchShutdownRequested = 0;
+                Recorder::Instance().swss.setAsync(false);
+            }
+    };
+
+    TEST_F(GracefulShutdownExitTest, NoShutdownRequestedDoesNotExit)
+    {
+        Recorder::Instance().swss.setAsync(true);
+
+        exit_if_graceful_shutdown_requested(mock_exit_fn);
+
+        EXPECT_EQ(gMockExitCallCount, 0);
+        // The recorder must be left untouched when no shutdown was requested.
+        EXPECT_TRUE(Recorder::Instance().swss.isAsyncEnabled());
+    }
+
+    TEST_F(GracefulShutdownExitTest, ShutdownRequestDrainsRecorderAndExits)
+    {
+        Recorder::Instance().swss.setAsync(true);
+        gOrchShutdownRequested = SIGTERM;
+
+        exit_if_graceful_shutdown_requested(mock_exit_fn);
+
+        EXPECT_EQ(gMockExitCallCount, 1);
+        EXPECT_EQ(gMockExitStatus, 0);
+        EXPECT_FALSE(Recorder::Instance().swss.isAsyncEnabled());
     }
 
 }

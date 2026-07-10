@@ -22,7 +22,11 @@ public:
     int sendIpcToTeamd(const std::string& command,
                       const std::vector<std::string>& args);
     void cleanTeamProcesses();
+
     void ipcCleanup();
+
+    bool setLagSysmac(const std::string &alias, std::string &sys_mac);
+
 
 private:
     Table m_cfgMetadataTable;   // To retrieve MAC address
@@ -57,6 +61,7 @@ private:
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
     bool setLagTpid(const std::string &alias, const std::string &tpid);
+    int update_kernel(const std::string &alias, const std::string &system_mac);
 
     bool isPortEnslaved(const std::string &);
     bool findPortMaster(std::string &, const std::string &);

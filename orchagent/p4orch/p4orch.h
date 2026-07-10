@@ -68,13 +68,14 @@ class P4Orch : public ZmqOrch
     void doTask(ConsumerBase &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doTask(swss::NotificationConsumer &consumer);
+    ObjectManagerInterface* findManager(const std::string key,
+                                        std::string& table_name);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
-    ReturnCode drain(const std::string& op);
+    ReturnCode drain();
     void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
     // P4 object manager request processing order.
     std::vector<ObjectManagerInterface*> m_p4ManagerAddPrecedence;
-    std::vector<ObjectManagerInterface*> m_p4ManagerDelPrecedence;
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
@@ -94,6 +95,9 @@ class P4Orch : public ZmqOrch
     std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
     std::unique_ptr<TunnelDecapGroupManager> m_tunnelDecapGroupManager;
     std::unique_ptr<ExtTablesManager> m_extTablesManager;
+
+    // DBConnector backing the port-state notification consumer.
+    std::shared_ptr<swss::DBConnector> m_notificationsDb;
 
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;

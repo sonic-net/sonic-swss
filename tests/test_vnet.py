@@ -3489,6 +3489,256 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet4", "down")
 
 
+    '''
+    Test 36 - Test for pinned state change
+    '''
+    def test_vnet_orch_36(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_36'
+        vnet_name = 'vnet36'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        self.create_l3_intf("Ethernet4", "")
+        self.add_ip_address("Ethernet4", "9.1.0.1/32")
+        self.set_admin_status("Ethernet4", "up")
+        self.add_neighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05")
+
+        '''
+        Local Endpoint: (DPU)9.1.0.1
+        Remote Endpoints: (NPU)10.1.0.1 -> (DPU)9.1.0.2
+        '''
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100, pinned_state="none,none")
+
+        # default monitor status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        time.sleep(2)
+        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Pinned state change, set primary's pinned state to down, route should switch to backup endpoint
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="down,none")
+        time.sleep(2)
+        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['10.1.0.1'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['10.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Pinned state change, set primary's pinned state to none, route should come up with primary endpoint
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="none,none")
+        time.sleep(2)
+        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Pinned state change, set primary's pinned state to up, route should remain on primary endpoint when BFD is down
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="up,none")
+        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
+        time.sleep(2)
+        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Confirm the monitor sessions are removed
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2'])
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+        self.remove_neighbor("Ethernet4", "9.1.0.1")
+        self.remove_ip_address("Ethernet4", "9.1.0.1/32")
+        self.set_admin_status("Ethernet4", "down")
+
+
+    '''
+    VNET tunnel route with a directly-connected local endpoint.
+    '''
+    def test_vnet_orch_local_endpoint_alias_resolution(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        tunnel_name = 'tunnel_local_ep'
+        vnet_name = 'Vnet_local_ep'
+        route_prefix = '103.100.1.1/32'
+        ecmp_route_prefix = '103.100.1.2/32'
+        endpoint = '20.20.20.5'
+        ecmp_endpoint = '20.20.20.7'
+        backup_endpoint = '20.20.20.6'
+        neighbor_mac = '00:01:02:03:04:05'
+        ecmp_neighbor_mac = '00:01:02:03:04:07'
+
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+
+        try:
+            self.create_l3_intf("Ethernet0", "")
+            self.add_ip_address("Ethernet0", "20.20.20.1/24")
+            self.set_admin_status("Ethernet0", "down")
+            time.sleep(1)
+            self.set_admin_status("Ethernet0", "up")
+
+            create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+            create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
+            vnet_obj.check_vnet_entry(dvs, vnet_name)
+            vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
+            vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+            # Add the route before the neighbor exists, so the cached NextHopKey
+            # must resolve the local interface when the monitor later goes up.
+            create_vnet_routes(dvs, route_prefix, vnet_name, "%s,%s" % (endpoint, backup_endpoint),
+                               ep_monitor="%s,%s" % (endpoint, backup_endpoint), primary=endpoint,
+                               monitoring='custom', check_directly_connected=True)
+            create_vnet_routes(dvs, ecmp_route_prefix, vnet_name, "%s,%s" % (endpoint, ecmp_endpoint),
+                               ep_monitor="%s,%s" % (endpoint, ecmp_endpoint), primary="%s,%s" % (endpoint, ecmp_endpoint),
+                               monitoring='custom', check_directly_connected=True)
+            self.add_neighbor("Ethernet0", endpoint, neighbor_mac)
+            self.add_neighbor("Ethernet0", ecmp_endpoint, ecmp_neighbor_mac)
+            update_monitor_session_state(dvs, route_prefix, endpoint, 'up')
+            update_monitor_session_state(dvs, ecmp_route_prefix, endpoint, 'up')
+            update_monitor_session_state(dvs, ecmp_route_prefix, ecmp_endpoint, 'up')
+            time.sleep(2)
+
+            nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP, set())
+            tbl_nh = swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
+            neighbor_nh = None
+            for nhid in nhids:
+                status, nh_fvs = tbl_nh.get(nhid)
+                nh_fvs = dict(nh_fvs)
+                assert status
+                if nh_fvs.get('SAI_NEXT_HOP_ATTR_IP') == endpoint and nh_fvs.get('SAI_NEXT_HOP_ATTR_TYPE') == 'SAI_NEXT_HOP_TYPE_IP':
+                    neighbor_nh = nhid
+                    break
+            assert neighbor_nh is not None
+
+            def _access_function():
+                for route_key in self.adb.get_keys(vnet_obj.ASIC_ROUTE_ENTRY):
+                    route_entry = json.loads(route_key)
+                    if route_entry["dest"] == route_prefix:
+                        return (True, self.adb.get_entry(vnet_obj.ASIC_ROUTE_ENTRY, route_key))
+                return (False, None)
+
+            _, route = wait_for_result(_access_function)
+            assert route["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == neighbor_nh
+
+            def _ecmp_route_function():
+                for route_key in self.adb.get_keys(vnet_obj.ASIC_ROUTE_ENTRY):
+                    route_entry = json.loads(route_key)
+                    if route_entry["dest"] == ecmp_route_prefix:
+                        return (True, route_key)
+                return (False, None)
+
+            _, ecmp_route_key = wait_for_result(_ecmp_route_function)
+            vnet_obj.check_vnet_local_route_nexthops(dvs, ecmp_route_key, [endpoint, ecmp_endpoint])
+
+        finally:
+            self.cdb.delete_entry("VNET_ROUTE_TUNNEL", "%s|%s" % (vnet_name, ecmp_route_prefix))
+            self.cdb.delete_entry("VNET_ROUTE_TUNNEL", "%s|%s" % (vnet_name, route_prefix))
+            self.remove_neighbor("Ethernet0", ecmp_endpoint)
+            self.remove_neighbor("Ethernet0", endpoint)
+            delete_vnet_entry(dvs, vnet_name)
+            delete_vxlan_tunnel(dvs, tunnel_name)
+            self.remove_ip_address("Ethernet0", "20.20.20.1/24")
+            self.set_admin_status("Ethernet0", "down")
+            self.cdb.delete_entry("INTERFACE", "Ethernet0")
+
+
+    '''
+    IP2Me link-local trap route install test for VNET VRs(fe80::/10 tracp to CPU route)
+    '''
+    def test_vnet_ip2me_link_local(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = "tunnel_ip2me"
+        vnet_name = "Vnet_ip2me"
+
+        vnet_obj.fetch_exist_entries(dvs)
+        pre_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        default_vr = get_default_vr_id(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, "10.10.10.10")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, "20001", "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        time.sleep(2)
+
+        post_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        new_routes = post_routes - pre_routes
+        print("DBG new_route_count=%d" % len(new_routes))
+        for r in sorted(new_routes):
+            print("DBG new_route: %s" % r)
+
+        ll_keys = []
+        ll_prefixes = []
+        for key in new_routes:
+            try:
+                payload = json.loads(key)
+            except (ValueError, IndexError):
+                continue
+            dest = payload.get("dest", "")
+            if dest.startswith("fe80:"):
+                ll_keys.append(key)
+                ll_prefixes.append(dest)
+
+        assert ll_prefixes == ["fe80::/10"], (
+            "Expected exactly one link-local trap route fe80::/10 in VNET VR, "
+            "got %s; full new_routes=%s" % (ll_prefixes, sorted(new_routes))
+        )
+
+        rt_tbl = swsscommon.Table(asic_db, vnet_obj.ASIC_ROUTE_ENTRY)
+        for k in ll_keys:
+            payload = json.loads(k)
+            assert payload.get("vr") and payload["vr"] != default_vr, (
+                "Link-local route %s programmed in default VR" % k
+            )
+            status, fvs = rt_tbl.get(k)
+            assert status, "Failed to fetch attributes for %s" % k
+            attrs = dict(fvs)
+            action = attrs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION")
+            assert action == "SAI_PACKET_ACTION_FORWARD", (
+                "Link-local route %s action=%s, expected FORWARD-to-CPU" % (k, action)
+            )
+            nh = attrs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
+            assert nh, "Link-local route %s missing next hop (CPU port)" % k
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        time.sleep(2)
+
+        final_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        for k in ll_keys:
+            assert k not in final_routes, (
+                "Link-local trap route %s not cleaned up after VNET delete" % k
+            )
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

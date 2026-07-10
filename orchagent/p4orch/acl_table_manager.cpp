@@ -10,9 +10,12 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/crmorch.h"
 #include "orch.h"
 #include "p4orch.h"
 #include "p4orch/acl_util.h"
+#include "orchagent/p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
@@ -76,7 +79,10 @@ std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField &udf_field)
 } // namespace
 
 AclTableManager::AclTableManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    : m_p4OidMapper(p4oidMapper), m_publisher(publisher)
+    : m_p4OidMapper(p4oidMapper),
+      m_asic_db("ASIC_DB", 0),
+      m_asic_state_table(&m_asic_db, "ASIC_STATE"),
+      m_publisher(publisher)
 {
     SWSS_LOG_ENTER();
 
@@ -1235,8 +1241,6 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
 
 std::string AclTableManager::verifyStateAsicDb(
     P4AclTableDefinition* acl_table) {
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
 
   // Verify table.
   auto attrs_or = getTableSaiAttrs(*acl_table);
@@ -1252,7 +1256,7 @@ std::string AclTableManager::verifyStateAsicDb(
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE) + ":" +
                     sai_serialize_object_id(acl_table->table_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
   std::string err_msg =
@@ -1270,7 +1274,7 @@ std::string AclTableManager::verifyStateAsicDb(
   key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER) +
         ":" + sai_serialize_object_id(acl_table->group_member_oid);
   values.clear();
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
   err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
@@ -1301,7 +1305,7 @@ std::string AclTableManager::verifyStateAsicDb(
       key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF_GROUP) + ":" +
             sai_serialize_object_id(udf_group_oid);
       values.clear();
-      if (!table.get(key, values)) {
+      if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
       }
       err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
@@ -1323,7 +1327,7 @@ std::string AclTableManager::verifyStateAsicDb(
       key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF) + ":" +
             sai_serialize_object_id(udf_oid);
       values.clear();
-      if (!table.get(key, values)) {
+      if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
       }
       err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
