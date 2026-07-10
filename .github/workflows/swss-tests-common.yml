@@ -306,13 +306,21 @@ jobs:
             cd /build/sonic-swss
           fi
 
-          # ── Phase 2: Configure (coverage for diff-cover) ──
+          # ── Phase 2: Configure (ai_fabric profile + coverage) ──
+          AI_FABRIC_OPTS="--disable-p4rt --disable-dash --disable-nat --disable-macsec"
+          AI_FABRIC_OPTS+=" --disable-dtel --disable-stp"
+          AI_FABRIC_OPTS+=" --disable-mlag --disable-gearsyncd --disable-chassis"
+          AI_FABRIC_OPTS+=" --disable-pbh --disable-nvgre --disable-twamp --disable-icmp-offload"
+          AI_FABRIC_OPTS+=" --disable-cbf --disable-mpls"
+          AI_FABRIC_OPTS+=" --disable-debug-counter --disable-multi-asic-vendor"
+          COV_FLAGS="--coverage -O0 -g"
+
           cd /build/sonic-swss
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lcov >/dev/null 2>&1 || true
           ./autogen.sh >/dev/null 2>&1
-          ./configure CFLAGS="--coverage -O0 -g" CXXFLAGS="--coverage -O0 -g" LDFLAGS="--coverage" \
-            >/dev/null 2>&1 || { echo "FAIL: configure failed"; ./configure \
-            CFLAGS="--coverage -O0 -g" CXXFLAGS="--coverage -O0 -g" LDFLAGS="--coverage"; exit 1; }
+          ./configure $AI_FABRIC_OPTS CFLAGS="$COV_FLAGS" CXXFLAGS="$COV_FLAGS" LDFLAGS="--coverage" \
+            >/dev/null 2>&1 || { echo "FAIL: configure failed"; \
+            ./configure $AI_FABRIC_OPTS CFLAGS="$COV_FLAGS" CXXFLAGS="$COV_FLAGS" LDFLAGS="--coverage"; exit 1; }
 
           # ── Phase 3: Build ──
           echo "=== Phase 3: make (V=0, -j$(nproc)) ==="
@@ -367,7 +375,7 @@ jobs:
           else
             echo "=== Phase 6: dpkg-buildpackage ==="
             SECONDS=0
-            if ! DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -us -uc -b -j$(nproc) -d > /tmp/dpkg.log 2>&1; then
+            if ! SONIC_BUILD_PROFILE=ai_fabric DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -us -uc -b -j$(nproc) -d > /tmp/dpkg.log 2>&1; then
               tail -50 /tmp/dpkg.log
               echo "=== dpkg-buildpackage FAILED ==="
               exit 1

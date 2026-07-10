@@ -44,7 +44,9 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+#ifdef INCLUDE_CHASSIS
 extern FabricPortsOrch *gFabricPortsOrch;
+#endif
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
@@ -86,7 +88,9 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_PHY_SERDES_ATTR", PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_DEBUG_COUNTER
     {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
+#endif
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
@@ -96,14 +100,18 @@ unordered_map<string, string> flexCounterGroupMap =
     {BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_DEBUG_COUNTER
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+#endif
     {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_MACSEC
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
+#endif
 #ifdef INCLUDE_DASH
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"DASH_METER", METER_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -186,10 +194,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
         return;
     }
 
+#ifdef INCLUDE_CHASSIS
     if (gFabricPortsOrch && !gFabricPortsOrch->allPortsReady())
     {
         return;
     }
+#endif
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -308,10 +318,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
                     }
+#ifdef INCLUDE_CHASSIS
                     if (gFabricPortsOrch)
                     {
                         gFabricPortsOrch->generateQueueStats();
                     }
+#endif
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();

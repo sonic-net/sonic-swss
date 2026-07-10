@@ -50,9 +50,9 @@ jobs:
               "",
               "| Stage | Result |",
               "|-------|--------|",
-              f"| Build + mock tests + S3 baseline coverage gate + cargo (self-hosted) | {icon.get(result, result)} {result} |",
+              f"| Build (ai_fabric profile) + mock tests + coverage gate + cargo (self-hosted) | {icon.get(result, result)} {result} |",
               "",
-              "_Runs on runner label `sonic-build-202511` with sonic-slave-bookworm and buildimage debs._",
+              "_Validates with `SONIC_BUILD_PROFILE=ai_fabric` flags on runner label `sonic-build-202511`._",
               "",
           ]
 

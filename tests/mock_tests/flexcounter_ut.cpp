@@ -1070,6 +1070,7 @@ namespace flexcounter_test
         }
     };
 
+#ifdef INCLUDE_DASH
     TEST_F(StandaloneFCTest, TestEniStatusUpdate)
     {
         /* Add a mock ENI */
@@ -1086,6 +1087,7 @@ namespace flexcounter_test
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
     }
+#endif
 
     TEST_F(StandaloneFCTest, TestCaching)
     {
@@ -1179,6 +1181,7 @@ namespace flexcounter_test
                                      }));
     }
 
+#ifdef INCLUDE_DASH
     class MeterStatFlexCounterTest : public MockOrchTest
     {
         virtual void PostSetUp() {
@@ -1206,4 +1209,5 @@ namespace flexcounter_test
         m_DashMeterOrch->handleMeterFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
+#endif
 }

@@ -132,9 +132,7 @@ tests_SOURCES += dashenifwdorch_ut.cpp \
                 mock_dash_orch_test.cpp
 endif
 
-if INCLUDE_P4RT
 tests_SOURCES += $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
-endif
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN) $(tests_INCLUDES) \
