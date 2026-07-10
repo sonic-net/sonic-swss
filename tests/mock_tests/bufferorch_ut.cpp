@@ -1020,4 +1020,66 @@ namespace bufferorch_test
             ASSERT_FALSE(value.empty());
         }
     }
+
+    /*
+     * UPSW-6660: Verify that bufferorch rejects buffer profiles with empty
+     * numeric fields (dynamic_th, size, etc.) instead of crashing via
+     * stol("")/stoul("").
+     *
+     * buffermgrd can propagate empty strings for numeric fields when
+     * optional CONFIG_DB fields are absent. Without the empty-value
+     * guards, processBufferProfile calls stol("") which throws
+     * std::invalid_argument and crashes orchagent.
+     */
+    TEST_F(BufferOrchTest, BufferOrchTestEmptyNumericFieldsRejected)
+    {
+        _hook_sai_apis();
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+
+        // Profile with empty dynamic_th (the original UPSW-6660 crash)
+        bufferProfileTable.set("empty_th_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", ""},
+                                   {"size", "500000"}
+                               });
+        gBufferOrch->addExistingData(&bufferProfileTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // The profile should be rejected (not programmed to SAI)
+        vector<string> ts;
+        gBufferOrch->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty())
+            << "Profile with empty dynamic_th should be rejected, not programmed";
+
+        // Clean up pending tasks
+        entries.push_back({"empty_th_profile", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        entries.clear();
+
+        // Profile with empty size
+        bufferProfileTable.set("empty_size_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", ""}
+                               });
+        gBufferOrch->addExistingData(&bufferProfileTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        ts.clear();
+        gBufferOrch->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty())
+            << "Profile with empty size should be rejected, not programmed";
+
+        // Clean up
+        entries.push_back({"empty_size_profile", "DEL", {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        _unhook_sai_apis();
+    }
 }
