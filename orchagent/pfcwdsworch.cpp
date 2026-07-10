@@ -14,6 +14,7 @@
 
 #define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 #define PFC_WD_IN_STORM                 "storm"
+#define PFC_WD_SW_STATE_TABLE           "PFC_WD_SW_STATE_TABLE"
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
@@ -216,6 +217,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::setSwWdState(const string& portAlias, uint8_t queueIdx, const char* status)
+{
+    vector<FieldValueTuple> fvs = { { "status", status } };
+    m_pfcWdSwStateTable->set(portAlias + ":" + to_string(queueIdx), fvs);
+}
+
+template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
@@ -271,6 +279,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         PfcWdActionHandler::initWdCounters(
                 this->getCountersTable(),
                 sai_serialize_object_id(queueId));
+
+        setSwWdState(port.m_alias, i, "configured");
     }
 
     // We do NOT need to create ACL table group here. It will be
@@ -345,6 +355,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
             + m_applTable->getTableNameSeparator()
             + port.m_alias;
         m_applDb->hdel(instormKey, to_string(i));
+
+        m_pfcWdSwStateTable->del(port.m_alias + ":" + to_string(i));
     }
 
 }
@@ -363,7 +375,9 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
     m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
-    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM"))
+    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
+    m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
+    m_pfcWdSwStateTable(make_shared<Table>(m_stateDb.get(), PFC_WD_SW_STATE_TABLE))
 {
     SWSS_LOG_ENTER();
 
@@ -620,6 +634,10 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
 
     SWSS_LOG_NOTICE("Receive notification, %s", event.c_str());
 
+    // Contain handler-construction failures (e.g. ACL table create on a full
+    // egress PMF) so no PFC event path aborts orchagent.
+    try
+    {
     if (m_bigRedSwitchFlag)
     {
         SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ignore syncd pfc watchdog notification");
@@ -638,9 +656,20 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                // Log storm event to APPL_DB for warm-reboot purpose
-                string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                if (entry->second.handler->isValid())
+                {
+                    // Log storm event to APPL_DB for warm-reboot purpose
+                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
+                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
+                }
+                else
+                {
+                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
+                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
+                                  entry->second.portAlias.c_str(), entry->second.index);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
+                }
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
@@ -655,9 +684,20 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                // Log storm event to APPL_DB for warm-reboot purpose
-                string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                if (entry->second.handler->isValid())
+                {
+                    // Log storm event to APPL_DB for warm-reboot purpose
+                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
+                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
+                }
+                else
+                {
+                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
+                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
+                                  entry->second.portAlias.c_str(), entry->second.index);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
+                }
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
@@ -672,9 +712,20 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                // Log storm event to APPL_DB for warm-reboot purpose
-                string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                if (entry->second.handler->isValid())
+                {
+                    // Log storm event to APPL_DB for warm-reboot purpose
+                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
+                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
+                }
+                else
+                {
+                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
+                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
+                                  entry->second.portAlias.c_str(), entry->second.index);
+                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
+                }
             }
         }
         else
@@ -694,11 +745,18 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             // Remove storm status in APPL_DB for warm-reboot purpose
             string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
             m_applDb->hdel(key, to_string(entry->second.index));
+            setSwWdState(entry->second.portAlias, entry->second.index, "configured");
         }
     }
     else
     {
         SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());
+        return false;
+    }
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("PFC watchdog %s action failed on queue 0x%" PRIx64 ": %s", event.c_str(), queueId, e.what());
         return false;
     }
 
