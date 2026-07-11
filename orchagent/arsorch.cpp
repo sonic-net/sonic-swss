@@ -13,6 +13,7 @@
 #include "converter.h"
 #include "directory.h"
 #include "swssnet.h"
+#include "warm_restart.h"
 
 #include <algorithm>
 #include <cctype>
@@ -188,6 +189,53 @@ void ArsOrch::update(SubjectType type, void *cntx)
     SWSS_LOG_NOTICE("ARS: port %s came up (speed=%u), re-applying auto scaling factor",
                     portName.c_str(), stateUpdate->port.m_speed);
     applyPortProfileToInterface(portName, entry.portProfile);
+}
+
+/*
+ * Override Orch::doTask() to enforce ARS_PROFILE-before-ARS_INTERFACES
+ * ordering during warm restart replay.
+ *
+ * The base Orch::doTask() iterates m_consumerMap alphabetically, which
+ * processes ARS_INTERFACES before ARS_PROFILE. During normal operation
+ * the retry queue (m_arsInterfacesPendingEnable) handles this, but
+ * during warm restart the TEMP view recorded in syncd must have the
+ * profile created before port ARS enables so that the APPLY_VIEW
+ * comparison generates operations in a safe order.
+ *
+ * Outside of warm restart, fall through to the default alphabetical
+ * iteration.
+ */
+void ArsOrch::doTask()
+{
+    if (!WarmStart::isWarmStart())
+    {
+        Orch::doTask();
+        return;
+    }
+
+    static const vector<string> priorityTables = {
+        CFG_ARS_TABLE_NAME,
+        CFG_ARS_PROFILE_TABLE_NAME,
+    };
+
+    for (const auto &name : priorityTables)
+    {
+        auto it = m_consumerMap.find(name);
+        if (it != m_consumerMap.end())
+            it->second->drain();
+    }
+
+    for (auto &it : m_consumerMap)
+    {
+        const auto &name = it.first;
+        bool already = false;
+        for (const auto &p : priorityTables)
+        {
+            if (name == p) { already = true; break; }
+        }
+        if (!already)
+            it.second->drain();
+    }
 }
 
 void ArsOrch::doTask(Consumer &consumer)

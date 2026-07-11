@@ -742,6 +742,7 @@ private:
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
+    set<string> m_arsClassifierTables;
     map<string, AclTableType> m_AclTableTypes;
 
     static DBConnector m_countersDb;

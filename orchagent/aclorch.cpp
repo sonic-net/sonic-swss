@@ -5761,6 +5761,17 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             auto tableType = getAclTableType(tableTypeName);
             if (!tableType)
             {
+                string upperType = to_upper(tableTypeName);
+                if (upperType == TABLE_TYPE_ARS || upperType == "ARS_CLASSIFIER")
+                {
+                    SWSS_LOG_NOTICE("ACL table %s (type %s) is handled by "
+                                    "ars-classifier-daemon — draining from "
+                                    "orchagent pending tasks",
+                                    table_id.c_str(), tableTypeName.c_str());
+                    m_arsClassifierTables.insert(table_id);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
                 it++;
                 continue;
             }
@@ -5825,6 +5836,13 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_arsClassifierTables.erase(table_id))
+            {
+                SWSS_LOG_NOTICE("ACL table %s (ARS classifier) removed from "
+                                "orchagent tracking", table_id.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             if (removeAclTable(table_id))
             {
                 // Remove ACL table status from STATE_DB
@@ -5885,6 +5903,16 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (m_ctrlAclTables.find(table_id) != m_ctrlAclTables.end())
                 {
                     SWSS_LOG_INFO("Skip control plane ACL rule %s", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (m_arsClassifierTables.find(table_id) != m_arsClassifierTables.end())
+                {
+                    SWSS_LOG_NOTICE("ACL rule %s belongs to ARS classifier "
+                                    "table %s — handled by "
+                                    "ars-classifier-daemon, draining",
+                                    key.c_str(), table_id.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -6039,6 +6067,15 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_arsClassifierTables.find(table_id) != m_arsClassifierTables.end())
+            {
+                SWSS_LOG_NOTICE("ACL rule %s removed from ARS classifier "
+                                "table %s — handled by "
+                                "ars-classifier-daemon, draining",
+                                key.c_str(), table_id.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             if (removeAclRule(table_id, rule_id))
             {
                 removeAclRuleStatus(table_id, rule_id);

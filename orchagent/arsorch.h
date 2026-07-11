@@ -123,6 +123,7 @@ public:
     void update(SubjectType type, void *cntx) override;
 
 private:
+    void doTask() override;
     void doTask(Consumer &consumer) override;
 
     void doArsGlobalTask(Consumer &consumer);
