@@ -603,21 +603,6 @@ impl IpfixActor {
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
-        })
-    }
-
-    /// Returns every session key that registered this template_id. In MIXED
-    /// mode multiple per-group sessions share template_ids (the orchagent
-    /// replicates the combined IPFIX template into each per-group SESSION
-    /// entry), so this returns multiple keys. Callers can safely union the
-    /// per-session object_id_name_map entries because the orchagent guarantees
-    /// labels are unique per profile.
     /// Returns the aggregated label lookup for `template_id`, populating the
     /// cache on miss. Callers must invalidate via
     /// `invalidate_aggregated_lookup_cache` whenever the underlying
