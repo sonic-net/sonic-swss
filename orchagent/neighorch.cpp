@@ -395,9 +395,15 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
                     // 2. attempt to delete it from sai
                     starting_ref_count = m_syncdNextHops[nexthop].ref_count;
                     starting_nh_flags = m_syncdNextHops[nexthop].nh_flags;
+
                     sai_status_t status = sai_next_hop_api->remove_next_hop(m_syncdNextHops[nexthop].next_hop_id);
-                    if (status == SAI_STATUS_SUCCESS)
+                    if (status == SAI_STATUS_SUCCESS || status == SAI_STATUS_ITEM_NOT_FOUND)
                     {
+                        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+                        {
+                            SWSS_LOG_NOTICE("Next hop %s for %s doesn't exist while replacing for %s, rv:%d",
+                                nexthop.to_string().c_str(), entry.alias.c_str(), nh.alias.c_str(), status);
+                        }
                         m_intfsOrch->decreaseRouterIntfsRefCount(entry.alias);
                         decCrmNextHopCounter(entry.ip_address);
                     }
@@ -1716,8 +1722,13 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 if (it != m_staleNextHops.end())
                 {
                     status = sai_next_hop_api->remove_next_hop(it->second.next_hop_id);
-                    if (status == SAI_STATUS_SUCCESS)
+                    if (status == SAI_STATUS_SUCCESS || status == SAI_STATUS_ITEM_NOT_FOUND)
                     {
+                        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+                        {
+                            SWSS_LOG_NOTICE("Stale next hop %s on %s doesn't exist, rv:%d",
+                                nexthop.to_string().c_str(), alias.c_str(), status);
+                        }
                         m_staleNextHops.erase(it);
                         m_intfsOrch->decreaseRouterIntfsRefCount(alias);
                         decCrmNextHopCounter(neighborEntry.ip_address);
@@ -1725,8 +1736,8 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                     // if we can't remove it then we need to wait to remove *this* neighbor
                     else
                     {
-                        SWSS_LOG_NOTICE("Unable to remove stale nexthop %s on %s during removal of %s, sai rv:%d",
-                            nexthop.to_string().c_str(), otherEntry.alias.c_str(), alias.c_str(), status);
+                        SWSS_LOG_NOTICE("Failed to remove stale nexthop %s during removal of stale neighbor %s, sai rv:%d",
+                            nexthop.to_string().c_str(), alias.c_str(), status);
                         return false;
                     }
                 }
