@@ -589,6 +589,16 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfi
     {
         map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(serdes.rxpolarity.value);
     }
+
+    if (serdes.tx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PRECODING] = SerdesValue(serdes.tx_precoding.value);
+    }
+
+    if (serdes.rx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_PRECODING] = SerdesValue(serdes.rx_precoding.value);
+    }
 }
 
 static bool isPathTracingSupported()
@@ -4778,12 +4788,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    // Invalid config for this port: drop the task and stop
+                    // tracking it as pending, so one bad port can't keep
+                    // allPortsReady() false and block every other port.
+                    SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
 
                 if (!m_portHlpr.validatePortConfig(pCfg))
                 {
+                    SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4798,6 +4815,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -7483,9 +7502,8 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
-    //Flush all FDB entires corresponding to the port (including static entries
-    //on tunnel/nexthop_group bridge ports)
-    gFdbOrch->flushAllFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
@@ -10385,6 +10403,23 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
     {
+        // Remove old mapping from memory map
+        m_portIdToSerdesId.erase(port_id);
+
+        // Remove old mapping from COUNTERS_DB
+        m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
+        SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
+                     port_attr.value.oid);
+
+        // Clear the phy port serdes countersIDList
+        Port p;
+        if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
+            flex_counters_orch->getPortPhySerdesAttrCountersState())
+        {
+            port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
+        }
+
+        // Remove SAI port serdes object
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -10394,24 +10429,6 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
-            }
-        }
-        else
-        {
-            // Remove old mapping from memory map
-            m_portIdToSerdesId.erase(port_id);
-
-            // Remove old mapping from COUNTERS_DB
-            m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
-            SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
-                         port_attr.value.oid);
-
-            //clear the phy port serdes countersIDList
-            Port p;
-            if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
-                flex_counters_orch->getPortPhySerdesAttrCountersState())
-            {
-                port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
             }
         }
     }

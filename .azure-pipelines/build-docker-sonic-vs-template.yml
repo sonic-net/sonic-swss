@@ -79,6 +79,8 @@ jobs:
     vmImage: 'ubuntu-22.04'
 
   steps:
+  - checkout: self
+  - template: merge-target-branch.yml
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific

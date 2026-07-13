@@ -15,6 +15,7 @@
 #include "pfcwdorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"
+#include "icmporch.h"
 #include "switchorch.h"
 #include "debugcounterorch.h"
 #include "fabricportsorch.h"
@@ -37,6 +38,7 @@ extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern Srv6Orch *gSrv6Orch;
+extern IcmpOrch *gIcmpOrch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 extern string gMySwitchType;
@@ -62,6 +64,7 @@ extern string gMySwitchType;
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
+#define ICMP_SESSION_KEY            "ICMP_SESSION"
 #define SWITCH_KEY                  "SWITCH"
 #define HA_SET_KEY                  "HA_SET"
 #define COPP_STATS_KEY               "COPP_STATS"
@@ -95,6 +98,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {ICMP_SESSION_KEY, ICMP_SESSION_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {COPP_STATS_KEY, COPP_STATS_COUNTER_FLEX_COUNTER_GROUP},
@@ -356,6 +360,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gSrv6Orch && (key == SRV6_KEY))
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
+                    }
+                    if (gIcmpOrch && (key == ICMP_SESSION_KEY))
+                    {
+                        gIcmpOrch->setCountersState((value == "enable"));
                     }
                     if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
                     {

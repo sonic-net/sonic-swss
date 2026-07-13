@@ -468,7 +468,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:R:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RM")) != -1)
     {
         switch (opt)
         {
@@ -1042,6 +1042,22 @@ int main(int argc, char **argv)
     }
 
     orchDaemon->start(heartBeatInterval);
+
+    /*
+     * On SIGTERM/SIGINT the signal handler sets gOrchShutdownRequested and
+     * start() returns. Do not fall through to `return 0;`: running ~OrchDaemon
+     * and its member destructors is unsafe here. FlexCounterManager destruction
+     * issues SAI calls (stopFlexCounterPolling -> set_switch_attribute) that
+     * round-trip through sairedis's ZMQ channel and park the main thread in
+     * zmq_poll while libzmq I/O threads are still alive; orchs torn down earlier
+     * in the reverse-order loop have already freed buffers those threads still
+     * reference, corrupting the heap.
+     *
+     * Instead, drain the async swss recorder so pending records flush, then
+     * _exit() to let the kernel reclaim the rest of the process without the
+     * destructor chain.
+     */
+    exit_if_graceful_shutdown_requested();
 
     return 0;
 }
