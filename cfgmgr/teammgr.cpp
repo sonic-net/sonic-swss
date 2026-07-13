@@ -761,6 +761,7 @@ int TeamMgr::sendIpcToTeamd(const std::string& command, const std::vector<std::s
     SWSS_LOG_INFO("Response from teamd to teammgrd: %s", buffer);
 
     return task_success;
+}
 
 int TeamMgr::update_kernel(const string &alias, const string &system_mac)
 {
