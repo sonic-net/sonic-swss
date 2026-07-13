@@ -378,7 +378,48 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(!hasNextHop(nexthop));
+    // on VOQ a nexthop could acceptably exist for the remote port, in which case we need to replace it.
+    int starting_ref_count = 0;
+    uint32_t starting_nh_flags = 0;
+    if (hasNextHop(nexthop))
+    {
+        if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
+        {
+            // 1. find the current neigh for the nexthop
+            for (const auto &neigh : m_syncdNeighbors)
+            {
+                NeighborEntry entry = neigh.first;
+                if (entry.ip_address == nh.ip_address && entry.alias != nh.alias
+                        && m_intfsOrch->isRemoteSystemPortIntf(entry.alias))
+                {
+                    // 2. attempt to delete it from sai
+                    starting_ref_count = m_syncdNextHops[nexthop].ref_count;
+                    starting_nh_flags = m_syncdNextHops[nexthop].nh_flags;
+                    sai_status_t status = sai_next_hop_api->remove_next_hop(m_syncdNextHops[nexthop].next_hop_id);
+                    if (status == SAI_STATUS_SUCCESS)
+                    {
+                        m_intfsOrch->decreaseRouterIntfsRefCount(entry.alias);
+                        decCrmNextHopCounter(entry.ip_address);
+                    }
+                    else
+                    {
+                        // track the sai nexthop for deletion later
+                        SWSS_LOG_NOTICE("Unable to clear nexthop %s for %s to create for %s, sai rv:%d",
+                            nexthop.to_string().c_str(), entry.alias.c_str(), nh.alias.c_str(), status);
+                        m_staleNextHops[entry] = m_syncdNextHops[nexthop];
+                    }
+
+                    // 3. proceed with clobbering m_syncdNextHops[ (ip, inband port) ]
+                    break;
+                }
+            }
+        }
+        else
+        {
+            assert(false);
+        }
+    }
+
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
@@ -453,8 +494,8 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
-    next_hop_entry.ref_count = 0;
-    next_hop_entry.nh_flags = 0;
+    next_hop_entry.ref_count = starting_ref_count;
+    next_hop_entry.nh_flags = starting_nh_flags;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
     m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
@@ -486,6 +527,15 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
         if (setNextHopFlag(nexthop, NHFLAGS_IFDOWN) == false)
         {
             SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
+                nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+        }
+    }
+    // if port has up oper status but the flag is down we need to clear
+    else if (isNextHopFlagSet(nexthop, NHFLAGS_IFDOWN))
+    {
+        if (clearNextHopFlag(nexthop, NHFLAGS_IFDOWN) == false)
+        {
+            SWSS_LOG_WARN("Failed to clear NHFLAGS_IFDOWN on nexthop %s for interface %s",
                 nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
         }
     }
@@ -1643,7 +1693,49 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     SWSS_LOG_INFO("Try to remove neighbor %s on %s",
                    ip_address.to_string().c_str(), alias.c_str());
 
-    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
+    /*
+        on VOQ the nexthop keyed by (ip, inband port) can exist for multiple
+        neighbors, keyed by (ip, system port).
+        We shouldn't delete the orch nexthop in this case, but should clean up
+        the old stale sai nexthop created for this neighbor.
+    */
+    bool nexthop_still_valid = false;
+    if (m_intfsOrch->isRemoteSystemPortIntf(alias))
+    {
+        // 1. find the *other* neigh for the nexthop
+        for (const auto &neigh : m_syncdNeighbors)
+        {
+            NeighborEntry otherEntry = neigh.first;
+            if (otherEntry.ip_address == ip_address && otherEntry.alias != alias &&
+                m_intfsOrch->isRemoteSystemPortIntf(otherEntry.alias))
+            {
+                nexthop_still_valid = true;
+
+                // 2. attempt to delete the stale entry for *this* neigh
+                auto it = m_staleNextHops.find(neighborEntry);
+                if (it != m_staleNextHops.end())
+                {
+                    status = sai_next_hop_api->remove_next_hop(it->second.next_hop_id);
+                    if (status == SAI_STATUS_SUCCESS)
+                    {
+                        m_staleNextHops.erase(it);
+                        m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+                        decCrmNextHopCounter(neighborEntry.ip_address);
+                    }
+                    // if we can't remove it then we need to wait to remove *this* neighbor
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Unable to remove stale nexthop %s on %s during removal of %s, sai rv:%d",
+                            nexthop.to_string().c_str(), otherEntry.alias.c_str(), alias.c_str(), status);
+                        return false;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if (!nexthop_still_valid && m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
                       m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -1675,42 +1767,37 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
             gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
             return true;
         }
-
-        status = sai_next_hop_api->remove_next_hop(next_hop_id);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!nexthop_still_valid)
         {
-            /* When next hop is not found, we continue to remove neighbor entry. */
-            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            status = sai_next_hop_api->remove_next_hop(next_hop_id);
+            if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
-                               ip_address.to_string().c_str(), alias.c_str(), status);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
-                               ip_address.to_string().c_str(), alias.c_str(), status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
-                if (handle_status != task_success)
+                /* When next hop is not found, we continue to remove neighbor entry. */
+                if (status == SAI_STATUS_ITEM_NOT_FOUND)
                 {
-                    return parseHandleSaiStatusFailure(handle_status);
+                    SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
+                                ip_address.to_string().c_str(), alias.c_str(), status);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                                ip_address.to_string().c_str(), alias.c_str(), status);
+                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
                 }
             }
-        }
 
-        if (status != SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            if (status != SAI_STATUS_ITEM_NOT_FOUND)
             {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+                decCrmNextHopCounter(ip_address);
             }
-            else
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-            }
-        }
 
-        SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                        ip_address.to_string().c_str(), alias.c_str());
+            SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                            ip_address.to_string().c_str(), alias.c_str());
+        }
 
         status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
         if (status != SAI_STATUS_SUCCESS)
@@ -1742,7 +1829,11 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            removeNextHop(ip_address, alias);
+            if (!nexthop_still_valid)
+            {
+                removeNextHop(ip_address, alias);
+            }
+
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
                     m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -1930,14 +2021,7 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
 
         if (ctx.nexthop_status != SAI_STATUS_ITEM_NOT_FOUND)
         {
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-            }
-            else
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-            }
+            decCrmNextHopCounter(ip_address);
         }
 
         SWSS_LOG_NOTICE("Bulk removed next hop %s on %s", ip_address.to_string().c_str(), alias.c_str());
@@ -2299,15 +2383,6 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 //Encap index is made available either by dynamic syncing or by static config
                 it++;
                 continue;
-            }
-            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
-            {
-                NextHopKey nexthop = { ip_address, ibif.m_alias};
-                if (hasNextHop(nexthop))
-                {
-                    it++;
-                    continue;
-                }
             }
 
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() ||
@@ -2955,4 +3030,16 @@ void NeighOrch::clearBulkers()
 {
     gNeighBulker.clear();
     gNextHopBulker.clear();
+}
+
+void NeighOrch::decCrmNextHopCounter(const IpAddress& addr)
+{
+    if (addr.isV4())
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+    }
 }
