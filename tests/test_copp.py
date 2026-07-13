@@ -166,6 +166,7 @@ copp_group_queue5_group1 = {
 
 copp_trap = {
         "bgp": ["bgp;bgpv6", copp_group_queue4_group1],
+        "bfd": ["bfd;bfdv6", copp_group_queue4_group1],
         "lacp": ["lacp", copp_group_queue4_group1, "always_enabled"],
         "arp": ["arp_req;arp_resp;neigh_discovery", copp_group_queue4_group2, "always_enabled"],
         "lldp": ["lldp", copp_group_queue4_group3],
