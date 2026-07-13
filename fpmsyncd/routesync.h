@@ -233,6 +233,35 @@ public:
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
 
+    /*
+     * ZMQ route-drop telemetry.
+     * When swss_zmq is enabled, a ProducerStateTable::set() on a route table can throw
+     * (ZmqClient::sendMsg exhausts its retries under a route burst and throws io_error),
+     * which is silently swallowed by Select::poll_descriptors and the route update is
+     * permanently lost. These helpers wrap the ZMQ route set() sites to attribute and
+     * count the drop and publish counters to STATE_DB, then re-throw so the existing
+     * control flow is unchanged (telemetry-only, no behavior change).
+     */
+    void trySetRoute(
+        ProducerStateTable & table,
+        const std::vector<swss::KeyOpFieldsValuesTuple> & kcos);
+    void trySetRoute(
+        ProducerStateTable & table,
+        const std::string & key,
+        const std::vector<swss::FieldValueTuple> & fvs);
+    /* Record a dropped route update and publish updated counters to STATE_DB. */
+    void recordRouteDrop(const std::string & routeKey, uint64_t routeCount);
+    /* Record a successfully-produced route op (the throughput denominator) and publish
+     * the running stats to STATE_DB on a throttled cadence (off the per-route hot path). */
+    void recordRouteSuccess(uint64_t routeCount);
+    /* Lazily open the STATE_DB stat table on first use (ZMQ-enabled path only). */
+    void ensureRouteStatTable();
+    /* Publish the current route stats (processed + drop counters + last drop/success) to STATE_DB. */
+    void publishRouteStats();
+    /* Format a time_t as a UTC "YYYY-MM-DD HH:MM:SS" string ("" when unset), matching the
+     * human-readable timestamp convention used elsewhere in SONiC STATE_DB. */
+    static std::string formatUtcTime(time_t t);
+
     void setTable(
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
@@ -295,6 +324,18 @@ private:
     map<uint32_t,NextHopGroup> m_nh_groups;
     /* SID list to refcount */
     map<string, uint32_t> m_srv6_sidlist_refcnt;
+
+    /* ZMQ route-drop telemetry — published to STATE_DB. */
+    std::unique_ptr<swss::DBConnector> m_stateDb;
+    std::unique_ptr<swss::Table>       m_zmqRouteStatTable;
+    uint64_t    m_zmqRouteDropMsgs{0};
+    uint64_t    m_zmqRouteDropRoutes{0};
+    uint64_t    m_zmqRouteProcessed{0};
+    std::string m_lastDropPrefix;
+    time_t      m_lastDropTime{0};
+    time_t      m_lastDropLogTime{0};
+    time_t      m_lastSuccessTime{0};
+    time_t      m_lastStatPublishTime{0};
 
     WarmStartHelper  m_warmStartHelper;
 

@@ -5097,3 +5097,133 @@ TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
     rtnl_route_put(test_route);
 
 }
+
+// ---------------------------------------------------------------------------
+// ZMQ route-drop telemetry
+// ---------------------------------------------------------------------------
+
+// recordRouteDrop() must accumulate the msg/route counters, remember the last
+// dropped prefix, and publish the running totals to STATE_DB.
+TEST_F(FpmSyncdResponseTest, ZmqRouteDropTelemetryRecordsAndPublishes)
+{
+    // Telemetry is gated on isNbZmqEnabled(); simulate NB ZMQ enabled on this instance.
+    m_routeSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+    // Two drops: a 3-route batch, then a single-route batch.
+    m_routeSync.recordRouteDrop("10.1.0.0/24", 3);
+    m_routeSync.recordRouteDrop("10.2.0.1/32", 1);
+
+    DBConnector stateDb("STATE_DB", 0);
+    Table statTable(&stateDb, "FPMSYNCD_ROUTE_STAT_TABLE");
+    vector<FieldValueTuple> result;
+    ASSERT_TRUE(statTable.get("global", result));
+
+    map<string, string> f;
+    for (const auto& fv : result) {
+        f[fvField(fv)] = fvValue(fv);
+    }
+
+    EXPECT_EQ(f["zmq_route_drop_msgs_total"], "2");
+    EXPECT_EQ(f["zmq_route_drop_routes_total"], "4");
+    EXPECT_EQ(f["zmq_route_last_drop_prefix"], "10.2.0.1/32");
+    EXPECT_FALSE(f["zmq_route_last_drop_time"].empty());
+    // No successful sets happened, so the throughput denominator stays 0
+    // and the last-success timestamp is unset (empty).
+    EXPECT_EQ(f["zmq_route_processed_total"], "0");
+    EXPECT_TRUE(f["zmq_route_last_success_time"].empty());
+
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropMsgs, 2u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropRoutes, 4u);
+}
+
+// trySetRoute() success path: the route is programmed, NO drop is recorded, and
+// the processed-total denominator is incremented and published to STATE_DB.
+TEST_F(FpmSyncdResponseTest, ZmqRouteProcessedTelemetryOnSuccessfulSet)
+{
+    // Telemetry is gated on isNbZmqEnabled(); simulate NB ZMQ enabled on this instance.
+    m_routeSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+    vector<FieldValueTuple> fvs = {
+        {"nexthop", "1.1.1.1"},
+        {"ifname", "Ethernet0"},
+    };
+    m_routeSync.trySetRoute(*m_routeSync.m_routeTable, "192.0.2.0/24", fvs);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_TRUE(routeTable.get("192.0.2.0/24", result));
+
+    // The success path publishes the running stats: processed incremented, drops still zero.
+    DBConnector stateDb("STATE_DB", 0);
+    Table statTable(&stateDb, "FPMSYNCD_ROUTE_STAT_TABLE");
+    vector<FieldValueTuple> stat;
+    ASSERT_TRUE(statTable.get("global", stat));
+
+    map<string, string> f;
+    for (const auto& fv : stat) {
+        f[fvField(fv)] = fvValue(fv);
+    }
+    EXPECT_EQ(f["zmq_route_processed_total"], "1");
+    EXPECT_EQ(f["zmq_route_drop_msgs_total"], "0");
+    EXPECT_EQ(f["zmq_route_drop_routes_total"], "0");
+    EXPECT_FALSE(f["zmq_route_last_success_time"].empty());
+
+    EXPECT_EQ(m_routeSync.m_zmqRouteProcessed, 1u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropMsgs, 0u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropRoutes, 0u);
+}
+
+// A drop rate is computable from the published totals: drop_routes / processed.
+TEST_F(FpmSyncdResponseTest, ZmqRouteDropRateDenominatorIsComputable)
+{
+    // Telemetry is gated on isNbZmqEnabled(); simulate NB ZMQ enabled on this instance.
+    m_routeSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+    vector<FieldValueTuple> fvs = {
+        {"nexthop", "1.1.1.1"},
+        {"ifname", "Ethernet0"},
+    };
+    // Three successful route ops, then one dropped batch of 2 routes.
+    m_routeSync.trySetRoute(*m_routeSync.m_routeTable, "192.0.2.0/24", fvs);
+    m_routeSync.trySetRoute(*m_routeSync.m_routeTable, "192.0.2.1/32", fvs);
+    m_routeSync.trySetRoute(*m_routeSync.m_routeTable, "192.0.2.2/32", fvs);
+    m_routeSync.recordRouteDrop("198.51.100.0/24", 2);
+
+    DBConnector stateDb("STATE_DB", 0);
+    Table statTable(&stateDb, "FPMSYNCD_ROUTE_STAT_TABLE");
+    vector<FieldValueTuple> stat;
+    ASSERT_TRUE(statTable.get("global", stat));
+
+    map<string, string> f;
+    for (const auto& fv : stat) {
+        f[fvField(fv)] = fvValue(fv);
+    }
+    // processed=3, drop_routes=2 → the consumer can compute a 2/3 drop rate.
+    EXPECT_EQ(f["zmq_route_processed_total"], "3");
+    EXPECT_EQ(f["zmq_route_drop_routes_total"], "2");
+    EXPECT_EQ(m_routeSync.m_zmqRouteProcessed, 3u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropRoutes, 2u);
+}
+
+// When northbound ZMQ is disabled (m_zmqClient == nullptr) the same route set()
+// sites reach Redis directly and are NOT ZMQ drops. The telemetry must stay
+// completely inert: no counters move, and no STATE_DB stat table is created.
+TEST_F(FpmSyncdResponseTest, ZmqRouteTelemetrySuppressedWhenZmqDisabled)
+{
+    ASSERT_FALSE(m_routeSync.isNbZmqEnabled());
+
+    vector<FieldValueTuple> fvs = {
+        {"nexthop", "1.1.1.1"},
+        {"ifname", "Ethernet0"},
+    };
+    m_routeSync.trySetRoute(*m_routeSync.m_routeTable, "203.0.113.0/24", fvs);
+    m_routeSync.recordRouteDrop("203.0.113.7/32", 5);
+
+    // Counters untouched.
+    EXPECT_EQ(m_routeSync.m_zmqRouteProcessed, 0u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropMsgs, 0u);
+    EXPECT_EQ(m_routeSync.m_zmqRouteDropRoutes, 0u);
+
+    // No STATE_DB stat table was ever opened.
+    DBConnector stateDb("STATE_DB", 0);
+    Table statTable(&stateDb, "FPMSYNCD_ROUTE_STAT_TABLE");
+    vector<FieldValueTuple> stat;
+    EXPECT_FALSE(statTable.get("global", stat));
+}
