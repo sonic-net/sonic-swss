@@ -17,10 +17,13 @@ extern "C" {
 #include <vector>
 #include <linux/limits.h>
 #include <net/if.h>
+#include <nlohmann/json.hpp>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "orch.h"
+#include "dbconnector.h"
+#include "table.h"
 
 using namespace std;
 using namespace swss;
@@ -108,8 +111,14 @@ extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern event_handle_t g_events_handle;
-extern bool gOrchUnhealthy;
-extern string gSaiErrorString;
+
+#define STATE_PROCESS_HEALTH_TABLE_NAME "PROCESS_HEALTH"
+#define PROCESS_HEALTH_KEY "orchagent"
+
+unique_ptr<DBConnector> gHealthStateDb;
+unique_ptr<Table> gOrchHealthTable;
+bool gOrchUnhealthyCached = false;
+std::string gLastSaiError;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -192,14 +201,68 @@ const sai_service_method_table_t test_services = {
     test_profile_get_next_value
 };
 
+// Resolve gRedisCommunicationMode against context_config.json. When -z zmq_sync
+// was requested but the JSON disables zmq for the default context (guid=0),
+// demote to REDIS_SYNC. Notification handlers in notifications.cpp gate
+// forwarding on this global, so it must reflect the actual transport sairedis
+// will use. Symmetric with the fallback in sairedis/syncd Syncd.cpp.
+//
+// Takes an istream so it streams directly from the open file in production and
+// from std::istringstream in unit tests, with no intermediate copy.
+sai_redis_communication_mode_t resolveCommunicationModeFromContextConfig(
+        std::istream& jsonStream,
+        sai_redis_communication_mode_t currentMode)
+{
+    if (currentMode != SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        return currentMode;
+    }
+
+    try
+    {
+        nlohmann::json j;
+        jsonStream >> j;
+
+        for (auto& item : j["CONTEXTS"])
+        {
+            uint32_t guid = item["guid"];
+            if (guid != 0)
+            {
+                continue;
+            }
+
+            if (item.contains("zmq_enable") && item["zmq_enable"] == false)
+            {
+                SWSS_LOG_NOTICE(
+                    "context %u: zmq_enable=false in context config, demoting "
+                    "gRedisCommunicationMode from ZMQ_SYNC to REDIS_SYNC",
+                    guid);
+                return SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
+            }
+            break;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to parse context config for comm-mode resolution: %s",
+                      e.what());
+    }
+
+    return currentMode;
+}
+
 void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    if (ifstream(CONTEXT_CFG_FILE))
+    std::ifstream ifs(CONTEXT_CFG_FILE);
+    if (ifs.good())
     {
         SWSS_LOG_NOTICE("Context config file %s exists", CONTEXT_CFG_FILE);
         gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
+
+        gRedisCommunicationMode = resolveCommunicationModeFromContextConfig(
+            ifs, gRedisCommunicationMode);
     }
 
     sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
@@ -494,6 +557,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
        SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
        return SAI_STATUS_FAILURE;
     }
+    memset(hwinfo, 0, HWINFO_MAX_SIZE + 1);
     strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
@@ -776,10 +840,10 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abor
 
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
-    gOrchUnhealthy = true;
-    gSaiErrorString = "Encountered failure in " + oper +
-                      " operation, SAI API: " + s_api + ", status: " + s_status;
-    SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+    string errorString = "Encountered failure in " + oper +
+                         " operation, SAI API: " + s_api + ", status: " + s_status;
+    setSaiFailureStatus(true, errorString);
+    SWSS_LOG_ERROR("%s", errorString.c_str());
 
     // Publish a structured syslog event
     event_params_t params = {
@@ -812,6 +876,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 
 static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
 {
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.counter_group_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
@@ -1122,56 +1187,84 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     return stat_list;
 }
 
-void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
-                     uint32_t res, const string& version)
+void initSaiFailureTable()
 {
-    SWSS_LOG_ENTER();
-
-    if (!table)
-    {
-        SWSS_LOG_WARN("Table passed in is NULL");
-        return;
-    }
-
-    std::vector<FieldValueTuple> fvVector;
-
-    fvVector.emplace_back("result", std::to_string(res));
-
-    if (!version.empty())
-    {
-        fvVector.emplace_back("version", version);
-    }
-
-    try
-    {
-        table->set(key, fvVector);
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_ERROR("Exception caught while writing to DB: %s", e.what());
-        return;
-    }
-    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
+    gHealthStateDb = make_unique<DBConnector>("STATE_DB", 0);
+    gOrchHealthTable = make_unique<Table>(gHealthStateDb.get(), STATE_PROCESS_HEALTH_TABLE_NAME);
 }
 
-void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
+void setSaiFailureStatus(bool unhealthy, const std::string& error)
 {
-    SWSS_LOG_ENTER();
-
-    if (!table)
+    gOrchUnhealthyCached = unhealthy;
+    if (unhealthy && !error.empty())
     {
-        SWSS_LOG_WARN("Table passed in is NULL");
+        gLastSaiError = error;
+    }
+    if (!gOrchHealthTable)
+    {
         return;
     }
-
     try
     {
-        table->del(key);
+        vector<FieldValueTuple> fvs;
+        fvs.emplace_back("unhealthy", unhealthy ? "true" : "false");
+        fvs.emplace_back("error", error);
+        gOrchHealthTable->set(PROCESS_HEALTH_KEY, fvs);
     }
-    catch (const exception &e)
+    catch (const std::exception& e)
     {
-        SWSS_LOG_ERROR("Exception caught while removing from DB: %s", e.what());
-        return;
+        SWSS_LOG_WARN("Failed to write health status to STATE_DB: %s", e.what());
     }
-    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }
+
+bool getSaiFailureStatus(std::string& error)
+{
+    /* Fast path: when the local cache says healthy, skip Redis entirely.
+     * Only read STATE_DB when unhealthy, so an external reset
+     * (operator clearing the flag in Redis) is still detected. */
+    if (!gOrchUnhealthyCached)
+    {
+        return false;
+    }
+    if (!gOrchHealthTable)
+    {
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (health table not initialized)" : gLastSaiError;
+        return true;
+    }
+    /* Fetch all fields in a single Redis round-trip */
+    vector<FieldValueTuple> fvs;
+    try
+    {
+        if (!gOrchHealthTable->get(PROCESS_HEALTH_KEY, fvs))
+        {
+            /* Key missing but cache says unhealthy — keep reporting unhealthy
+             * with the last known error rather than silently clearing. */
+            error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB key missing)" : gLastSaiError;
+            return true;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to read health status from STATE_DB: %s", e.what());
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB read failed)" : gLastSaiError;
+        return true;
+    }
+    bool unhealthy = true;
+    error = "Orchagent is unhealthy";
+    for (const auto& fv : fvs)
+    {
+        if (fvField(fv) == "unhealthy")
+            unhealthy = (fvValue(fv) == "true");
+        else if (fvField(fv) == "error")
+            error = fvValue(fv);
+    }
+    if (!unhealthy)
+    {
+        /* External reset detected — update local cache */
+        gOrchUnhealthyCached = false;
+        error = "";
+        return false;
+    }
+    return true;
+}
+

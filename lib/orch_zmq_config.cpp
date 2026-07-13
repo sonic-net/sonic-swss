@@ -119,6 +119,42 @@ bool swss::get_feature_status(std::string feature, bool default_value)
     return *enabled == "true";
 }
 
+bool swss::get_route_perf_zmq_enabled()
+{
+    std::shared_ptr<std::string> value = nullptr;
+
+    try
+    {
+        swss::DBConnector config_db("CONFIG_DB", 0);
+        value = config_db.hget(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD);
+    }
+    catch (const std::runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Failed to read swss_zmq status: %s", e.what());
+        return false;
+    }
+
+    if (!value)
+    {
+        SWSS_LOG_NOTICE("swss_zmq status not found, default disabled.");
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("swss_zmq status: %s", value->c_str());
+    return *value == "enabled";
+}
+
+std::shared_ptr<swss::ZmqClient> swss::create_route_perf_zmq_client()
+{
+    if (get_route_perf_zmq_enabled())
+    {
+        SWSS_LOG_NOTICE("Route perf ZMQ enabled, creating local ZMQ client");
+        return create_zmq_client(ZMQ_LOCAL_ADDRESS);
+    }
+
+    return nullptr;
+}
+
 std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string feature, bool default_value)
 {
     auto enable = get_feature_status(feature, default_value);

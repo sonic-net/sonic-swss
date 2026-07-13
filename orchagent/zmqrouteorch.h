@@ -3,6 +3,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 #include <string>
 #include <orch.h>
@@ -24,15 +25,14 @@ public:
     void execute() override;
     void drain() override;
 
-    // Locked overrides: take m_toSyncMutex, then forward to ConsumerBase.
-    // These guard against the ZmqRouteServer mqPollThread (calling addToSync
-    // via the ingress callback) racing with the orch main thread.
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false) override;
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false) override;
-    void dumpPendingTasks(std::vector<std::string> &ts) override;
-
 private:
-    mutable std::mutex m_toSyncMutex;
+    // Staging buffer for tuples delivered by the ZmqRouteServer mqPollThread
+    // ingress callback. The callback writes here under m_toSyncMutex (rather
+    // than merging into m_toSync directly); execute() drains it into m_toSync
+    // under the same lock. This keeps m_toSync single-threaded (touched only
+    // by the orch main thread), so the base ConsumerBase paths need no locking.
+    std::mutex m_toSyncMutex;
+    std::unordered_map<std::string, swss::KeyOpFieldsValuesTuple> m_ingress;
 };
 
 class ZmqRouteOrch : public Orch

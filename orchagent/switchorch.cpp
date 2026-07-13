@@ -26,6 +26,7 @@ extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
+extern string gMySwitchType;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -51,7 +52,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
     {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
-    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
+    {"credit_watchdog",                     SAI_SWITCH_ATTR_CREDIT_WD},
+    {"credit_watchdog_timer",               SAI_SWITCH_ATTR_CREDIT_WD_TIMER}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -166,6 +169,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchPortMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
@@ -699,6 +703,35 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         else
                         {
                             attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD:
+                        // SAI gates this attribute to VOQ switches (validonly
+                        // SAI_SWITCH_ATTR_TYPE == SAI_SWITCH_TYPE_VOQ). Skip on
+                        // non-VOQ rather than letting SAI return NOT_SUPPORTED.
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.booldata = to_uint<bool>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD_TIMER:
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog_timer is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u32 = to_uint<uint32_t>(value);
                         }
                         break;
 
@@ -1952,6 +1985,87 @@ void SwitchOrch::querySwitchPortMirrorCapability()
             m_portEgressMirrorSupported = false;
         }
         SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchSamplePacketCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling samplepacket truncation
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SAMPLEPACKET,
+                            SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query samplepacket truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+        m_samplepacketTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "true");
+            m_samplepacketTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+            m_samplepacketTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
     set_switch_capability(fvVector);

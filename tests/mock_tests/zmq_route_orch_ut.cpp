@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -58,12 +59,20 @@ public:
     void doTask(ConsumerBase &consumer) override
     {
         ++doTaskCount;
+        // Record the keys handed to doTask before clearing. m_toSync is cleared
+        // below, so tests that want to verify specific entries must capture
+        // them here. doTask runs only on the orch main thread, so no lock.
+        for (const auto &kv : consumer.m_toSync)
+        {
+            seenKeys.insert(kv.first);
+        }
         // Drain the consumer's m_toSync so subsequent drain() calls observe it
         // as empty (matches the contract a real orch would honor).
         consumer.m_toSync.clear();
     }
 
     std::atomic<int> doTaskCount{0};
+    std::set<std::string> seenKeys;
 };
 
 } // namespace
@@ -167,8 +176,8 @@ TEST(ZmqRouteConsumerTest, DrainGatedByToSyncEmptiness)
     zrc->drain();
     EXPECT_EQ(orch->doTaskCount.load(), 0);
 
-    // Stage one entry via the locked addToSync override; drain forwards to
-    // doTask exactly once. RecordingZmqRouteOrch::doTask clears m_toSync.
+    // Stage one entry via addToSync; drain forwards to doTask exactly once.
+    // RecordingZmqRouteOrch::doTask clears m_toSync.
     KeyOpFieldsValuesTuple kfv("route_a", SET_COMMAND,
                                vector<FieldValueTuple>{{"f", "v"}});
     zrc->addToSync(kfv);
@@ -184,7 +193,8 @@ TEST(ZmqRouteConsumerTest, DrainGatedByToSyncEmptiness)
     EXPECT_EQ(orch->doTaskCount.load(), 1);
 }
 
-// execute() simply calls drain(); cover that override.
+// execute() drains m_ingress into m_toSync then calls drain(); with m_ingress
+// empty here it reduces to drain(). Cover that override.
 TEST(ZmqRouteConsumerTest, ExecuteDelegatesToDrain)
 {
     vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
@@ -204,8 +214,8 @@ TEST(ZmqRouteConsumerTest, ExecuteDelegatesToDrain)
     EXPECT_EQ(orch->doTaskCount.load(), 1);
 }
 
-// Locked deque-form addToSync forwards to ConsumerBase::addToSync(deque) and
-// returns the count.
+// Deque-form addToSync forwards to ConsumerBase::addToSync(deque) and returns
+// the count.
 TEST(ZmqRouteConsumerTest, AddToSyncDequeReturnsCount)
 {
     vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
@@ -228,9 +238,8 @@ TEST(ZmqRouteConsumerTest, AddToSyncDequeReturnsCount)
     EXPECT_EQ(zrc->m_toSync.size(), 5u);
 }
 
-// dumpPendingTasks (locked override) returns the staged entries as strings
-// and doesn't deadlock with concurrent addToSync.
-TEST(ZmqRouteConsumerTest, DumpPendingTasksLockedAndCorrect)
+// dumpPendingTasks returns the staged entries as strings.
+TEST(ZmqRouteConsumerTest, DumpPendingTasksReturnsEntries)
 {
     vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
     auto app_db = make_shared<DBConnector>("APPL_DB", 0);
@@ -251,47 +260,12 @@ TEST(ZmqRouteConsumerTest, DumpPendingTasksLockedAndCorrect)
     EXPECT_EQ(ts.size(), 2u);
 }
 
-// Concurrent addToSync from multiple threads must not crash, lose entries, or
-// deadlock with drain. This guards the locking contract that ZmqRouteServer
-// relies on (mqPollThread races with the orch main thread).
-TEST(ZmqRouteConsumerTest, ConcurrentAddToSyncIsThreadSafe)
-{
-    vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
-    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
-    ZmqRouteServer server("tcp://*:1265", "", /*lazyBind=*/true);
-    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
-
-    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
-        orch->m_consumerMap.begin()->second.get());
-    ASSERT_NE(zrc, nullptr);
-
-    constexpr int kThreads = 4;
-    constexpr int kPerThread = 250;
-    std::vector<std::thread> producers;
-    for (int t = 0; t < kThreads; ++t)
-    {
-        producers.emplace_back([zrc, t]() {
-            for (int i = 0; i < kPerThread; ++i)
-            {
-                std::string k = "t" + std::to_string(t) + "_" + std::to_string(i);
-                zrc->addToSync(KeyOpFieldsValuesTuple(
-                    k, SET_COMMAND, vector<FieldValueTuple>{{"f", "v"}}));
-            }
-        });
-    }
-    for (auto &th : producers)
-        th.join();
-
-    EXPECT_EQ(zrc->m_toSync.size(),
-              static_cast<size_t>(kThreads * kPerThread));
-}
-
-// End-to-end: ZmqProducerStateTable → ZmqRouteServer → ZmqRouteConsumer
-// ingress callback → m_toSync. Verifies the callback wiring set up by
-// ZmqRouteConsumer's constructor actually merges entries into m_toSync, and
-// (since count < gMaxBulkSize) does not eagerly fire notifyPending — the
-// burst quiesce timer fires it instead.
-TEST(ZmqRouteConsumerTest, IngressCallbackMergesIntoToSync)
+// End-to-end: ZmqProducerStateTable → ZmqRouteServer → ZmqRouteConsumer.
+// The ingress callback (on mqPollThread) stages the tuple into m_ingress;
+// execute() on this thread then drains m_ingress into m_toSync and forwards it
+// to doTask. Verifies the callback wiring set up by ZmqRouteConsumer's
+// constructor delivers the entry all the way through to doTask.
+TEST(ZmqRouteConsumerTest, IngressCallbackDeliversToDoTask)
 {
     const string tableName = "ZMQ_ROUTE_UT_INGRESS";
     const string pushEndpoint = "tcp://localhost:1266";
@@ -311,11 +285,17 @@ TEST(ZmqRouteConsumerTest, IngressCallbackMergesIntoToSync)
     ZmqProducerStateTable p(app_db.get(), tableName, client, /*dbPersistence=*/false);
     p.set("route_x", vector<FieldValueTuple>{{"nh", "1.1.1.1"}});
 
-    ASSERT_TRUE(waitFor(2000, [&] { return zrc->m_toSync.size() >= 1u; }));
-    EXPECT_NE(zrc->m_toSync.find("route_x"), zrc->m_toSync.end());
+    // The tuple arrives asynchronously on mqPollThread and lands in m_ingress.
+    // Repeatedly run execute() (drains m_ingress → m_toSync → doTask) until
+    // doTask observes the entry, then confirm the specific key was delivered.
+    ASSERT_TRUE(waitFor(2000, [&] {
+        zrc->execute();
+        return orch->doTaskCount.load() >= 1;
+    }));
+    EXPECT_EQ(orch->seenKeys.count("route_x"), 1u);
 }
 
-// When the ingress callback fills m_toSync past gMaxBulkSize, it must fire
+// When the ingress callback stages past gMaxBulkSize entries, it must fire
 // notifyPending mid-burst (rather than waiting for the burst quiesce timer)
 // so the orch main loop wakes up and drains immediately. We lower
 // gMaxBulkSize to 1 to make this trivially observable.
@@ -339,20 +319,18 @@ TEST(ZmqRouteConsumerTest, IngressCallbackFiresNotifyAtMaxBulkSize)
     const size_t savedMaxBulk = gMaxBulkSize;
     gMaxBulkSize = 1;
 
+    Select sel;
+    sel.addSelectable(zrc);
+
     ZmqClient client(pushEndpoint, 0);
     ZmqProducerStateTable p(app_db.get(), tableName, client, /*dbPersistence=*/false);
     p.set("route_bulk", vector<FieldValueTuple>{{"nh", "2.2.2.2"}});
 
-    ASSERT_TRUE(waitFor(2000, [&] { return zrc->m_toSync.size() >= 1u; }));
-
-    // Select wake-up should arrive almost immediately because the ingress
-    // callback fires notifyPending the moment m_toSync reaches gMaxBulkSize=1
-    // — without this we'd have to wait for BURST_QUIESCE_MS (~5ms) before the
-    // post-burst notify fires.
-    Select sel;
-    sel.addSelectable(zrc);
+    // The ingress callback fires notifyPending the moment m_ingress reaches
+    // gMaxBulkSize=1, so the Select loop wakes on the consumer's event without
+    // waiting for the BURST_QUIESCE_MS post-burst notify.
     Selectable *out = nullptr;
-    EXPECT_EQ(sel.select(&out, 200), Select::OBJECT);
+    EXPECT_EQ(sel.select(&out, 2000), Select::OBJECT);
     EXPECT_EQ(out, zrc);
 
     gMaxBulkSize = savedMaxBulk;

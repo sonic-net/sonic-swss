@@ -411,10 +411,6 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
         recordTuples(entries);
     }
 
-    // Call addToSyncInternal directly so we don't re-enter virtual dispatch
-    // (and any subclass-installed lock) per entry. Subclasses that need
-    // locking override addToSync(deque) to take the lock once before calling
-    // this base implementation.
     for (auto& entry: entries)
     {
         addToSyncInternal(entry, onRetry, onRetry);
@@ -495,6 +491,11 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 
 void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
 {
+    if (!m_recordable)
+    {
+        return;
+    }
+
     auto& swssRecorder = Recorder::Instance().swss;
 
     if (!swssRecorder.isAsyncEnabled())
@@ -510,6 +511,11 @@ void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
 
 void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
+    if (!m_recordable)
+    {
+        return;
+    }
+
     auto& swssRecorder = Recorder::Instance().swss;
 
     if (!swssRecorder.isAsyncEnabled())

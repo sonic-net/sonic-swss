@@ -37,6 +37,12 @@ public:
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
 
+protected:
+    // For subclasses that want to register their own consumer types instead of
+    // ZmqConsumer; they skip the base table-iterating constructors and call
+    // their own addConsumer().
+    ZmqOrch() = default;
+
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool orderedQueue = false, bool dbPersistence = true);
 };

@@ -103,6 +103,13 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
             throw std::runtime_error("Failed to create VR object");
         }
         gFlowCounterRouteOrch->onAddVR(router_id);
+
+        /* Install IPv6 link-local trap routes (fe80::/10) to trap control packet so CPU. RouteOrch's
+         * constructor only installs these for the default VR */
+        IpPrefix default_link_local_prefix("fe80::/10");
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_INFO("Created link local ipv6 route %s for vnet %s to cpu", default_link_local_prefix.to_string().c_str(), vnet_name_.c_str());
+
         return true;
     };
 
@@ -349,6 +356,11 @@ VNetVrfObject::~VNetVrfObject()
     {
         if (it != gVirtualRouterId)
         {
+            /* Remove the IPv6 link-local trap routes installed at VR creation */
+            IpPrefix default_link_local_prefix("fe80::/10");
+            gRouteOrch->delLinkLocalRouteToMe(it, default_link_local_prefix);
+            SWSS_LOG_INFO("Deleted link local ipv6 route %s for vnet %s to cpu", default_link_local_prefix.to_string().c_str(), vnet_name_.c_str());
+
             sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -777,15 +789,28 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
-    std::map<NextHopKey, uint32_t> nh_seq_id_in_nhgrp;
+    std::map<sai_object_id_t, uint32_t> nh_seq_id_in_nhgrp;
     uint32_t seq_id = 0;
 
     for (auto it : next_hop_set)
     {
-        nh_seq_id_in_nhgrp[it] = ++seq_id;
+        uint32_t nh_seq_id = ++seq_id;
         if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
         {
             continue;
+        }
+        // VNET_ROUTE_TUNNEL_TABLE endpoints can be processed before the neighbor
+        // is resolved. In that ordering, the cached NextHopKey is created with
+        // only IP and an empty alias. For directly-connected local endpoints,
+        // resolve the current RIF alias from NeighOrch before has/getNextHop().
+        if (isLocalEp && it.alias.empty())
+        {
+            NeighborEntry neigh_entry;
+            MacAddress mac;
+            if (gNeighOrch->getNeighborEntry(it.ip_address, neigh_entry, mac))
+            {
+                it = NextHopKey(it.ip_address, neigh_entry.alias);
+            }
         }
         if (isLocalEp && !gNeighOrch->hasNextHop(it))
         {
@@ -795,6 +820,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
+        nh_seq_id_in_nhgrp[next_hop_id] = nh_seq_id;
     }
 
     sai_attribute_t nhg_attr;
@@ -841,7 +867,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         if (gSwitchOrch->checkOrderedEcmpEnable())
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp.at(nhid);
             nhgm_attrs.push_back(nhgm_attr);
         }
 
@@ -947,6 +973,22 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     {
         NextHopKey nexthop = *nexthops.getNextHops().begin();
         bool isLocalEp = isLocalEndpoint(vnet, nexthop.ip_address);
+        // VNET_ROUTE_TUNNEL_TABLE endpoints can be seen before neighbor
+        // resolution. In that case, the stored NextHopKey may still carry an
+        // empty alias. For local endpoints, refresh alias from NeighOrch so the
+        // key matches the resolved IP@ifname form used by NeighOrch caches.
+        if (isLocalEp && nexthop.alias.empty())
+        {
+            NeighborEntry neigh_entry;
+            MacAddress mac;
+            if (gNeighOrch->getNeighborEntry(nexthop.ip_address, neigh_entry, mac))
+            {
+                nexthop = NextHopKey(nexthop.ip_address, neigh_entry.alias);
+                SWSS_LOG_INFO("Resolved local endpoint %s to interface %s",
+                              nexthop.ip_address.to_string().c_str(),
+                              neigh_entry.alias.c_str());
+            }
+        }
         if (isLocalEp && !gNeighOrch->hasNextHop(nexthop))
         {
             SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", nexthop.to_string().c_str());

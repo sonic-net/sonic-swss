@@ -167,13 +167,7 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-
-    /*
-     * dumpPendingTasks and the addToSync overloads are virtual so concurrent
-     * subclasses (e.g. ZmqRouteConsumer) can wrap the base implementation in
-     * a lock. The base class itself is single-threaded and takes no lock.
-     */
-    virtual void dumpPendingTasks(std::vector<std::string> &ts);
+    void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -183,11 +177,15 @@ public:
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
-    virtual void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
+    /* Enable or disable swss.rec recording for this consumer */
+    void setRecordable(bool recordable) { m_recordable = recordable; }
+    bool isRecordable() const { return m_recordable; }
+
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
-    virtual size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false);
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
 
     /**
      * @brief Add the failed task and its constraint to the consumer's RetryCache
@@ -201,6 +199,7 @@ public:
 
 private:
     void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
+    bool m_recordable = true;
 };
 
 class RingBuffer
@@ -361,7 +360,7 @@ public:
     /**
      * @brief Flush pending responses
      */
-    void flushResponses();
+    virtual void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
     RetryCacheMap m_retryCaches;

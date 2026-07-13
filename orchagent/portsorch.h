@@ -158,6 +158,7 @@ public:
     bool isConfigDone();
     bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
+    bool setPortAdminStatusByAlias(const string &alias, bool up);
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -175,6 +176,7 @@ public:
     void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
+    bool getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
@@ -261,6 +263,8 @@ public:
 
     bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
     bool removeTunnel(Port tunnel);
+    bool addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid);
+    bool removeL2NexthopGroup(Port nhgPort);
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
@@ -526,7 +530,7 @@ private:
     void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, sai_queue_type_t queueType);
 
     bool m_isWredQueueCounterMapGenerated = false;
-    void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
+    void addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq = false);
     void addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, sai_queue_type_t queueType);
 
     bool m_isPriorityGroupMapGenerated = false;

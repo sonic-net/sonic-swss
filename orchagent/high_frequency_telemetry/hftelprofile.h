@@ -46,8 +46,8 @@ public:
     void setBulkSize(std::uint32_t bulk_size);
     void setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
     void setStatsIDs(const std::string &group_name, const std::set<std::string> &object_counters);
-    void setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id);
-    void delObjectSAIID(sai_object_type_t object_type, const char *object_name);
+    bool setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id);
+    bool delObjectSAIID(sai_object_type_t object_type, const char *object_name);
     bool canBeUpdated() const;
     bool canBeUpdated(sai_object_type_t object_type) const;
     bool isEmpty() const;

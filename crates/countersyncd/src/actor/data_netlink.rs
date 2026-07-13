@@ -1,7 +1,6 @@
 use std::{
     collections::LinkedList,
     sync::Arc,
-    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -14,7 +13,11 @@ use log::{debug, info, warn};
 use netlink_sys::Socket;
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::{
+    select,
+    sync::mpsc::{Receiver, Sender},
+    time::{interval, MissedTickBehavior},
+};
 
 use std::io;
 
@@ -22,9 +25,9 @@ use super::super::message::{
     buffer::SocketBufferMessage,
     netlink::{NetlinkCommand, SocketConnect},
 };
-use crate::utilities::{format_hex_lines, record_comm_stats, ChannelLabel};
 #[cfg(not(test))]
 use super::netlink_utils;
+use crate::utilities::{format_hex_lines, record_comm_stats, ChannelLabel};
 
 #[cfg(not(test))]
 type SocketType = Socket;
@@ -35,6 +38,7 @@ type SocketType = test::MockSocket;
 const SONIC_CONSTANTS: &str = "/etc/sonic/constants.yml";
 
 /// Size of the buffer used for receiving netlink messages
+#[cfg(test)]
 const BUFFER_SIZE: usize = 0x1FFFF;
 /// Linux error code for "No buffer space available" (ENOBUFS)
 /// Note: std::io::ErrorKind doesn't have a specific variant for ENOBUFS,
@@ -56,22 +60,17 @@ const DEBUG_TARGET_MS: u64 = 30 * 1000;
 /// Target duration for WouldBlock log (1 minute).
 const WOULDBLOCK_TARGET_MS: u64 = 60 * 1000;
 
+/// Maximum supported size for a single netlink datagram/message.
+/// This bounds userspace allocation after peeking the datagram length.
+const MAX_NETLINK_DATAGRAM_SIZE: usize = 16 * 1024 * 1024;
 
-/// Maximum size for buffering incomplete messages (1MB)
-const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
-
-/// Netlink message parser for handling multiple messages in one buffer
+/// Netlink message parser for handling multiple messages in one datagram
 #[derive(Debug)]
-struct NetlinkMessageParser {
-    /// Buffer for incomplete messages that span multiple recv operations
-    incomplete_buffer: Vec<u8>,
-}
+struct NetlinkMessageParser;
 
 impl NetlinkMessageParser {
     fn new() -> Self {
-        Self {
-            incomplete_buffer: Vec::new(),
-        }
+        Self
     }
 
     /// Mirrors `NLMSG_ALIGN` from `linux/netlink.h` by rounding lengths up to the next 4-byte boundary.
@@ -79,65 +78,112 @@ impl NetlinkMessageParser {
         (len + 3) & !3
     }
 
-    /// Parse buffer that may contain multiple complete and/or incomplete netlink messages
-    /// Returns a vector of complete message payloads, where each payload represents 
-    /// one complete netlink message (which contains one complete IPFIX message)
-    fn parse_buffer(&mut self, new_data: &[u8]) -> Result<Vec<SocketBufferMessage>, io::Error> {
-        // Combine any incomplete data from previous recv with new data
-        if !self.incomplete_buffer.is_empty() {
-            self.incomplete_buffer.extend_from_slice(new_data);
-            debug!("Combined incomplete buffer ({} bytes) with new data ({} bytes)", 
-                   self.incomplete_buffer.len() - new_data.len(), new_data.len());
-        } else {
-            self.incomplete_buffer.extend_from_slice(new_data);
+    fn is_valid_alignment_padding(data: &[u8]) -> bool {
+        data.len() <= 3 && data.iter().all(|byte| *byte == 0)
+    }
+
+    fn return_parsed_or_error(
+        complete_messages: Vec<SocketBufferMessage>,
+        error: io::Error,
+        offset: usize,
+        remaining: usize,
+    ) -> Result<Vec<SocketBufferMessage>, io::Error> {
+        if complete_messages.is_empty() {
+            return Err(error);
         }
 
+        warn!(
+            "Discarding trailing {} bytes at offset {} after parsing {} message(s): {}",
+            remaining,
+            offset,
+            complete_messages.len(),
+            error
+        );
+        Ok(complete_messages)
+    }
+
+    /// Parse a single netlink datagram that may contain one or more complete netlink messages.
+    ///
+    /// Netlink multicast sockets are datagram-oriented. If a userspace receive buffer is too small,
+    /// the kernel discards the rest of that datagram, so bytes from a later recv must never be
+    /// treated as a continuation of the previous one.
+    /// Returns the generic-netlink payload from each complete netlink message. For IPFIX data,
+    /// each payload can contain multiple IPFIX sets and records.
+    fn parse_buffer(&mut self, new_data: &[u8]) -> Result<Vec<SocketBufferMessage>, io::Error> {
         let mut complete_messages = Vec::new();
         let mut offset = 0;
 
         // Parse all complete messages in the buffer
-        while offset < self.incomplete_buffer.len() {
+        while offset < new_data.len() {
             // Check if we have enough data for a netlink header
-            if offset + 16 > self.incomplete_buffer.len() {
-                debug!("Not enough data for netlink header at offset {}, keeping {} bytes for next recv", 
-                       offset, self.incomplete_buffer.len() - offset);
-                break;
+            if offset + 16 > new_data.len() {
+                if Self::is_valid_alignment_padding(&new_data[offset..]) {
+                    break;
+                }
+
+                let remaining = new_data.len() - offset;
+                let error = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Incomplete netlink header at offset {}: have {} bytes",
+                        offset, remaining
+                    ),
+                );
+                return Self::return_parsed_or_error(complete_messages, error, offset, remaining);
             }
 
             // Extract message length from netlink header
             let nl_len = u32::from_le_bytes([
-                self.incomplete_buffer[offset],
-                self.incomplete_buffer[offset + 1], 
-                self.incomplete_buffer[offset + 2],
-                self.incomplete_buffer[offset + 3],
+                new_data[offset],
+                new_data[offset + 1],
+                new_data[offset + 2],
+                new_data[offset + 3],
             ]) as usize;
 
             // Validate message length
             if nl_len < 16 {
-                return Err(io::Error::new(
+                let error = io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid netlink message length: {} (too small)", nl_len),
-                ));
+                );
+                return Self::return_parsed_or_error(
+                    complete_messages,
+                    error,
+                    offset,
+                    new_data.len() - offset,
+                );
             }
 
-            if nl_len > MAX_INCOMPLETE_MESSAGE_SIZE {
-                return Err(io::Error::new(
+            if nl_len > MAX_NETLINK_DATAGRAM_SIZE {
+                let error = io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid netlink message length: {} (too large)", nl_len),
-                ));
+                );
+                return Self::return_parsed_or_error(
+                    complete_messages,
+                    error,
+                    offset,
+                    new_data.len() - offset,
+                );
             }
 
             // Check if we have the complete message
-            if offset + nl_len > self.incomplete_buffer.len() {
-                debug!("Incomplete message at offset {}: need {} bytes, have {} bytes", 
-                       offset, nl_len, self.incomplete_buffer.len() - offset);
-                break;
+            if offset + nl_len > new_data.len() {
+                let remaining = new_data.len() - offset;
+                let error = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Incomplete netlink message at offset {}: need {} bytes, have {} bytes",
+                        offset, nl_len, remaining
+                    ),
+                );
+                return Self::return_parsed_or_error(complete_messages, error, offset, remaining);
             }
 
             let aligned_nl_len = Self::nlmsg_align(nl_len);
 
             // Extract complete message without trailing alignment padding
-            let message_data = self.incomplete_buffer[offset..offset + nl_len].to_vec();
+            let message_data = new_data[offset..offset + nl_len].to_vec();
             debug!(
                 "Found complete message: offset={}, length={}, aligned_length={}",
                 offset, nl_len, aligned_nl_len
@@ -146,27 +192,23 @@ impl NetlinkMessageParser {
             // Extract payload from this message
             match Self::extract_payload_from_slice(&message_data) {
                 Ok(payload) => {
-                    debug!("Successfully extracted payload with {} bytes", payload.len());
+                    debug!(
+                        "Successfully extracted payload with {} bytes",
+                        payload.len()
+                    );
                     complete_messages.push(payload);
                 }
                 Err(e) => {
-                    warn!("Failed to extract payload from message at offset {}: {}", offset, e);
+                    warn!(
+                        "Failed to extract payload from message at offset {}: {}",
+                        offset, e
+                    );
                     // Continue with next message instead of failing completely
                 }
             }
 
-            let remaining = self.incomplete_buffer.len() - offset;
+            let remaining = new_data.len() - offset;
             offset += usize::min(aligned_nl_len, remaining);
-        }
-
-        // Keep remaining incomplete data for next recv
-        if offset < self.incomplete_buffer.len() {
-            let remaining = self.incomplete_buffer[offset..].to_vec();
-            debug!("Keeping {} bytes for next recv operation", remaining.len());
-            self.incomplete_buffer = remaining;
-        } else {
-            // All data was consumed
-            self.incomplete_buffer.clear();
         }
 
         Ok(complete_messages)
@@ -177,45 +219,70 @@ impl NetlinkMessageParser {
         const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
         const GENL_HDRLEN: usize = 4; // sizeof(struct genlmsghdr)
         const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
+        const NLMSG_LEN: std::ops::Range<usize> = 0..4;
+        const NLMSG_TYPE: std::ops::Range<usize> = 4..6;
+        const NLMSG_FLAGS: std::ops::Range<usize> = 6..8;
+        const NLMSG_SEQ: std::ops::Range<usize> = 8..12;
+        const NLMSG_PID: std::ops::Range<usize> = 12..16;
+        const GENL_CMD: usize = 16;
+        const GENL_VERSION: usize = 17;
+        const GENL_RESERVED: std::ops::Range<usize> = 18..20;
 
         if message_data.len() < TOTAL_HEADER_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Message too small: {} bytes, expected at least {}", 
-                        message_data.len(), TOTAL_HEADER_SIZE),
+                format!(
+                    "Message too small: {} bytes, expected at least {}",
+                    message_data.len(),
+                    TOTAL_HEADER_SIZE
+                ),
             ));
         }
 
         // Extract netlink message length from header
-        let nl_len = u32::from_le_bytes([
-            message_data[0], message_data[1], message_data[2], message_data[3]
-        ]) as usize;
+        let nl_len = u32::from_le_bytes(message_data[NLMSG_LEN].try_into().unwrap()) as usize;
 
         if nl_len != message_data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Message length mismatch: header says {}, actual {}", 
-                        nl_len, message_data.len()),
+                format!(
+                    "Message length mismatch: header says {}, actual {}",
+                    nl_len,
+                    message_data.len()
+                ),
             ));
         }
 
         // Debug: Print headers only when debug logging is enabled
         if log::log_enabled!(log::Level::Debug) {
-            debug!("Netlink Header (16 bytes): {:02x?}", &message_data[0..16]);
-            let nl_type = u16::from_le_bytes([message_data[4], message_data[5]]);
-            let nl_flags = u16::from_le_bytes([message_data[6], message_data[7]]);
-            let nl_seq = u32::from_le_bytes([message_data[8], message_data[9], message_data[10], message_data[11]]);
-            let nl_pid = u32::from_le_bytes([message_data[12], message_data[13], message_data[14], message_data[15]]);
-            debug!("  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}", 
-                   nl_len, nl_type, nl_flags, nl_seq, nl_pid);
+            debug!(
+                "Netlink Header ({} bytes): {:02x?}",
+                NLMSG_HDRLEN,
+                &message_data[..NLMSG_HDRLEN]
+            );
+            let nl_type = u16::from_le_bytes(message_data[NLMSG_TYPE].try_into().unwrap());
+            let nl_flags = u16::from_le_bytes(message_data[NLMSG_FLAGS].try_into().unwrap());
+            let nl_seq = u32::from_le_bytes(message_data[NLMSG_SEQ].try_into().unwrap());
+            let nl_pid = u32::from_le_bytes(message_data[NLMSG_PID].try_into().unwrap());
+            debug!(
+                "  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}",
+                nl_len, nl_type, nl_flags, nl_seq, nl_pid
+            );
 
             if message_data.len() >= TOTAL_HEADER_SIZE {
-                debug!("Generic Netlink Header (4 bytes): {:02x?}", &message_data[16..20]);
-                let genl_cmd = message_data[16];
-                let genl_version = message_data[17];
-                let genl_reserved = u16::from_le_bytes([message_data[18], message_data[19]]);
-                debug!("  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}", 
-                       genl_cmd, genl_version, genl_reserved);
+                debug!(
+                    "Generic Netlink Header ({} bytes): {:02x?}",
+                    GENL_HDRLEN,
+                    &message_data[NLMSG_HDRLEN..TOTAL_HEADER_SIZE]
+                );
+                let genl_cmd = message_data[GENL_CMD];
+                let genl_version = message_data[GENL_VERSION];
+                let genl_reserved =
+                    u16::from_le_bytes(message_data[GENL_RESERVED].try_into().unwrap());
+                debug!(
+                    "  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}",
+                    genl_cmd, genl_version, genl_reserved
+                );
             }
         }
 
@@ -256,7 +323,7 @@ pub struct DataNetlinkActor {
     buffer_recipients: LinkedList<Sender<SocketBufferMessage>>,
     /// Channel for receiving control commands
     command_recipient: Receiver<NetlinkCommand>,
-    /// Message parser for handling multiple and fragmented netlink messages
+    /// Message parser for handling one or more netlink messages in each datagram
     message_parser: NetlinkMessageParser,
     /// Netlink socket receive buffer size in bytes (0 = OS default). Reduces ENOBUFS when set.
     netlink_rcvbuf_bytes: usize,
@@ -265,6 +332,90 @@ pub struct DataNetlinkActor {
 }
 
 impl DataNetlinkActor {
+    fn recvmsg_into(
+        fd: std::os::unix::io::RawFd,
+        buffer: &mut [u8],
+        flags: i32,
+    ) -> Result<(usize, i32), io::Error> {
+        let mut iov = libc::iovec {
+            iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
+            iov_len: buffer.len(),
+        };
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+
+        // Safe on the Tokio worker because the fd is configured as non-blocking by connect().
+        let size = unsafe { libc::recvmsg(fd, &mut msg, flags) };
+        if size < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok((size as usize, msg.msg_flags))
+        }
+    }
+
+    fn recv_datagram_fd(
+        fd: std::os::unix::io::RawFd,
+        max_size: usize,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut peek_buffer = [0u8; 1];
+        // Peek first to size the receive buffer exactly and to make truncation observable. A fixed
+        // large buffer would either waste memory in the hot path or still silently truncate when a
+        // producer emits a larger datagram than expected.
+        let (needed, peek_flags) =
+            Self::recvmsg_into(fd, &mut peek_buffer, libc::MSG_PEEK | libc::MSG_TRUNC)?;
+
+        if needed == 0 {
+            let _ = Self::recvmsg_into(fd, &mut peek_buffer, 0);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Received empty netlink datagram",
+            ));
+        }
+
+        if needed > max_size {
+            let mut drain_buffer = [0u8; 1];
+            if let Err(err) = Self::recvmsg_into(fd, &mut drain_buffer, libc::MSG_TRUNC) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to drain oversized netlink datagram of {} bytes: {}",
+                        needed, err
+                    ),
+                ));
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Netlink datagram length {} exceeds maximum supported {} bytes",
+                    needed, max_size
+                ),
+            ));
+        }
+
+        let mut buffer = vec![0u8; needed];
+        let (size, flags) = Self::recvmsg_into(fd, &mut buffer, 0)?;
+        if flags & libc::MSG_TRUNC != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Truncated netlink datagram: buffer={} bytes, received={} bytes, peek_flags=0x{:x}",
+                    buffer.len(),
+                    size,
+                    peek_flags
+                ),
+            ));
+        }
+
+        buffer.truncate(size);
+        Ok(buffer)
+    }
+
+    #[cfg(not(test))]
+    fn recv_netlink_datagram(socket: &mut SocketType) -> Result<Vec<u8>, io::Error> {
+        Self::recv_datagram_fd(socket.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE)
+    }
+
     /// Creates a new DataNetlinkActor instance.
     ///
     /// # Arguments
@@ -438,6 +589,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
+
         debug!("Adding multicast membership for group_id {}", group_id);
         if let Err(e) = socket.add_membership(group_id) {
             warn!(
@@ -455,13 +608,14 @@ impl DataNetlinkActor {
             return None;
         }
 
-        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
-
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
             family, group, group_id
         );
-        debug!("Socket created successfully, ready to receive multicast messages on group_id: {}", group_id);
+        debug!(
+            "Socket created successfully, ready to receive multicast messages on group_id: {}",
+            group_id
+        );
         Some(socket)
     }
 
@@ -513,7 +667,8 @@ impl DataNetlinkActor {
             "Temporary socket created, resolving group ID for family '{}', group '{}'",
             family, group
         );
-        let group_id = match netlink_utils::resolve_multicast_group(&mut temp_socket, family, group) {
+        let group_id = match netlink_utils::resolve_multicast_group(&mut temp_socket, family, group)
+        {
             Ok(id) => {
                 debug!(
                     "Resolved group ID {} for family '{}', group '{}'",
@@ -555,6 +710,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
+
         debug!("Adding multicast membership for group_id {}", group_id);
         if let Err(e) = socket.add_membership(group_id) {
             warn!(
@@ -570,20 +727,21 @@ impl DataNetlinkActor {
             return None;
         }
 
-        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
-
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
             family, group, group_id
         );
-        debug!("Socket created successfully, ready to receive multicast messages on group_id: {}", group_id);
+        debug!(
+            "Socket created successfully, ready to receive multicast messages on group_id: {}",
+            group_id
+        );
         Some(socket)
     }
 
     /// Attempts to establish a connection on demand.
     ///
     /// This will be called when receiving a Reconnect or SoftReconnect command from ControlNetlinkActor.
-    /// 
+    ///
     /// # Arguments
     ///
     /// * `force` - If true, always reconnect regardless of socket health status.
@@ -602,9 +760,9 @@ impl DataNetlinkActor {
                     warn!(
                         "Socket unhealthy - no data received for {} seconds, forcing reconnection",
                         time_since_last_data.as_secs()
-                        );
-                        // Close the unhealthy socket
-                        self.socket = None;
+                    );
+                    // Close the unhealthy socket
+                    self.socket = None;
                 } else {
                     info!(
                         "Socket healthy - data received {} seconds ago, skipping reconnect",
@@ -678,81 +836,60 @@ impl DataNetlinkActor {
     ///
     /// Returns immediately with WouldBlock if no data is available, allowing
     /// the event loop to handle other operations concurrently.
-    /// 
+    ///
     /// This function handles multiple scenarios:
     /// 1. Single complete message in one recv
-    /// 2. Multiple complete messages in one recv  
-    /// 3. Incomplete message that needs to be combined with future recv data
+    /// 2. Multiple complete messages in one recv
+    /// 3. Truncated or malformed datagrams, which are rejected without splicing future recv data
     async fn try_recv(
-        socket: Option<&mut SocketType>, 
-        message_parser: &mut NetlinkMessageParser
+        socket: Option<&mut SocketType>,
+        message_parser: &mut NetlinkMessageParser,
     ) -> Result<Vec<SocketBufferMessage>, io::Error> {
         let socket = socket
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No socket available"))?;
 
-        let mut buffer = vec![0; BUFFER_SIZE];
-
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
         #[cfg(not(test))]
-        let result = {
-            let fd = socket.as_raw_fd();
-            unsafe {
-                libc::recv(
-                    fd,
-                    buffer.as_mut_ptr() as *mut libc::c_void,
-                    buffer.len(),
-                    0
-                )
-            }
-        };
+        let recv_result = Self::recv_netlink_datagram(socket);
 
         #[cfg(test)]
-        let result = match socket.recv(&mut buffer, 0) {
-            Ok(size) => size as isize,
-            Err(e) => {
-                return Err(e);
-            }
+        let recv_result = {
+            let mut buffer = vec![0; BUFFER_SIZE];
+            socket.recv(&mut buffer, 0).map(|size| {
+                buffer.truncate(size);
+                buffer
+            })
         };
 
-        match result {
-            size if size > 0 => {
-                let size = size as usize;
+        match recv_result {
+            Ok(buffer) => {
+                let size = buffer.len();
                 debug!("Received netlink data, size: {} bytes", size);
 
                 if size == 0 {
                     return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "No more data to receive",
+                        io::ErrorKind::InvalidData,
+                        "Received empty netlink datagram",
                     ));
                 }
 
-                // Resize buffer to actual received size
-                buffer.resize(size, 0);
-
                 if log::log_enabled!(log::Level::Debug) {
                     let hex_dump = format_hex_lines(&buffer);
-                    debug!(
-                        "Raw netlink recv buffer ({} bytes):\n{}",
-                        size, hex_dump
-                    );
+                    debug!("Raw netlink recv buffer ({} bytes):\n{}", size, hex_dump);
                 }
 
                 // Parse buffer which may contain multiple messages and/or incomplete messages
                 let messages = message_parser.parse_buffer(&buffer)?;
-                debug!("Parsed {} complete messages from {} bytes of data", messages.len(), size);
+                debug!(
+                    "Parsed {} complete messages from {} bytes of data",
+                    messages.len(),
+                    size
+                );
 
                 Ok(messages)
             }
-            size if size == 0 => {
-                Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "Connection closed",
-                ))
-            }
-            _ => {
-                // size < 0, errno is set
-                let err = io::Error::last_os_error();
+            Err(err) => {
                 // WouldBlock is expected for non-blocking sockets with no data
                 // Only log other errors
                 if err.kind() != io::ErrorKind::WouldBlock {
@@ -764,43 +901,6 @@ impl DataNetlinkActor {
                 }
                 Err(err)
             }
-        }
-    }
-
-    /// Checks for socket readiness without unsafe operations.
-    ///
-    /// This is a safer alternative that uses tokio's timeout mechanism
-    /// instead of direct file descriptor polling with unsafe operations.
-    ///
-    /// # Arguments
-    ///
-    /// * `timeout_ms` - Timeout in milliseconds
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating if data socket has data
-    async fn check_socket_readiness(timeout_ms: u64) -> Result<bool, io::Error> {
-        // In test environment, always return true to let try_recv() handle the actual data availability
-        #[cfg(test)]
-        {
-            // Simulate minimal polling delay
-            sleep(Duration::from_millis(std::cmp::min(timeout_ms, 1)));
-            // Always return true in test mode - let MockSocket.recv() handle availability
-            return Ok(true);
-        }
-
-        #[cfg(not(test))]
-        {
-            use tokio::time::{sleep as tokio_sleep, Duration as TokioDuration};
-
-            // For production, we simply wait for the timeout period
-            // This approach avoids unsafe operations but is less efficient
-            // The actual socket readiness will be checked by try_recv() calls
-            tokio_sleep(TokioDuration::from_millis(timeout_ms)).await;
-
-            // Always return that data might be ready, let try_recv() handle the actual check
-            // This is safe but potentially less efficient than direct polling
-            Ok(true)
         }
     }
 
@@ -821,73 +921,69 @@ impl DataNetlinkActor {
         let heartbeat_interval = (HEARTBEAT_TARGET_MS / poll_ms).max(1) as u32;
         let debug_interval = (DEBUG_TARGET_MS / poll_ms).max(1) as u32;
         let wouldblock_interval = (WOULDBLOCK_TARGET_MS / poll_ms).max(1) as u32;
+        let mut poll_interval = interval(Duration::from_millis(poll_ms));
+        poll_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
-            // Log heartbeat every 5 minutes to show the actor is running
-            heartbeat_counter += 1;
-            if heartbeat_counter % heartbeat_interval == 0 {
-                info!("DataNetlinkActor is running normally - waiting for data messages");
-            }
-
-            // More frequent debug info about socket status
-            if heartbeat_counter % debug_interval == 0 {
-                debug!(
-                    "DataNetlinkActor heartbeat: socket={}, recipients={}, failures={}",
-                    actor.socket.is_some(),
-                    actor.buffer_recipients.len(),
-                    consecutive_failures
-                );
-                if actor.socket.is_some() {
-                    debug!("Socket is available and we are actively trying to receive messages");
-                    consecutive_failures = 0; // Reset failure counter when socket is available
-                }
-            }
-
-            // Check for pending commands first (non-blocking)
-            if let Ok(command) = actor.command_recipient.try_recv() {
-                record_comm_stats(
-                    ChannelLabel::ControlNetlinkToDataNetlink,
-                    actor.command_recipient.len(),
-                );
-                match command {
-                    NetlinkCommand::SocketConnect(SocketConnect { family, group }) => {
-                        actor.reset(&family, &group);
-                        consecutive_failures = 0; // Reset failure counter on reconnect command
-                    }
-                    NetlinkCommand::Reconnect => {
-                        actor.connect(true); // Force reconnection
-                        consecutive_failures = 0; // Reset failure counter on reconnect command
-                    }
-                    NetlinkCommand::SoftReconnect => {
-                        actor.connect(false); // Check health before reconnecting
-                        consecutive_failures = 0; // Reset failure counter on reconnect command
-                    }
-                    NetlinkCommand::Close => {
-                        break;
+            select! {
+                command = actor.command_recipient.recv() => {
+                    match command {
+                        Some(command) => {
+                            record_comm_stats(
+                                ChannelLabel::ControlNetlinkToDataNetlink,
+                                actor.command_recipient.len(),
+                            );
+                            match command {
+                                NetlinkCommand::SocketConnect(SocketConnect { family, group }) => {
+                                    actor.reset(&family, &group);
+                                    consecutive_failures = 0;
+                                }
+                                NetlinkCommand::Reconnect => {
+                                    actor.connect(true);
+                                    consecutive_failures = 0;
+                                }
+                                NetlinkCommand::SoftReconnect => {
+                                    actor.connect(false);
+                                    consecutive_failures = 0;
+                                }
+                                NetlinkCommand::Close => {
+                                    break;
+                                }
+                            }
+                        }
+                        None => break,
                     }
                 }
-                continue;
-            }
+                _ = poll_interval.tick() => {
+                    heartbeat_counter += 1;
+                    if heartbeat_counter % heartbeat_interval == 0 {
+                        info!("DataNetlinkActor is running normally - waiting for data messages");
+                    }
 
-            // Check socket readiness with configurable timeout to allow periodic checks
-            match Self::check_socket_readiness(actor.socket_readiness_timeout_ms).await {
-                Ok(data_ready) => {
-                    // Only try to receive data if we have a socket and data is ready
-                    if actor.socket.is_some() && data_ready {
+                    if heartbeat_counter % debug_interval == 0 {
+                        debug!(
+                            "DataNetlinkActor heartbeat: socket={}, recipients={}, failures={}",
+                            actor.socket.is_some(),
+                            actor.buffer_recipients.len(),
+                            consecutive_failures
+                        );
+                        if actor.socket.is_some() {
+                            debug!("Socket is available and we are actively trying to receive messages");
+                            consecutive_failures = 0;
+                        }
+                    }
+
+                    if actor.socket.is_some() {
                         match Self::try_recv(actor.socket.as_mut(), &mut actor.message_parser).await {
                             Ok(messages) => {
-                                consecutive_failures = 0; // Reset failure counter on successful receive
-                                actor.last_data_time = Instant::now(); // Update data reception timestamp
-
+                                consecutive_failures = 0;
+                                actor.last_data_time = Instant::now();
 
                                 if messages.is_empty() {
-                                    debug!("Received data but no complete messages yet (partial message)");
+                                    debug!("Received netlink datagram but no complete payload was extracted");
                                 } else {
                                     debug!("Successfully parsed {} complete netlink messages", messages.len());
 
-                                    // Send each complete netlink message individually to all recipients
-                                    // This ensures each IPFIX message (contained in one netlink message) 
-                                    // is sent as a separate operation to the downstream actors
                                     for (i, message) in messages.iter().enumerate() {
                                         if log::log_enabled!(log::Level::Debug) {
                                             let hex_dump = format_hex_lines(message.as_ref());
@@ -899,19 +995,17 @@ impl DataNetlinkActor {
                                                 hex_dump
                                             );
                                         }
-                                        debug!("Processing netlink message {}/{}: {} bytes", 
+                                        debug!("Processing netlink message {}/{}: {} bytes",
                                                i + 1, messages.len(), message.len());
 
-                                        // Send this single netlink message to all recipients
                                         for (j, recipient) in actor.buffer_recipients.iter().enumerate() {
-                                            debug!("Sending netlink message {}/{} to recipient {}", 
+                                            debug!("Sending netlink message {}/{} to recipient {}",
                                                    i + 1, messages.len(), j + 1);
                                             if let Err(e) = recipient.send(message.clone()).await {
-                                                warn!("Failed to send netlink message {}/{} to recipient {}: {:?}", 
+                                                warn!("Failed to send netlink message {}/{} to recipient {}: {:?}",
                                                       i + 1, messages.len(), j + 1, e);
-                                                // Consider removing failed recipients here if needed
                                             } else {
-                                                debug!("Successfully sent netlink message {}/{} ({} bytes) to recipient {}", 
+                                                debug!("Successfully sent netlink message {}/{} ({} bytes) to recipient {}",
                                                        i + 1, messages.len(), message.len(), j + 1);
                                             }
                                         }
@@ -921,7 +1015,6 @@ impl DataNetlinkActor {
                                 }
                             }
                             Err(e) => {
-                                // Handle specific errors
                                 if let Some(os_error) = e.raw_os_error() {
                                     if os_error == ENOBUFS {
                                         warn!(
@@ -933,25 +1026,24 @@ impl DataNetlinkActor {
                                     }
                                 }
 
-                                // Check if it's WouldBlock using standard ErrorKind
                                 if e.kind() == io::ErrorKind::WouldBlock {
                                     // No data available right now, continue normally
                                     if heartbeat_counter % wouldblock_interval == 0 {
                                         debug!("No netlink data available (WouldBlock) - socket is connected but no messages from kernel");
                                     }
+                                } else if e.kind() == io::ErrorKind::InvalidData {
+                                    warn!("Dropping invalid netlink datagram: {:?}", e);
                                 } else {
-                                    // Socket error occurred, disconnect and try limited reconnects
                                     warn!("Failed to receive message: {:?}", e);
                                     actor.disconnect();
                                     consecutive_failures += 1;
 
-                                    // Only attempt very limited local reconnects
                                     if consecutive_failures <= MAX_LOCAL_RECONNECT_ATTEMPTS {
                                         debug!(
                                             "Attempting quick reconnect #{}",
                                             consecutive_failures
                                         );
-                                        actor.connect(true); // Force reconnection on error
+                                        actor.connect(true);
                                     } else {
                                         debug!("Too many consecutive failures, waiting for reconnect command from ControlNetlinkActor");
                                     }
@@ -964,11 +1056,6 @@ impl DataNetlinkActor {
                             debug!("No socket available - waiting for reconnect command from ControlNetlinkActor");
                         }
                     }
-                }
-                Err(e) => {
-                    warn!("Poll error: {:?}", e);
-                    // Wait a bit before retrying to avoid busy loop on persistent poll errors
-                    sleep(Duration::from_millis(actor.socket_readiness_timeout_ms));
                 }
             }
         }
@@ -996,7 +1083,17 @@ pub mod test {
         msg[..actual_len].to_vec()
     }
 
-    // Test constants for simulating different message scenarios  
+    fn create_large_mock_netlink_message(payload: &[u8]) -> Vec<u8> {
+        let total_len = 20 + payload.len();
+        let mut msg = vec![0u8; total_len];
+        msg[0..4].copy_from_slice(&(total_len as u32).to_le_bytes());
+        msg[4..6].copy_from_slice(&0x10u16.to_le_bytes());
+        msg[16] = 0x01;
+        msg[20..].copy_from_slice(payload);
+        msg
+    }
+
+    // Test constants for simulating different message scenarios
     fn get_partially_valid_messages() -> Vec<Vec<u8>> {
         vec![
             create_test_message(b"PARTIALLY_VALID1"),
@@ -1122,7 +1219,7 @@ pub mod test {
         ///
         /// Ok(size) on success, Err on failure or empty message
         pub fn recv(&mut self, buf: &mut [u8], _flags: i32) -> Result<usize, io::Error> {
-            sleep(Duration::from_millis(1));
+            std::thread::sleep(Duration::from_millis(1));
 
             if self.budget == 0 {
                 // When there are no more messages, return WouldBlock to simulate non-blocking behavior
@@ -1269,11 +1366,8 @@ pub mod test {
         let mut parser = NetlinkMessageParser::new();
 
         let result = parser.parse_buffer(&buffer);
-        assert!(result.is_ok());
-
-        // Should have no complete messages due to insufficient data
-        let messages = result.unwrap();
-        assert!(messages.is_empty());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 
     /// Tests handling multiple messages in one buffer.
@@ -1323,34 +1417,54 @@ pub mod test {
         assert_eq!(String::from_utf8(messages[1].to_vec()).unwrap(), "SECOND");
     }
 
-    /// Tests handling fragmented messages across multiple recv operations.
     #[test]
-    fn test_fragmented_message() {
-        let msg = create_mock_netlink_message(b"FRAGMENTED_MESSAGE");
-        let msg_len = 20 + b"FRAGMENTED_MESSAGE".len();
+    fn test_trailing_zero_bytes_larger_than_alignment_padding_are_discarded() {
+        let mut buffer = create_mock_netlink_message(b"COMPLETE").to_vec();
+        buffer.truncate(20 + b"COMPLETE".len());
+        buffer.extend_from_slice(&[0; 4]);
+
+        let mut parser = NetlinkMessageParser::new();
+        let messages = parser.parse_buffer(&buffer).unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].as_ref(), b"COMPLETE");
+    }
+
+    #[test]
+    fn test_zero_bytes_larger_than_alignment_padding_are_rejected() {
+        let mut parser = NetlinkMessageParser::new();
+        let result = parser.parse_buffer(&[0; 4]);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// Tests that a truncated datagram is never spliced with the next datagram.
+    ///
+    /// Without the fix, parse_buffer() keeps the first truncated datagram in an
+    /// incomplete buffer and combines it with the next recv, producing one
+    /// corrupted payload instead of dropping the truncated datagram.
+    #[test]
+    fn test_truncated_datagram_is_not_spliced_with_next_datagram() {
+        let first_payload = vec![b'A'; BUFFER_SIZE + 3200];
+        let first_datagram = create_large_mock_netlink_message(&first_payload);
+        let second_datagram = create_large_mock_netlink_message(b"SECOND_DATAGRAM");
         let mut parser = NetlinkMessageParser::new();
 
-        // Simulate first recv getting only part of the message
-        let first_part = &msg[..15]; // Less than header size
-        let result1 = parser.parse_buffer(first_part);
-        assert!(result1.is_ok());
-        let messages1 = result1.unwrap();
-        assert!(messages1.is_empty()); // No complete messages yet
+        let result1 = parser.parse_buffer(&first_datagram[..BUFFER_SIZE]);
+        assert!(result1.is_err());
+        assert_eq!(result1.unwrap_err().kind(), io::ErrorKind::InvalidData);
 
-        // Simulate second recv getting the rest
-        let second_part = &msg[15..msg_len];
-        let result2 = parser.parse_buffer(second_part);
+        let result2 = parser.parse_buffer(&second_datagram);
         assert!(result2.is_ok());
         let messages2 = result2.unwrap();
         assert_eq!(messages2.len(), 1);
-
-        let payload_str = String::from_utf8(messages2[0].to_vec()).unwrap();
-        assert_eq!(payload_str, "FRAGMENTED_MESSAGE");
+        assert_eq!(messages2[0].as_ref(), b"SECOND_DATAGRAM");
     }
 
-    /// Tests handling mixed scenario: complete message + partial message.
+    /// Tests handling a datagram with a complete message followed by a truncated message.
     #[test]
-    fn test_mixed_complete_and_partial() {
+    fn test_complete_message_followed_by_truncated_message_is_rejected() {
         let mut combined_buffer = Vec::new();
 
         // First complete message
@@ -1364,25 +1478,100 @@ pub mod test {
         combined_buffer.extend_from_slice(&msg2[..25]); // Only part of second message
 
         let mut parser = NetlinkMessageParser::new();
-        let result1 = parser.parse_buffer(&combined_buffer);
-        assert!(result1.is_ok());
+        let result = parser.parse_buffer(&combined_buffer);
+        assert!(result.is_ok());
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].as_ref(), b"COMPLETE");
 
-        let messages1 = result1.unwrap();
-        assert_eq!(messages1.len(), 1); // Only first complete message
+        // The next datagram must be parsed independently, not as a continuation.
+        let result = parser.parse_buffer(&msg2[..msg2_len]);
+        assert!(result.is_ok());
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].as_ref(), b"PARTIAL_MSG");
+    }
 
-        let payload1_str = String::from_utf8(messages1[0].to_vec()).unwrap();
-        assert_eq!(payload1_str, "COMPLETE");
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_datagram_larger_than_default_buffer() {
+        use std::os::unix::net::UnixDatagram;
 
-        // Send remaining part of second message
-        let remaining_part = &msg2[25..msg2_len];
-        let result2 = parser.parse_buffer(remaining_part);
-        assert!(result2.is_ok());
+        let (tx, rx) = UnixDatagram::pair().unwrap();
+        let payload = vec![0xab; BUFFER_SIZE + 4096];
+        tx.send(&payload).unwrap();
 
-        let messages2 = result2.unwrap();
-        assert_eq!(messages2.len(), 1); // Second message now complete
+        let received =
+            DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE).unwrap();
 
-        let payload2_str = String::from_utf8(messages2[0].to_vec()).unwrap();
-        assert_eq!(payload2_str, "PARTIAL_MSG");
+        assert_eq!(received, payload);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_datagram_larger_than_max_size_is_drained() {
+        use std::os::unix::net::UnixDatagram;
+
+        let (tx, rx) = UnixDatagram::pair().unwrap();
+        let payload = vec![0xef; BUFFER_SIZE + 4096];
+        let next_payload = b"NEXT";
+        tx.send(&payload).unwrap();
+        tx.send(next_payload).unwrap();
+
+        let result = DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), BUFFER_SIZE);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+
+        let received = DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), BUFFER_SIZE).unwrap();
+        assert_eq!(received, next_payload);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_datagram_empty_is_invalid_and_drained() {
+        use std::os::unix::net::UnixDatagram;
+
+        let (tx, rx) = UnixDatagram::pair().unwrap();
+        let next_payload = b"NEXT";
+        tx.send(&[]).unwrap();
+        tx.send(next_payload).unwrap();
+
+        let result = DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), BUFFER_SIZE);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+
+        let received = DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), BUFFER_SIZE).unwrap();
+        assert_eq!(received, next_payload);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_plain_recvmsg_reports_truncation() {
+        use std::os::unix::net::UnixDatagram;
+
+        let (tx, rx) = UnixDatagram::pair().unwrap();
+        let payload = vec![0xcd; BUFFER_SIZE + 4096];
+        tx.send(&payload).unwrap();
+
+        let mut buffer = vec![0u8; BUFFER_SIZE];
+        let (size, flags) = DataNetlinkActor::recvmsg_into(rx.as_raw_fd(), &mut buffer, 0).unwrap();
+
+        assert_eq!(size, BUFFER_SIZE);
+        assert_ne!(flags & libc::MSG_TRUNC, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_datagram_fd_propagates_wouldblock() {
+        use std::os::unix::net::UnixDatagram;
+
+        let (_tx, rx) = UnixDatagram::pair().unwrap();
+        rx.set_nonblocking(true).unwrap();
+
+        let result = DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), BUFFER_SIZE);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
     }
 
     /// Tests the get_genl_family_group function with a valid constants file.
@@ -1457,12 +1646,21 @@ pub mod test {
             let heartbeat = (HEARTBEAT_TARGET_MS / poll_ms).max(1);
             let debug = (DEBUG_TARGET_MS / poll_ms).max(1);
             let wouldblock = (WOULDBLOCK_TARGET_MS / poll_ms).max(1);
-            assert_eq!(heartbeat * poll_ms, HEARTBEAT_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(
+                heartbeat * poll_ms,
+                HEARTBEAT_TARGET_MS,
+                "poll_ms={}",
+                poll_ms
+            );
             assert_eq!(debug * poll_ms, DEBUG_TARGET_MS, "poll_ms={}", poll_ms);
-            assert_eq!(wouldblock * poll_ms, WOULDBLOCK_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(
+                wouldblock * poll_ms,
+                WOULDBLOCK_TARGET_MS,
+                "poll_ms={}",
+                poll_ms
+            );
         }
     }
-
 }
 
 /// Reads the Generic Netlink family and group names from the configuration file.
