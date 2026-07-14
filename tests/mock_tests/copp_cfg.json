@@ -79,7 +79,8 @@
 	    },
 	    "bfd": {
 		    "trap_ids": "bfd,bfdv6",
-		    "trap_group": "queue4_group1"
+		    "trap_group": "queue4_group1",
+		    "always_enabled": "true"
 	    },
 	    "lacp": {
 		    "trap_ids": "lacp",
