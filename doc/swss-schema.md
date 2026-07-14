@@ -444,15 +444,15 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     wred_red_enable         = "true" / "false"
     ; optional independent ECN marking thresholds ("mark before drop"), applied best-effort where the
     ; platform supports them; each color requires that color enabled in "ecn"
-    ecn_green_min_threshold     = byte_count
-    ecn_green_max_threshold     = byte_count
-    ecn_green_mark_probability  = percentage
-    ecn_yellow_min_threshold    = byte_count
-    ecn_yellow_max_threshold    = byte_count
-    ecn_yellow_mark_probability = percentage
-    ecn_red_min_threshold       = byte_count
-    ecn_red_max_threshold       = byte_count
-    ecn_red_mark_probability    = percentage
+    green_ect_min_threshold     = byte_count
+    green_ect_max_threshold     = byte_count
+    green_ect_mark_probability  = percentage
+    yellow_ect_min_threshold    = byte_count
+    yellow_ect_max_threshold    = byte_count
+    yellow_ect_mark_probability = percentage
+    red_ect_min_threshold       = byte_count
+    red_ect_max_threshold       = byte_count
+    red_ect_mark_probability    = percentage
     percentage                  = 1*DIGIT     ; 0..100 (percent)
 
     Example:

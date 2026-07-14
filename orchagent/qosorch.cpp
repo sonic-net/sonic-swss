@@ -829,31 +829,31 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             }
             attribs.push_back(attr);
         }
-        else if (fvField(*i) == ecn_green_min_threshold_field_name)
+        else if (fvField(*i) == green_ect_min_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_green_max_threshold < threshold),
+                                           (storedProfile.green_ect_max_threshold < threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_green_min_threshold);
+                                           currentProfile.green_ect_min_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_green_max_threshold_field_name)
+        else if (fvField(*i) == green_ect_max_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_green_min_threshold > threshold),
+                                           (storedProfile.green_ect_min_threshold > threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_green_max_threshold);
+                                           currentProfile.green_ect_max_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_green_mark_probability_field_name)
+        else if (fvField(*i) == green_ect_mark_probability_field_name)
         {
             if (!ecn_supported) { continue; }
             attr.id = SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY;
@@ -861,31 +861,31 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attribs.push_back(attr);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_yellow_min_threshold_field_name)
+        else if (fvField(*i) == yellow_ect_min_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_yellow_max_threshold < threshold),
+                                           (storedProfile.yellow_ect_max_threshold < threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_yellow_min_threshold);
+                                           currentProfile.yellow_ect_min_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_yellow_max_threshold_field_name)
+        else if (fvField(*i) == yellow_ect_max_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_yellow_min_threshold > threshold),
+                                           (storedProfile.yellow_ect_min_threshold > threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_yellow_max_threshold);
+                                           currentProfile.yellow_ect_max_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_yellow_mark_probability_field_name)
+        else if (fvField(*i) == yellow_ect_mark_probability_field_name)
         {
             if (!ecn_supported) { continue; }
             attr.id = SAI_WRED_ATTR_ECN_YELLOW_MARK_PROBABILITY;
@@ -893,31 +893,31 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attribs.push_back(attr);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_red_min_threshold_field_name)
+        else if (fvField(*i) == red_ect_min_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_red_max_threshold < threshold),
+                                           (storedProfile.red_ect_max_threshold < threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_red_min_threshold);
+                                           currentProfile.red_ect_min_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_red_max_threshold_field_name)
+        else if (fvField(*i) == red_ect_max_threshold_field_name)
         {
             if (!ecn_supported) { continue; }
             threshold = stoi(fvValue(*i));
             appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD,
                                            threshold,
-                                           (storedProfile.ecn_red_min_threshold > threshold),
+                                           (storedProfile.red_ect_min_threshold > threshold),
                                            attribs,
                                            deferred_attributes,
-                                           currentProfile.ecn_red_max_threshold);
+                                           currentProfile.red_ect_max_threshold);
             has_ecn_threshold = true;
         }
-        else if (fvField(*i) == ecn_red_mark_probability_field_name)
+        else if (fvField(*i) == red_ect_mark_probability_field_name)
         {
             if (!ecn_supported) { continue; }
             attr.id = SAI_WRED_ATTR_ECN_RED_MARK_PROBABILITY;
@@ -946,9 +946,9 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
         return false;
     }
 
-    if ((currentProfile.ecn_green_min_threshold > currentProfile.ecn_green_max_threshold)
-        || (currentProfile.ecn_yellow_min_threshold > currentProfile.ecn_yellow_max_threshold)
-        || (currentProfile.ecn_red_min_threshold > currentProfile.ecn_red_max_threshold))
+    if ((currentProfile.green_ect_min_threshold > currentProfile.green_ect_max_threshold)
+        || (currentProfile.yellow_ect_min_threshold > currentProfile.yellow_ect_max_threshold)
+        || (currentProfile.red_ect_min_threshold > currentProfile.red_ect_max_threshold))
     {
         SWSS_LOG_ERROR("Wrong wred profile: ECN min threshold is greater than ECN max threshold");
         return false;

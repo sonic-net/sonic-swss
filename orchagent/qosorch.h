@@ -62,15 +62,15 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
-const string ecn_green_min_threshold_field_name     = "ecn_green_min_threshold";
-const string ecn_green_max_threshold_field_name     = "ecn_green_max_threshold";
-const string ecn_green_mark_probability_field_name  = "ecn_green_mark_probability";
-const string ecn_yellow_min_threshold_field_name    = "ecn_yellow_min_threshold";
-const string ecn_yellow_max_threshold_field_name    = "ecn_yellow_max_threshold";
-const string ecn_yellow_mark_probability_field_name = "ecn_yellow_mark_probability";
-const string ecn_red_min_threshold_field_name       = "ecn_red_min_threshold";
-const string ecn_red_max_threshold_field_name       = "ecn_red_max_threshold";
-const string ecn_red_mark_probability_field_name    = "ecn_red_mark_probability";
+const string green_ect_min_threshold_field_name     = "green_ect_min_threshold";
+const string green_ect_max_threshold_field_name     = "green_ect_max_threshold";
+const string green_ect_mark_probability_field_name  = "green_ect_mark_probability";
+const string yellow_ect_min_threshold_field_name    = "yellow_ect_min_threshold";
+const string yellow_ect_max_threshold_field_name    = "yellow_ect_max_threshold";
+const string yellow_ect_mark_probability_field_name = "yellow_ect_mark_probability";
+const string red_ect_min_threshold_field_name       = "red_ect_min_threshold";
+const string red_ect_max_threshold_field_name       = "red_ect_max_threshold";
+const string red_ect_mark_probability_field_name    = "red_ect_mark_probability";
 
 class QosMapHandler
 {
@@ -150,12 +150,12 @@ private:
         sai_uint32_t yellow_min_threshold;
         sai_uint32_t red_max_threshold;
         sai_uint32_t red_min_threshold;
-        sai_uint32_t ecn_green_max_threshold;
-        sai_uint32_t ecn_green_min_threshold;
-        sai_uint32_t ecn_yellow_max_threshold;
-        sai_uint32_t ecn_yellow_min_threshold;
-        sai_uint32_t ecn_red_max_threshold;
-        sai_uint32_t ecn_red_min_threshold;
+        sai_uint32_t green_ect_max_threshold;
+        sai_uint32_t green_ect_min_threshold;
+        sai_uint32_t yellow_ect_max_threshold;
+        sai_uint32_t yellow_ect_min_threshold;
+        sai_uint32_t red_ect_max_threshold;
+        sai_uint32_t red_ect_min_threshold;
     } qos_wred_thresholds_t;
     typedef map<string, qos_wred_thresholds_t> qos_wred_thresholds_store_t;
 

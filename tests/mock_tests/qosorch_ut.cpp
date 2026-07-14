@@ -131,28 +131,28 @@ namespace qosorch_test
             saiMaxDropProbabilities.red_max_drop_probability = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_green_min_threshold || saiThresholds.ecn_green_min_threshold < attr.value.u32);
-            saiThresholds.ecn_green_max_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.green_ect_min_threshold || saiThresholds.green_ect_min_threshold < attr.value.u32);
+            saiThresholds.green_ect_max_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_green_max_threshold || saiThresholds.ecn_green_max_threshold > attr.value.u32);
-            saiThresholds.ecn_green_min_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.green_ect_max_threshold || saiThresholds.green_ect_max_threshold > attr.value.u32);
+            saiThresholds.green_ect_min_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_yellow_min_threshold || saiThresholds.ecn_yellow_min_threshold < attr.value.u32);
-            saiThresholds.ecn_yellow_max_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.yellow_ect_min_threshold || saiThresholds.yellow_ect_min_threshold < attr.value.u32);
+            saiThresholds.yellow_ect_max_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_yellow_max_threshold || saiThresholds.ecn_yellow_max_threshold > attr.value.u32);
-            saiThresholds.ecn_yellow_min_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.yellow_ect_max_threshold || saiThresholds.yellow_ect_max_threshold > attr.value.u32);
+            saiThresholds.yellow_ect_min_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_red_min_threshold || saiThresholds.ecn_red_min_threshold < attr.value.u32);
-            saiThresholds.ecn_red_max_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.red_ect_min_threshold || saiThresholds.red_ect_min_threshold < attr.value.u32);
+            saiThresholds.red_ect_max_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD:
-            ASSERT_TRUE(!saiThresholds.ecn_red_max_threshold || saiThresholds.ecn_red_max_threshold > attr.value.u32);
-            saiThresholds.ecn_red_min_threshold = attr.value.u32;
+            ASSERT_TRUE(!saiThresholds.red_ect_max_threshold || saiThresholds.red_ect_max_threshold > attr.value.u32);
+            saiThresholds.red_ect_min_threshold = attr.value.u32;
             break;
         case SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY:
             saiEcnMarkProbabilities.green_max_drop_probability = attr.value.u32;
@@ -178,12 +178,12 @@ namespace qosorch_test
         ASSERT_EQ(oaThresholds.yellow_max_threshold, thresholds.yellow_max_threshold);
         ASSERT_EQ(oaThresholds.red_min_threshold, thresholds.red_min_threshold);
         ASSERT_EQ(oaThresholds.red_max_threshold, thresholds.red_max_threshold);
-        ASSERT_EQ(oaThresholds.ecn_green_min_threshold, thresholds.ecn_green_min_threshold);
-        ASSERT_EQ(oaThresholds.ecn_green_max_threshold, thresholds.ecn_green_max_threshold);
-        ASSERT_EQ(oaThresholds.ecn_yellow_min_threshold, thresholds.ecn_yellow_min_threshold);
-        ASSERT_EQ(oaThresholds.ecn_yellow_max_threshold, thresholds.ecn_yellow_max_threshold);
-        ASSERT_EQ(oaThresholds.ecn_red_min_threshold, thresholds.ecn_red_min_threshold);
-        ASSERT_EQ(oaThresholds.ecn_red_max_threshold, thresholds.ecn_red_max_threshold);
+        ASSERT_EQ(oaThresholds.green_ect_min_threshold, thresholds.green_ect_min_threshold);
+        ASSERT_EQ(oaThresholds.green_ect_max_threshold, thresholds.green_ect_max_threshold);
+        ASSERT_EQ(oaThresholds.yellow_ect_min_threshold, thresholds.yellow_ect_min_threshold);
+        ASSERT_EQ(oaThresholds.yellow_ect_max_threshold, thresholds.yellow_ect_max_threshold);
+        ASSERT_EQ(oaThresholds.red_ect_min_threshold, thresholds.red_ect_min_threshold);
+        ASSERT_EQ(oaThresholds.red_ect_max_threshold, thresholds.red_ect_max_threshold);
     }
 
     void updateWredProfileAndCheck(vector<FieldValueTuple> &thresholdsVector, WredMapHandler::qos_wred_thresholds_t &thresholdsValue)
@@ -1613,15 +1613,15 @@ namespace qosorch_test
             {"yellow_max_threshold", "2097153"},
             {"red_min_threshold", "1048578"},
             {"red_max_threshold", "2097154"},
-            {"ecn_green_min_threshold", "524288"},
-            {"ecn_green_max_threshold", "1048576"},
-            {"ecn_green_mark_probability", "50"},
-            {"ecn_yellow_min_threshold", "524289"},
-            {"ecn_yellow_max_threshold", "1048577"},
-            {"ecn_yellow_mark_probability", "50"},
-            {"ecn_red_min_threshold", "524290"},
-            {"ecn_red_max_threshold", "1048578"},
-            {"ecn_red_mark_probability", "100"}
+            {"green_ect_min_threshold", "524288"},
+            {"green_ect_max_threshold", "1048576"},
+            {"green_ect_mark_probability", "50"},
+            {"yellow_ect_min_threshold", "524289"},
+            {"yellow_ect_max_threshold", "1048577"},
+            {"yellow_ect_mark_probability", "50"},
+            {"red_ect_min_threshold", "524290"},
+            {"red_ect_max_threshold", "1048578"},
+            {"red_ect_mark_probability", "100"}
         };
         WredMapHandler::qos_wred_thresholds_t ecnThresholds = {
             2097152, //green_max_threshold
@@ -1630,12 +1630,12 @@ namespace qosorch_test
             1048577, //yellow_min_threshold
             2097154, //red_max_threshold
             1048578, //red_min_threshold
-            1048576, //ecn_green_max_threshold
-            524288,  //ecn_green_min_threshold
-            1048577, //ecn_yellow_max_threshold
-            524289,  //ecn_yellow_min_threshold
-            1048578, //ecn_red_max_threshold
-            524290   //ecn_red_min_threshold
+            1048576, //green_ect_max_threshold
+            524288,  //green_ect_min_threshold
+            1048577, //yellow_ect_max_threshold
+            524289,  //yellow_ect_min_threshold
+            1048578, //red_ect_max_threshold
+            524290   //red_ect_min_threshold
         };
 
         updateWredProfileAndCheck(ecnSetVector, ecnThresholds);
@@ -1663,9 +1663,9 @@ namespace qosorch_test
             {"wred_green_enable", "true"},
             {"green_min_threshold", "1048576"},
             {"green_max_threshold", "2097152"},
-            {"ecn_green_min_threshold", "524288"},
-            {"ecn_green_max_threshold", "1048576"},
-            {"ecn_green_mark_probability", "50"}
+            {"green_ect_min_threshold", "524288"},
+            {"green_ect_max_threshold", "1048576"},
+            {"green_ect_mark_probability", "50"}
         };
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -1683,8 +1683,8 @@ namespace qosorch_test
         ASSERT_EQ(saiThresholds.green_max_threshold, 2097152u);
         // The unsupported ECN marking attributes were skipped, not programmed, and did not fail
         // the WRED profile creation.
-        ASSERT_EQ(saiThresholds.ecn_green_min_threshold, 0u);
-        ASSERT_EQ(saiThresholds.ecn_green_max_threshold, 0u);
+        ASSERT_EQ(saiThresholds.green_ect_min_threshold, 0u);
+        ASSERT_EQ(saiThresholds.green_ect_max_threshold, 0u);
         ASSERT_EQ(saiEcnMarkProbabilities.green_max_drop_probability, 0u);
 
         testing_wred_thresholds = false;
@@ -1708,15 +1708,15 @@ namespace qosorch_test
             {"yellow_max_threshold", "2097153"},
             {"red_min_threshold", "1048578"},
             {"red_max_threshold", "2097154"},
-            {"ecn_green_min_threshold", "524288"},
-            {"ecn_green_max_threshold", "1048576"},
-            {"ecn_green_mark_probability", "50"},
-            {"ecn_yellow_min_threshold", "524289"},
-            {"ecn_yellow_max_threshold", "1048577"},
-            {"ecn_yellow_mark_probability", "50"},
-            {"ecn_red_min_threshold", "524290"},
-            {"ecn_red_max_threshold", "1048578"},
-            {"ecn_red_mark_probability", "100"}
+            {"green_ect_min_threshold", "524288"},
+            {"green_ect_max_threshold", "1048576"},
+            {"green_ect_mark_probability", "50"},
+            {"yellow_ect_min_threshold", "524289"},
+            {"yellow_ect_max_threshold", "1048577"},
+            {"yellow_ect_mark_probability", "50"},
+            {"red_ect_min_threshold", "524290"},
+            {"red_ect_max_threshold", "1048578"},
+            {"red_ect_mark_probability", "100"}
         };
         WredMapHandler::qos_wred_thresholds_t afterCreate = {
             2097152, 1048576, 2097153, 1048577, 2097154, 1048578,
@@ -1737,15 +1737,15 @@ namespace qosorch_test
             {"yellow_max_threshold", "2097153"},
             {"red_min_threshold", "1048578"},
             {"red_max_threshold", "2097154"},
-            {"ecn_green_min_threshold", "786432"},
-            {"ecn_green_max_threshold", "1572864"},
-            {"ecn_green_mark_probability", "60"},
-            {"ecn_yellow_min_threshold", "786433"},
-            {"ecn_yellow_max_threshold", "1572865"},
-            {"ecn_yellow_mark_probability", "60"},
-            {"ecn_red_min_threshold", "786434"},
-            {"ecn_red_max_threshold", "1572866"},
-            {"ecn_red_mark_probability", "100"}
+            {"green_ect_min_threshold", "786432"},
+            {"green_ect_max_threshold", "1572864"},
+            {"green_ect_mark_probability", "60"},
+            {"yellow_ect_min_threshold", "786433"},
+            {"yellow_ect_max_threshold", "1572865"},
+            {"yellow_ect_mark_probability", "60"},
+            {"red_ect_min_threshold", "786434"},
+            {"red_ect_max_threshold", "1572866"},
+            {"red_ect_mark_probability", "100"}
         };
         WredMapHandler::qos_wred_thresholds_t afterModify = {
             2097152, 1048576, 2097153, 1048577, 2097154, 1048578,
@@ -1769,8 +1769,8 @@ namespace qosorch_test
             {"wred_green_enable", "true"},
             {"green_min_threshold", "1048576"},
             {"green_max_threshold", "2097152"},
-            {"ecn_green_min_threshold", "2097152"},
-            {"ecn_green_max_threshold", "1048576"}
+            {"green_ect_min_threshold", "2097152"},
+            {"green_ect_max_threshold", "1048576"}
         };
         updateWrongWredProfileAndCheck(invalidVector);
         testing_wred_thresholds = false;
