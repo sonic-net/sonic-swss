@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <sstream>
 #include "aclorch.h"
+#include "swssreadiness.h"
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
@@ -4370,6 +4371,32 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
 
+    // Pre-populate m_expectedInitTables from CONFIG_DB so areAllTablesApplied()
+    // can distinguish "no ACL configured" from "events not yet received".
+    // This mirrors how BufferOrch pre-populates m_ready_list from CONFIG_DB.
+    for (const auto& connector : connectors)
+    {
+        if (connector.second == CFG_ACL_TABLE_TABLE_NAME)
+        {
+            Table cfgAclTable(connector.first, CFG_ACL_TABLE_TABLE_NAME);
+            vector<string> keys;
+            cfgAclTable.getKeys(keys);
+            for (const auto& key : keys)
+            {
+                m_expectedInitTables.insert(key);
+            }
+            SWSS_LOG_NOTICE("AclOrch: %zu ACL table(s) expected from CONFIG_DB",
+                            m_expectedInitTables.size());
+            break;
+        }
+    }
+
+    // If no ACL tables are configured, areAllTablesApplied() would only be
+    // called from doTask() which may never fire if no ACL events arrive.
+    // Signal immediately here so "acl" does not block system readiness.
+    if (m_expectedInitTables.empty())
+        areAllTablesApplied();
+
     /* Initialize retry caches for rule consumers so that resource-exhaustion
      * failures can be parked and retried only when resources are freed. */
     createRetryCache(CFG_ACL_RULE_TABLE_NAME);
@@ -4450,6 +4477,11 @@ void AclOrch::doTask(Consumer &consumer)
     {
         SWSS_LOG_ERROR("Invalid table %s", table_name.c_str());
     }
+
+    // After every ACL task, check whether all initial config is applied.
+    // areAllTablesApplied() calls gSwssReadiness->signalDone("acl") once
+    // when all three gates pass (expected tables created, ports bound, m_toSync empty).
+    areAllTablesApplied();
 }
 
 void AclOrch::getAddDeletePorts(AclTable    &newT,
@@ -5033,6 +5065,11 @@ bool AclOrch::removeAclTable(string table_id)
 
         SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
         m_AclTables.erase(table_oid);
+        // Table deleted during bootup — remove from expected set so
+        // areAllTablesApplied() is not blocked on a table that will
+        // never be created. erase() on a missing key is a safe no-op.
+        m_expectedInitTables.erase(table_id);
+        areAllTablesApplied();
 
         // Clear mirror table information
         // If the v4 and v6 ACL mirror tables are combined together,
@@ -6512,4 +6549,55 @@ void MetaDataMgr::recycleMetaData(uint16_t metadata)
     {
         SWSS_LOG_ERROR("Unexpected: Metadata free before Initialization complete.");
     }
+}
+
+// Returns true when all ACL configuration has been applied to SAI:
+//   1. Every table listed in CONFIG_DB at startup has been created in SAI.
+//   2. All created tables have their configured ports bound (pendingPortSet empty).
+//   3. No ACL table/rule tasks remain in the consumer processing queue.
+//
+// m_expectedInitTables is pre-populated from CONFIG_DB at construction time,
+// so this check is reliable even when buffer is not configured via SONiC
+// (e.g. direct BCM YAML init) and areAllPortsReady() returns true immediately.
+bool AclOrch::areAllTablesApplied()
+{
+    // Gate 1: all tables that CONFIG_DB declared must have been created in SAI.
+    // This prevents a premature true when m_AclTables is empty because events
+    // simply haven't arrived yet (vs. genuinely no ACL configured).
+    for (const auto& name : m_expectedInitTables)
+    {
+        // m_AclTables is keyed by sai_object_id_t; check by AclTable.id (string)
+        bool found = false;
+        for (const auto& kv : m_AclTables)
+        {
+            if (kv.second.id == name) { found = true; break; }
+        }
+        if (!found && m_ctrlAclTables.find(name) == m_ctrlAclTables.end())
+        {
+            return false;
+        }
+    }
+
+    // Gate 2: all created tables must have their ports bound.
+    for (const auto& kv : m_AclTables)
+    {
+        if (!kv.second.pendingPortSet.empty()) return false;
+    }
+    for (const auto& kv : m_ctrlAclTables)
+    {
+        if (!kv.second.pendingPortSet.empty()) return false;
+    }
+
+    // Gate 3: no outstanding table/rule entries in m_toSync.
+    vector<string> pending;
+    dumpPendingTasks(pending);
+    if (!pending.empty()) return false;
+
+    // Signal readiness exactly once via the event-based manager.
+    if (gSwssReadiness && !m_aclReadySignalled)
+    {
+        m_aclReadySignalled = true;
+        gSwssReadiness->signalDone("acl");
+    }
+    return true;
 }

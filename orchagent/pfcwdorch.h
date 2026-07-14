@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
+#include "swssreadiness.h"
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
@@ -61,6 +62,20 @@ public:
     PfcWdAction getPfcDlrPacketAction() { return PfcDlrPacketAction; }
     void setPfcDlrPacketAction(PfcWdAction action) { PfcDlrPacketAction = action; }
 
+    // Returns true once all port entries from CFG_PFC_WD_TABLE that existed at
+    // startup have been applied (m_pfcwd_ports.size() >= m_initExpectedPortCount).
+    // Overrides Orch::isInitConfigDone() used by the orchdaemon readiness gate.
+    bool isInitConfigDone() const override
+    {
+        if (m_pfcwd_ports.size() < m_initExpectedPortCount) return false;
+        if (gSwssReadiness && !m_pfcwdReadySignalled)
+        {
+            m_pfcwdReadySignalled = true;
+            gSwssReadiness->signalDone("pfcwd");
+        }
+        return true;
+    }
+
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
     string m_platform = "";
@@ -72,6 +87,11 @@ private:
     shared_ptr<Table> m_countersTable = nullptr;
     PfcWdAction PfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
     std::set<std::string> m_pfcwd_ports;
+    // Number of non-GLOBAL port entries in CFG_PFC_WD_TABLE at startup.
+    // Pre-populated in constructor so isInitConfigDone() can detect "not yet
+    // received" vs "genuinely no PFCwd configured".
+    size_t m_initExpectedPortCount = 0;
+    mutable bool m_pfcwdReadySignalled = false;
 };
 
 template <typename DropHandler, typename ForwardHandler>

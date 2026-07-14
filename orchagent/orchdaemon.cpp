@@ -17,6 +17,7 @@
 #include "chassisorch.h"
 #include "notificationconsumerstatsorch.h"
 #include "stporch.h"
+#include "swssreadiness.h"
 
 using namespace std;
 using namespace swss;
@@ -80,6 +81,7 @@ L2NhgOrch *gL2NhgOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
+SwssReadinessManager *gSwssReadiness = nullptr;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
@@ -189,6 +191,15 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+
+    // Create readiness manager first — before any orch — so every module that
+    // signals from its constructor (empty-config case) always finds a valid
+    // gSwssReadiness. "pfcwd" is registered later at its orch creation site.
+    gSwssReadiness = new SwssReadinessManager(m_stateDb);
+    gSwssReadiness->registerModule("port");
+    gSwssReadiness->registerModule("buffer");
+    gSwssReadiness->registerModule("acl");
+    gSwssReadiness->registerModule("vlanmember");
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
@@ -703,6 +714,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
+        gSwssReadiness->registerModule("pfcwd");
         m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
@@ -751,6 +763,7 @@ bool OrchDaemon::init()
 	    (platform == CLX_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
+            gSwssReadiness->registerModule("pfcwd");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -761,6 +774,7 @@ bool OrchDaemon::init()
         }
         else if (platform == BFN_PLATFORM_SUBSTRING)
         {
+            gSwssReadiness->registerModule("pfcwd");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -823,6 +837,7 @@ bool OrchDaemon::init()
 
         if(pfcDlrInit)
         {
+            gSwssReadiness->registerModule("pfcwd");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -833,6 +848,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            gSwssReadiness->registerModule("pfcwd");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -873,6 +889,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
+        gSwssReadiness->registerModule("pfcwd");
         m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
@@ -1081,6 +1098,18 @@ void OrchDaemon::start(long heartBeatInterval)
             for (Orch *o : m_orchList)
                 o->doTask();
         }
+
+        // Fallback: check port readiness every event cycle until port signals.
+        // isInitPortConfigDone() is also called from within portsorch's doTask()
+        // at specific state-change points; this catches any case where those
+        // triggers fired while m_toSync was still non-empty and the signal was
+        // skipped. Cost is negligible — returns immediately once signalled.
+        if (gSwssReadiness && !gSwssReadiness->isReady() &&
+            gPortsOrch && !gPortsOrch->isPortReadySignalled())
+        {
+            gPortsOrch->isInitPortConfigDone();
+        }
+
         /*
          * Asked to check warm restart readiness.
          * Not doing this under Select::TIMEOUT condition because of

@@ -51,6 +51,23 @@ PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string
         SWSS_LOG_ERROR("Platform environment variable is not defined");
         return;
     }
+
+    // Pre-populate m_initExpectedPortCount from CONFIG_DB so isInitConfigDone()
+    // can distinguish "no PFCwd configured" from "events not yet received".
+    // The 'db' parameter is CONFIG_DB (CFG_PFC_WD_TABLE_NAME lives there).
+    Table cfgPfcWdTable(db, CFG_PFC_WD_TABLE_NAME);
+    vector<string> keys;
+    cfgPfcWdTable.getKeys(keys);
+    for (const auto& k : keys)
+    {
+        if (k != PFC_WD_GLOBAL) m_initExpectedPortCount++;
+    }
+    SWSS_LOG_NOTICE("PfcWdOrch: %zu port(s) expected from CONFIG_DB",
+                    m_initExpectedPortCount);
+
+    // If no PFCwd ports are configured, signal immediately so the readiness
+    // manager is not blocked waiting for a signal that will never arrive.
+    if (m_initExpectedPortCount == 0) isInitConfigDone();
 }
 
 
@@ -316,6 +333,8 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
     m_pfcwd_ports.insert(port.m_alias);
+    // Check if this was the last expected port; signal readiness if so.
+    isInitConfigDone();
     return task_process_status::task_success;
 }
 
@@ -335,6 +354,11 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
     m_pfcwd_ports.erase(port.m_alias);
+    if (m_initExpectedPortCount > 0)
+    {
+        m_initExpectedPortCount--;
+        isInitConfigDone();
+    }
     return task_process_status::task_success;
 }
 

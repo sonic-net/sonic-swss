@@ -326,7 +326,9 @@ public:
     virtual void onWarmBootEnd() { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
-    
+
+    virtual bool isInitConfigDone() const { return true; }
+
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
     ConsumerBase* getConsumerBase(const std::string &executorName);

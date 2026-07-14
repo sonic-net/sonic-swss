@@ -730,6 +730,12 @@ private:
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
     FlexCounterManager m_flex_counter_manager;
+
+    bool areAllTablesApplied();
+    bool m_aclReadySignalled = false;
+    // Pre-populated from CONFIG_DB at construction time so areAllTablesApplied()
+    // can distinguish "no ACL configured" from "events not yet received".
+    set<string> m_expectedInitTables;
 };
 
 #endif /* SWSS_ACLORCH_H */

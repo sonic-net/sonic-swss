@@ -3,6 +3,8 @@
 #include <algorithm>
 
 #include "portsorch.h"
+#include "swssreadiness.h"
+#include <chrono>
 #include "intfsorch.h"
 #include "bufferorch.h"
 #include "neighorch.h"
@@ -1161,6 +1163,22 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);
+
+    // Pre-populate expected VLAN member count from CONFIG_DB.
+    // Done here (constructor) so it works for both cold boot and warm boot.
+    // bake() is only called during warm restart, so it cannot be the sole
+    // initialization point.
+    {
+        DBConnector cfgDb("CONFIG_DB", 0);
+        Table cfgVlanMemberTable(&cfgDb, CFG_VLAN_MEMBER_TABLE_NAME);
+        vector<string> vlanMemberKeys;
+        cfgVlanMemberTable.getKeys(vlanMemberKeys);
+        m_initExpectedVlanMemberCount = vlanMemberKeys.size();
+        SWSS_LOG_NOTICE("PortsOrch: %zu VLAN member(s) expected from CONFIG_DB",
+                        m_initExpectedVlanMemberCount);
+        if (m_initExpectedVlanMemberCount == 0)
+            checkAndSignalVlanMemberDone();
+    }
 }
 
 void PortsOrch::initializeCpuPort()
@@ -1738,6 +1756,56 @@ void PortsOrch::removeDefaultBridgePorts()
 bool PortsOrch::allPortsReady()
 {
     return m_initDone && m_pendingPortSet.empty();
+}
+
+// Stricter check used only by the orchdaemon readiness gate.
+// allPortsReady() is used in many places to gate downstream orch processing;
+// changing it would widen the blast radius. This new API adds the PORT_TABLE
+// consumer m_toSync check without affecting any existing callers.
+bool PortsOrch::isInitPortConfigDone()
+{
+    if (!m_initDone)
+    {
+        SWSS_LOG_INFO("isInitPortConfigDone: waiting for PortInitDone");
+        return false;
+    }
+
+    if (!m_pendingPortSet.empty())
+    {
+        // Log the first few pending ports every 30 seconds so we can see
+        // which ports are blocked and why (typically buffer not yet ready).
+        auto now = std::chrono::steady_clock::now();
+        if ((now - m_lastPendingLog) >= std::chrono::seconds(30))
+        {
+            m_lastPendingLog = now;
+            size_t logged = 0;
+            string sample;
+            for (const auto& p : m_pendingPortSet)
+            {
+                if (logged++ >= 5) { sample += " ..."; break; }
+                sample += " " + p;
+                sample += "(bufRdy=" + string(gBufferOrch->isPortReady(p) ? "Y" : "N") + ")";
+            }
+            SWSS_LOG_WARN("isInitPortConfigDone: %zu port(s) still pending:%s",
+                          m_pendingPortSet.size(), sample.c_str());
+        }
+        return false;
+    }
+
+    if (gSwssReadiness && !m_portReadySignalled)
+    {
+        m_portReadySignalled = true;
+        gSwssReadiness->signalDone("port");
+    }
+    return true;
+}
+
+void PortsOrch::checkAndSignalVlanMemberDone()
+{
+    if (m_vlanMemberSignalled || !gSwssReadiness) return;
+    if (m_addedVlanMemberCount < m_initExpectedVlanMemberCount) return;
+    m_vlanMemberSignalled = true;
+    gSwssReadiness->signalDone("vlanmember");
 }
 
 /* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
@@ -4748,6 +4816,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Got PortInitDone notification from portsyncd");
+                isInitPortConfigDone(); // check and signal if pendingPortSet already empty
             }
 
             it = taskMap.erase(it);
@@ -4923,6 +4992,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 m_pendingPortSet.erase(pCfg.key);
+                if (m_pendingPortSet.empty()) isInitPortConfigDone(); // signal when last pending clears
             }
 
             Port p;
@@ -6092,7 +6162,11 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             }
 
             if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
+            {
+                m_addedVlanMemberCount++;
+                checkAndSignalVlanMemberDone();
                 it = consumer.m_toSync.erase(it);
+            }
             else
                 it++;
         }
@@ -6107,6 +6181,14 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                         removeBridgePort(port);
                     }
                     it = consumer.m_toSync.erase(it);
+                    // Member successfully removed — one fewer entry will
+                    // ever reach "added" state, so adjust expected count
+                    // and re-check the vlanmember readiness signal.
+                    if (m_initExpectedVlanMemberCount > 0)
+                    {
+                        m_initExpectedVlanMemberCount--;
+                        checkAndSignalVlanMemberDone();
+                    }
                 }
                 else
                 {
@@ -6114,8 +6196,18 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 }
             }
             else
-                /* Cannot locate the VLAN */
+            {
+                /* DEL arrived for a member that was never added (SET not yet
+                 * seen or already cleaned up). Adjust expected count so the
+                 * readiness signal is not blocked waiting for an entry that
+                 * will never be added. */
+                if (m_initExpectedVlanMemberCount > 0)
+                {
+                    m_initExpectedVlanMemberCount--;
+                    checkAndSignalVlanMemberDone();
+                }
                 it = consumer.m_toSync.erase(it);
+            }
         }
         else
         {
