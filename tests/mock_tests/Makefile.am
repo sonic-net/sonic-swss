@@ -86,6 +86,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
+                parseasicid_ut.cpp \
                 counternameupdater_ut.cpp \
                 hftelgroup_ut.cpp \
                 hftelprofile_ut.cpp \
