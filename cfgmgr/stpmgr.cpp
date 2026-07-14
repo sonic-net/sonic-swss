@@ -49,12 +49,12 @@ void restorePvstPduFlooding()
           std::string("nft delete table bridge ") + pvstNftBridgeTable;
     int ret = swss::exec(cmd, res);
     if ( ret != 0 ) {
-        SWSS_LOG_DEBUG( "Failed to remove nft rule which prevented PVST PDU flooding - %d", ret );
+        SWSS_LOG_ERROR( "Failed to remove nft rule which prevented PVST PDU flooding - %d", ret );
     }
 }
 
 } // namespace
-  //
+
 StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
@@ -144,7 +144,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                         {
                             preventPvstPduFlooding();
                             l2ProtoEnabled = L2_PVSTP;
-                            SWSS_LOG_ERROR( "Enabling PVST" );
+                            SWSS_LOG_DEBUG( "Enabling PVST" );
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
@@ -1250,7 +1250,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     int rc;
 
     len = msgLen + (offsetof(struct STP_IPC_MSG, data));
-    SWSS_LOG_INFO( "tx_msg len %d msglen %d for proto_mode %d",
+    SWSS_LOG_INFO( "tx_msg len %d msglen %u for proto_mode %d",
                    (int)len, msgLen, l2ProtoEnabled );
 
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
