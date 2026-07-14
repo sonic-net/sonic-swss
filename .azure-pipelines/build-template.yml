@@ -131,8 +131,12 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
+      # PINNED to sonic-swss-common PR #1222 build 1164874 (CI-unification migration
+      # validation): build against the migration swss-common (stock apt libnl,
+      # published build-env/). Revert to latestFromBranch / runBranch:
+      # refs/heads/${{ parameters.swss_common_branch }} before merge.
+      runVersion: 'specific'
+      runId: '1164874'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
