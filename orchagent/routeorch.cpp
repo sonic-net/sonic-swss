@@ -89,15 +89,38 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
          * ASIC specific workaround to re-calculate maximum ECMP groups
          * according to different ECMP mode used.
          *
-         * On Mellanox platform, the maximum ECMP groups returned is the value
-         * under the condition that the ECMP group size is 1. Dividing this
-         * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
-         * ECMP groups when the maximum ECMP group size is 32.
+         * On older Mellanox Spectrum ASICs (Spectrum-1/2/3),
+         * SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS returns the total number
+         * of ECMP group entries assuming each group has only 1 member.
+         * Dividing by DEFAULT_MAX_ECMP_GROUP_SIZE (32) estimates the
+         * realistic maximum with a typical ECMP width.
+         *
+         * On Spectrum-4+ (SN5xxx, SN6xxx and later), the SAI returns the
+         * actual maximum number of ECMP groups from the unified KVD pool
+         * and no adjustment is needed (UPSW-6924).
+         *
+         * Legacy platforms needing the /32 adjustment are identified by
+         * PLATFORM containing _msn (msnXXXX series), _lssn, _sn2, or
+         * _sn4.  All other Mellanox platforms (current and future) use
+         * the SAI value directly.
          */
         char *platform = getenv("platform");
         if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
         {
-            m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
+            bool is_legacy_spectrum = true;
+            char *full_platform = getenv("PLATFORM");
+            if (full_platform)
+            {
+                is_legacy_spectrum = (strstr(full_platform, "_msn") ||
+                                     strstr(full_platform, "_lssn") ||
+                                     strstr(full_platform, "_sn2") ||
+                                     strstr(full_platform, "_sn4"));
+            }
+
+            if (is_legacy_spectrum)
+            {
+                m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
+            }
         }
     }
     vector<FieldValueTuple> fvTuple;
