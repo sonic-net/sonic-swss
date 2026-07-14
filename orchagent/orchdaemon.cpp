@@ -10,6 +10,10 @@
 
 #include "orchdaemon.h"
 #include "logger.h"
+
+#ifndef CFG_SWITCH_FORWARDING_MODE_TABLE_NAME
+#define CFG_SWITCH_FORWARDING_MODE_TABLE_NAME "SWITCH_FORWARDING_MODE"
+#endif
 #include "warm_restart.h"
 #include "orch_zmq_config.h"
 
@@ -259,12 +263,14 @@ bool OrchDaemon::init()
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
+    TableConnector conf_switch_fwd_mode(m_configDb, CFG_SWITCH_FORWARDING_MODE_TABLE_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_switch_trim,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
+        conf_switch_fwd_mode,
         app_switch_table
     };
 

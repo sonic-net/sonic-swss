@@ -15,6 +15,10 @@
 #include "notifications.h"
 #include "redisapi.h"
 
+#ifndef CFG_SWITCH_FORWARDING_MODE_TABLE_NAME
+#define CFG_SWITCH_FORWARDING_MODE_TABLE_NAME "SWITCH_FORWARDING_MODE"
+#endif
+
 using namespace std;
 using namespace swss;
 
@@ -146,10 +150,11 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
 
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
-        m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
+        m_switchTable(switchTable.first, switchTable.second),
         m_appSwitchTbl(db, APP_SWITCH_TABLE_NAME),
         m_stateDb(new DBConnector("STATE_DB", 0)),
+        m_stateForwardingModeTable(m_stateDb.get(), "SWITCH_FORWARDING_MODE_STATE"),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
         m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
@@ -1535,9 +1540,100 @@ void SwitchOrch::doTask(Consumer &consumer)
     {
         doCfgSuppressAsicSdkHealthEventTableTask(consumer);
     }
+    else if (tableName == CFG_SWITCH_FORWARDING_MODE_TABLE_NAME)
+    {
+        doSwitchForwardingModeTask(consumer);
+    }
     else
     {
         SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
+    }
+}
+
+void SwitchOrch::doSwitchForwardingModeTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    SWSS_LOG_DEBUG("doSwitchForwardingModeTask: %zu entries pending", map.size());
+
+    for (auto it = map.begin(); it != map.end(); it = map.erase(it))
+    {
+        auto &key = kfvKey(it->second);
+        auto &op = kfvOp(it->second);
+
+        SWSS_LOG_INFO("Forwarding mode task: key='%s' op='%s'", key.c_str(), op.c_str());
+
+        if (key != "global")
+        {
+            SWSS_LOG_WARN("Ignoring non-global forwarding mode key: '%s' (only 'global' supported)",
+                          key.c_str());
+            continue;
+        }
+
+        if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Forwarding mode configuration removed (key='%s')", key.c_str());
+            m_stateForwardingModeTable.del("global");
+            continue;
+        }
+
+        auto &fvs = kfvFieldsValues(it->second);
+        SWSS_LOG_DEBUG("Forwarding mode fields: count=%zu", fvs.size());
+
+        for (auto &fv : fvs)
+        {
+            SWSS_LOG_DEBUG("Forwarding mode field: '%s' = '%s'",
+                           fvField(fv).c_str(), fvValue(fv).c_str());
+
+            if (fvField(fv) == "mode")
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_SWITCH_ATTR_SWITCHING_MODE;
+
+                if (fvValue(fv) == "cut-through")
+                {
+                    attr.value.s32 = SAI_SWITCH_SWITCHING_MODE_CUT_THROUGH;
+                }
+                else if (fvValue(fv) == "store-and-forward")
+                {
+                    attr.value.s32 = SAI_SWITCH_SWITCHING_MODE_STORE_AND_FORWARD;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid forwarding mode value: '%s' (expected 'cut-through' or 'store-and-forward')",
+                                   fvValue(fv).c_str());
+                    vector<FieldValueTuple> stateValues;
+                    stateValues.emplace_back("mode", fvValue(fv));
+                    stateValues.emplace_back("status", "invalid");
+                    m_stateForwardingModeTable.set("global", stateValues);
+                    continue;
+                }
+
+                SWSS_LOG_INFO("Setting SAI_SWITCH_ATTR_SWITCHING_MODE to %s (s32=%d) on switch 0x%" PRIx64,
+                              fvValue(fv).c_str(), attr.value.s32, gSwitchId);
+
+                sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set switching mode to '%s': SAI rc=%d (switch_id=0x%" PRIx64 ")",
+                                   fvValue(fv).c_str(), status, gSwitchId);
+                    vector<FieldValueTuple> stateValues;
+                    stateValues.emplace_back("mode", fvValue(fv));
+                    stateValues.emplace_back("status", "failed");
+                    stateValues.emplace_back("sai_rc", to_string(status));
+                    m_stateForwardingModeTable.set("global", stateValues);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Switching mode set to '%s' successfully", fvValue(fv).c_str());
+                    vector<FieldValueTuple> stateValues;
+                    stateValues.emplace_back("mode", fvValue(fv));
+                    stateValues.emplace_back("status", "applied");
+                    m_stateForwardingModeTable.set("global", stateValues);
+                }
+            }
+        }
     }
 }
 
