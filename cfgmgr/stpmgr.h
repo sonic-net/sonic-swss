@@ -40,8 +40,6 @@
 #define FREE_ALL_INST_ID() l2InstPool.reset()
 #define IS_INST_ID_AVAILABLE() (l2InstPool.count() < max_stp_instances)
 
-#define STPD_SOCK_NAME "/var/run/stpipc.sock"
-
 namespace swss {
 
 class StpMgr : public Orch
