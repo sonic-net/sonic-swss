@@ -140,8 +140,14 @@ class TestHFT(object):
                 entries[key] = dict(fvs)
         return entries
 
-    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)], watermark_count=0):
-        """Verify HFT objects are created correctly in ASIC_STATE DB."""
+    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)], watermark_count=0,
+                               expected_mode="SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE"):
+        """Verify HFT objects are created correctly in ASIC_STATE DB.
+
+        MIXED mode (default) collapses every configured object type into a
+        single shared sai_tam_tel_type and sai_tam_report per profile;
+        SINGLE mode allocates one of each per configured group.
+        """
 
         # If no groups, we expect minimal or no HFT objects
         if not groups:
@@ -152,6 +158,9 @@ class TestHFT(object):
                 "configured"
             # Other objects might still exist as base infrastructure
             return
+
+        expected_type_count = 1 if expected_mode == \
+            "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE" else len(groups)
 
         # Verify TAM transport
         assert len(asic_db["tam_transport"]) == 1, "Expected one tam transport"
@@ -180,8 +189,9 @@ class TestHFT(object):
             "Expected tam collector to reference hostif user defined trap"
 
         # Verify TAM telemetry type
-        assert len(asic_db["tam_tel_type"]) == len(groups), \
-            f"Expected {len(groups)} tam telemetry types"
+        assert len(asic_db["tam_tel_type"]) == expected_type_count, \
+            f"Expected {expected_type_count} tam telemetry types " \
+            f"(mode={expected_mode}, groups={len(groups)})"
 
         for tam_tel_type in asic_db["tam_tel_type"].values():
             assert tam_tel_type[
@@ -203,8 +213,8 @@ class TestHFT(object):
                 "Expected tam telemetry to have at least one enable " \
                 "capability set to true"
             assert tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_MODE"] == \
-                "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE", \
-                "Expected tam telemetry to be mode single type"
+                expected_mode, \
+                f"Expected tam telemetry mode to be {expected_mode}"
 
             # Fix: Use only the object ID
             report_oid = tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_REPORT_ID"]
@@ -212,8 +222,9 @@ class TestHFT(object):
                 "Expected tam telemetry to reference tam report"
 
         # Verify TAM report
-        assert len(asic_db["tam_report"]) == len(groups), \
-            f"Expected {len(groups)} tam reports"
+        assert len(asic_db["tam_report"]) == expected_type_count, \
+            f"Expected {expected_type_count} tam reports " \
+            f"(mode={expected_mode}, groups={len(groups)})"
 
         for tam_report in asic_db["tam_report"].values():
             assert tam_report["SAI_TAM_REPORT_ATTR_TYPE"] == \
@@ -295,10 +306,11 @@ class TestHFT(object):
 
         tam_type_list_count = tam_telemetry[
             "SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST"].split(":")[0]
-        assert tam_type_list_count == str(len(groups)), \
-            f"Expected tam telemetry tam type list count to be {len(groups)}"
+        assert tam_type_list_count == str(expected_type_count), \
+            f"Expected tam telemetry tam type list count to be " \
+            f"{expected_type_count} (mode={expected_mode}, groups={len(groups)})"
 
-        if len(groups) == 1:
+        if expected_type_count == 1:
             # Fix: Extract the telemetry type object ID and check directly
             tam_type_oid = ":".join(tam_telemetry[
                 "SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST"].split(":")[1:3])
