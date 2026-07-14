@@ -2082,6 +2082,235 @@ namespace portsorch_test
     }
 
     /**
+     * Test that programSerdes is skipped on the gearbox line and system sides when
+     * link training is enabled for that side. With training enabled on both sides,
+     * neither side should produce a create_port_serdes call, and the task should
+     * not be left pending for retry.
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigTrainingEnabledBothSides)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs (simulating initGearboxPort)
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Enable link training on both line and system sides of the gearbox.
+        gearbox_port_t gbPort = {};
+        gbPort.index = p.m_index;
+        gbPort.line_training = true;
+        gbPort.system_training = true;
+        gPortsOrch->m_gearboxPortMap[p.m_index] = gbPort;
+
+        // Push both line-side and system-side serdes attributes.
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",    "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",    "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Neither side should have triggered a create_port_serdes call.
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 0);
+
+        // Skipping does not leave a pending task: the consumer should have drained.
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that link training on one side of the gearbox suppresses serdes
+     * programming only on that side, while the other side is still programmed.
+     * Here we enable line_training only: line-side programSerdes is skipped,
+     * system-side programSerdes still runs.
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigTrainingEnabledLineSideOnly)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Enable line-side training only; system-side training off.
+        gearbox_port_t gbPort = {};
+        gbPort.index = p.m_index;
+        gbPort.line_training = true;
+        gbPort.system_training = false;
+        gPortsOrch->m_gearboxPortMap[p.m_index] = gbPort;
+
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",    "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",    "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Exactly one create_port_serdes call, for the system side only.
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 1);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_system_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x15, 0x16, 0x17, 0x18}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x95, 0x96, 0x97, 0x98}));
+
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Symmetric to PortGearboxSerdesConfigTrainingEnabledLineSideOnly: enable
+     * system_training only and verify that only the line-side serdes is
+     * programmed.
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigTrainingEnabledSystemSideOnly)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Enable system-side training only; line-side training off.
+        gearbox_port_t gbPort = {};
+        gbPort.index = p.m_index;
+        gbPort.line_training = false;
+        gbPort.system_training = true;
+        gPortsOrch->m_gearboxPortMap[p.m_index] = gbPort;
+
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",    "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",    "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Exactly one create_port_serdes call, for the line side only.
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 1);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x10, 0x11, 0x12, 0x13}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x90, 0x91, 0x92, 0x93}));
+
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
      * Test that verifies gearbox serdes config is skipped for ports without gearbox
      */
     TEST_F(PortsOrchTest, PortGearboxSerdesConfigNoGearbox)
