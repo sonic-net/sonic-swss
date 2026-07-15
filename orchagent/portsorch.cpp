@@ -6458,6 +6458,7 @@ void PortsOrch::postPortInit(Port& p)
 
     initPortSupportedSpeeds(p.m_alias, p.m_port_id);
     initPortSupportedFecModes(p.m_alias, p.m_port_id);
+    refreshPortDuplex(p);
 }
 
 void PortsOrch::doTask()
@@ -9797,6 +9798,7 @@ void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsVa
                 {
                     updateDbPortOperSpeed(port, 0);
                 }
+                refreshPortDuplex(port);
                 sai_port_fec_mode_t fec_mode;
                 string fec_str;
                 if (oper_fec_sup && getPortOperFec(port, fec_mode))
@@ -9981,6 +9983,54 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     // cause a port flapping.
 }
 
+bool PortsOrch::getPortFullDuplexMode(const Port& port, bool& full_duplex) const
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_FULL_DUPLEX_MODE;
+
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Failed to get full duplex mode for %s (rc:%d)",
+                        port.m_alias.c_str(), ret);
+        return false;
+    }
+
+    full_duplex = attr.value.booldata;
+    return true;
+}
+
+void PortsOrch::updateDbPortDuplex(Port &port, bool full_duplex)
+{
+    SWSS_LOG_ENTER();
+
+    // STATE_DB: SAI-derived operational duplex (same table as oper speed / FEC).
+    // Consumed by Translib duplex-mode / negotiated-duplex-mode.
+    vector<FieldValueTuple> tuples;
+    tuples.emplace_back(std::make_pair("duplex", full_duplex ? "full" : "half"));
+    m_portStateTable.set(port.m_alias, tuples);
+}
+
+void PortsOrch::refreshPortDuplex(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    bool full_duplex = true;
+    if (getPortFullDuplexMode(port, full_duplex))
+    {
+        SWSS_LOG_INFO("%s duplex mode is %s",
+                      port.m_alias.c_str(), full_duplex ? "full" : "half");
+        updateDbPortDuplex(port, full_duplex);
+    }
+}
+
 void PortsOrch::updateDbPortOperFec(Port &port, string fec_str)
 {
     SWSS_LOG_ENTER();
@@ -10035,6 +10085,7 @@ void PortsOrch::refreshPortStatus()
             {
                 updateDbPortOperSpeed(port, 0);
             }
+            refreshPortDuplex(port);
             sai_port_fec_mode_t fec_mode;
             string fec_str = "N/A";
             if (oper_fec_sup && getPortOperFec(port, fec_mode))

@@ -554,6 +554,10 @@ private:
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
     void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
 
+    bool getPortFullDuplexMode(const Port& port, bool& full_duplex) const;
+    void updateDbPortDuplex(Port &port, bool full_duplex);
+    void refreshPortDuplex(Port &port);
+
     bool getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status);
     bool getPortLinkTrainingFailure(const Port &port, sai_port_link_training_failure_status_t &failure);
 
