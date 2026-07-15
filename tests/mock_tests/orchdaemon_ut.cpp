@@ -8,8 +8,12 @@
 #include "mock_sai_switch.h"
 #include "saihelper.h"
 
+#include <csignal>
+
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
+
+extern volatile sig_atomic_t gOrchShutdownRequested;
 
 namespace orchdaemon_test
 {
@@ -246,6 +250,55 @@ namespace orchdaemon_test
         orchd->flush();
 
         orchd->disableRingBuffer();
+    }
+
+    static int gMockExitCallCount;
+    static int gMockExitStatus;
+
+    static void mock_exit_fn(int status)
+    {
+        gMockExitCallCount++;
+        gMockExitStatus = status;
+    }
+
+    class GracefulShutdownExitTest : public ::testing::Test
+    {
+        protected:
+            void SetUp() override
+            {
+                gMockExitCallCount = 0;
+                gMockExitStatus = -1;
+                gOrchShutdownRequested = 0;
+            }
+
+            void TearDown() override
+            {
+                gOrchShutdownRequested = 0;
+                Recorder::Instance().swss.setAsync(false);
+            }
+    };
+
+    TEST_F(GracefulShutdownExitTest, NoShutdownRequestedDoesNotExit)
+    {
+        Recorder::Instance().swss.setAsync(true);
+
+        exit_if_graceful_shutdown_requested(mock_exit_fn);
+
+        EXPECT_EQ(gMockExitCallCount, 0);
+        // The recorder must be left untouched when no shutdown was requested.
+        EXPECT_TRUE(Recorder::Instance().swss.isAsyncEnabled());
+    }
+
+    TEST_F(GracefulShutdownExitTest, ShutdownRequestDrainsRecorderAndExits)
+    {
+        Recorder::Instance().swss.setAsync(true);
+        gOrchShutdownRequested = SIGTERM;
+
+        exit_if_graceful_shutdown_requested(mock_exit_fn);
+
+        EXPECT_EQ(gMockExitCallCount, 1);
+        EXPECT_EQ(gMockExitStatus, 0);
+        EXPECT_FALSE(Recorder::Instance().swss.isAsyncEnabled());
     }
 
 }

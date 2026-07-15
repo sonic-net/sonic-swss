@@ -1477,6 +1477,8 @@ namespace portsorch_test
                 { "post2",         "0x10,0x12,0x11,0x13"         },
                 { "post3",         "0x10,0x12,0x11,0x13"         },
                 { "attn",          "0x80,0x82,0x81,0x83"         },
+                { "tx_precoding",  "0x1,0x0,0x1,0x0"             },
+                { "rx_precoding",  "0x0,0x1,0x0,0x1"             },
                 { "unreliable_los","off"                         },
                 { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
                 { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
@@ -1575,6 +1577,14 @@ namespace portsorch_test
         // Verify attn
         std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), SerdesValue(attn));
+
+        // Verify tx_precoding
+        std::vector<std::uint32_t> tx_precoding = { 0x1, 0x0, 0x1, 0x0 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PRECODING), SerdesValue(tx_precoding));
+
+        // Verify rx_precoding
+        std::vector<std::uint32_t> rx_precoding = { 0x0, 0x1, 0x0, 0x1 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_RX_PRECODING), SerdesValue(rx_precoding));
 
         // Verify ob_m2lp
         std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };

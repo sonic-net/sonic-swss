@@ -97,6 +97,8 @@
 #define PORT_REGN_BFM1N            "regn_bfm1n"
 #define PORT_TX_POLARITY            "txpolarity"
 #define PORT_RX_POLARITY            "rxpolarity"
+#define PORT_TX_PRECODING           "tx_precoding"
+#define PORT_RX_PRECODING           "rx_precoding"
 #define PORT_CUSTOM_SERDES_ATTRS   "custom_serdes_attrs"
 #define PORT_ROLE                  "role"
 #define PORT_ADMIN_STATUS          "admin_status"
