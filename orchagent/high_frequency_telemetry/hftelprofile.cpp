@@ -1047,7 +1047,7 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
     }
 
     vector<uint8_t> buffer;
-    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.u8list.count > 0)
+    if (attr.value.u8list.count > 0)
     {
         buffer.resize(attr.value.u8list.count, 0);
         attr.value.u8list.list = buffer.data();
