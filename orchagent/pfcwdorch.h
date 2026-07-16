@@ -13,10 +13,24 @@ extern "C" {
 #include "sai.h"
 }
 
-#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
-#define PFC_WD_TC_MAX                   8
+// ============================================================================
+// Global macros used across base and derived classes
+// ============================================================================
 
-const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
+// State and configuration table identifiers
+#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+#define PFC_WD_GLOBAL                   "GLOBAL"
+
+#define PFC_WD_ACTION                   "action"
+#define PFC_WD_DETECTION_TIME           "detection_time"
+#define PFC_WD_RESTORATION_TIME         "restoration_time"
+#define PFC_STAT_HISTORY                "pfc_stat_history"
+
+// Timer limits in milliseconds
+#define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
+#define PFC_WD_DETECTION_TIME_MIN       100
+#define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
+#define PFC_WD_RESTORATION_TIME_MIN     100
 
 enum class PfcWdAction
 {
@@ -24,12 +38,6 @@ enum class PfcWdAction
     PFC_WD_ACTION_FORWARD,
     PFC_WD_ACTION_DROP,
     PFC_WD_ACTION_ALERT,
-};
-
-static const map<string, sai_packet_action_t> packet_action_map = {
-    {"drop", SAI_PACKET_ACTION_DROP},
-    {"forward", SAI_PACKET_ACTION_FORWARD},
-    {"alert", SAI_PACKET_ACTION_FORWARD}
 };
 
 class PfcWdBaseOrch: public Orch
@@ -58,8 +66,8 @@ public:
 
     virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
     task_process_status deleteEntry(const string& name);
-    PfcWdAction getPfcDlrPacketAction() { return PfcDlrPacketAction; }
-    void setPfcDlrPacketAction(PfcWdAction action) { PfcDlrPacketAction = action; }
+    PfcWdAction getPfcDlrPacketAction() { return m_pfcDlrPacketAction; }
+    void setPfcDlrPacketAction(PfcWdAction action) { m_pfcDlrPacketAction = action; }
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
@@ -99,7 +107,7 @@ private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
-    PfcWdAction PfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
     std::set<std::string> m_pfcwd_ports;
 };
 
