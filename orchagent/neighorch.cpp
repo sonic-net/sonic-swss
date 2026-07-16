@@ -1650,17 +1650,8 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         return false;
     }
 
-    bool neigh_change_notified = false;
-
     if (isHwConfigured(neighborEntry))
     {
-        if (!disable)
-        {
-            NeighborUpdate update = { neighborEntry, MacAddress(), false };
-            notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-            neigh_change_notified = true;
-        }
-
         sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
         // remove the full prefix route
@@ -1768,11 +1759,8 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
     m_syncdNeighbors.erase(neighborEntry);
 
-    if (!neigh_change_notified)
-    {
-        NeighborUpdate update = { neighborEntry, MacAddress(), false };
-        notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    }
+    NeighborUpdate update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
     if(isChassisDbInUse())
     {
