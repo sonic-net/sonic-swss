@@ -646,6 +646,9 @@ int main(int argc, char **argv)
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
 
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
+
     // Instantiate ZMQ server
     shared_ptr<ZmqServer> zmq_server = nullptr;
     if (zmq_server_address.empty())
@@ -655,11 +658,11 @@ int main(int argc, char **argv)
     else
     {
         SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = create_zmq_server(zmq_server_address);
+        if (gMySwitchType == "fabric" || gMySwitchType == "dpu")
+            zmq_server = create_zmq_server(zmq_server_address);
+        else
+            zmq_server = create_zmq_route_server(zmq_server_address);
     }
-
-    // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
