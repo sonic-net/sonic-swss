@@ -857,7 +857,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_INFO("Interface '%s' still has %zu IP address(es); deferring VRF '%s' bind until pending IP removals are processed.",
+                            SWSS_LOG_NOTICE("Interface '%s' still has %zu IP address(es); deferring VRF '%s' bind until pending IP removals are processed.",
                                           alias.c_str(), m_syncdIntfses[alias].ip_addresses.size(), vrf_name.c_str());
                             it++;
                             continue;
