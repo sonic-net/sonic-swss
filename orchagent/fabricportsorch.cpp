@@ -34,10 +34,11 @@ using TimePoint = std::chrono::time_point<Clock>;
 #define FABRIC_SWITCH_DEBUG_COUNTER_POLLING_INTERVAL_MS 60000
 #define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_ID"
 
-// STATE_DB field on PORT<n> (fabric): isolation cause for operators / telemetry.
-// Values: none | config | permanent | crc_error| fec_uncorrectable |
-//         crc_errors & fec_uncorrectable | auto | unknown |
-//         link_event_counters_reset | admin_unisolate
+// ISOLATE_REASON on FABRIC_PORT_TABLE: current derived cause, refreshed each
+// debug-counter poll. Values: none | config | permanent | crc_errors |
+// fec_uncorrectable | crc_errors & fec_uncorrectable | auto | unknown.
+// link_event_counters_reset and admin_unisolate are written when those events
+// occur and are overwritten on the next poll (e.g. none once the link is healthy).
 #define STATE_FABRIC_ISOLATE_REASON_FIELD "ISOLATE_REASON"
 
 // constants for link monitoring
@@ -934,7 +935,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         if (cfgIsolated == 1)
         {
             isolated = 1;
-            SWSS_LOG_INFO("port %s keep isolated due to configuation",key.c_str());
+            SWSS_LOG_INFO("port %s keep isolated due to configuration",key.c_str());
         }
         else
         {
@@ -956,7 +957,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         {
             isolated = 1;
             permIsolate = 1;
-            SWSS_LOG_INFO("port %s permentantly isolated %d",key.c_str(), permIsolate );
+            SWSS_LOG_INFO("port %s permanently isolated %d",key.c_str(), permIsolate );
         }
 
         if (origIsolated != isolated)
@@ -1074,6 +1075,7 @@ void FabricPortsOrch::clearFabricCnt(int lane, bool clearIsolation)
         // sai call to unisolate the link
         isolateFabricLink(lane, !clearIsolation);
         updateStateDbTable(m_stateTable, key, "ISOLATED", isolated);
+        // Ephemeral: overwritten on the next debug-counter poll.
         m_stateTable->hset(key, STATE_FABRIC_ISOLATE_REASON_FIELD, "link_event_counters_reset");
     }
 
@@ -1170,6 +1172,7 @@ void FabricPortsOrch::updateFabricCapacity()
        // Calculate total number of serdes link, number of operational links,
        // total fabric capacity.
         bool linkIssue = false;
+        // Count links isolated by config, SAI ISOLATED, or auto-isolate (includes permanent).
         if (configIsolated == "1" || isolated == "1" || autoIsolated == "1")
         {
             linkIssue = true;
@@ -1576,6 +1579,7 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
                     updateStateDbTable(m_stateTable, state_key, "ISOLATED", m_defaultIsolated);
                     updateStateDbTable(m_stateTable, state_key, "AUTO_ISOLATED", m_defaultAutoIsolated);
                     updateStateDbTable(m_stateTable, state_key, "PRM_ISOLATED", m_defaultIsolated);
+                    // Ephemeral: overwritten on the next debug-counter poll.
                     m_stateTable->hset(state_key, STATE_FABRIC_ISOLATE_REASON_FIELD, "admin_unisolate");
                     linkQueues.clear();
 

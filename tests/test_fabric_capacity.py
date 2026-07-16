@@ -58,6 +58,7 @@ class TestVirtualChassis(object):
                        # isolate the link from config_db
                        config_db.update_entry("FABRIC_PORT", cdb_port, {"isolateStatus": "True"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", sdb_port, {"ISOLATE_REASON": "config"}, polling_config=max_poll)
                        # check if capacity reduced
                        sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'operating_links': capacity}, polling_config=max_poll)
                        sdb.wait_for_field_negative_match("FABRIC_CAPACITY_TABLE", "FABRIC_CAPACITY_DATA", {'isolated_links': iso_links}, polling_config=max_poll)
