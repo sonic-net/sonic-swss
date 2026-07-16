@@ -808,7 +808,7 @@ class TestHFT(object):
             dvs,
             profile_name=profile_name,
             group_name=queue_group,
-            object_names="Ethernet0|0",
+            object_names="Ethernet0|7",
             object_counters="BYTES",
         )
         try:
