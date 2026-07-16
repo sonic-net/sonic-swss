@@ -11,23 +11,6 @@
 #include "schema.h"
 #include "subscriberstatetable.h"
 
-#define PFC_WD_GLOBAL                   "GLOBAL"
-#define PFC_WD_ACTION                   "action"
-#define PFC_WD_DETECTION_TIME           "detection_time"
-#define PFC_WD_RESTORATION_TIME         "restoration_time"
-#define PFC_STAT_HISTORY                "pfc_stat_history"
-#define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
-#define PFC_WD_IN_STORM                 "storm"
-
-#define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
-#define PFC_WD_DETECTION_TIME_MIN       100
-#define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
-#define PFC_WD_RESTORATION_TIME_MIN     100
-#define PFC_WD_POLL_TIMEOUT             5000
-#define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
-#define PFC_WD_TC_MAX 8
-#define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
-
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
@@ -37,6 +20,12 @@ extern event_handle_t g_events_handle;
 
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
+
+static const map<string, sai_packet_action_t> packet_action_map = {
+    {"drop", SAI_PACKET_ACTION_DROP},
+    {"forward", SAI_PACKET_ACTION_FORWARD},
+    {"alert", SAI_PACKET_ACTION_FORWARD}
+};
 
 PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),

@@ -57,6 +57,9 @@ const char state_db_key_delimiter  = '|';
 #define RING_SIZE 30
 #define SLEEP_MSECONDS 500
 
+// Max number of PFC traffic classes
+#define PFC_WD_TC_MAX 8
+
 const int default_orch_pri = 0;
 
 typedef enum

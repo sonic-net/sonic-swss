@@ -12,18 +12,8 @@
 #include "schema.h"
 #include "subscriberstatetable.h"
 
-#define PFC_WD_GLOBAL                   "GLOBAL"
-#define PFC_WD_ACTION                   "action"
-#define PFC_WD_DETECTION_TIME           "detection_time"
-#define PFC_WD_RESTORATION_TIME         "restoration_time"
-#define PFC_STAT_HISTORY                "pfc_stat_history"
 #define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 #define PFC_WD_IN_STORM                 "storm"
-
-#define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
-#define PFC_WD_DETECTION_TIME_MIN       100
-#define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
-#define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
@@ -262,9 +252,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
         this->getCountersTable()->set(queueIdStr, countersFieldValues);
 
-        // We register our queues in PFC_WD table so that syncd will know that it must poll them
-        string key = getFlexCounterTableKey(queueIdStr);
-
+        // Register queue counters in the PFC_WD flex counter group so syncd polls them
         if (!c_queueStatIds.empty())
         {
             auto queueStatIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
@@ -383,7 +371,6 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
     string restorePluginName;
-    string pollIntervalStr = to_string(m_pollInterval);
     string plugins;
     if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
         restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
@@ -469,12 +456,12 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
-    PfcWdBaseOrch::doTask(consumer);
-
     if (!gPortsOrch->allPortsReady())
     {
         return;
     }
+
+    PfcWdBaseOrch::doTask(consumer);
 
     if ((consumer.getDbName() == "APPL_DB") && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {

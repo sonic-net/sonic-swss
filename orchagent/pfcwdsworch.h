@@ -32,7 +32,7 @@ public:
 
     task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
     virtual void doTask(SelectableTimer &timer);
-    //XXX Add port/queue state change event handlers
+    // Add port/queue state change event handlers
 
     bool bake() override;
     void doTask() override;
