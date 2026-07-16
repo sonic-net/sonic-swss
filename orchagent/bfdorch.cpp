@@ -335,39 +335,43 @@ void BfdOrch::update(SubjectType type, void *cntx)
 
 void BfdOrch::updateNextHopId(const string& alias, const IpAddress& peer_address, sai_object_id_t next_hop_id)
 {
-    const string key = get_app_db_key("default", alias, peer_address);
-    if (bfd_inject_next_hop_lookup.find(key) == bfd_inject_next_hop_lookup.end())
+    for (auto &it : bfd_inject_next_hop_lookup)
     {
-        SWSS_LOG_DEBUG("BFD session %s does not exist or not inject_next_hop", key.c_str());
-        return;
-    }
-    if (bfd_inject_next_hop_lookup[key].next_hop_id == next_hop_id)
-    {
-        SWSS_LOG_DEBUG("BFD session %s no change on next_hop_id, skip", key.c_str());
-        return;
-    }
+        const string& key = it.first;
+        BfdInjectNextHop& inject = it.second;
 
-    auto bfd_session_id = bfd_inject_next_hop_lookup[key].bfd_session_id;
-    if (bfd_session_id == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("Failed to update next hop id, bfd session %s id is null", key.c_str());
-        return;
-    }
+        if (inject.alias != alias || inject.peer != peer_address.to_string())
+        {
+            continue;
+        }
 
-    SWSS_LOG_INFO("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
-                  peer_address.to_string().c_str(), alias.c_str(),
-                  static_cast<unsigned long long>(next_hop_id));
+        if (inject.next_hop_id == next_hop_id)
+        {
+            SWSS_LOG_DEBUG("BFD session %s no change on next_hop_id, skip", key.c_str());
+            return;
+        }
 
-    sai_attribute_t attr;
-    attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
-    attr.value.oid = next_hop_id;
-    sai_status_t status = sai_bfd_api->set_bfd_session_attribute(bfd_session_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to update bfd session attribute %s, rv:%d", key.c_str(), status);
-        return;
+        if (inject.bfd_session_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to update next hop id, bfd session %s id is null", key.c_str());
+            return;
+        }
+
+        SWSS_LOG_INFO("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+                      peer_address.to_string().c_str(), alias.c_str(),
+                      static_cast<unsigned long long>(next_hop_id));
+
+        sai_attribute_t attr;
+        attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
+        attr.value.oid = next_hop_id;
+        sai_status_t status = sai_bfd_api->set_bfd_session_attribute(inject.bfd_session_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update bfd session attribute %s, rv:%d", key.c_str(), status);
+            return;
+        }
+        inject.next_hop_id = next_hop_id;
     }
-    bfd_inject_next_hop_lookup[key].next_hop_id = next_hop_id;
 }
 
 bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple>& data)
@@ -426,6 +430,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     BfdInjectNextHop bfd_inject_next_hop;
     bfd_inject_next_hop.alias = alias;
+    bfd_inject_next_hop.peer = peer_address.to_string();
     bfd_inject_next_hop.next_hop_id = SAI_NULL_OBJECT_ID;
 
     for (auto i : data)
