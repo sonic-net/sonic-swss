@@ -748,6 +748,75 @@ namespace vxlanorch_test
         (void)added; // Suppress unused variable warning - result may vary in mock environment
     }
 
+    // Test P2MP L2VNI remote VTEP visibility and per-user ref count tracking
+    TEST_F(VxlanOrchTest, P2MPL2VniRemoteVtepStateDbUsesImrRef)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+
+        const string tunnel_name = "tunnel_p2mp";
+        const string src_ip = "10.1.1.1";
+        const string remote_vtep = "10.1.1.2";
+        const uint32_t vni = 1000;
+        const uint32_t vlan = 100;
+
+        CreateBasicVxlanTunnel(tunnel_name, src_ip);
+        VxlanTunnel* tunnel = m_vxlan_tunnel_orch->getVxlanTunnel(tunnel_name);
+        ASSERT_NE(tunnel, nullptr);
+
+        tunnel->active_ = true;
+        m_evpnNvoOrch->source_vtep_ptr = tunnel;
+        m_vxlan_tunnel_orch->is_dip_tunnel_supported = false;
+
+        string tunnel_state_key;
+        m_vxlan_tunnel_orch->getTunnelNameFromDIP(remote_vtep, tunnel_state_key);
+        Table stateVxlanTable(m_state_db.get(), "VXLAN_TUNNEL_TABLE");
+        stateVxlanTable.del(tunnel_state_key);
+
+        vector<FieldValueTuple> stateValues;
+        const auto getField = [](const vector<FieldValueTuple>& values, const string& field) -> string
+        {
+            for (const auto& value : values)
+            {
+                if (fvField(value) == field)
+                {
+                    return fvValue(value);
+                }
+            }
+            return "";
+        };
+
+        EXPECT_TRUE(m_vxlan_tunnel_orch->addTunnelUser(remote_vtep, vni, vlan, TUNNEL_USER_IMR));
+        EXPECT_EQ(tunnel->getRemoteEndPointIMRRefCnt(remote_vtep), 1);
+        EXPECT_EQ(tunnel->getRemoteEndPointIPRefCnt(remote_vtep), 0);
+        EXPECT_EQ(tunnel->getRemoteEndPointRefCnt(remote_vtep), 1);
+
+        ASSERT_TRUE(stateVxlanTable.get(tunnel_state_key, stateValues));
+        EXPECT_EQ(getField(stateValues, "src_ip"), src_ip);
+        EXPECT_EQ(getField(stateValues, "dst_ip"), remote_vtep);
+        EXPECT_EQ(getField(stateValues, "tnl_src"), "EVPN");
+        EXPECT_EQ(getField(stateValues, "operstatus"), "up");
+
+        EXPECT_TRUE(m_vxlan_tunnel_orch->addTunnelUser(remote_vtep, vni, vlan, TUNNEL_USER_IP));
+        EXPECT_EQ(tunnel->getRemoteEndPointIMRRefCnt(remote_vtep), 1);
+        EXPECT_EQ(tunnel->getRemoteEndPointIPRefCnt(remote_vtep), 1);
+        EXPECT_EQ(tunnel->getRemoteEndPointRefCnt(remote_vtep), 2);
+
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delTunnelUser(remote_vtep, vni, vlan, TUNNEL_USER_IP));
+        EXPECT_EQ(tunnel->getRemoteEndPointIMRRefCnt(remote_vtep), 1);
+        EXPECT_EQ(tunnel->getRemoteEndPointIPRefCnt(remote_vtep), 0);
+        EXPECT_EQ(tunnel->getRemoteEndPointRefCnt(remote_vtep), 1);
+
+        stateValues.clear();
+        EXPECT_TRUE(stateVxlanTable.get(tunnel_state_key, stateValues));
+
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delTunnelUser(remote_vtep, vni, vlan, TUNNEL_USER_IMR));
+        EXPECT_EQ(tunnel->getRemoteEndPointRefCnt(remote_vtep), -1);
+
+        stateValues.clear();
+        EXPECT_FALSE(stateVxlanTable.get(tunnel_state_key, stateValues));
+    }
+
     // Test VXLAN tunnel port operations
     TEST_F(VxlanOrchTest, TunnelPortOperations)
     {
