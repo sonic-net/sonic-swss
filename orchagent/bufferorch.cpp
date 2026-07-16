@@ -283,6 +283,38 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     }
 }
 
+void BufferOrch::registerBufferPoolWatermarkCounter(sai_object_id_t sai_object, const string &object_name)
+{
+    string statList;
+    for (const auto &stat : bufferPoolWatermarkStatIds)
+    {
+        statList += (sai_serialize_buffer_pool_stat(stat) + list_item_delimiter);
+    }
+    if (!statList.empty())
+    {
+        statList.pop_back();
+    }
+
+    string flexKey = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":"
+                     + sai_serialize_object_id(sai_object);
+
+    string stats_mode;
+    sai_status_t clr_status = sai_buffer_api->clear_buffer_pool_stats(
+            sai_object,
+            static_cast<uint32_t>(bufferPoolWatermarkStatIds.size()),
+            reinterpret_cast<const sai_stat_id_t *>(bufferPoolWatermarkStatIds.data()));
+    if (clr_status == SAI_STATUS_NOT_SUPPORTED || clr_status == SAI_STATUS_NOT_IMPLEMENTED)
+    {
+        SWSS_LOG_NOTICE("Clear watermark not supported on %s, using read-only mode",
+                        object_name.c_str());
+        stats_mode = STATS_MODE_READ;
+    }
+
+    startFlexCounterPolling(gSwitchId, flexKey, statList, BUFFER_POOL_COUNTER_ID_LIST, stats_mode);
+    SWSS_LOG_NOTICE("Registered buffer pool %s (oid:%" PRIx64 ") for watermark polling",
+                    object_name.c_str(), sai_object);
+}
+
 void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 {
     // This function will be called in FlexCounterOrch when field:value tuple "FLEX_COUNTER_STATUS":"enable"
@@ -544,6 +576,11 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
             m_counterNameMapUpdater->setCounterNameMap(object_name, sai_object);
+
+            if (m_isBufferPoolWatermarkCounterIdListGenerated && sai_object != SAI_NULL_OBJECT_ID)
+            {
+                registerBufferPoolWatermarkCounter(sai_object, object_name);
+            }
         }
 
         // Only publish the result when shared headroom pool is enabled and it has been successfully applied to SAI
