@@ -146,7 +146,7 @@ jobs:
       # version-mismatch Exception that jammy's pip 22.0.2 build-isolation
       # env otherwise triggers. --no-build-isolation needs wheel present
       # in the environment to provide bdist_wheel, so install it first.
-      sudo apt-get install -y python3-cffi
+      sudo apt-get install -y python3-cffi python3-dev
       sudo uv pip install --system wheel
       sudo uv pip install --system --no-build-isolation 'libyang==3.3.0'
 
