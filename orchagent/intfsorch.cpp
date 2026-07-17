@@ -48,6 +48,8 @@ const int intfsorch_pri = 35;
 
 #define MGMT_VRF            "mgmt"
 
+static constexpr uint32_t ARN_LOOPBACK_RIF_MTU = 10240;
+
 static const vector<sai_router_interface_stat_t> rifStatIds =
 {
     SAI_ROUTER_INTERFACE_STAT_IN_PACKETS,
@@ -110,6 +112,39 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
     }
 
     DBConnector cfgDb("CONFIG_DB", 0);
+
+    /* Collect loopback interfaces referenced by ARN_ROUTER entries.
+     * Only these loopbacks get a SAI TYPE_LOOPBACK RIF — other
+     * platforms / loopbacks (e.g. Loopback0) are left alone. */
+    {
+        Table arnRouterTbl(&cfgDb, "ARN_ROUTER");
+        vector<string> arnKeys;
+        arnRouterTbl.getKeys(arnKeys);
+        for (const auto &key : arnKeys)
+        {
+            vector<FieldValueTuple> fvs;
+            arnRouterTbl.get(key, fvs);
+            for (const auto &fv : fvs)
+            {
+                if (fvField(fv) == "irif" || fvField(fv) == "erif")
+                {
+                    if (!fvValue(fv).empty())
+                    {
+                        m_arnLoopbacks.insert(fvValue(fv));
+                    }
+                }
+            }
+        }
+        if (!m_arnLoopbacks.empty())
+        {
+            string names;
+            for (const auto &n : m_arnLoopbacks)
+                names += (names.empty() ? "" : ", ") + n;
+            SWSS_LOG_NOTICE("ARN-referenced loopbacks for SAI RIF creation: %s",
+                            names.c_str());
+        }
+    }
+
     Table crmCfgTable(&cfgDb, "CRM");
     std::string maxSviStr;
     if (crmCfgTable.hget("Config", "max_svi_capacity", maxSviStr) && !maxSviStr.empty())
@@ -937,6 +972,37 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         if (m_syncdIntfses[alias].ip_addresses.size() == 0)
                         {
+                            /* VR ID is create-only — destroy old RIF before
+                               switching VRFs so it gets recreated below. */
+                            if (m_syncdIntfses[alias].loopback_rif_id != SAI_NULL_OBJECT_ID)
+                            {
+                                sai_status_t s = sai_router_intfs_api->remove_router_interface(
+                                    m_syncdIntfses[alias].loopback_rif_id);
+                                if (s == SAI_STATUS_SUCCESS)
+                                {
+                                    SWSS_LOG_NOTICE("Removed loopback RIF 0x%" PRIx64
+                                                    " for %s (VRF change)",
+                                                    m_syncdIntfses[alias].loopback_rif_id,
+                                                    alias.c_str());
+                                    m_syncdIntfses[alias].loopback_rif_id = SAI_NULL_OBJECT_ID;
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to remove loopback RIF 0x%" PRIx64
+                                                   " for %s on VRF change: 0x%x",
+                                                   m_syncdIntfses[alias].loopback_rif_id,
+                                                   alias.c_str(), s);
+                                    if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, s) == task_need_retry)
+                                    {
+                                        it++;
+                                        continue;
+                                    }
+                                    /* Non-retryable (e.g. ITEM_NOT_FOUND — already
+                                       absent).  Clear the stale cached ID so the
+                                       RIF gets recreated on the new VRF. */
+                                    m_syncdIntfses[alias].loopback_rif_id = SAI_NULL_OBJECT_ID;
+                                }
+                            }
                             m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
                             m_vrfOrch->increaseVrfRefCount(vrf_id);
                             m_syncdIntfses[alias].vrf_id = vrf_id;
@@ -944,6 +1010,47 @@ void IntfsOrch::doTask(Consumer &consumer)
                         else
                         {
                             SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%lu' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                        }
+                    }
+
+                    if (m_syncdIntfses[alias].loopback_rif_id == SAI_NULL_OBJECT_ID &&
+                        m_arnLoopbacks.count(alias))
+                    {
+                        sai_attribute_t attr;
+                        vector<sai_attribute_t> attrs;
+
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+                        attr.value.oid = m_syncdIntfses[alias].vrf_id;
+                        attrs.push_back(attr);
+
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+                        attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+                        attrs.push_back(attr);
+
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+                        attr.value.u32 = ARN_LOOPBACK_RIF_MTU;
+                        attrs.push_back(attr);
+
+                        sai_object_id_t rif_id;
+                        sai_status_t status = sai_router_intfs_api->create_router_interface(
+                            &rif_id, gSwitchId,
+                            (uint32_t)attrs.size(), attrs.data());
+
+                        if (status == SAI_STATUS_SUCCESS)
+                        {
+                            m_syncdIntfses[alias].loopback_rif_id = rif_id;
+                            SWSS_LOG_NOTICE("Created SAI loopback RIF 0x%" PRIx64 " for %s",
+                                            rif_id, alias.c_str());
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to create loopback RIF for %s: SAI status 0x%x",
+                                           alias.c_str(), status);
+                            if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                            {
+                                it++;
+                                continue;
+                            }
                         }
                     }
                 }
@@ -1143,6 +1250,29 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         if (m_syncdIntfses[alias].ip_addresses.size() == 0)
                         {
+                            if (m_syncdIntfses[alias].loopback_rif_id != SAI_NULL_OBJECT_ID)
+                            {
+                                sai_status_t status = sai_router_intfs_api->remove_router_interface(
+                                    m_syncdIntfses[alias].loopback_rif_id);
+                                if (status == SAI_STATUS_SUCCESS)
+                                {
+                                    SWSS_LOG_NOTICE("Removed SAI loopback RIF 0x%" PRIx64 " for %s",
+                                                    m_syncdIntfses[alias].loopback_rif_id, alias.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to remove loopback RIF 0x%" PRIx64 " for %s: 0x%x",
+                                                   m_syncdIntfses[alias].loopback_rif_id, alias.c_str(), status);
+                                    if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                                    {
+                                        it++;
+                                        continue;
+                                    }
+                                    /* Non-retryable: ITEM_NOT_FOUND is treated
+                                       as success by handleSaiRemoveStatus —
+                                       fall through to cleanup. */
+                                }
+                            }
                             m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
                             m_syncdIntfses.erase(alias);
                         }

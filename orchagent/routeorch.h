@@ -5,6 +5,7 @@
 #include "observer.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include "timer.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -312,6 +313,17 @@ private:
     shared_ptr<DBConnector> m_stateDb;
     unique_ptr<swss::Table> m_stateDefaultRouteTb;
 
+    /* ARN generation deferral: when ARN_ROUTER is configured in CONFIG_DB
+     * at cold-boot time, the two DROP default routes (0.0.0.0/0, ::/0) are
+     * deferred to give the ARN daemon a window to enable generation before
+     * any remote UC routes exist on the VRID.  Link-local routes are
+     * installed immediately and never deferred.  Deferral is skipped
+     * entirely during warm/fast boot.  Hard timeout: 15s. */
+    bool m_defaultRoutesCreated = false;
+    int  m_defaultRouteDeferCount = 0;
+    unique_ptr<swss::Table> m_arnStateTbl;
+    swss::SelectableTimer  *m_defaultRouteTimer = nullptr;
+
     RouteTables m_syncdRoutes;
     LabelRouteTables m_syncdLabelRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
@@ -340,7 +352,10 @@ private:
 
     void updateDefRouteState(string ip, bool add=false);
 
+    void installLinkLocalRoutes();
+    void createDefaultDropRoutes();
     void doTask(ConsumerBase& consumer);
+    void doTask(swss::SelectableTimer &timer) override;
 #ifdef INCLUDE_MPLS
     void doLabelTask(ConsumerBase& consumer);
 #endif

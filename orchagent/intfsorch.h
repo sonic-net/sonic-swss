@@ -28,6 +28,7 @@ struct IntfsEntry
     int                 ref_count;
     sai_object_id_t     vrf_id;
     bool                proxy_arp;
+    sai_object_id_t     loopback_rif_id = SAI_NULL_OBJECT_ID;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -99,6 +100,7 @@ private:
     unique_ptr<Table> m_rifTypeTable;
     unique_ptr<Table> m_vidToRidTable;
 
+    std::set<std::string> m_arnLoopbacks;
     std::set<std::string> m_removingIntfses;
     std::map<std::string, std::string> m_pendingLagRifs;
 

@@ -25,6 +25,7 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
+#include "warm_restart.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -163,68 +164,224 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     m_stateDb = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateDefaultRouteTb = unique_ptr<swss::Table>(new Table(m_stateDb.get(), STATE_ROUTE_TABLE_NAME));
 
-    IpPrefix default_ip_prefix("0.0.0.0/0");
-    updateDefRouteState("0.0.0.0/0");
+    /* Link-local routes (fe80::/10 and EUI-64 /128) are trap-to-CPU
+     * entries, not remote UC routes.  Install them immediately so that
+     * BGP-unnumbered / IPv6 link-local peering is never delayed. */
+    installLinkLocalRoutes();
+
+    /* Check CONFIG_DB for ARN_ROUTER entries.  When ARN generation is
+     * configured, the Mellanox SDK rejects sx_api_ar_arn_router_gen_set
+     * with SX_STATUS_RESOURCE_IN_USE if any remote UC route (including
+     * the default DROP routes created below) exists on the VRID.  Defer
+     * only the DROP default routes so the ARN daemon in syncd has a
+     * clean window to enable generation before routes appear.
+     *
+     * Deferral is skipped during warm/fast boot: routes already exist
+     * in SAI from the previous incarnation and ARN generation was
+     * already enabled — deferring would interfere with route
+     * reconciliation and delay readiness signals. */
+    {
+        bool deferDefaultRoutes = false;
+
+        if (!WarmStart::isWarmStart())
+        {
+            DBConnector cfgDb("CONFIG_DB", 0);
+            Table arnRouterTbl(&cfgDb, "ARN_ROUTER");
+            vector<string> arnRouterKeys;
+            arnRouterTbl.getKeys(arnRouterKeys);
+
+            if (!arnRouterKeys.empty())
+            {
+                deferDefaultRoutes = true;
+
+                m_arnStateTbl = unique_ptr<Table>(
+                    new Table(m_stateDb.get(), "ARN_STATE"));
+
+                SWSS_LOG_NOTICE("ARN_ROUTER configured (%zu entries) — "
+                                "deferring default DROP routes until ARN "
+                                "generation is enabled or timeout",
+                                arnRouterKeys.size());
+
+                m_defaultRouteTimer = new SelectableTimer(
+                    timespec{0, 500000000});
+                auto executor = new ExecutableTimer(
+                    m_defaultRouteTimer, this, "ARN_DEFAULT_ROUTE_DEFER");
+                Orch::addExecutor(executor);
+                m_defaultRouteTimer->start();
+            }
+        }
+
+        if (!deferDefaultRoutes)
+        {
+            createDefaultDropRoutes();
+        }
+    }
+}
+
+/* ── Link-local routes ─────────────────────────────────────────────────
+ *
+ * fe80::/10 and the EUI-64 /128 are FORWARD-to-CPU trap entries.
+ * They are NOT remote UC routes, so they do not trigger the Mellanox
+ * SDK's SX_STATUS_RESOURCE_IN_USE constraint on ARN generation.
+ * Install them immediately in the constructor so that BGP-unnumbered
+ * and IPv6 link-local peering are never delayed.
+ */
+
+void RouteOrch::installLinkLocalRoutes()
+{
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+    addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu",
+                    linklocal_prefix.to_string().c_str());
+
+    IpPrefix default_link_local_prefix("fe80::/10");
+    addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu",
+                    default_link_local_prefix.to_string().c_str());
+}
+
+/* ── Deferred default DROP route creation for ARN generation ──────────
+ *
+ * When ARN_ROUTER is configured in CONFIG_DB at cold-boot time, the
+ * constructor defers the two DROP default routes (0.0.0.0/0, ::/0)
+ * and starts a 500ms timer.  Each tick checks STATE_DB for the ARN
+ * daemon's arn_generation_enabled=true signal.  Once generation is
+ * confirmed (or a 15s hard timeout expires), createDefaultDropRoutes()
+ * installs them.
+ *
+ * Ordering on cold boot (m_orchList processing):
+ *   1. ArsOrch::doTask  → creates ARS profile, binds to switch → AR init
+ *   2. IntfsOrch::doTask → creates loopback RIF in SAI
+ *   3. [daemon window]   → AR ready + RIF exists + no routes → gen SET OK
+ *   4. RouteOrch timer   → reads STATE_DB → creates DROP defaults
+ *
+ * Link-local routes are installed immediately (not deferred).
+ * Deferral is skipped entirely during warm/fast boot.
+ * Without ARN configuration, createDefaultDropRoutes() is called
+ * directly from the constructor (zero behavioral change).
+ */
+
+void RouteOrch::createDefaultDropRoutes()
+{
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.vr_id = gVirtualRouterId;
     unicast_route_entry.switch_id = gSwitchId;
-    copy(unicast_route_entry.destination, default_ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    /* IPv4 default route — skip if already installed by doTask()
+     * (e.g. zebra pushed a real default via APP_ROUTE during the
+     * deferral window). */
+    IpPrefix default_ip_prefix("0.0.0.0/0");
 
-    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (m_syncdRoutes[gVirtualRouterId].find(default_ip_prefix) ==
+        m_syncdRoutes[gVirtualRouterId].end())
     {
-        SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
-        throw runtime_error("Failed to create IPv4 default route with packet action drop");
+        updateDefRouteState("0.0.0.0/0");
+
+        copy(unicast_route_entry.destination, default_ip_prefix);
+        subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+        sai_status_t status = sai_route_api->create_route_entry(
+            &unicast_route_entry, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS &&
+            status != SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
+            throw runtime_error("Failed to create IPv4 default route with packet action drop");
+        }
+        if (status == SAI_STATUS_SUCCESS)
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+
+        m_syncdRoutes[gVirtualRouterId][default_ip_prefix] = RouteNhg();
+        SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("IPv4 default route already tracked — skipping");
     }
 
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-
-    /* Add default IPv4 route into the m_syncdRoutes */
-    m_syncdRoutes[gVirtualRouterId][default_ip_prefix] = RouteNhg();
-
-    SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
-
+    /* IPv6 default route */
     IpPrefix v6_default_ip_prefix("::/0");
-    updateDefRouteState("::/0");
 
-    copy(unicast_route_entry.destination, v6_default_ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (m_syncdRoutes[gVirtualRouterId].find(v6_default_ip_prefix) ==
+        m_syncdRoutes[gVirtualRouterId].end())
     {
-        SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
-        throw runtime_error("Failed to create IPv6 default route with packet action drop");
+        updateDefRouteState("::/0");
+
+        copy(unicast_route_entry.destination, v6_default_ip_prefix);
+        subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+        sai_status_t status = sai_route_api->create_route_entry(
+            &unicast_route_entry, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS &&
+            status != SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
+            throw runtime_error("Failed to create IPv6 default route with packet action drop");
+        }
+        if (status == SAI_STATUS_SUCCESS)
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+        m_syncdRoutes[gVirtualRouterId][v6_default_ip_prefix] = RouteNhg();
+        SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("IPv6 default route already tracked — skipping");
     }
 
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    m_defaultRoutesCreated = true;
+}
 
-    /* Add default IPv6 route into the m_syncdRoutes */
-    m_syncdRoutes[gVirtualRouterId][v6_default_ip_prefix] = RouteNhg();
+void RouteOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
+    if (m_defaultRoutesCreated)
+    {
+        if (m_defaultRouteTimer)
+            m_defaultRouteTimer->stop();
+        return;
+    }
 
-    /* All the interfaces have the same MAC address and hence the same
-     * auto-generated link-local ipv6 address with eui64 interface-id.
-     * Hence add a single /128 route entry for the link-local interface
-     * address pointing to the CPU port.
-     */
-    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+    static const int MAX_DEFER_ITERATIONS = 30; /* 30 × 500ms = 15s */
 
-    addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
-    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
+    if (m_defaultRouteDeferCount < MAX_DEFER_ITERATIONS)
+    {
+        string genEnabled;
+        if (m_arnStateTbl)
+            m_arnStateTbl->hget("GLOBAL", "arn_generation_enabled", genEnabled);
 
-    /* Add fe80::/10 subnet route to forward all link-local packets
-     * destined to us, to CPU */
-    IpPrefix default_link_local_prefix("fe80::/10");
+        if (genEnabled != "true")
+        {
+            m_defaultRouteDeferCount++;
+            if (m_defaultRouteDeferCount == 1 ||
+                m_defaultRouteDeferCount % 10 == 0)
+            {
+                SWSS_LOG_NOTICE("Deferring default DROP routes for ARN "
+                                "generation (iteration %d/%d)",
+                                m_defaultRouteDeferCount, MAX_DEFER_ITERATIONS);
+            }
+            return;
+        }
+        SWSS_LOG_NOTICE("ARN generation enabled in STATE_DB — creating "
+                        "default DROP routes (deferred %d iterations)",
+                        m_defaultRouteDeferCount);
+    }
+    else
+    {
+        SWSS_LOG_WARN("ARN generation deferral timed out after %d iterations "
+                      "(%.1fs) — creating default DROP routes anyway",
+                      MAX_DEFER_ITERATIONS, MAX_DEFER_ITERATIONS * 0.5);
+    }
 
-    addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
-    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
+    createDefaultDropRoutes();
+
+    if (m_defaultRouteTimer)
+        m_defaultRouteTimer->stop();
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
