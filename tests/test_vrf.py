@@ -163,6 +163,55 @@ class TestVrf(object):
         r = random.choice(values)
         return r[0], r[1]
 
+    @pytest.mark.parametrize("family", ["-4", "-6"])
+    def test_VRFMgr_LocalRulePriority(self, dvs, testlog, family):
+        other_family = "-6" if family == "-4" else "-4"
+
+        def get_local_rule_pref(rule_family):
+            status, output = dvs.runcmd(["ip", rule_family, "rule", "show", "table", "local"])
+            assert status == 0, output
+            for rule in output.splitlines():
+                preference, selector = rule.split(":", 1)
+                if selector.strip() == "from all lookup local":
+                    return int(preference.strip())
+            assert False, "Missing {} canonical local rule".format(rule_family)
+
+        original_pref = get_local_rule_pref(family)
+        assert original_pref == 1001
+        assert get_local_rule_pref(other_family) == 1001
+        try:
+            status, output = dvs.runcmd(
+                ["ip", family, "rule", "add", "pref", "32765", "table", "local"]
+            )
+            assert status == 0, output
+            status, output = dvs.runcmd(
+                ["ip", family, "rule", "del", "pref", str(original_pref), "table", "local"]
+            )
+            assert status == 0, output
+
+            status, output = dvs.runcmd(["supervisorctl", "restart", "vrfmgrd"])
+            assert status == 0, output
+
+            for _ in range(10):
+                if get_local_rule_pref(family) == 1001:
+                    break
+                time.sleep(1)
+            assert get_local_rule_pref(family) == 1001
+            assert get_local_rule_pref(other_family) == 1001
+        finally:
+            current_pref = get_local_rule_pref(family)
+            if current_pref != 1001:
+                status, output = dvs.runcmd(
+                    ["ip", family, "rule", "add", "pref", "1001", "table", "local"]
+                )
+                assert status == 0, output
+                status, output = dvs.runcmd(
+                    ["ip", family, "rule", "del", "pref", str(current_pref), "table", "local"]
+                )
+                assert status == 0, output
+            status, output = dvs.runcmd(["supervisorctl", "restart", "vrfmgrd"])
+            assert status == 0, output
+
     def test_VRFMgr_Comprehensive(self, dvs, testlog):
         self.setup_db(dvs)
 
