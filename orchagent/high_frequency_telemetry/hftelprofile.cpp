@@ -6,6 +6,8 @@
 #include <swss/redisutility.h>
 #include <sai_serialize.h>
 
+#include <limits>
+
 #include <boost/tokenizer.hpp>
 #include <boost/algorithm/string.hpp>
 
@@ -284,6 +286,20 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     SWSS_LOG_ENTER();
 
     sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
+
+    if (isMixedTypeMode())
+    {
+        const auto next = static_cast<uint32_t>(m_next_label) + object_names.size();
+        if (next > std::numeric_limits<sai_uint16_t>::max())
+        {
+            SWSS_LOG_ERROR(
+                "HFTel: cannot add group %s (%zu objects); label allocator would wrap past %u. "
+                "Delete and recreate the profile to reset.",
+                group_name.c_str(), object_names.size(),
+                std::numeric_limits<sai_uint16_t>::max());
+            return;
+        }
+    }
 
     auto itr = m_groups.lower_bound(sai_object_type);
 
