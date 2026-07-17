@@ -93,21 +93,24 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         }
     }
 
-    cmd.str("");
-    cmd.clear();
-    // Get local table pref
-    cmd << IP_CMD << " rule | grep 'from all lookup local' | awk -F'[^0-9]+' '{ print $1 }'";
-    swss::exec(cmd.str(), res);
-    table = static_cast<uint32_t>(stoul(res));
-    // If local table pref is not expected, set it to be expected
-    if (table != TABLE_LOCAL_PREF)
+    for (const char *family : {" -4", " -6"})
     {
         cmd.str("");
         cmd.clear();
-        cmd << IP_CMD << " rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " rule del pref "
-            << table << " && " << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD
-            << " -6 rule del pref " << table;
+        res.clear();
+        cmd << IP_CMD << family << " rule show table local | grep 'from all lookup local'";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        table = static_cast<uint32_t>(stoul(res));
+
+        if (table != TABLE_LOCAL_PREF)
+        {
+            cmd.str("");
+            cmd.clear();
+            res.clear();
+            cmd << IP_CMD << family << " rule add pref " << TABLE_LOCAL_PREF << " table local && "
+                << IP_CMD << family << " rule del pref " << table << " table local";
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        }
     }
 
     if (!WarmStart::isWarmStart())
@@ -557,4 +560,3 @@ uint32_t VrfMgr::getVRFmappedVNI(const std::string& vrf_name)
         return 0;
     }
 }
-
