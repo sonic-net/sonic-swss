@@ -689,6 +689,14 @@ class TestBfd(object):
 
         self.sdb.wait_for_field_match("SWITCH_CAPABILITY", "switch", {"BFD_NEXT_HOP_CAPABLE": "true"})
 
+        # Remove stale session from a prior failed retry in the same DVS instance.
+        self.remove_bfd_session("default:Ethernet0:10.0.0.2")
+        for key in list(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION")):
+            fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", key)
+            if (fvs.get("SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS") == "10.0.0.2" and
+                    fvs.get("SAI_BFD_SESSION_ATTR_USE_NEXT_HOP") == "true"):
+                self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", key)
+
         bfdSessions = self.get_exist_bfd_session()
 
         fieldValues = {"local_addr": "10.0.0.1"}

@@ -348,7 +348,7 @@ void BfdOrch::updateNextHopId(const string& alias, const IpAddress& peer_address
         if (inject.next_hop_id == next_hop_id)
         {
             SWSS_LOG_DEBUG("BFD session %s no change on next_hop_id, skip", key.c_str());
-            return;
+            continue;
         }
 
         if (inject.bfd_session_id == SAI_NULL_OBJECT_ID)
