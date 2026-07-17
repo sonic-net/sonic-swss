@@ -83,6 +83,7 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+#define ACTION_ECN                          "ECN_ACTION"
 #define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
 
 #define PACKET_ACTION_FORWARD      "FORWARD"

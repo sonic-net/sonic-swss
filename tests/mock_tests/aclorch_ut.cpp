@@ -1995,6 +1995,122 @@ namespace aclorch_test
         sai_switch_api = old_sai_switch_api;
     }
 
+    // Advertise SET_ECN (with COUNTER and PACKET_ACTION) as supported ACL actions so the
+    // capability gate accepts an ECN rule in the mock environment. The mandatory flag is
+    // driven by g_ecnActionListMandatory so the single mock serves both ECN tests.
+    static bool g_ecnActionListMandatory = false;
+
+    sai_status_t getSwitchAttributeEcn(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                       _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch (attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 16;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 3;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+                attr_list[0].value.aclcapability.action_list.list[2] = SAI_ACL_ACTION_TYPE_SET_ECN;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = g_ecnActionListMandatory;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    // When the ACL action list is mandatory at table creation, a built-in L3 table must seed
+    // SET_ECN from defaultAclActionList so that ECN rules are accepted on a standard L3 table.
+    TEST_F(AclOrchTest, AclTableL3EcnDefaultAction)
+    {
+        old_sai_switch_api = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeEcn;
+        g_ecnActionListMandatory = true;
+
+        auto orch = createAclOrch();
+
+        string acl_table_id = "ecn_l3_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "ECN" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_SET_ECN), acl_actions.end());
+
+        g_ecnActionListMandatory = false;
+        sai_switch_api = old_sai_switch_api;
+    }
+
+    // An ECN_ACTION rule is routed to AclRulePacket, its value is range-checked (RFC 3168,
+    // 0..3), and a valid value is programmed as SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN. An
+    // out-of-range value is rejected and no rule is created.
+    TEST_F(AclOrchTest, AclRuleSetEcnAction)
+    {
+        old_sai_switch_api = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeEcn;
+        g_ecnActionListMandatory = false;
+
+        auto orch = createAclOrch();
+
+        string acl_table_id = "ecn_acl_table";
+        string acl_rule_id = "ecn_acl_rule";
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "ECN" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+        const auto &acl_tables = orch->getAclTables();
+        const auto &acl_table = acl_tables.at(acl_table_oid);
+
+        // Valid ECN value: the rule is created and programs SET_ECN = 3.
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id + "|" + acl_rule_id,
+                SET_COMMAND,
+                { { ACTION_ECN, "3" },
+                  { MATCH_SRC_IP, "1.2.3.4" } } } });
+        orch->doAclRuleTask(kvfAclRule);
+
+        auto it_rule = acl_table.rules.find(acl_rule_id);
+        ASSERT_NE(it_rule, acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*it_rule->second, SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN), "3");
+
+        // Out-of-range ECN value (> 3) is rejected: no rule is created.
+        string bad_rule_id = "ecn_acl_rule_bad";
+        auto kvfBadRule = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id + "|" + bad_rule_id,
+                SET_COMMAND,
+                { { ACTION_ECN, "4" },
+                  { MATCH_SRC_IP, "5.6.7.8" } } } });
+        orch->doAclRuleTask(kvfBadRule);
+        ASSERT_EQ(acl_table.rules.find(bad_rule_id), acl_table.rules.end());
+
+        sai_switch_api = old_sai_switch_api;
+    }
+
+
     TEST_F(AclOrchTest, Match_Inner_Mac)
     {
         string aclTableTypeName = "MAC_MATCH_TABLE_TYPE";

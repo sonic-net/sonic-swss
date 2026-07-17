@@ -112,7 +112,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_ECN,                              SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -204,14 +205,16 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             },
             {
                 ACL_STAGE_EGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             }
         }
@@ -224,14 +227,16 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             },
             {
                 ACL_STAGE_EGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             }
         }
@@ -244,14 +249,16 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             },
             {
                 ACL_STAGE_EGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_ECN
                 }
             }
         }
@@ -2216,6 +2223,28 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             return false;
         }
         actionData.parameter.oid = param_id;
+    }
+    else if (attr_name == ACTION_ECN)
+    {
+        sai_uint8_t val;
+        try
+        {
+            val = to_uint<sai_uint8_t>(attr_value);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to parse %s value %s", attr_name.c_str(), attr_value.c_str());
+            return false;
+        }
+
+        // ECN field is 2 bits (RFC 3168): 0=Non-ECT, 1=ECT(1), 2=ECT(0), 3=CE
+        if (val > 3)
+        {
+            SWSS_LOG_ERROR("ECN_ACTION value %u is out of range (0-3)", (unsigned int)val);
+            return false;
+        }
+
+        actionData.parameter.u8 = val;
     }
     else
     {
