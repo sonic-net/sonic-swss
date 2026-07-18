@@ -77,6 +77,11 @@
 		    "trap_ids": "bgp,bgpv6",
 		    "trap_group": "queue4_group1"
 	    },
+	    "bfd": {
+		    "trap_ids": "bfd",
+		    "trap_group": "queue4_group1",
+		    "always_enabled": "true"
+	    },
 	    "lacp": {
 		    "trap_ids": "lacp",
 		    "trap_group": "queue4_group1",
