@@ -132,6 +132,8 @@ protected:
     // control and sets each ECN attribute, logging and skipping any the platform rejects so the
     // base WRED profile is never failed by an unsupported ECN attribute.
     void applyEcnThresholdAttributes(sai_object_id_t sai_object, const vector<sai_attribute_t> &ecn_attributes);
+    // Commit a successfully-set ECN threshold attribute to the cached profile (m_pendingWredKey).
+    void commitEcnThresholdToCache(sai_attr_id_t id, sai_uint32_t value);
     // Capability-gated (queried once, cached) check for the per-WRED ECN threshold/mark
     // attributes. When unsupported, the ECN threshold fields are ignored so that WRED profile
     // creation keeps working unchanged on platforms that do not implement them.
@@ -165,6 +167,10 @@ private:
     // marking configuration (thresholds and/or probabilities); consumed by add/modifyQosItem()
     // to apply the optional ECN marking attributes (which also enables the switch-level ECT control).
     bool m_ecnThresholdConfigured = false;
+
+    // Key of the WRED profile currently being processed (set in convertFieldValuesToAttributes()).
+    // Used by commitEcnThresholdToCache() to update the cache after a successful best-effort ECN set.
+    string m_pendingWredKey;
 };
 
 
