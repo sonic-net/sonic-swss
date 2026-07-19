@@ -75,6 +75,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
     }
 
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
@@ -839,6 +840,15 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
+            if (!loopbackAction.empty())
+            {
+                sai_packet_action_t action;
+                if (!getSaiLoopbackAction(loopbackAction, action))
+                {
+                    loopbackAction.clear();
+                }
+            }
+
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1006,7 +1016,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     /* Set loopback action */
                     if (!loopbackAction.empty())
                     {
-                        setIntfLoopbackAction(port, loopbackAction);
+                        if (!setIntfLoopbackAction(port, loopbackAction))
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                 }
             }
