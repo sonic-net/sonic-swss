@@ -119,7 +119,8 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 
 sai_object_id_t IntfsOrch::getRouterIntfsIdForNewDependency(const string &alias)
 {
-    if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    if (m_removingIntfses.find(alias) != m_removingIntfses.end() ||
+        m_pendingVrfUpdates.find(alias) != m_pendingVrfUpdates.end())
     {
         return SAI_NULL_OBJECT_ID;
     }
@@ -488,12 +489,18 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 }
 
 bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
-                        const bool adminUp, const uint32_t mtu, string loopbackAction)
+                        const bool adminUp, const uint32_t mtu, string loopbackAction,
+                        const bool vrfIdIsExplicit)
 
 {
     SWSS_LOG_ENTER();
 
     if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    {
+        return false;
+    }
+
+    if (ip_prefix && m_pendingVrfUpdates.find(alias) != m_pendingVrfUpdates.end())
     {
         return false;
     }
@@ -522,8 +529,10 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             {
                 intfs_entry.mac = gMacAddress;
             }
+            intfs_entry.loopback_action = loopbackAction;
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
+            m_pendingVrfUpdates.erase(alias);
         }
         else
         {
@@ -532,30 +541,107 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     }
     else
     {
-        if (!ip_prefix && port.m_type == Port::SUBPORT)
+        // Treat an explicit VRF change as a RIF replacement and retain the SET
+        // until the old interface has no prefixes or dependent objects.
+        sai_object_id_t old_vrf_id = it_intfs->second.vrf_id;
+        if (!ip_prefix && vrfIdIsExplicit && old_vrf_id != vrf_id)
         {
-            // port represents a sub interface
-            // Change sub interface config at run time
-            bool attrChanged = false;
-            if (mtu && port.m_mtu != mtu)
+            m_pendingVrfUpdates.insert(alias);
+            if (!it_intfs->second.ip_addresses.empty())
             {
-                port.m_mtu = mtu;
-                attrChanged = true;
-
-                setRouterIntfsMtu(port);
+                return false;
             }
 
-            if (port.m_admin_state_up != adminUp)
+            IntfsEntry intfs_entry = it_intfs->second;
+            if (intfs_entry.sag_enabled)
             {
-                port.m_admin_state_up = adminUp;
-                attrChanged = true;
-
-                setRouterIntfsAdminStatus(port);
+                SWSS_LOG_WARN("Cannot move SAG-enabled interface %s between VRFs", alias.c_str());
+                return false;
             }
 
-            if (attrChanged)
+            Port rehome_port = port;
+            rehome_port.m_mac = intfs_entry.mac;
+            if (rehome_port.m_type == Port::SUBPORT)
             {
-                gPortsOrch->setPort(alias, port);
+                rehome_port.m_admin_state_up = adminUp;
+                if (mtu)
+                {
+                    rehome_port.m_mtu = mtu;
+                }
+            }
+            if (!removeRouterIntfs(port))
+            {
+                return false;
+            }
+
+            rehome_port.m_rif_id = SAI_NULL_OBJECT_ID;
+            rehome_port.m_vr_id = SAI_NULL_OBJECT_ID;
+            string rehome_loopback_action = loopbackAction.empty() ?
+                                                intfs_entry.loopback_action :
+                                                loopbackAction;
+            try
+            {
+                if (!addRouterIntfs(vrf_id, rehome_port, rehome_loopback_action))
+                {
+                    return false;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                Port rollback_port = rehome_port;
+                rollback_port.m_rif_id = SAI_NULL_OBJECT_ID;
+                rollback_port.m_vr_id = SAI_NULL_OBJECT_ID;
+                if (!addRouterIntfs(old_vrf_id, rollback_port, intfs_entry.loopback_action))
+                {
+                    SWSS_LOG_ERROR("Failed to restore interface %s after VRF move failed: %s",
+                                   alias.c_str(), e.what());
+                    throw;
+                }
+                SWSS_LOG_ERROR("Failed to move interface %s to VRF %s; restored the old RIF and will retry: %s",
+                               alias.c_str(), m_vrfOrch->getVRFname(vrf_id).c_str(), e.what());
+                return false;
+            }
+
+            m_vrfOrch->decreaseVrfRefCount(old_vrf_id);
+            m_vrfOrch->increaseVrfRefCount(vrf_id);
+            intfs_entry.vrf_id = vrf_id;
+            intfs_entry.loopback_action = rehome_loopback_action;
+            m_syncdIntfses[alias] = intfs_entry;
+
+            m_pendingVrfUpdates.erase(alias);
+        }
+        else if (!ip_prefix)
+        {
+            if (vrfIdIsExplicit)
+            {
+                m_pendingVrfUpdates.erase(alias);
+            }
+
+            if (port.m_type == Port::SUBPORT)
+            {
+                // port represents a sub interface
+                // Change sub interface config at run time
+                bool attrChanged = false;
+                if (mtu && port.m_mtu != mtu)
+                {
+                    port.m_mtu = mtu;
+                    attrChanged = true;
+
+                    setRouterIntfsMtu(port);
+                }
+
+                if (port.m_admin_state_up != adminUp)
+                {
+                    port.m_admin_state_up = adminUp;
+                    attrChanged = true;
+
+                    setRouterIntfsAdminStatus(port);
+                }
+
+                if (attrChanged)
+                {
+                    gPortsOrch->setPort(alias, port);
+                }
             }
         }
     }
@@ -668,6 +754,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
             m_syncdIntfses.erase(alias);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
+            m_pendingVrfUpdates.erase(alias);
 
             if (port.m_type == Port::SUBPORT)
             {
@@ -746,6 +833,9 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
         string vrf_name = "", vnet_name = "", nat_zone = "";
+        bool vrfNameIsExplicit = false;
+        bool macIsExplicit = false;
+        bool mplsIsExplicit = false;
         MacAddress mac;
 
         uint32_t mtu = 0;
@@ -780,6 +870,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (field == "vrf_name")
             {
                 vrf_name = value;
+                vrfNameIsExplicit = true;
             }
             else if (field == "vnet_name")
             {
@@ -790,6 +881,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 try
                 {
                     mac = MacAddress(value);
+                    macIsExplicit = true;
                 }
                 catch (const std::invalid_argument &e)
                 {
@@ -800,6 +892,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "mpls")
             {
                 mpls = (value == "enable" ? true : false);
+                mplsIsExplicit = true;
             }
             else if (field == "nat_zone")
             {
@@ -1018,7 +1111,8 @@ void IntfsOrch::doTask(Consumer &consumer)
                     adminUp = port.m_admin_state_up;
                 }
 
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction))
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu,
+                             loopbackAction, vrfNameIsExplicit))
                 {
                     it++;
                     continue;
@@ -1062,7 +1156,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                         gPortsOrch->setPort(alias, port);
                     }
                     /* Set MPLS */
-                    if ((!ip_prefix_in_key) && (port.m_mpls != mpls))
+                    if (mplsIsExplicit && !ip_prefix_in_key && port.m_mpls != mpls)
                     {
                         port.m_mpls = mpls;
 
@@ -1073,18 +1167,16 @@ void IntfsOrch::doTask(Consumer &consumer)
                     /* Set loopback action */
                     if (!loopbackAction.empty())
                     {
-                        setIntfLoopbackAction(port, loopbackAction);
+                        if (setIntfLoopbackAction(port, loopbackAction))
+                        {
+                            m_syncdIntfses[alias].loopback_action = loopbackAction;
+                        }
                     }
                 }
             }
 
-            if (!mac)
-            {
-                mac = gMacAddress;
-            }
-
             // update mac if it is changed
-            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            if (macIsExplicit && m_syncdIntfses.find(alias) != m_syncdIntfses.end())
             {
                 if ((!ip_prefix_in_key) && (m_syncdIntfses[alias].mac != mac))
                 {
@@ -1112,6 +1204,8 @@ void IntfsOrch::doTask(Consumer &consumer)
                             SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
                                                         mac.to_string().c_str(), alias.c_str());
                             m_syncdIntfses[alias].mac = mac;
+                            port.m_mac = mac;
+                            gPortsOrch->setPort(alias, port);
                         }
                     }
                     else
