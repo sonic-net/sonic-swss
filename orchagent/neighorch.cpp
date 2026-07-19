@@ -268,7 +268,12 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsIdForNewDependency(nh.alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to get rif_id for %s", nh.alias.c_str());
+        return false;
+    }
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -1201,7 +1206,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     bool bulk_op = ctx.bulk_op;
 
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsIdForNewDependency(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_INFO("Failed to get rif_id for %s", alias.c_str());

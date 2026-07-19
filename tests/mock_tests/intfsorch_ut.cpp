@@ -308,17 +308,30 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_create_count + 1, create_rif_count);
 
+        // Add a prefix so the whole-interface DEL is processed before its dependency DEL.
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", {
+            {"scope", "global"},
+            {"family", "IPv4"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
         // create dependency to the interface
         gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
 
-        // delete the interface, expect retry because dependency exists
+        // Delete the interface and prefix in lexical order. The successful prefix
+        // DEL must not clear the whole-interface removal fence.
         entries.clear();
         entries.push_back({"Ethernet0", "DEL", { {} }});
+        entries.push_back({"Ethernet0:10.0.0.1/24", "DEL", { {} }});
         consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
         auto current_remove_count = remove_rif_count;
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_remove_count, remove_rif_count);
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_EQ(gIntfsOrch->getRouterIntfsIdForNewDependency("Ethernet0"), SAI_NULL_OBJECT_ID);
 
         // create the interface again, expect retry because interface is in removing
         entries.clear();
