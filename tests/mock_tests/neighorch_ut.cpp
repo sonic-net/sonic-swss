@@ -240,6 +240,9 @@ namespace neighorch_test
 
         auto inband_rif = gIntfsOrch->getRouterIntfsIdForNewDependency(ETHERNET4);
         ASSERT_NE(inband_rif, SAI_NULL_OBJECT_ID);
+        auto remote_ref_count = gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count;
+        auto inband_ref_count = gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count;
+        NextHopKey inband_nexthop(TEST_IP, ETHERNET4);
 
         bool saw_inband_rif = false;
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
@@ -260,6 +263,22 @@ namespace neighorch_test
         NeighborContext ctx(NeighborEntry(TEST_IP, ETHERNET0));
         ASSERT_TRUE(gNeighOrch->addNextHop(ctx));
         ASSERT_TRUE(saw_inband_rif);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
+
+        ASSERT_TRUE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
+
+        NeighborContext bulk_ctx(NeighborEntry(TEST_IP, ETHERNET0), true);
+        bulk_ctx.next_hop_id = 0x200001;
+        ASSERT_TRUE(gNeighOrch->processBulkAddNextHop(bulk_ctx));
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
+
+        ASSERT_TRUE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
     }
 
     TEST_F(NeighOrchTest, BulkRemoteSystemPortNeighborRetriesWhenInbandRifIsFenced)
