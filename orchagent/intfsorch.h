@@ -39,6 +39,7 @@ public:
     static const int intfsorch_pri;
 
     sai_object_id_t getRouterIntfsId(const string&);
+    sai_object_id_t getRouterIntfsIdForNewDependency(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
     bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");

@@ -117,6 +117,16 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
     return port.m_rif_id;
 }
 
+sai_object_id_t IntfsOrch::getRouterIntfsIdForNewDependency(const string &alias)
+{
+    if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return getRouterIntfsId(alias);
+}
+
 bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string &alias)
 {
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
@@ -1204,12 +1214,18 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    m_removingIntfses.erase(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.erase(alias);
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    m_removingIntfses.insert(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.insert(alias);
+                    }
                     it++;
                     continue;
                 }
@@ -1972,4 +1988,3 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
-
