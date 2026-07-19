@@ -46,6 +46,7 @@ private:
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const std::string &vlanMemberKey);
+    bool isVlanMemberModeApplied(const std::string &vlanMemberKey, const std::string &tagging_mode);
     void doVlanPacPortTask(Consumer &consumer);
     void doVlanPacFdbTask(Consumer &consumer);
     void doVlanPacVlanMemberTask(Consumer &consumer);
