@@ -16,6 +16,9 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    bool saw_loopback_action = false;
+    bool fail_next_rif_create = false;
+    sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
@@ -26,6 +29,20 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
+        if (fail_next_rif_create)
+        {
+            fail_next_rif_create = false;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        }
+        *router_interface_id = 0x100000 + create_rif_count;
+        for (uint32_t i = 0; i < attr_count; ++i)
+        {
+            if (attr_list[i].id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+            {
+                saw_loopback_action = true;
+                last_loopback_action = static_cast<sai_packet_action_t>(attr_list[i].value.s32);
+            }
+        }
         return SAI_STATUS_SUCCESS;
     }
 
@@ -61,6 +78,8 @@ namespace intfsorch_test
 
             sai_router_intfs_api->create_router_interface = _ut_create_router_interface;
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
+            saw_loopback_action = false;
+            fail_next_rif_create = false;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
@@ -407,5 +426,172 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchVrfUpdateWaitsForDrain)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {
+                {"mtu", "9100"},
+                {"loopback_action", "drop"},
+                {"mpls", "enable"},
+                {"mac_addr", "00:11:22:33:44:55"}
+            }},
+            {"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"}, {"family", "IPv4"}}}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        port.m_rif_id = 0x123456;
+        port.m_vr_id = gVirtualRouterId;
+        gPortsOrch->setPort("Ethernet0", port);
+        gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
+
+        entries = {
+            {"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}},
+            {"Ethernet0:10.0.0.1/24", "DEL", {}},
+            {"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"}, {"family", "IPv4"}}}
+        };
+        saw_loopback_action = false;
+        consumer->addToSync(entries);
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 2u);
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getRouterIntfsIdForNewDependency("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 2u);
+        ASSERT_EQ(remove_count, remove_rif_count);
+
+        gIntfsOrch->decreaseRouterIntfsRefCount("Ethernet0");
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.count(
+                      IpPrefix("10.0.0.1/24")),
+                  1u);
+        ASSERT_TRUE(saw_loopback_action);
+        ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_TRUE(port.m_mpls);
+        ASSERT_EQ(port.m_mac, MacAddress("00:11:22:33:44:55"));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac,
+                  MacAddress("00:11:22:33:44:55"));
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchPartialUpdatePreservesVrf)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0.10", "SET", {
+                {"vlan", "10"},
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        entries = {
+            {"Ethernet0.10", "SET", {
+                {"vrf_name", "Vrf-Blue"},
+                {"admin_status", "down"},
+                {"mtu", "1500"}
+            }}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_FALSE(port.m_admin_state_up);
+        ASSERT_EQ(port.m_mtu, 1500u);
+
+        create_count = create_rif_count;
+        remove_count = remove_rif_count;
+        entries = {
+            {"Ethernet0.10", "SET", {{"admin_status", "up"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_TRUE(port.m_admin_state_up);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchVrfUpdateRollsBackCreateFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {{"mtu", "9100"}, {"loopback_action", "drop"}}}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        fail_next_rif_create = true;
+        entries = {
+            {"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_EQ(create_count + 2, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_EQ(gIntfsOrch->getRouterIntfsIdForNewDependency("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(create_count + 3, create_rif_count);
+        ASSERT_EQ(remove_count + 2, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
     }
 }
