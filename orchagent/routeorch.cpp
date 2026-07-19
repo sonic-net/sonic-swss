@@ -1515,7 +1515,10 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
             NeighborContext ctx = NeighborContext(it);
-            m_neighOrch->addNextHop(ctx);
+            if (!m_neighOrch->addNextHop(ctx))
+            {
+                return false;
+            }
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -2091,7 +2094,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 return true;
             }
 
-            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+            next_hop_id = m_intfsOrch->getRouterIntfsIdForNewDependency(nexthop.alias);
             /* rif is not created yet */
             if (next_hop_id == SAI_NULL_OBJECT_ID)
             {
@@ -2126,7 +2129,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
                 NeighborContext ctx = NeighborContext(nexthop);
-                m_neighOrch->addNextHop(ctx);
+                if (!m_neighOrch->addNextHop(ctx))
+                {
+                    return false;
+                }
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
