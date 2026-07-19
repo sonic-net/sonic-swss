@@ -35,6 +35,7 @@ namespace intfsorch_test
             fail_next_rif_create = false;
             return SAI_STATUS_INSUFFICIENT_RESOURCES;
         }
+
         *router_interface_id = 0x100000 + create_rif_count;
         for (uint32_t i = 0; i < attr_count; ++i)
         {
@@ -662,7 +663,7 @@ namespace intfsorch_test
         entries = {
             {"Ethernet0", "SET", {
                 {"loopback_action", "invalid"},
-                {"mtu", "1500"}
+                {"nat_zone", "7"}
             }}
         };
         consumer->addToSync(entries);
@@ -673,6 +674,6 @@ namespace intfsorch_test
 
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-        ASSERT_EQ(port.m_mtu, 1500u);
+        ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
 }
