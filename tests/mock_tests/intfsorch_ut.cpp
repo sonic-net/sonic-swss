@@ -518,6 +518,7 @@ namespace intfsorch_test
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
@@ -544,6 +545,7 @@ namespace intfsorch_test
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
