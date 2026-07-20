@@ -117,6 +117,11 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
     return port.m_rif_id;
 }
 
+bool IntfsOrch::isIntfRemovalPending(const string &alias) const
+{
+    return m_removingIntfses.find(alias) != m_removingIntfses.end();
+}
+
 bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string &alias)
 {
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
@@ -1204,12 +1209,18 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    m_removingIntfses.erase(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.erase(alias);
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    m_removingIntfses.insert(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.insert(alias);
+                    }
                     it++;
                     continue;
                 }
