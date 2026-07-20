@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <team.h>
 #include <teamdctl.h>
+#include "schema.h"
 #include "teamsync.h"
 #include "mock_table.h"
 
@@ -207,13 +208,13 @@ namespace teamsync_test
         callback_teamdctl_disconnect = cb_teamdctl_disconnect;
     }
 
-    /* Subclass to expose the protected addLag() for unit testing. */
     class TeamSyncUnderTest : public swss::TeamSync
     {
     public:
         TeamSyncUnderTest(swss::DBConnector *db, swss::DBConnector *stateDb, swss::Select *sel)
             : swss::TeamSync(db, stateDb, sel) {}
         using swss::TeamSync::addLag;
+        using swss::TeamSync::removeLag;
     };
 
     struct TeamSyncTest : public ::testing::Test
@@ -269,5 +270,52 @@ namespace teamsync_test
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
         ts.addLag("testLag", 4, true, true, 1500);
+    }
+
+    /* When teamd is not ready, APP_LAG is still published for orchagent but
+     * STATE_LAG is deferred until TeamPortSync succeeds. */
+    TEST_F(TeamSyncTest, AddLagTeamdctlFailsNoStateLag)
+    {
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_sleep = cb_sleep;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        ts.addLag("testLag", 4, true, true, 1500);
+
+        swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
+        std::vector<std::string> appKeys;
+        appLagTable.getKeys(appKeys);
+        EXPECT_EQ(appKeys.size(), 1u);
+        EXPECT_EQ(appKeys[0], "testLag");
+
+        swss::Table stateLagTable(&stateDb, STATE_LAG_TABLE_NAME);
+        std::vector<std::string> stateKeys;
+        stateLagTable.getKeys(stateKeys);
+        EXPECT_TRUE(stateKeys.empty());
+    }
+
+    TEST_F(TeamSyncTest, RemoveLagWithoutTeamPortSync)
+    {
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_sleep = cb_sleep;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        ts.addLag("testLag", 4, true, true, 1500);
+        ts.removeLag("testLag");
+
+        swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
+        std::vector<std::string> keys;
+        appLagTable.getKeys(keys);
+        EXPECT_TRUE(keys.empty());
     }
 }
