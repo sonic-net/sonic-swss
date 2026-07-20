@@ -2046,13 +2046,13 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         if (isHwConfigured(neighborEntry))
         {

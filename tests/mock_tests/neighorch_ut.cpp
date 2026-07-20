@@ -208,6 +208,16 @@ namespace neighorch_test
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 0);
     }
 
+    TEST_F(NeighOrchTest, EnableNeighborsDoesNotInsertMissingNeighbor)
+    {
+        list<NeighborContext> contexts;
+        contexts.emplace_back(VLAN1000_NEIGH, true);
+
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
+        EXPECT_TRUE(gNeighOrch->enableNeighbors(contexts));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
+    }
+
     TEST_F(NeighOrchTest, MultiVlanUnableToRemoveNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
