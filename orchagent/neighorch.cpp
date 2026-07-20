@@ -261,8 +261,11 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -421,8 +424,11 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
     {
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -677,8 +683,11 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
