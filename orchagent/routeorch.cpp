@@ -2087,9 +2087,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             }
 
             if (!m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias) &&
-                m_intfsOrch->isIntfRemovalPending(nexthop.alias))
+                (m_intfsOrch->isIntfRemovalPending(nexthop.alias) ||
+                 m_intfsOrch->isIntfVrfUpdatePending(nexthop.alias)))
             {
-                SWSS_LOG_INFO("Interface %s is pending removal", nexthop.alias.c_str());
+                SWSS_LOG_INFO("Interface %s is pending removal or VRF update", nexthop.alias.c_str());
                 return false;
             }
 
