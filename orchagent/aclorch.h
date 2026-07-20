@@ -84,6 +84,7 @@
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
 #define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
+#define ACTION_POLICER_ACTION               "POLICER_ACTION"
 
 #define PACKET_ACTION_FORWARD      "FORWARD"
 #define PACKET_ACTION_DROP         "DROP"
@@ -417,7 +418,13 @@ public:
     void onUpdate(SubjectType, void *) override;
 
 protected:
+    bool createRule() override;
+    bool removeRule() override;
+
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
+
+    string m_policerName;
+    bool m_policerRefHeld {false};
 };
 
 class AclRuleInnerSrcMacRewrite: public AclRule
