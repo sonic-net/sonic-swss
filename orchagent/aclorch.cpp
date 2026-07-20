@@ -14,6 +14,7 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "saihelper.h"
+#include "policerorch.h"
 
 using namespace std;
 using namespace swss;
@@ -32,6 +33,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -112,7 +114,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -2217,6 +2220,26 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    // SET_POLICER attaches a policer (by name -> OID) to the ACL entry.
+    else if (attr_name == ACTION_POLICER_ACTION)
+    {
+        if (_attr_value.empty())
+        {
+            SWSS_LOG_ERROR("Empty policer name for action %s in rule %s", attr_name.c_str(), m_id.c_str());
+            return false;
+        }
+
+        sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+        if (!gPolicerOrch->getPolicerOid(_attr_value, policer_oid))
+        {
+            SWSS_LOG_ERROR("Failed to add policer action to rule %s: policer %s does not exist",
+                    m_id.c_str(), _attr_value.c_str());
+            return false;
+        }
+
+        actionData.parameter.oid = policer_oid;
+        m_policerName = _attr_value;
+    }
     else
     {
         return false;
@@ -2322,7 +2345,27 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
+    {
+        return false;
+    }
+
+    // A packet rule must carry at least one action.
+    if (m_actions.empty())
+    {
+        return false;
+    }
+
+    size_t nonPolicerActions = 0;
+    for (const auto& action : m_actions)
+    {
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        {
+            nonPolicerActions++;
+        }
+    }
+
+    if (nonPolicerActions > 1)
     {
         return false;
     }
@@ -2333,6 +2376,57 @@ bool AclRulePacket::validate()
 void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
+}
+
+bool AclRulePacket::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    // When the rule binds a policer, take the policer reference BEFORE creating the
+    // SAI ACL entry (same ordering as AclRuleMirror's session policer). This way a
+    // refcount failure -- only reachable if the policer disappeared after validate()
+    // -- leaves nothing to unwind. m_policerRefHeld keeps the count balanced across
+    // recreate cycles.
+    if (!m_policerName.empty() && !m_policerRefHeld)
+    {
+        if (!gPolicerOrch->increaseRefCount(m_policerName))
+        {
+            SWSS_LOG_ERROR("Failed to increase reference count for policer %s bound by rule %s",
+                    m_policerName.c_str(), m_id.c_str());
+            return false;
+        }
+        m_policerRefHeld = true;
+    }
+
+    if (!AclRule::createRule())
+    {
+        if (m_policerRefHeld)
+        {
+            gPolicerOrch->decreaseRefCount(m_policerName);
+            m_policerRefHeld = false;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePacket::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (m_policerRefHeld)
+    {
+        gPolicerOrch->decreaseRefCount(m_policerName);
+        m_policerRefHeld = false;
+    }
+
+    return true;
 }
 
 AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
@@ -5892,6 +5986,29 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 type = table_id == m_mirrorTableId[stage] ? TABLE_TYPE_MIRROR : TABLE_TYPE_MIRRORV6;
             }
 
+            /* If the rule references a policer that has not been created yet,
+             * defer it and rely on the Consumer m_toSync retry (same pattern as
+             * "Wait for ACL table" above). This covers the case where the
+             * POLICER table is synced after the ACL_RULE table. */
+            bool waitForPolicer = false;
+            for (const auto& itr : kfvFieldsValues(t))
+            {
+                if (to_upper(fvField(itr)) == ACTION_POLICER_ACTION)
+                {
+                    if (!fvValue(itr).empty() && !gPolicerOrch->policerExists(fvValue(itr)))
+                    {
+                        SWSS_LOG_INFO("Wait for policer %s to be created for ACL rule %s",
+                                fvValue(itr).c_str(), key.c_str());
+                        waitForPolicer = true;
+                    }
+                    break;
+                }
+            }
+            if (waitForPolicer)
+            {
+                it++;
+                continue;
+            }
 
             try
             {
