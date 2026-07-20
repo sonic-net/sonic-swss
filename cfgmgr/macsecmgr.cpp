@@ -132,7 +132,15 @@ static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MAC
     }
 
     // Get the salt index from the cipher_str
-    saltIdx = (unsigned int) stoi(cipher_str.substr(0,2));
+    try
+    {
+        saltIdx = static_cast<unsigned int>(stoi(cipher_str.substr(0, 2)));
+    }
+    catch (const std::exception &)
+    {
+        throw std::invalid_argument(
+            "Invalid Type-7 CAK: salt prefix must be two decimal digits");
+    }
 
     // Convert the hex string (eg: "aabbcc") to hex integers (eg: 0xaa, 0xbb, 0xcc) taking a substring of 2 chars at a time
     // and do xor with the magic salt string
@@ -832,6 +840,11 @@ bool MACsecMgr::configureMACsec(
             "",
             "enable_network",
             network_id);
+    }
+    catch(const std::invalid_argument & e)
+    {
+        SWSS_LOG_WARN("Enable MACsec fail due to invalid CAK : %s", e.what());
+        return false;
     }
     catch(const std::runtime_error & e)
     {
