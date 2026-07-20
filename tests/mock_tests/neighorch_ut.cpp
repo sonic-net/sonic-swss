@@ -287,6 +287,20 @@ namespace neighorch_test
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
     }
 
+    TEST_F(NeighOrchTest, LocalNeighborDependenciesRetryWhileVrfUpdatePending)
+    {
+        gIntfsOrch->m_pendingVrfUpdates.insert(VLAN_1000);
+
+        NeighborContext neighbor_ctx(VLAN1000_NEIGH);
+        neighbor_ctx.mac = MacAddress(MAC1);
+        EXPECT_FALSE(gNeighOrch->addNeighbor(neighbor_ctx));
+
+        NeighborContext next_hop_ctx(VLAN1000_NEIGH);
+        EXPECT_FALSE(gNeighOrch->addNextHop(next_hop_ctx));
+
+        gIntfsOrch->m_pendingVrfUpdates.erase(VLAN_1000);
+    }
+
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);

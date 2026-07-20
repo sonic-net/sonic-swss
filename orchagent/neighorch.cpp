@@ -269,9 +269,10 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     assert(!hasNextHop(nexthop));
     if (!m_intfsOrch->isRemoteSystemPortIntf(nh.alias) &&
-        m_intfsOrch->isIntfRemovalPending(nh.alias))
+        (m_intfsOrch->isIntfRemovalPending(nh.alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(nh.alias)))
     {
-        SWSS_LOG_INFO("Interface %s is pending removal", nh.alias.c_str());
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", nh.alias.c_str());
         return false;
     }
 
@@ -1223,9 +1224,10 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     bool bulk_op = ctx.bulk_op;
 
     if (!m_intfsOrch->isRemoteSystemPortIntf(alias) &&
-        m_intfsOrch->isIntfRemovalPending(alias))
+        (m_intfsOrch->isIntfRemovalPending(alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(alias)))
     {
-        SWSS_LOG_INFO("Interface %s is pending removal", alias.c_str());
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", alias.c_str());
         return false;
     }
 
