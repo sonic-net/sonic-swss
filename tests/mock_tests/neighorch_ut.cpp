@@ -308,10 +308,19 @@ namespace neighorch_test
 
         NeighborContext ctx(NeighborEntry(TEST_IP, ETHERNET0), true);
         ctx.next_hop_id = 0x200001;
+        ctx.mac = MacAddress(MAC1);
 
         EXPECT_FALSE(gNeighOrch->addNextHop(ctx));
         EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
         EXPECT_FALSE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_TRUE(ctx.object_statuses.empty());
+
+        gNeighOrch->m_syncdNeighbors[ctx.neighborEntry] = {ctx.mac, true};
+        EXPECT_FALSE(gNeighOrch->removeNeighbor(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
+        EXPECT_FALSE(gNeighOrch->processBulkDisableNeighbor(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
     }
 
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
