@@ -219,6 +219,15 @@ namespace neighorch_test
     {
         ConfigureRemoteSystemPort(ETHERNET0, ETHERNET4);
 
+        Port remote_port;
+        ASSERT_TRUE(gPortsOrch->getPort(ETHERNET0, remote_port));
+        remote_port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+        gPortsOrch->setPort(ETHERNET0, remote_port);
+
+        Port inband_port;
+        ASSERT_TRUE(gPortsOrch->getPort(ETHERNET4, inband_port));
+        ASSERT_EQ(inband_port.m_oper_status, SAI_PORT_OPER_STATUS_UP);
+
         auto inband_rif = gIntfsOrch->getRouterIntfsId(ETHERNET4);
         ASSERT_NE(inband_rif, SAI_NULL_OBJECT_ID);
         auto remote_ref_count = gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count;
@@ -245,6 +254,7 @@ namespace neighorch_test
         ASSERT_TRUE(gNeighOrch->addNextHop(ctx));
         ASSERT_TRUE(saw_inband_rif);
         ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_TRUE(gNeighOrch->isNextHopFlagSet(inband_nexthop, NHFLAGS_IFDOWN));
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
 
@@ -255,6 +265,7 @@ namespace neighorch_test
         bulk_ctx.next_hop_id = 0x200001;
         ASSERT_TRUE(gNeighOrch->processBulkAddNextHop(bulk_ctx));
         ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_TRUE(gNeighOrch->isNextHopFlagSet(inband_nexthop, NHFLAGS_IFDOWN));
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
 
