@@ -9,15 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-<<<<<<< HEAD
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_vlanmgrd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
-=======
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_bfdsyncd tests_vlanmgrd
-
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_bfdsyncd tests_vlanmgrd
->>>>>>> 6a19fb09 (NOS-8055: Fix VLAN member tagging_mode updates for existing members (#770))
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_vlanmgrd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
