@@ -1501,9 +1501,12 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         if (bulk_op)
         {
             SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
+            if (!addNextHop(ctx))
+            {
+                return false;
+            }
             object_statuses.emplace_back();
             gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            addNextHop(ctx);
             return true;
         }
 
@@ -1629,6 +1632,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     bool bulk_op = ctx.bulk_op;
 
     NextHopKey nexthop = { ip_address, alias };
+    auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+    if (neighborIt == m_syncdNeighbors.end())
+    {
+        return true;
+    }
+
     sai_object_id_t port_vrf_id;
     port_vrf_id = gVirtualRouterId;
 
@@ -1636,8 +1645,11 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote neighbor %s", nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -1650,12 +1662,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     else
     {
         SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
-    }
-
-    auto neighborIt = m_syncdNeighbors.find(neighborEntry);
-    if (neighborIt == m_syncdNeighbors.end())
-    {
-        return true;
     }
 
     SWSS_LOG_INFO("Try to remove neighbor %s on %s",
@@ -1760,7 +1766,10 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            removeNextHop(ip_address, alias);
+            if (!removeNextHop(ip_address, nexthop.alias))
+            {
+                return false;
+            }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
                     m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -1909,10 +1918,23 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
     const NeighborEntry neighborEntry = ctx.neighborEntry;
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
+    NextHopKey nexthop = { ip_address, alias };
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {
         return true;
+    }
+
+    if (m_intfsOrch->isRemoteSystemPortIntf(alias))
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote neighbor %s", nexthop.to_string().c_str());
+            return false;
+        }
+
+        nexthop.alias = inbp.m_alias;
     }
 
     SWSS_LOG_INFO("Checking neighbor remove entry status %s on %s.", ip_address.to_string().c_str(), m_syncdNeighbors[neighborEntry].mac.to_string().c_str());
@@ -1990,7 +2012,10 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            removeNextHop(ip_address, alias);
+            if (!removeNextHop(ip_address, nexthop.alias))
+            {
+                return false;
+            }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
                     m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
