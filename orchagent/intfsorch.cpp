@@ -1199,11 +1199,19 @@ void IntfsOrch::doTask(Consumer &consumer)
 
                 if (vnet_orch->delIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.erase(alias);
+                    }
                     m_vnetInfses.erase(alias);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.insert(alias);
+                    }
                     it++;
                     continue;
                 }
