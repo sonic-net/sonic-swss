@@ -117,8 +117,8 @@ jobs:
 
   - script: |
       set -ex
-
-      sudo apt-get install -y python3-pip
+      sudo apt-get update
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y python3-pip
       
       # install packages for vs test
       sudo pip3 install pytest flaky exabgp docker lcov_cobertura
