@@ -156,8 +156,13 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
 
     for (const auto &cit : hash.fieldValueMap)
     {
-        const auto &field = cit.first;
+        auto field = cit.first;
         const auto &value = cit.second;
+
+        // YANG leaf-list fields are stored with an '@' suffix in CONFIG_DB.
+        // Strip it so both "ecmp_hash" and "ecmp_hash@" are recognized.
+        if (!field.empty() && field.back() == '@')
+            field.pop_back();
 
         if (field == SWITCH_HASH_ECMP_HASH)
         {
