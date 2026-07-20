@@ -273,6 +273,19 @@ namespace neighorch_test
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
     }
 
+    TEST_F(NeighOrchTest, RemoteSystemPortNextHopRetriesWithoutInbandPort)
+    {
+        ConfigureRemoteSystemPort(ETHERNET0, ETHERNET4);
+        gPortsOrch->m_inbandPortName.clear();
+
+        NeighborContext ctx(NeighborEntry(TEST_IP, ETHERNET0), true);
+        ctx.next_hop_id = 0x200001;
+
+        EXPECT_FALSE(gNeighOrch->addNextHop(ctx));
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_FALSE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+    }
+
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
