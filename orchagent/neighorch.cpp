@@ -688,8 +688,8 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
 
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
-                       ipAddress.to_string().c_str(), alias.c_str());
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s requested on %s, tracked on %s",
+                       ipAddress.to_string().c_str(), alias.c_str(), nexthop.alias.c_str());
         return false;
     }
 
