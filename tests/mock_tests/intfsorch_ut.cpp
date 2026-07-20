@@ -34,7 +34,6 @@ namespace intfsorch_test
             fail_next_rif_create = false;
             return SAI_STATUS_INSUFFICIENT_RESOURCES;
         }
-        *router_interface_id = 0x100000 + create_rif_count;
         for (uint32_t i = 0; i < attr_count; ++i)
         {
             if (attr_list[i].id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
@@ -43,14 +42,15 @@ namespace intfsorch_test
                 last_loopback_action = static_cast<sai_packet_action_t>(attr_list[i].value.s32);
             }
         }
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->create_router_interface(
+            router_interface_id, switch_id, attr_count, attr_list);
     }
 
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
         ++remove_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->remove_router_interface(router_interface_id);
     }
 
     struct IntfsOrchTest : public ::testing::Test
@@ -78,6 +78,8 @@ namespace intfsorch_test
 
             sai_router_intfs_api->create_router_interface = _ut_create_router_interface;
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
+            create_rif_count = 0;
+            remove_rif_count = 0;
             saw_loopback_action = false;
             fail_next_rif_create = false;
 
@@ -493,9 +495,6 @@ namespace intfsorch_test
 
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-        port.m_rif_id = 0x123456;
-        port.m_vr_id = gVirtualRouterId;
-        gPortsOrch->setPort("Ethernet0", port);
         gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
 
         entries = {
