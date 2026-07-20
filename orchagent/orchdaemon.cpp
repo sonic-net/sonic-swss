@@ -7,6 +7,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "namelabelmapper.h"
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
@@ -78,6 +79,7 @@ ShlOrch *gShlOrch;
 EvpnMhOrch *gEvpnMhOrch;
 L2NhgOrch *gL2NhgOrch;
 
+NameLabelMapper *gLabelMapper;
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
@@ -189,6 +191,7 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+    gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
