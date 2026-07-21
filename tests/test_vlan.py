@@ -65,6 +65,29 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanMacLearn(self, dvs):
+
+        vlan = "100"
+
+        # Create a VLAN and disable MAC learning on it.
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
+
+        self.dvs_vlan.set_vlan_property(vlan, "mac_learning", "disabled")
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
+            {"SAI_VLAN_ATTR_LEARN_DISABLE": "true"})
+
+        # Re-enable MAC learning.
+        self.dvs_vlan.set_vlan_property(vlan, "mac_learning", "enabled")
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
+            {"SAI_VLAN_ATTR_LEARN_DISABLE": "false"})
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     def test_MultipleVlan(self, dvs):
 
         def _create_vlan_members(vlan, member_list):

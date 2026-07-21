@@ -5784,4 +5784,62 @@ namespace portsorch_test
 
         ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
+
+    static bool _vlan_learn_disable_seen = false;
+    static bool _vlan_learn_disable_value = false;
+    static sai_vlan_api_t *_org_vlan_api_for_learn = nullptr;
+
+    static sai_status_t _ut_stub_set_vlan_attr_capture_learn(sai_object_id_t vlan_oid,
+                                                             const sai_attribute_t *attr)
+    {
+        if (attr && attr->id == SAI_VLAN_ATTR_LEARN_DISABLE)
+        {
+            _vlan_learn_disable_seen = true;
+            _vlan_learn_disable_value = attr->value.booldata;
+        }
+        return _org_vlan_api_for_learn->set_vlan_attribute(vlan_oid, attr);
+    }
+
+    TEST_F(PortsOrchTest, VlanMacLearn)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        // Bring up ports.
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Hook set_vlan_attribute to capture SAI_VLAN_ATTR_LEARN_DISABLE.
+        _vlan_learn_disable_seen = false;
+        _vlan_learn_disable_value = false;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_learn = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_learn;
+        sai_vlan_api = &ut_vlan_api;
+
+        // Create a VLAN with MAC learning disabled.
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"mac_learning", "disabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Restore the SAI vlan api before asserting.
+        sai_vlan_api = _org_vlan_api_for_learn;
+
+        // PortsOrch must have programmed SAI_VLAN_ATTR_LEARN_DISABLE = true.
+        ASSERT_TRUE(_vlan_learn_disable_seen);
+        ASSERT_TRUE(_vlan_learn_disable_value);
+    }
 }

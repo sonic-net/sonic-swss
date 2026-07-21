@@ -5901,6 +5901,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             uint32_t mtu = 0;
             MacAddress mac;
             string hostif_name = "";
+            string mac_learning = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -5914,6 +5915,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
+                }
+                if (fvField(i) == "mac_learning")
+                {
+                    mac_learning = fvValue(i);
                 }
             }
 
@@ -5956,6 +5961,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     {
                         gIntfsOrch->setRouterIntfsMac(vl);
                     }
+                }
+                if (!mac_learning.empty())
+                {
+                    setVlanMacLearn(vl, mac_learning);
                 }
                 if (!hostif_name.empty())
                 {
@@ -7559,6 +7568,30 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_
 
     SWSS_LOG_NOTICE("Set bridge port %s learning mode %d", port.m_alias.c_str(), learn_mode);
 
+    return true;
+}
+
+bool PortsOrch::setVlanMacLearn(Port &vlan, const string &mac_learning)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_VLAN_ATTR_LEARN_DISABLE;
+    attr.value.booldata = (mac_learning == "disabled");
+
+    sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set MAC learning to %s on VLAN %s, rv:%d",
+                       mac_learning.c_str(), vlan.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Set MAC learning to %s on VLAN %s", mac_learning.c_str(), vlan.m_alias.c_str());
     return true;
 }
 

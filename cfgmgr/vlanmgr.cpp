@@ -413,6 +413,11 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                     mac = fvValue(i);
                     setHostVlanMac(vlan_id, mac);
                 }
+                else if (fvField(i) == "mac_learning")
+                {
+                    /* Propagate the per-VLAN MAC-learning setting to APPL_DB for PortsOrch. */
+                    fvVector.push_back(i);
+                }
                 else if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
