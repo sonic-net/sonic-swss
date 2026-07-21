@@ -2094,7 +2094,14 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 return true;
             }
 
-            next_hop_id = m_intfsOrch->getRouterIntfsIdForNewDependency(nexthop.alias);
+            if (!m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias) &&
+                m_intfsOrch->isIntfRemovalPending(nexthop.alias))
+            {
+                SWSS_LOG_INFO("Interface %s is pending removal", nexthop.alias.c_str());
+                return false;
+            }
+
+            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
             /* rif is not created yet */
             if (next_hop_id == SAI_NULL_OBJECT_ID)
             {

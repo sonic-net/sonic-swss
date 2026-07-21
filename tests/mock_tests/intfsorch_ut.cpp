@@ -331,7 +331,7 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_remove_count, remove_rif_count);
         ASSERT_EQ(consumer->m_toSync.size(), 1u);
-        ASSERT_EQ(gIntfsOrch->getRouterIntfsIdForNewDependency("Ethernet0"), SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(gIntfsOrch->isIntfRemovalPending("Ethernet0"));
 
         // create the interface again, expect retry because interface is in removing
         entries.clear();
