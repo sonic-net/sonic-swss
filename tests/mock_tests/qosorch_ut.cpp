@@ -1028,6 +1028,8 @@ namespace qosorch_test
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 1);
         auto sai_oid = (*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME])["STANDALONE_WRED"].m_saiObjectId;
         ASSERT_NE(sai_oid, SAI_NULL_OBJECT_ID);
+        // Threshold cache must be populated after create
+        ASSERT_EQ(WredMapHandler::m_wredProfiles.count("STANDALONE_WRED"), 1);
 
         // Delete the standalone profile
         RemoveItem(CFG_WRED_PROFILE_TABLE_NAME, "STANDALONE_WRED");
