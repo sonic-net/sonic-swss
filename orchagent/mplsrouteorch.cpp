@@ -879,18 +879,22 @@ bool RouteOrch::removeLabelRoute(LabelRouteBulkContext& ctx)
 
     if (it_route->second.nhg_index.empty())
     {
-        for (const auto& nexthop : it_route->second.nhg_key.getNextHops())
-        {
-            if (nexthop.isMplsNextHop() &&
-                m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
+        const auto& nexthops = it_route->second.nhg_key.getNextHops();
+        const auto remote_mpls_nexthop = find_if(nexthops.begin(), nexthops.end(),
+            [this](const auto& nexthop)
             {
-                Port inbp;
-                if (!gPortsOrch->getInbandPort(inbp))
-                {
-                    SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
-                                  nexthop.to_string().c_str());
-                    return false;
-                }
+                return nexthop.isMplsNextHop() &&
+                       m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias);
+            });
+
+        if (remote_mpls_nexthop != nexthops.end())
+        {
+            Port inbp;
+            if (!gPortsOrch->getInbandPort(inbp))
+            {
+                SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                              remote_mpls_nexthop->to_string().c_str());
+                return false;
             }
         }
     }
