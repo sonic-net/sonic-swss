@@ -878,6 +878,23 @@ bool NextHopGroup::remove()
     {
         return true;
     }
+
+    for (const auto& member : m_members)
+    {
+        const auto& nh_key = member.first;
+        if (nh_key.isMplsNextHop() &&
+            gIntfsOrch->isRemoteSystemPortIntf(nh_key.alias))
+        {
+            Port inbp;
+            if (!gPortsOrch->getInbandPort(inbp))
+            {
+                SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                              nh_key.to_string().c_str());
+                return false;
+            }
+        }
+    }
+
     //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
     if (m_is_temp ||
         (!isRecursive() && m_members.size() == 1))

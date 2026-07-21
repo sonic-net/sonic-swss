@@ -2814,6 +2814,24 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
         return true;
     }
 
+    if (it_route != it_route_table->second.end() && it_route->second.nhg_index.empty())
+    {
+        for (const auto& nexthop : it_route->second.nhg_key.getNextHops())
+        {
+            if (nexthop.isMplsNextHop() &&
+                m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
+            {
+                Port inbp;
+                if (!gPortsOrch->getInbandPort(inbp))
+                {
+                    SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                                  nexthop.to_string().c_str());
+                    return false;
+                }
+            }
+        }
+    }
+
     auto& object_statuses = ctx.object_statuses;
 
     // set to blackhole for default route

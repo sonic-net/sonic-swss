@@ -717,8 +717,12 @@ bool NeighOrch::removeMplsNextHop(const NextHopKey& nh)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                          nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
