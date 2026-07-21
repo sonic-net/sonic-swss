@@ -1733,4 +1733,36 @@ namespace routeorch_test
         (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
         ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
     }
+
+    TEST_F(RouteOrchTest, RemoteMplsRouteRemovalRetriesWithoutInbandPort)
+    {
+        Port remote_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", remote_port));
+        remote_port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+        gPortsOrch->setPort("Ethernet0", remote_port);
+        gPortsOrch->m_inbandPortName.clear();
+
+        NextHopGroupKey nhg(
+            "push100+10.0.0.2@Ethernet0,push200+10.0.0.3@Ethernet0");
+
+        IpPrefix prefix("8.8.8.0/24");
+        gRouteOrch->m_syncdRoutes[gVirtualRouterId][prefix] = RouteNhg(nhg, "");
+
+        RouteBulkContext route_ctx(prefix.to_string(), false);
+        route_ctx.vrf_id = gVirtualRouterId;
+        route_ctx.ip_prefix = prefix;
+
+        EXPECT_FALSE(gRouteOrch->removeRoute(route_ctx));
+        EXPECT_TRUE(route_ctx.object_statuses.empty());
+
+        Label label = 1000;
+        gRouteOrch->m_syncdLabelRoutes[gVirtualRouterId][label] = RouteNhg(nhg, "");
+
+        LabelRouteBulkContext label_ctx;
+        label_ctx.vrf_id = gVirtualRouterId;
+        label_ctx.label = label;
+
+        EXPECT_FALSE(gRouteOrch->removeLabelRoute(label_ctx));
+        EXPECT_TRUE(label_ctx.object_statuses.empty());
+    }
 }

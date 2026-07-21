@@ -293,6 +293,14 @@ namespace neighorch_test
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
         EXPECT_FALSE(gNeighOrch->processBulkDisableNeighbor(ctx));
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
+
+        NextHopKey remote_mpls_nexthop("push100+" + TEST_IP + "@" + ETHERNET0);
+        NextHopKey inband_mpls_nexthop(remote_mpls_nexthop);
+        inband_mpls_nexthop.alias = ETHERNET4;
+        gNeighOrch->m_syncdNextHops[inband_mpls_nexthop] = {0x200002, 0, 0};
+
+        EXPECT_FALSE(gNeighOrch->removeMplsNextHop(remote_mpls_nexthop));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(inband_mpls_nexthop), 1u);
     }
 
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
