@@ -1004,17 +1004,30 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     sai_status = sai_wred_api->remove_wred(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove scheduler profile, status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to remove WRED profile, status:%d", sai_status);
         return false;
     }
     return true;
+}
+
+void WredMapHandler::clearStoredProfile(const string &key)
+{
+    m_wredProfiles.erase(key);
 }
 
 task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     WredMapHandler wred_handler;
-    return wred_handler.processWorkItem(consumer, tuple);
+    string op = kfvOp(tuple);
+    auto result = wred_handler.processWorkItem(consumer, tuple);
+
+    if (op == DEL_COMMAND && result == task_process_status::task_success)
+    {
+        WredMapHandler::clearStoredProfile(kfvKey(tuple));
+    }
+
+    return result;
 }
 
 bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)

@@ -128,6 +128,7 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
     bool modifyQosItem(sai_object_id_t sai_object, vector<sai_attribute_t> &attribs);
     bool removeQosItem(sai_object_id_t sai_object);
+    static void clearStoredProfile(const string &key);
 protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
