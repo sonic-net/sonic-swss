@@ -1037,7 +1037,8 @@ namespace qosorch_test
         ASSERT_EQ(baseline_sai_remove + 1, sai_remove_wred_profile_count);
         // Type-map entry must be gone
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 0);
-        // Stored thresholds must be cleaned up
+        // Stored thresholds must be cleaned up (m_wredProfiles is private;
+        // the #define private public at the top of this file makes it accessible)
         ASSERT_EQ(WredMapHandler::m_wredProfiles.count("STANDALONE_WRED"), 0);
     }
 

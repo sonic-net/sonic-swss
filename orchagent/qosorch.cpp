@@ -1010,6 +1010,11 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     return true;
 }
 
+void WredMapHandler::clearStoredProfile(const string &key)
+{
+    m_wredProfiles.erase(key);
+}
+
 task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -1019,8 +1024,7 @@ task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFie
 
     if (op == DEL_COMMAND && result == task_process_status::task_success)
     {
-        string key = kfvKey(tuple);
-        WredMapHandler::m_wredProfiles.erase(key);
+        WredMapHandler::clearStoredProfile(kfvKey(tuple));
     }
 
     return result;
