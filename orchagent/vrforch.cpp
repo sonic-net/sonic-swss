@@ -75,6 +75,12 @@ bool VRFOrch::addOperation(const Request& request)
             vni = static_cast<uint32_t>(request.getAttrUint(name));
             continue;
         }
+        else if (name == "fallback")
+        {
+            SWSS_LOG_WARN("VRF fallback attribute is deprecated and ignored; "
+                          "use KERNEL_VRF_FALLBACK|GLOBAL for temporary compatibility");
+            continue;
+        }
         else if ((name == "mgmtVrfEnabled") || (name == "in_band_mgmt_enabled"))
         {
             SWSS_LOG_INFO("MGMT VRF field: %s ignored", name.c_str());
