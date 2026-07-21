@@ -118,7 +118,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker lcov_cobertura
+      sudo uv pip install --system pytest flaky exabgp docker lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
@@ -144,9 +144,11 @@ jobs:
       # from PyPI instead — same fallback as the inline amd64/ubuntu-22.04
       # job. --no-build-isolation + apt's python3-cffi sidesteps a cffi
       # version-mismatch Exception that jammy's pip 22.0.2 build-isolation
-      # env otherwise triggers.
-      sudo apt-get install -y python3-cffi
-      sudo pip3 install --no-build-isolation 'libyang==3.3.0'
+      # env otherwise triggers. --no-build-isolation needs wheel present
+      # in the environment to provide bdist_wheel, so install it first.
+      sudo apt-get install -y python3-cffi python3-dev
+      sudo uv pip install --system wheel
+      sudo uv pip install --system --no-build-isolation 'libyang==3.3.0'
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
