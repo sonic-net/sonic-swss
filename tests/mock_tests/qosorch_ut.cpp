@@ -999,6 +999,48 @@ namespace qosorch_test
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS_1"), 0);
     }
 
+    /*
+     * UPSW-7238: Verify that a standalone WRED profile (never bound to any
+     * QUEUE) can be created and deleted, with the SAI remove_wred call
+     * actually invoked and the type-map entry fully cleaned up.
+     */
+    TEST_F(QosOrchTest, QosOrchTestStandaloneWredProfileCreateDelete)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        auto wredProfileConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+
+        auto baseline_sai_remove = sai_remove_wred_profile_count;
+
+        // Create a standalone WRED profile — no QUEUE binding
+        entries.push_back({"STANDALONE_WRED", "SET",
+                           {
+                               {"ecn", "ecn_all"},
+                               {"green_drop_probability", "5"},
+                               {"green_max_threshold", "2097152"},
+                               {"green_min_threshold", "1048576"},
+                               {"wred_green_enable", "true"}
+                           }});
+        wredProfileConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // Verify SAI object was created
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 1);
+        auto sai_oid = (*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME])["STANDALONE_WRED"].m_saiObjectId;
+        ASSERT_NE(sai_oid, SAI_NULL_OBJECT_ID);
+
+        // Delete the standalone profile
+        RemoveItem(CFG_WRED_PROFILE_TABLE_NAME, "STANDALONE_WRED");
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // SAI remove_wred must have been called
+        ASSERT_EQ(baseline_sai_remove + 1, sai_remove_wred_profile_count);
+        // Type-map entry must be gone
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 0);
+        // Stored thresholds must be cleaned up
+        ASSERT_EQ(WredMapHandler::m_wredProfiles.count("STANDALONE_WRED"), 0);
+    }
+
     TEST_F(QosOrchTest, QosOrchTestPortQosMapReplaceOneFieldAndRemoveObject)
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
