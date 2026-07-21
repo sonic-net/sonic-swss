@@ -857,7 +857,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                            SWSS_LOG_NOTICE("Interface '%s' still has %zu IP address(es); deferring VRF '%s' bind until pending IP removals are processed.",
+                                          alias.c_str(), m_syncdIntfses[alias].ip_addresses.size(), vrf_name.c_str());
+                            it++;
+                            continue;
                         }
                     }
                 }
