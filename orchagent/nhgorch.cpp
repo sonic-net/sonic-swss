@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <random>
 #include "nhgorch.h"
 #include "neighorch.h"
@@ -879,19 +880,22 @@ bool NextHopGroup::remove()
         return true;
     }
 
-    for (const auto& member : m_members)
-    {
-        const auto& nh_key = member.first;
-        if (nh_key.isMplsNextHop() &&
-            gIntfsOrch->isRemoteSystemPortIntf(nh_key.alias))
+    const auto remote_mpls_member = find_if(m_members.begin(), m_members.end(),
+        [](const auto& member)
         {
-            Port inbp;
-            if (!gPortsOrch->getInbandPort(inbp))
-            {
-                SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
-                              nh_key.to_string().c_str());
-                return false;
-            }
+            const auto& nh_key = member.first;
+            return nh_key.isMplsNextHop() &&
+                   gIntfsOrch->isRemoteSystemPortIntf(nh_key.alias);
+        });
+
+    if (remote_mpls_member != m_members.end())
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                          remote_mpls_member->first.to_string().c_str());
+            return false;
         }
     }
 
