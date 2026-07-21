@@ -623,8 +623,8 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
                 }
 
                 Port port;
-                gPortsOrch->getPort(configPortName, port);
-                if (port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
+                if (gPortsOrch->getPort(configPortName, port) &&
+                    port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
                 {
                     queuesStateVector.at(configPortName).enableQueueCounter(port.m_host_tx_queue);
                 }
