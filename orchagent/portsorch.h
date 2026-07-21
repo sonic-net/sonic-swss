@@ -460,6 +460,7 @@ private:
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
+    bool setVlanMacLearn(Port &vlan, const string &mac_learning);
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
