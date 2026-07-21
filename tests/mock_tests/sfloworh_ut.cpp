@@ -12,6 +12,45 @@ using namespace swss;
 
 namespace sflow_test
 {
+    sai_status_t failSaiCreate(sai_object_id_t *, sai_object_id_t, uint32_t,
+                               const sai_attribute_t *)
+    {
+        return SAI_STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    sai_status_t failSaiSetSwitchAttribute(sai_object_id_t, const sai_attribute_t *)
+    {
+        return SAI_STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    template <typename SaiApi>
+    class ScopedSaiApiOverride final
+    {
+    public:
+        explicit ScopedSaiApiOverride(SaiApi *&target) : target(target), original(target), replacement(*target)
+        {
+            this->target = &replacement;
+        }
+
+        ~ScopedSaiApiOverride()
+        {
+            target = original;
+        }
+
+        ScopedSaiApiOverride(const ScopedSaiApiOverride &) = delete;
+        ScopedSaiApiOverride &operator=(const ScopedSaiApiOverride &) = delete;
+
+        SaiApi &api()
+        {
+            return replacement;
+        }
+
+    private:
+        SaiApi *&target;
+        SaiApi *original;
+        SaiApi replacement;
+    };
+
     class MockSflowOrch final
     {
     public:
@@ -72,6 +111,22 @@ namespace sflow_test
         std::shared_ptr<SflowOrch> sflowOrch;
         std::shared_ptr<DBConnector> appDb;
     };
+
+    void setDropMonitorLimit(MockSflowOrch &mock_orch, const string &limit)
+    {
+        auto table = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "global",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"},
+                        {"drop_monitor_limit", limit}
+                    }
+                }
+            });
+        mock_orch.doSflowTableTask(table);
+    }
 
     class SflowOrchTest : public ::testing::Test
     {
@@ -496,6 +551,119 @@ namespace sflow_test
             mock_orch.get(), "./sflow_mod_invalid.json");
         ASSERT_EQ(queue, 47);
     }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamReportCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam_report = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTrapGroupCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        hostif_api_override.api().create_hostif_trap_group = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamEventActionCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam_event_action = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamTransportCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam_transport = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorPolicerCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        policer_api_override.api().create_policer = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorUserDefinedTrapCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        hostif_api_override.api().create_hostif_user_defined_trap = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamCollectorCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam_collector = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorTamEventCreateFailure)
+    {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        tam_api_override.api().create_tam_event = failSaiCreate;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorReconfigureSwitchUnbindFailure)
+    {
+        ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        ASSERT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        switch_api_override.api().set_switch_attribute = failSaiSetSwitchAttribute;
+        setDropMonitorLimit(mock_orch, "200");
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorSwitchBindFailure)
+    {
+        ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
+        switch_api_override.api().set_switch_attribute = failSaiSetSwitchAttribute;
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
+    TEST_F(SflowOrchTest, SflowDropMonitorSwitchUnbindFailure)
+    {
+        ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        ASSERT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        switch_api_override.api().set_switch_attribute = failSaiSetSwitchAttribute;
+        setDropMonitorLimit(mock_orch, "0");
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+    }
+
     TEST_F(SflowOrchTest, SflowAddPortRejectsConflictingEgressBinding)
     {
         MockSflowOrch mock_orch;
