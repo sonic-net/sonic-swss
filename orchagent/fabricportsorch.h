@@ -86,7 +86,7 @@ private:
     void isolateFabricLink(int lane, bool isolate);
     string computeFabricIsolateReason(int isolated,
         int cfgIsolated, int autoIsolated, int permIsolate,
-        int origPermIsolated, uint64_t consecutivePollsWithErrors,
+        uint64_t consecutivePollsWithErrors,
         uint64_t consecutivePollsWithFecErrs, uint64_t isolationPollsCfg,
         uint64_t fecIsolatedPolls);
 

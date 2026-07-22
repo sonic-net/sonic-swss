@@ -111,7 +111,7 @@ class TestVirtualChassis(object):
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port,
-                                                 {"ISOLATE_REASON": "crc_errors & fec_uncorrectable"}, polling_config=max_poll)
+                                                 {"ISOLATE_REASON": "crc_errors,fec_uncorrectable"}, polling_config=max_poll)
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "0"})
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "0"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)

@@ -36,9 +36,14 @@ using TimePoint = std::chrono::time_point<Clock>;
 
 // ISOLATE_REASON on FABRIC_PORT_TABLE: current derived cause, refreshed each
 // debug-counter poll. Values: none | config | permanent | crc_errors |
-// fec_uncorrectable | crc_errors & fec_uncorrectable | auto | unknown.
-// link_event_counters_reset and admin_unisolate are written when those events
-// occur and are overwritten on the next poll (e.g. none once the link is healthy).
+// fec_uncorrectable | crc_errors,fec_uncorrectable | auto.
+// Precedence when multiple apply: permanent > config > auto sub-reasons.
+// auto = AUTO_ISOLATED but current poll CRC/FEC counts are below the isolate
+// threshold (hysteresis / recovery window); crc_errors or fec_uncorrectable
+// when the corresponding threshold is met on this poll.
+// link_event_counters_reset and admin_unisolate are written on those events;
+// they are overwritten on the next debug-counter poll when monitoring runs.
+// If monState is disabled, no poll runs and those ephemeral values persist.
 #define STATE_FABRIC_ISOLATE_REASON_FIELD "ISOLATE_REASON"
 
 // constants for link monitoring
@@ -423,22 +428,22 @@ void FabricPortsOrch::updateFabricPortState()
 }
 
 string FabricPortsOrch::computeFabricIsolateReason(int isolated,
-                     int cfgIsolated, int autoIsolated, int permIsolate,
-                     int origPermIsolated, uint64_t consecutivePollsWithErrors,
-                     uint64_t consecutivePollsWithFecErrs, uint64_t isolationPollsCfg,
-                     uint64_t fecIsolatedPolls)
+        int cfgIsolated, int autoIsolated, int permIsolate,
+        uint64_t consecutivePollsWithErrors,
+        uint64_t consecutivePollsWithFecErrs, uint64_t isolationPollsCfg,
+        uint64_t fecIsolatedPolls)
 {
     if (!isolated)
     {
         return "none";
     }
+    if (permIsolate)
+    {
+        return "permanent";
+    }
     if (cfgIsolated)
     {
         return "config";
-    }
-    if (permIsolate || origPermIsolated)
-    {
-        return "permanent";
     }
     if (autoIsolated)
     {
@@ -446,7 +451,7 @@ string FabricPortsOrch::computeFabricIsolateReason(int isolated,
         const bool fecHit = consecutivePollsWithFecErrs >= fecIsolatedPolls;
         if (crcHit && fecHit)
         {
-            return "crc_errors & fec_uncorrectable";
+            return "crc_errors,fec_uncorrectable";
         }
         if (fecHit)
         {
@@ -456,10 +461,9 @@ string FabricPortsOrch::computeFabricIsolateReason(int isolated,
         {
             return "crc_errors";
         }
-        //  still in the auto-isolated state, but the current CRC/FEC
-        //  counters are not at/above the isolate trigger anymore
         return "auto";
     }
+    SWSS_LOG_WARN("ISOLATE_REASON: isolated with no config/auto/permanent cause");
     return "unknown";
 }
 
@@ -984,7 +988,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         updateStateDbTable(m_stateTable, key, "PRM_ISOLATED", permIsolate);
 
         const string isolateReason = computeFabricIsolateReason(
-            isolated, cfgIsolated, autoIsolated, permIsolate, origPermIsolated,
+            isolated, cfgIsolated, autoIsolated, permIsolate,
             consecutivePollsWithErrors, consecutivePollsWithFecErrs,
             isolationPollsCfg, fecIsolatedPolls);
         m_stateTable->hset(key, STATE_FABRIC_ISOLATE_REASON_FIELD, isolateReason.c_str());
@@ -1075,7 +1079,7 @@ void FabricPortsOrch::clearFabricCnt(int lane, bool clearIsolation)
         // sai call to unisolate the link
         isolateFabricLink(lane, !clearIsolation);
         updateStateDbTable(m_stateTable, key, "ISOLATED", isolated);
-        // Ephemeral: overwritten on the next debug-counter poll.
+        // Ephemeral: overwritten on the next debug-counter poll when monState is enabled.
         m_stateTable->hset(key, STATE_FABRIC_ISOLATE_REASON_FIELD, "link_event_counters_reset");
     }
 
@@ -1579,7 +1583,7 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
                     updateStateDbTable(m_stateTable, state_key, "ISOLATED", m_defaultIsolated);
                     updateStateDbTable(m_stateTable, state_key, "AUTO_ISOLATED", m_defaultAutoIsolated);
                     updateStateDbTable(m_stateTable, state_key, "PRM_ISOLATED", m_defaultIsolated);
-                    // Ephemeral: overwritten on the next debug-counter poll.
+                    // Ephemeral: overwritten on the next debug-counter poll when monState is enabled.
                     m_stateTable->hset(state_key, STATE_FABRIC_ISOLATE_REASON_FIELD, "admin_unisolate");
                     linkQueues.clear();
 
