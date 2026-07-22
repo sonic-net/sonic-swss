@@ -46,6 +46,14 @@ FABRIC_NUM_PORTS = 16
 
 SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
 
+def get_dvs_service_ready_timeout():
+    try:
+        return int(os.environ.get("DVS_SERVICE_READY_TIMEOUT", "180"))
+    except ValueError:
+        return 180
+
+DEFAULT_DVS_SERVICE_READY_TIMEOUT = get_dvs_service_ready_timeout()
+
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
@@ -564,7 +572,7 @@ class DockerVirtualSwitch:
             self.destroy()
             raise
 
-    def check_services_ready(self, timeout=60) -> None:
+    def check_services_ready(self, timeout=DEFAULT_DVS_SERVICE_READY_TIMEOUT) -> None:
         """Check if all processes in the DVS are ready."""
         service_polling_config = PollingConfig(1, timeout, strict=True)
 
@@ -1951,6 +1959,7 @@ def manage_dvs(request) -> str:
             if dvs is not None:
                 dvs.get_logs()
                 dvs.destroy()
+                dvs = None
 
             vol = {}
             if switch_mode and switch_mode == SINGLE_ASIC_VOQ_FS:
@@ -1958,7 +1967,8 @@ def manage_dvs(request) -> str:
                 voq_configs = cwd + "/single_asic_voq_fs"
                 vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
+            new_dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
+            dvs = new_dvs
 
             curr_dvs_env = new_dvs_env
 
@@ -1976,6 +1986,9 @@ def manage_dvs(request) -> str:
         return dvs
 
     yield update_dvs
+
+    if dvs is None:
+        return
 
     if graceful_stop:
         dvs.stop_swss()
