@@ -1268,3 +1268,91 @@ bool getSaiFailureStatus(std::string& error)
     return true;
 }
 
+/*
+ * Determine the ACL table group lookup type the platform actually supports.
+ *
+ * Historically orchagent hardcodes SAI_ACL_TABLE_GROUP_TYPE_PARALLEL. The only
+ * case in which we deviate from that is when a *successful* enum-values
+ * capability query for SAI_ACL_TABLE_GROUP_ATTR_TYPE tells us PARALLEL is not
+ * supported but SEQUENTIAL is. For every other outcome we keep the historical
+ * PARALLEL default so existing platforms are never regressed:
+ *   - query SUCCESS, PARALLEL listed            -> PARALLEL (unchanged)
+ *   - query SUCCESS, only SEQUENTIAL listed     -> SEQUENTIAL
+ *   - query NOT_IMPLEMENTED / NOT_SUPPORTED     -> PARALLEL (query not available)
+ *   - any other (genuine) query failure         -> PARALLEL (preserve historical)
+ *
+ * Note: unlike a "must this field be dropped" gate, choosing PARALLEL on a
+ * non-definitive result cannot introduce a new create/retry loop here because
+ * PARALLEL is exactly what is programmed today; it is the safe, no-change path.
+ */
+sai_acl_table_group_type_t querySupportedAclTableGroupType(sai_object_id_t switch_id)
+{
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_ACL_TABLE_GROUP, SAI_ACL_TABLE_GROUP_ATTR_TYPE);
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
+    {
+        return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    }
+
+    std::vector<int32_t> values_list(meta->enummetadata->valuescount, 0);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(
+        switch_id, SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+        SAI_ACL_TABLE_GROUP_ATTR_TYPE, &values);
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        bool parallel_supported = false;
+        bool sequential_supported = false;
+        for (uint32_t i = 0; i < values.count; i++)
+        {
+            if (values.list[i] == SAI_ACL_TABLE_GROUP_TYPE_PARALLEL)
+            {
+                parallel_supported = true;
+            }
+            else if (values.list[i] == SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL)
+            {
+                sequential_supported = true;
+            }
+        }
+
+        if (parallel_supported)
+        {
+            return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        }
+        if (sequential_supported)
+        {
+            SWSS_LOG_NOTICE("PARALLEL ACL table group lookup not supported by the "
+                            "platform; using SEQUENTIAL");
+            return SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL;
+        }
+
+        SWSS_LOG_WARN("ACL table group TYPE capability query returned no usable "
+                      "values; preserving historical PARALLEL default");
+        return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    }
+
+    /*
+     * The capability query did not succeed. Only treat NOT_IMPLEMENTED /
+     * NOT_SUPPORTED as the expected "query unavailable" case; log any other
+     * status as a genuine failure. In both cases keep the historical PARALLEL
+     * default so behavior is identical to before this change.
+     */
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_enum_values_capability(ACL_TABLE_GROUP, "
+                      "TYPE) not available (status:%d); using historical PARALLEL "
+                      "default", status);
+    }
+    else
+    {
+        SWSS_LOG_WARN("sai_query_attribute_enum_values_capability(ACL_TABLE_GROUP, "
+                      "TYPE) failed (status:%d); preserving historical PARALLEL "
+                      "default", status);
+    }
+    return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+}
+

@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -41,6 +42,11 @@ namespace
         // (sai_query_attribute_capability) fails, forcing native FlexCounter.
         thread_local bool g_fail_session_capability = false;
     }
+
+    // Generic per-attribute enum-values-capability override (sai_enum_cap_ut),
+    // consulted first in __wrap_sai_query_attribute_enum_values_capability so any
+    // orch UT (e.g. the ACL table group type query) can inject a result.
+    thread_local sai_enum_cap_ut::EnumValuesCapabilityOverride g_enumValuesOverride;
 
     // HFTel capability discovery path (HFTelOrch::isSupportedHFTel).
     namespace hftel
@@ -109,6 +115,14 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Inout_ sai_s32_list_t* enum_values_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when set,
+        // its result is used verbatim; otherwise fall through to the icmp hooks.
+        if (g_enumValuesOverride)
+        {
+            return g_enumValuesOverride(switch_id, object_type, attr_id,
+                                        enum_values_capability);
+        }
+
         const bool is_icmp_stats_mode = (object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
                 && (attr_id == SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
 
@@ -337,5 +351,29 @@ namespace hftelorch_sai_wrap_ut
     HFTelSaiHookGuard::~HFTelSaiHookGuard()
     {
         setSaiHookNone();
+    }
+}
+
+namespace sai_enum_cap_ut
+{
+    void setEnumValuesCapabilityOverride(EnumValuesCapabilityOverride fn)
+    {
+        g_enumValuesOverride = std::move(fn);
+    }
+
+    void clearEnumValuesCapabilityOverride()
+    {
+        g_enumValuesOverride = nullptr;
+    }
+
+    EnumValuesCapabilityOverrideGuard::EnumValuesCapabilityOverrideGuard(
+            EnumValuesCapabilityOverride fn)
+    {
+        setEnumValuesCapabilityOverride(std::move(fn));
+    }
+
+    EnumValuesCapabilityOverrideGuard::~EnumValuesCapabilityOverrideGuard()
+    {
+        clearEnumValuesCapabilityOverride();
     }
 }
