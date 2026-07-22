@@ -3164,7 +3164,7 @@ bool AclTable::bind(sai_object_id_t portOid)
     assert(ports.find(portOid) != ports.end());
 
     sai_object_id_t group_member_oid;
-    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid, stage))
+    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid, stage, priority))
     {
         SWSS_LOG_ERROR("Failed to bind port oid: %" PRIx64 "", portOid);
         return false;
@@ -3951,6 +3951,26 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             {
                 throw "AclOrch initialization failure";
             }
+        }
+
+        // Query the switch-reported ACL table group member priority range. This
+        // is best-effort: if the SAI implementation does not support it, table
+        // priority range validation is simply skipped (see processAclTablePriority).
+        sai_attribute_t tbl_prio_attrs[2] = {};
+        tbl_prio_attrs[0].id = SAI_SWITCH_ATTR_ACL_TABLE_MINIMUM_PRIORITY;
+        tbl_prio_attrs[1].id = SAI_SWITCH_ATTR_ACL_TABLE_MAXIMUM_PRIORITY;
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 2, tbl_prio_attrs);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            m_aclTableMinPriority = tbl_prio_attrs[0].value.u32;
+            m_aclTableMaxPriority = tbl_prio_attrs[1].value.u32;
+            SWSS_LOG_NOTICE("Get ACL table priority values, min: %u, max: %u",
+                            m_aclTableMinPriority, m_aclTableMaxPriority);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("ACL table priority min/max query not supported (rv:%d); "
+                            "ACL table priority range validation disabled", status);
         }
 
         queryAclActionCapability();
@@ -5650,6 +5670,16 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                         break;
                     }
                 }
+                else if (attr_name == ACL_TABLE_PRIORITY)
+                {
+                    if (!processAclTablePriority(attr_value, newTable))
+                    {
+                        SWSS_LOG_ERROR("Failed to process ACL table %s priority",
+                                table_id.c_str());
+                        bAllAttributesOk = false;
+                        break;
+                    }
+                }
                 else if (attr_name == ACL_TABLE_STAGE)
                 {
                    if (!processAclTableStage(attr_value, newTable.stage))
@@ -5692,6 +5722,21 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             newTable.validateAddType(*tableType);
             // Add mandatory ACL action if not present
             newTable.addMandatoryActions();
+
+            // 'priority' maps to the ACL table group member attribute, which only
+            // exists for PORT/LAG-bound tables; warn if set on a type that can't use it.
+            if (newTable.priority != ACL_TABLE_GROUP_MEMBER_DEFAULT_PRIORITY)
+            {
+                const auto &bpTypes = newTable.type.getBindPointTypes();
+                if (bpTypes.find(SAI_ACL_BIND_POINT_TYPE_PORT) == bpTypes.end() &&
+                    bpTypes.find(SAI_ACL_BIND_POINT_TYPE_LAG) == bpTypes.end())
+                {
+                    SWSS_LOG_WARN("ACL table %s: 'priority' is ignored for table type %s "
+                                  "(only effective for port/LAG-bound tables)",
+                                  table_id.c_str(), newTable.type.getName().c_str());
+                }
+            }
+
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
@@ -5704,7 +5749,9 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     !isAclTableTypeUpdated(newTable.type.getName(),
                                            m_AclTables[table_oid]) &&
                     !isAclTableStageUpdated(newTable.stage,
-                                            m_AclTables[table_oid]))
+                                            m_AclTables[table_oid]) &&
+                    !isAclTablePriorityUpdated(newTable.priority,
+                                               m_AclTables[table_oid]))
                 {
                     // Update the existing table using the info in newTable
                     if (updateAclTable(table_id, newTable, orignalTableTypeName))
@@ -6243,6 +6290,39 @@ bool AclOrch::processAclTableType(string type, string &out_table_type)
 bool AclOrch::isAclTableStageUpdated(acl_stage_type_t acl_stage, AclTable &t)
 {
     return (acl_stage != t.stage);
+}
+
+bool AclOrch::isAclTablePriorityUpdated(sai_uint32_t priority, AclTable &t)
+{
+    return (priority != t.priority);
+}
+
+bool AclOrch::processAclTablePriority(const string &priority, AclTable &aclTable)
+{
+    SWSS_LOG_ENTER();
+
+    char *endp = nullptr;
+    errno = 0;
+    auto value = (sai_uint32_t)strtoul(priority.c_str(), &endp, 0);
+    if (errno != 0 || endp != priority.c_str() + priority.size())
+    {
+        SWSS_LOG_ERROR("Invalid ACL table priority value %s", priority.c_str());
+        return false;
+    }
+
+    // Enforce the switch-reported priority range only when it was discovered.
+    // When unavailable (e.g. Vendor SAI does not implement the query), fall back to
+    // accepting the configured value for backward compatibility.
+    if (m_aclTableMaxPriority != 0 &&
+        (value < m_aclTableMinPriority || value > m_aclTableMaxPriority))
+    {
+        SWSS_LOG_ERROR("ACL table priority %u is out of supported range %u-%u",
+                       value, m_aclTableMinPriority, m_aclTableMaxPriority);
+        return false;
+    }
+
+    aclTable.priority = value;
+    return true;
 }
 
 bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
