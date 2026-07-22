@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <exception>
+#include <unordered_set>
 #include <unistd.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -3331,7 +3332,16 @@ bool ArsOrch::migratePortToArs(const string &portName)
     size_t nhRemoveSuccess = 0, nhRemoveFail = 0;
     size_t neighRemoveSuccess = 0;
     size_t ip2meRemoved = 0;
+    size_t routeDrainFail = 0;
+    size_t routesScanned = 0;
     sai_status_t st;
+
+    struct SavedSingleNhRoute {
+        sai_object_id_t vrfId;
+        IpPrefix prefix;
+        NextHopKey nhKey;
+    };
+    vector<SavedSingleNhRoute> savedSingleNhRoutes;
 
     // ─── Phase 2: Tear down NHG members referencing this port's NHs ──────
 
@@ -3449,6 +3459,117 @@ bool ArsOrch::migratePortToArs(const string &portName)
         SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2 COMPLETE - removed %zu NHG members "
                         "across %zu unique NHGs",
                         portName.c_str(), removedMembers.size(), uniqueNhgs.size());
+    }
+
+    // ─── Phase 2.5: Drain single-NH routes referencing this port's NHs ──
+    //
+    // Routes with a single next-hop are programmed in SAI with
+    // NEXT_HOP_ID = nh_oid (no NHG involved).  Phase 2 only drains NHG
+    // members, so these direct route→NH references survive and cause
+    // Phase 3's remove_next_hop() to fail with SAI_STATUS_OBJECT_IN_USE.
+    // Re-point them to DROP now; Phase 9.5 restores them.
+
+    // Block scope for savedNhKeySet so that earlier gotos to
+    // restore_rif_without_ars do not cross its non-trivial initialization.
+    {
+        // Build a set for O(1) NH key lookups instead of O(K) inner loop.
+        // Note: the outer loops iterate getSyncdRoutes() by reference.
+        // decreaseNextHopRefCount() below is a simple counter decrement that
+        // does not mutate the route map, so the iterators remain valid.
+        std::unordered_set<NextHopKey, boost::hash<NextHopKey>> savedNhKeySet;
+        for (auto &snh : savedNextHops)
+            savedNhKeySet.insert(snh.key);
+
+        if (gRouteOrch)
+        {
+            for (auto &vrfRoutes : gRouteOrch->getSyncdRoutes())
+            {
+                for (auto &routeEntry : vrfRoutes.second)
+                {
+                    const auto &nhgKey = routeEntry.second.nhg_key;
+                    if (nhgKey.getSize() != 1)
+                        continue;
+
+                    const NextHopKey &routeNh = *nhgKey.getNextHops().begin();
+                    if (routeNh.isIntfNextHop())
+                        continue;
+
+                    if (savedNhKeySet.find(routeNh) == savedNhKeySet.end())
+                        continue;
+
+                    routesScanned++;
+
+                    sai_route_entry_t route_entry;
+                    route_entry.switch_id = gSwitchId;
+                    route_entry.vr_id = vrfRoutes.first;
+                    copy(route_entry.destination, routeEntry.first);
+
+                    sai_attribute_t drop_attr;
+                    drop_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                    drop_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+                    sai_status_t rs = sai_route_api->set_route_entry_attribute(
+                        &route_entry, &drop_attr);
+                    if (rs != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 FAILED to set "
+                                       "DROP on route %s vrf=0x%" PRIx64 " rc=%d",
+                                       portName.c_str(),
+                                       routeEntry.first.to_string().c_str(),
+                                       vrfRoutes.first, rs);
+                        routeDrainFail++;
+                        continue;
+                    }
+
+                    sai_attribute_t nh_attr;
+                    nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                    nh_attr.value.oid = SAI_NULL_OBJECT_ID;
+                    rs = sai_route_api->set_route_entry_attribute(
+                        &route_entry, &nh_attr);
+                    if (rs != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 FAILED to "
+                                       "null NEXT_HOP_ID on route %s rc=%d "
+                                       "— restoring FORWARD",
+                                       portName.c_str(),
+                                       routeEntry.first.to_string().c_str(),
+                                       rs);
+                        sai_attribute_t fwd_attr;
+                        fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                        fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+                        sai_route_api->set_route_entry_attribute(
+                            &route_entry, &fwd_attr);
+                        routeDrainFail++;
+                        continue;
+                    }
+
+                    savedSingleNhRoutes.push_back(
+                        {vrfRoutes.first, routeEntry.first, routeNh});
+                    gNeighOrch->decreaseNextHopRefCount(routeNh);
+
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2.5 drained single-NH "
+                                   "route: %s nh=%s vrf=0x%" PRIx64,
+                                   portName.c_str(),
+                                   routeEntry.first.to_string().c_str(),
+                                   routeNh.to_string().c_str(),
+                                   vrfRoutes.first);
+                }
+            }
+        }
+    } // savedNhKeySet destroyed here
+
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2.5 COMPLETE - drained %zu single-NH "
+                    "routes, %zu failed, %zu matched (scanned all VRFs)",
+                    portName.c_str(), savedSingleNhRoutes.size(),
+                    routeDrainFail, routesScanned);
+
+    if (routeDrainFail > 0)
+    {
+        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 had %zu drain failures — "
+                       "aborting before Phase 3 (NH removal would fail with "
+                       "OBJECT_IN_USE for undrained routes)",
+                       portName.c_str(), routeDrainFail);
+        goto restore_rif_without_ars;
     }
 
     // ─── Phase 3: Remove next-hop SAI objects ─────────────────────────────
@@ -4006,6 +4127,90 @@ phase5_success:
                         portName.c_str(), nhCreateSuccess,
                         savedNextHops.size(), nhCreateFail);
 
+        // ─── Phase 9.5: Restore single-NH routes drained in Phase 2.5 ───
+
+        size_t routeRestoreSuccess = 0, routeRestoreFail = 0;
+        for (auto &savedRoute : savedSingleNhRoutes)
+        {
+            auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+            auto nhIt = syncdNhs.find(savedRoute.nhKey);
+            if (nhIt == syncdNhs.end() ||
+                nhIt->second.next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("ARS-MIGRATE[%s]: Phase9.5 SKIP route %s - "
+                              "NH %s not recreated (NULL OID)",
+                              portName.c_str(),
+                              savedRoute.prefix.to_string().c_str(),
+                              savedRoute.nhKey.to_string().c_str());
+                routeRestoreFail++;
+                continue;
+            }
+
+            sai_route_entry_t route_entry;
+            route_entry.switch_id = gSwitchId;
+            route_entry.vr_id = savedRoute.vrfId;
+            copy(route_entry.destination, savedRoute.prefix);
+
+            sai_attribute_t nh_attr;
+            nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            nh_attr.value.oid = nhIt->second.next_hop_id;
+
+            sai_status_t rs = sai_route_api->set_route_entry_attribute(
+                &route_entry, &nh_attr);
+            if (rs != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase9.5 FAILED to restore "
+                               "route %s nh=%s new_nh_oid=0x%" PRIx64
+                               " rc=%d",
+                               portName.c_str(),
+                               savedRoute.prefix.to_string().c_str(),
+                               savedRoute.nhKey.to_string().c_str(),
+                               nhIt->second.next_hop_id, rs);
+                routeRestoreFail++;
+                continue;
+            }
+
+            sai_attribute_t fwd_attr;
+            fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+            sai_status_t fwd_rs = sai_route_api->set_route_entry_attribute(
+                &route_entry, &fwd_attr);
+
+            // Increment refcount unconditionally: the NH SAI binding above
+            // already succeeded, so the hardware holds a reference from this
+            // route to the NH object.  The refcount must reflect reality even
+            // if the FORWARD action set fails below (the route would remain
+            // DROP with a valid NH binding — an operator-visible error, but
+            // rolling back the NH binding here would add complexity to an
+            // already multi-phase error path with marginal benefit).
+            gNeighOrch->increaseNextHopRefCount(savedRoute.nhKey);
+
+            if (fwd_rs != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase9.5 route %s NH rebound "
+                               "but FORWARD failed rc=%d — route stays DROP "
+                               "with elevated NH refcount (accepted trade-off)",
+                               portName.c_str(),
+                               savedRoute.prefix.to_string().c_str(), fwd_rs);
+                routeRestoreFail++;
+                continue;
+            }
+
+            routeRestoreSuccess++;
+
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase9.5 restored route: %s "
+                            "nh=%s new_nh_oid=0x%" PRIx64,
+                            portName.c_str(),
+                            savedRoute.prefix.to_string().c_str(),
+                            savedRoute.nhKey.to_string().c_str(),
+                            nhIt->second.next_hop_id);
+        }
+
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase9.5 COMPLETE - restored %zu/%zu "
+                        "single-NH routes (%zu failed)",
+                        portName.c_str(), routeRestoreSuccess,
+                        savedSingleNhRoutes.size(), routeRestoreFail);
+
         // ─── Phase 10: Recreate NHG members with new NH OIDs ─────────────
         //
         // BATCH MODE: when m_batchMigrationMode is set (multiple ports being
@@ -4084,24 +4289,31 @@ phase5_success:
                             "will happen after all ports are migrated",
                             portName.c_str());
 
-            bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0);
+            bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0 ||
+                                   routeRestoreFail > 0);
             if (partialFailure)
             {
                 SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ===== MIGRATION PARTIAL (batch) ===== "
                                "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                               " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=DEFERRED(%zu)",
+                               " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                               "NHG_members=DEFERRED(%zu)",
                                portName.c_str(), oldRifId, newRifId,
                                neighCreateSuccess, savedNeighbors.size(),
-                               nhCreateSuccess, savedNextHops.size(), deferred);
+                               nhCreateSuccess, savedNextHops.size(),
+                               routeRestoreSuccess, savedSingleNhRoutes.size(),
+                               deferred);
                 return false;
             }
 
             SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== MIGRATION COMPLETE (batch) ===== "
                             "Summary: old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                            " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=DEFERRED(%zu)",
+                            " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                            "NHG_members=DEFERRED(%zu)",
                             portName.c_str(), oldRifId, newRifId,
                             neighCreateSuccess, savedNeighbors.size(),
-                            nhCreateSuccess, savedNextHops.size(), deferred);
+                            nhCreateSuccess, savedNextHops.size(),
+                            routeRestoreSuccess, savedSingleNhRoutes.size(),
+                            deferred);
             return true;
         }
 
@@ -4200,7 +4412,7 @@ phase5_success:
         }
 
         bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0 ||
-                               memberCreateFail > 0);
+                               memberCreateFail > 0 || routeRestoreFail > 0);
 
         if (partialFailure)
         {
@@ -4208,22 +4420,26 @@ phase5_success:
                            "ARS enabled and RIF recreated, but some dependent "
                            "objects failed to restore. "
                            "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                           " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=%zu/%zu. "
+                           " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                           "NHG_members=%zu/%zu. "
                            "Forwarding may be degraded on this port until "
                            "missing objects are resolved (e.g., neighbor re-learn).",
                            portName.c_str(), oldRifId, newRifId,
                            neighCreateSuccess, savedNeighbors.size(),
                            nhCreateSuccess, savedNextHops.size(),
+                           routeRestoreSuccess, savedSingleNhRoutes.size(),
                            memberCreateSuccess, removedMembers.size());
             return false;
         }
 
         SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== MIGRATION COMPLETE ===== "
                         "Summary: old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                        " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=%zu/%zu",
+                        " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                        "NHG_members=%zu/%zu",
                         portName.c_str(), oldRifId, newRifId,
                         neighCreateSuccess, savedNeighbors.size(),
                         nhCreateSuccess, savedNextHops.size(),
+                        routeRestoreSuccess, savedSingleNhRoutes.size(),
                         memberCreateSuccess, removedMembers.size());
         return true;
     }
@@ -4234,10 +4450,10 @@ restore_rif_without_ars:
                    "Port state: port_oid=0x%" PRIx64
                    " rif_id=0x%" PRIx64 " vrf=0x%" PRIx64
                    " Objects to restore: %zu neighbors, %zu NHs, "
-                   "%zu IP-to-me routes removed",
+                   "%zu IP-to-me routes, %zu single-NH routes",
                    portName.c_str(), port.m_port_id, port.m_rif_id,
                    vrfId, savedNeighbors.size(), savedNextHops.size(),
-                   ip2meRemoved);
+                   ip2meRemoved, savedSingleNhRoutes.size());
     {
         sai_object_id_t restoredRifId;
 
@@ -4461,6 +4677,80 @@ restore_rif_without_ars:
                 rt_attr.value.oid = restoredRifId;
                 sai_route_api->create_route_entry(
                     &subnet_route, 1, &rt_attr);
+            }
+            // Restore single-NH routes drained in Phase 2.5
+            size_t rollbackRouteSuccess = 0, rollbackRouteFail = 0;
+            for (auto &savedRoute : savedSingleNhRoutes)
+            {
+                auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+                auto nhIt = syncdNhs.find(savedRoute.nhKey);
+                if (nhIt == syncdNhs.end() ||
+                    nhIt->second.next_hop_id == SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_WARN("ARS-MIGRATE[%s]: ROLLBACK SKIP route %s - "
+                                  "NH %s not available (NULL OID) — route "
+                                  "stays DROP",
+                                  portName.c_str(),
+                                  savedRoute.prefix.to_string().c_str(),
+                                  savedRoute.nhKey.to_string().c_str());
+                    rollbackRouteFail++;
+                    continue;
+                }
+
+                sai_route_entry_t re;
+                re.switch_id = gSwitchId;
+                re.vr_id = savedRoute.vrfId;
+                copy(re.destination, savedRoute.prefix);
+
+                sai_attribute_t nh_attr;
+                nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                nh_attr.value.oid = nhIt->second.next_hop_id;
+                sai_status_t nh_rs = sai_route_api->set_route_entry_attribute(
+                    &re, &nh_attr);
+                if (nh_rs != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ROLLBACK failed to rebind "
+                                   "NH on route %s rc=%d",
+                                   portName.c_str(),
+                                   savedRoute.prefix.to_string().c_str(),
+                                   nh_rs);
+                    rollbackRouteFail++;
+                    continue;
+                }
+
+                gNeighOrch->increaseNextHopRefCount(savedRoute.nhKey);
+
+                sai_attribute_t fwd_attr;
+                fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+                sai_status_t fwd_rs = sai_route_api->set_route_entry_attribute(
+                    &re, &fwd_attr);
+                if (fwd_rs != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ROLLBACK NH rebound but "
+                                   "FORWARD failed on route %s rc=%d",
+                                   portName.c_str(),
+                                   savedRoute.prefix.to_string().c_str(),
+                                   fwd_rs);
+                    rollbackRouteFail++;
+                }
+                else
+                {
+                    rollbackRouteSuccess++;
+                }
+
+                SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ROLLBACK restored single-NH "
+                                "route: %s nh=%s",
+                                portName.c_str(),
+                                savedRoute.prefix.to_string().c_str(),
+                                savedRoute.nhKey.to_string().c_str());
+            }
+            if (!savedSingleNhRoutes.empty())
+            {
+                SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ROLLBACK route restore: "
+                                "%zu/%zu succeeded, %zu failed",
+                                portName.c_str(), rollbackRouteSuccess,
+                                savedSingleNhRoutes.size(), rollbackRouteFail);
             }
         }
         return false;
