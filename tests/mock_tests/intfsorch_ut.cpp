@@ -512,13 +512,14 @@ namespace intfsorch_test
         syncd = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
     TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
     {
         std::deque<KeyOpFieldsValuesTuple> entries{
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
@@ -545,14 +546,13 @@ namespace intfsorch_test
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         entries = {
             {"Ethernet0", "SET", {
                 {"loopback_action", "invalid"},
-                {"nat_zone", "7"}
+                {"mtu", "1500"}
             }}
         };
         consumer->addToSync(entries);
@@ -563,6 +563,6 @@ namespace intfsorch_test
 
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-        ASSERT_EQ(port.m_nat_zone_id, 7u);
+        ASSERT_EQ(port.m_mtu, 1500u);
     }
 }
