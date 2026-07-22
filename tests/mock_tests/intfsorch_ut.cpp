@@ -520,6 +520,7 @@ namespace intfsorch_test
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
@@ -546,13 +547,14 @@ namespace intfsorch_test
             {"Ethernet0", "SET", {{"mtu", "9100"}}}
         };
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         entries = {
             {"Ethernet0", "SET", {
                 {"loopback_action", "invalid"},
-                {"mtu", "1500"}
+                {"nat_zone", "7"}
             }}
         };
         consumer->addToSync(entries);
@@ -563,6 +565,6 @@ namespace intfsorch_test
 
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-        ASSERT_EQ(port.m_mtu, 1500u);
+        ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
 }
