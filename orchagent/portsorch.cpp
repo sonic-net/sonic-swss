@@ -1077,6 +1077,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         // Get System ports
         getSystemPorts();
 
+        // SAI may place ports into the default VLAN / default 1Q bridge on creation.
+        // Remove them so that ports are not unintentionally bridged together in a
+        // single L2 broadcast domain.
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
@@ -1544,9 +1547,10 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         m_portCount++;
     }
 
-    // newly created ports might be put in the default vlan so remove all ports from
-    // the default vlan.
-    if (gMySwitchType == "voq") {
+    // SAI may place newly created ports into the default VLAN / default 1Q bridge,
+    // remove them here as well, consistently with the PortsOrch constructor.
+    if (gMySwitchType != "dpu")
+    {
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
