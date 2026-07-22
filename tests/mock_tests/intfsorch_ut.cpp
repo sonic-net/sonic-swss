@@ -58,13 +58,13 @@ namespace intfsorch_test
             _In_ sai_object_id_t router_interface_id,
             _In_ const sai_attribute_t *attr)
     {
-        if (fail_next_rif_set)
-        {
-            fail_next_rif_set = false;
-            return SAI_STATUS_INSUFFICIENT_RESOURCES;
-        }
         if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
         {
+            if (fail_next_rif_set)
+            {
+                fail_next_rif_set = false;
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
             saw_loopback_action = true;
             last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
         }
