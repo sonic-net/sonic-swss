@@ -1507,7 +1507,10 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
             NeighborContext ctx = NeighborContext(it);
-            m_neighOrch->addNextHop(ctx);
+            if (!m_neighOrch->addNextHop(ctx))
+            {
+                return false;
+            }
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -2118,7 +2121,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
                 NeighborContext ctx = NeighborContext(nexthop);
-                m_neighOrch->addNextHop(ctx);
+                if (!m_neighOrch->addNextHop(ctx))
+                {
+                    return false;
+                }
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */
@@ -2790,6 +2796,28 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
                       ipPrefix.to_string().c_str());
  
         return true;
+    }
+
+    if (it_route != it_route_table->second.end() && it_route->second.nhg_index.empty())
+    {
+        const auto& nexthops = it_route->second.nhg_key.getNextHops();
+        const auto remote_mpls_nexthop = find_if(nexthops.begin(), nexthops.end(),
+            [this](const auto& nexthop)
+            {
+                return nexthop.isMplsNextHop() &&
+                       m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias);
+            });
+
+        if (remote_mpls_nexthop != nexthops.end())
+        {
+            Port inbp;
+            if (!gPortsOrch->getInbandPort(inbp))
+            {
+                SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                              remote_mpls_nexthop->to_string().c_str());
+                return false;
+            }
+        }
     }
 
     auto& object_statuses = ctx.object_statuses;

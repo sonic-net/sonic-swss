@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <random>
 #include "nhgorch.h"
 #include "neighorch.h"
@@ -878,6 +879,26 @@ bool NextHopGroup::remove()
     {
         return true;
     }
+
+    const auto remote_mpls_member = find_if(m_members.begin(), m_members.end(),
+        [](const auto& member)
+        {
+            const auto& nh_key = member.first;
+            return nh_key.isMplsNextHop() &&
+                   gIntfsOrch->isRemoteSystemPortIntf(nh_key.alias);
+        });
+
+    if (remote_mpls_member != m_members.end())
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                          remote_mpls_member->first.to_string().c_str());
+            return false;
+        }
+    }
+
     //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
     if (m_is_temp ||
         (!isRecursive() && m_members.size() == 1))

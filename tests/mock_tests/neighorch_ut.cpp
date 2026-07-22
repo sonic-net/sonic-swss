@@ -17,7 +17,9 @@ EXTERN_MOCK_FNS
 namespace neighorch_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
+    DEFINE_SAI_GENERIC_API_MOCK(next_hop, next_hop);
     using namespace std;
+    using ::testing::Invoke;
     using namespace mock_orch_test;
     using ::testing::Return;
     using ::testing::Throw;
@@ -47,6 +49,27 @@ namespace neighorch_test
             gNeighOrch->addExistingData(&neigh_table);
             static_cast<Orch *>(gNeighOrch)->doTask();
             neigh_table.del(key);
+        }
+
+        void ConfigureRemoteSystemPort(const string& remote_alias, const string& inband_alias)
+        {
+            Table intf_table = Table(m_app_db.get(), APP_INTF_TABLE_NAME);
+            intf_table.set(remote_alias, {{"NULL", "NULL"}});
+            intf_table.set(inband_alias, {{"NULL", "NULL"}});
+            gIntfsOrch->addExistingData(&intf_table);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+
+            Port remote_port;
+            ASSERT_TRUE(gPortsOrch->getPort(remote_alias, remote_port));
+            remote_port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+            remote_port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            gPortsOrch->setPort(remote_alias, remote_port);
+
+            Port inband_port;
+            ASSERT_TRUE(gPortsOrch->getPort(inband_alias, inband_port));
+            inband_port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            gPortsOrch->setPort(inband_alias, inband_port);
+            gPortsOrch->m_inbandPortName = inband_alias;
         }
 
         void ApplyInitialConfigs()
@@ -180,14 +203,105 @@ namespace neighorch_test
         void PostSetUp() override
         {
             INIT_SAI_API_MOCK(neighbor);
+            INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
+            DEINIT_SAI_API_MOCK(neighbor);
         }
     };
+
+    TEST_F(NeighOrchTest, RemoteSystemPortNextHopUsesInbandRif)
+    {
+        ConfigureRemoteSystemPort(ETHERNET0, ETHERNET4);
+
+        Port remote_port;
+        ASSERT_TRUE(gPortsOrch->getPort(ETHERNET0, remote_port));
+        remote_port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+        gPortsOrch->setPort(ETHERNET0, remote_port);
+
+        Port inband_port;
+        ASSERT_TRUE(gPortsOrch->getPort(ETHERNET4, inband_port));
+        ASSERT_EQ(inband_port.m_oper_status, SAI_PORT_OPER_STATUS_UP);
+
+        auto inband_rif = gIntfsOrch->getRouterIntfsId(ETHERNET4);
+        ASSERT_NE(inband_rif, SAI_NULL_OBJECT_ID);
+        auto remote_ref_count = gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count;
+        auto inband_ref_count = gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count;
+        NextHopKey inband_nexthop(TEST_IP, ETHERNET4);
+
+        bool saw_inband_rif = false;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .WillOnce(Invoke([&](sai_object_id_t *next_hop_id, sai_object_id_t, uint32_t attr_count,
+                                 const sai_attribute_t *attr_list) {
+                *next_hop_id = 0x200000;
+                for (uint32_t i = 0; i < attr_count; ++i)
+                {
+                    if (attr_list[i].id == SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID)
+                    {
+                        EXPECT_EQ(attr_list[i].value.oid, inband_rif);
+                        saw_inband_rif = true;
+                    }
+                }
+                return SAI_STATUS_SUCCESS;
+            }));
+
+        NeighborContext ctx(NeighborEntry(TEST_IP, ETHERNET0));
+        ASSERT_TRUE(gNeighOrch->addNextHop(ctx));
+        ASSERT_TRUE(saw_inband_rif);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_TRUE(gNeighOrch->isNextHopFlagSet(inband_nexthop, NHFLAGS_IFDOWN));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
+
+        ASSERT_TRUE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
+
+        NeighborContext bulk_ctx(NeighborEntry(TEST_IP, ETHERNET0), true);
+        bulk_ctx.next_hop_id = 0x200001;
+        ASSERT_TRUE(gNeighOrch->processBulkAddNextHop(bulk_ctx));
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(inband_nexthop), 1u);
+        ASSERT_TRUE(gNeighOrch->isNextHopFlagSet(inband_nexthop, NHFLAGS_IFDOWN));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET0).ref_count, remote_ref_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count + 1);
+
+        ASSERT_TRUE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(ETHERNET4).ref_count, inband_ref_count);
+    }
+
+    TEST_F(NeighOrchTest, RemoteSystemPortNextHopRetriesWithoutInbandPort)
+    {
+        ConfigureRemoteSystemPort(ETHERNET0, ETHERNET4);
+        gPortsOrch->m_inbandPortName.clear();
+
+        NeighborContext ctx(NeighborEntry(TEST_IP, ETHERNET0), true);
+        ctx.next_hop_id = 0x200001;
+        ctx.mac = MacAddress(MAC1);
+
+        EXPECT_FALSE(gNeighOrch->addNextHop(ctx));
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_FALSE(gNeighOrch->removeNextHop(IpAddress(TEST_IP), ETHERNET0));
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_TRUE(ctx.object_statuses.empty());
+
+        gNeighOrch->m_syncdNeighbors[ctx.neighborEntry] = {ctx.mac, true};
+        EXPECT_FALSE(gNeighOrch->removeNeighbor(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
+        EXPECT_FALSE(gNeighOrch->processBulkDisableNeighbor(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(ctx.neighborEntry), 1u);
+
+        NextHopKey remote_mpls_nexthop("push100+" + TEST_IP + "@" + ETHERNET0);
+        NextHopKey inband_mpls_nexthop(remote_mpls_nexthop);
+        inband_mpls_nexthop.alias = ETHERNET4;
+        gNeighOrch->m_syncdNextHops[inband_mpls_nexthop] = {0x200002, 0, 0};
+
+        EXPECT_FALSE(gNeighOrch->removeMplsNextHop(remote_mpls_nexthop));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(inband_mpls_nexthop), 1u);
+    }
 
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
