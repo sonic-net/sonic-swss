@@ -233,7 +233,10 @@ void IntfsOrch::update(SubjectType type, void *cntx)
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
-    gPortsOrch->getPort(alias, port);
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
     return port.m_rif_id;
 }
 
@@ -609,7 +612,15 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     }
 
     Port port;
-    gPortsOrch->getPort(alias, port);
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        // Callers (doTask INTF_TABLE handling) resolve the port before
+        // calling setIntf; a miss here means the port is not ready yet.
+        // Returning false makes the caller retry instead of creating a
+        // RIF from a default-constructed Port.
+        SWSS_LOG_INFO("Port %s not found, retrying later", alias.c_str());
+        return false;
+    }
 
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())

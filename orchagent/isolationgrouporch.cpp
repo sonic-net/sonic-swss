@@ -283,7 +283,11 @@ IsolationGroup::destroy()
     for (auto p : m_bind_ports)
     {
         Port port;
-        gPortsOrch->getPort(p, port);
+        if (!gPortsOrch->getPort(p, port))
+        {
+            SWSS_LOG_WARN("Port %s not found, skipping isolation group unbind", p.c_str());
+            continue;
+        }
         if (ISOLATION_GROUP_TYPE_BRIDGE_PORT == m_type)
         {
             attr.id = SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP;

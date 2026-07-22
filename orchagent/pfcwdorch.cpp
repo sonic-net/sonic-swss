@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <inttypes.h>
+#include <algorithm>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -325,8 +326,22 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
 {
     SWSS_LOG_ENTER();
 
+    if (name == PFC_WD_GLOBAL)
+    {
+        // PFC_WD|GLOBAL only carries POLL_INTERVAL / BIG_RED_SWITCH; there is
+        // no per-port watchdog state to tear down. Without this check the
+        // getPort() lookup below fails and stopWdOnPort() would index
+        // m_queue_ids on a default-constructed Port (UPSW-7294).
+        SWSS_LOG_NOTICE("PFC Watchdog GLOBAL entry removed");
+        return task_process_status::task_success;
+    }
+
     Port port;
-    gPortsOrch->getPort(name, port);
+    if (!gPortsOrch->getPort(name, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", name.c_str());
+        return task_process_status::task_invalid_entry;
+    }
 
     if (!stopWdOnPort(port))
     {
@@ -354,7 +369,16 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
 
             if (field == POLL_INTERVAL_FIELD)
             {
-                this->m_pfcwdFlexCounterManager->updateGroupPollingInterval(stoi(value));
+                try
+                {
+                    this->m_pfcwdFlexCounterManager->updateGroupPollingInterval(stoi(value));
+                }
+                catch (const exception& e)
+                {
+                    SWSS_LOG_ERROR("Invalid PFC Watchdog %s value %s: %s",
+                            POLL_INTERVAL_FIELD, value.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
@@ -449,7 +473,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             return;
         }
 
-        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+        uint8_t maxTc = static_cast<uint8_t>(min<size_t>(PFC_WD_TC_MAX, port.m_queue_ids.size()));
+        for (uint8_t i = 0; i < maxTc; i++)
         {
             sai_object_id_t queueId = port.m_queue_ids[i];
             if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
@@ -493,7 +518,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             return;
         }
 
-        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+        uint8_t maxTc = static_cast<uint8_t>(min<size_t>(PFC_WD_TC_MAX, port.m_queue_ids.size()));
+        for (uint8_t i = 0; i < maxTc; i++)
         {
             if ((pfcMask & (1 << i)) == 0)
             {
@@ -563,6 +589,13 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     for (auto i : losslessTc)
     {
+        if (i >= port.m_queue_ids.size())
+        {
+            SWSS_LOG_WARN("Port %s has no queue for lossless TC %u, skipping",
+                    port.m_alias.c_str(), static_cast<unsigned int>(i));
+            continue;
+        }
+
         sai_object_id_t queueId = port.m_queue_ids[i];
         string queueIdStr = sai_serialize_object_id(queueId);
 
@@ -652,7 +685,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 
     this->m_pfcwdFlexCounterManager->clearCounterIdList(port.m_port_id, SAI_OBJECT_TYPE_PORT);
 
-    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    uint8_t maxTc = static_cast<uint8_t>(min<size_t>(PFC_WD_TC_MAX, port.m_queue_ids.size()));
+    for (uint8_t i = 0; i < maxTc; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
         this->m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);

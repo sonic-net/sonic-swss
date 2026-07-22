@@ -410,7 +410,15 @@ void SflowOrch::doTask(Consumer &consumer)
         string op = kfvOp(tuple);
         string alias = kfvKey(tuple);
 
-        gPortsOrch->getPort(alias, port);
+        if (!gPortsOrch->getPort(alias, port))
+        {
+            // port is declared outside this loop: on a failed lookup it
+            // would still hold the previous iteration's port and the
+            // operation would be applied to the wrong port. Drop the entry.
+            SWSS_LOG_ERROR("Invalid port %s in %s, dropping entry", alias.c_str(), table_name.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         if (op == SET_COMMAND)
         {
             bool      admin_state = m_sflowStatus;

@@ -5417,7 +5417,11 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
             for (const auto& port_iter: in_ports)
             {
                 Port p;
-                gPortsOrch->getPort(port_iter, p);
+                if (!gPortsOrch->getPort(port_iter, p))
+                {
+                    SWSS_LOG_WARN("Failed to get port by oid 0x%" PRIx64 ", skipping", port_iter);
+                    continue;
+                }
                 attr_value += p.m_alias;
                 attr_value += ',';
             }
