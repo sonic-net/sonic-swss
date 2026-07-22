@@ -80,6 +80,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 switchorch_ut.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                arsorch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
                 portphyserdesattr_ut.cpp \
