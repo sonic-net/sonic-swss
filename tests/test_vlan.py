@@ -88,6 +88,36 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanBumFloodControl(self, dvs):
+
+        vlan = "100"
+
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+
+        # Disable BUM flooding on the VLAN.
+        self.dvs_vlan.set_vlan_property(vlan, "unknown_unicast_flood", "disabled")
+        self.dvs_vlan.set_vlan_property(vlan, "unknown_multicast_flood", "disabled")
+        self.dvs_vlan.set_vlan_property(vlan, "broadcast_flood", "disabled")
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
+            {"SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_NONE",
+             "SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_NONE",
+             "SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_NONE"})
+
+        # Re-enable BUM flooding on the VLAN.
+        self.dvs_vlan.set_vlan_property(vlan, "unknown_unicast_flood", "enabled")
+        self.dvs_vlan.set_vlan_property(vlan, "unknown_multicast_flood", "enabled")
+        self.dvs_vlan.set_vlan_property(vlan, "broadcast_flood", "enabled")
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
+            {"SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_ALL",
+             "SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_ALL",
+             "SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE": "SAI_VLAN_FLOOD_CONTROL_TYPE_ALL"})
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     def test_MultipleVlan(self, dvs):
 
         def _create_vlan_members(vlan, member_list):

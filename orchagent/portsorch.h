@@ -461,6 +461,7 @@ private:
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
     bool setVlanMacLearn(Port &vlan, const string &mac_learning);
+    bool setVlanFloodControl(Port &vlan, const std::string &uuc_flood, const std::string &umc_flood, const std::string &bc_flood);
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);

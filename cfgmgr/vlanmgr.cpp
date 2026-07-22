@@ -422,6 +422,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 {
                     hostif_name = fvValue(i);
                 }
+                /* Propagate per-VLAN BUM flood control to APPL_DB for PortsOrch. */
+                else if (fvField(i) == "unknown_unicast_flood" ||
+                         fvField(i) == "unknown_multicast_flood" ||
+                         fvField(i) == "broadcast_flood")
+                {
+                    fvVector.push_back(i);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
