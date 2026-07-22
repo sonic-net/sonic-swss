@@ -53,7 +53,8 @@ namespace intfsorch_test
             saw_loopback_action = true;
             last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
         }
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->set_router_interface_attribute(
+            router_interface_id, attr);
     }
 
     struct IntfsOrchTest : public ::testing::Test
