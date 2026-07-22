@@ -436,4 +436,57 @@ namespace intfsorch_test
         sagConsumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
     }
+
+    // Regression test for the batched IP-removal + VRF-bind race.
+    // m_toSync is an ordered multimap, so within a single drain the bare interface
+    // key ("Loopback6") is processed before the per-IP key ("Loopback6:6.6.6.6/32").
+    // When a config sequence removes the loopback IPs and rebinds the interface to a
+    // VRF back-to-back, both land in one batch and the VRF-change SET is evaluated
+    // while the IP is still present. The fix defers (retains) that SET instead of
+    // logging an error and dropping it, so the bind converges on a later drain.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfBindDeferredUntilIpRemoved)
+    {
+        // create a new vrf
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+        auto base_vrf_ref = gVrfOrch->getVrfRefCount("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        // create a loopback in the default vrf and give it an IP address
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", {}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "SET", {{"scope", "global"}, {"family", "IPv4"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(1));
+
+        // Single batch: remove the IP AND rebind the interface to Vrf-Blue.
+        // The bare "Loopback6" SET sorts before "Loopback6:6.6.6.6/32" DEL, so the
+        // bind is evaluated first (IP still present) and must be deferred, not dropped.
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "DEL", {}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // After the first drain: IP removed, interface still present and still in the
+        // default vrf (the bind is pending, not lost).
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Loopback6"), syncd.end());
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(0));
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+
+        // The deferred bind is retried on the next drain and now succeeds.
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
 }

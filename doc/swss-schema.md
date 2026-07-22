@@ -651,6 +651,14 @@ Stores rules associated with a specific ACL table on the switch.
     mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
     mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
+    policer_action = 1*255VCHAR                ; name of a POLICER table entry used to
+                                               ; meter/rate-limit packets matching this rule.
+                                               ; The ACL table's type must advertise POLICER_ACTION
+                                               ; in its ACTIONS -- i.e. use a custom ACL_TABLE_TYPE;
+                                               ; the built-in L3/L3V6 types do not include it.
+                                               ; May compose with a packet/redirect action on the
+                                               ; same rule (e.g. rate-limit + forward).
+
     ether_type    = h16                        ; Ethernet type field
 
     ip_type       = ip_types                   ; options of the l2_protocol_type
@@ -658,17 +666,34 @@ Stores rules associated with a specific ACL table on the switch.
 
     ip_protocol   = h8                         ; options of the l3_protocol_type field
 
-    src_ip        = ipv4_prefix                ; options of the source ipv4
-                                               ; address (and mask) field
+    src_ip        = ipv4_prefix / ipv4_address ; source IPv4 match: CIDR prefix (e.g. "10.0.0.0/8")
+                                               ; or plain host address when paired with src_ip_mask
 
-    dst_ip        = ipv4_prefix                ; options of the destination ipv4
-                                               ; address (and mask) field
+    src_ip_mask   = ipv4_address               ; optional non-contiguous IPv4 mask for src_ip.
+                                               ; Used when the mask cannot be expressed as a
+                                               ; CIDR prefix length (e.g. "255.0.255.0").
+                                               ; Requires src_ip to be a plain host address
+                                               ; (no "/" prefix notation).
 
-    src_ipv6      = ipv6_prefix                ; options of the source ipv6
-                                               ; address (and mask) field
+    dst_ip        = ipv4_prefix / ipv4_address ; destination IPv4 match: CIDR prefix or plain
+                                               ; host address when paired with dst_ip_mask
 
-    dst_ipv6      = ipv6_prefix                ; options of the destination ipv6
-                                               ; address (and mask) field
+    dst_ip_mask   = ipv4_address               ; optional non-contiguous IPv4 mask for dst_ip.
+                                               ; See src_ip_mask for usage.
+
+    src_ipv6      = ipv6_prefix / ipv6_address ; source IPv6 match: prefix (e.g. "2001:db8::/32")
+                                               ; or plain host address when paired with src_ipv6_mask
+
+    src_ipv6_mask = ipv6_address               ; optional non-contiguous IPv6 mask for src_ipv6.
+                                               ; Used when the mask cannot be expressed as a
+                                               ; prefix length (e.g. "ffff::ffff").
+                                               ; Requires src_ipv6 to be a plain host address.
+
+    dst_ipv6      = ipv6_prefix / ipv6_address ; destination IPv6 match: prefix or plain host
+                                               ; address when paired with dst_ipv6_mask
+
+    dst_ipv6_mask = ipv6_address               ; optional non-contiguous IPv6 mask for dst_ipv6.
+                                               ; See src_ipv6_mask for usage.
 
     l4_src_port   = port_num                   ; source L4 port or the
     l4_dst_port   = port_num                   ; destination L4 port
@@ -700,6 +725,8 @@ Stores rules associated with a specific ACL table on the switch.
     h16         = 1*4HEXDIG
     ls32        = ( h16 ":" h16 ) / IPv4address
     ipv4_prefix = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
+    ipv4_address = dec-octet "." dec-octet "." dec-octet "." dec-octet
+    ipv6_address = ipv6 host address without prefix-length (e.g. "ffff::ffff")
     dec-octet   = DIGIT                     ; 0-9
                     / %x31-39 DIGIT         ; 10-99
                     / "1" 2DIGIT            ; 100-199

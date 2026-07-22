@@ -87,15 +87,6 @@ void TeamSync::applyState()
 
     m_lagTable.apply_temp_view();
     m_lagMemberTable.apply_temp_view();
-
-    for(auto &it: m_stateLagTablePreserved)
-    {
-        const auto &lagName  = it.first;
-        const auto &fvVector = it.second;
-        m_stateLagTable.set(lagName, fvVector);
-    }
-
-    m_stateLagTablePreserved.clear();
 }
 
 void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
@@ -174,7 +165,6 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
-
     if (lag_update)
     {
         /* Create the team instance.
@@ -194,14 +184,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         try
         {
             auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-            if (m_warmstart)
-            {
-                m_stateLagTablePreserved[lagName] = fvVector;
-            }
-            else
-            {
-                m_stateLagTable.set(lagName, fvVector);
-            }
+            m_stateLagTable.set(lagName, fvVector);
             m_teamSelectables[lagName] = sync;
             m_selectablesToAdd.insert(lagName);
         }
@@ -214,14 +197,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     }
     else
     {
-        if (m_warmstart)
-        {
-            m_stateLagTablePreserved[lagName] = fvVector;
-        }
-        else
-        {
-            m_stateLagTable.set(lagName, fvVector);
-        }
+        m_stateLagTable.set(lagName, fvVector);
     }
 }
 
@@ -246,14 +222,7 @@ void TeamSync::removeLag(const string &lagName)
     if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
         return;
 
-    if (m_warmstart)
-    {
-        m_stateLagTablePreserved.erase(lagName);
-    }
-    else
-    {
-        m_stateLagTable.del(lagName);
-    }
+    m_stateLagTable.del(lagName);
 
     m_selectablesToRemove.insert(lagName);
 }

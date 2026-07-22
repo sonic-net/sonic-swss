@@ -151,11 +151,17 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
 
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid);
+            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+            {
+                continue;
+            }
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(counter_itr->second, counter_name.c_str());
+            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+            {
+                continue;
+            }
         }
         else
         {

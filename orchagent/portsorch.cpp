@@ -589,6 +589,16 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfi
     {
         map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(serdes.rxpolarity.value);
     }
+
+    if (serdes.tx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PRECODING] = SerdesValue(serdes.tx_precoding.value);
+    }
+
+    if (serdes.rx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_PRECODING] = SerdesValue(serdes.rx_precoding.value);
+    }
 }
 
 static bool isPathTracingSupported()
@@ -4778,12 +4788,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    // Invalid config for this port: drop the task and stop
+                    // tracking it as pending, so one bad port can't keep
+                    // allPortsReady() false and block every other port.
+                    SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
 
                 if (!m_portHlpr.validatePortConfig(pCfg))
                 {
+                    SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4798,6 +4815,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -7483,9 +7502,8 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
-    //Flush all FDB entires corresponding to the port (including static entries
-    //on tunnel/nexthop_group bridge ports)
-    gFdbOrch->flushAllFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
