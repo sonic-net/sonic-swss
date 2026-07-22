@@ -60,6 +60,7 @@ class P4Orch : public ZmqOrch
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
     bool bake() override;
+    void setEnableNotify(bool enable) override;
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
