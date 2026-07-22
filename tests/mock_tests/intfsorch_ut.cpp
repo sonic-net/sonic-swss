@@ -16,6 +16,9 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    bool saw_loopback_action = false;
+    bool fail_next_rif_set = false;
+    sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
@@ -34,6 +37,24 @@ namespace intfsorch_test
     {
         ++remove_rif_count;
         return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_set_router_interface_attribute(
+            _In_ sai_object_id_t router_interface_id,
+            _In_ const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+        {
+            if (fail_next_rif_set)
+            {
+                fail_next_rif_set = false;
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+            saw_loopback_action = true;
+            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
+        }
+        return pold_sai_rif_api->set_router_interface_attribute(
+            router_interface_id, attr);
     }
 
     struct IntfsOrchTest : public ::testing::Test
@@ -61,6 +82,10 @@ namespace intfsorch_test
 
             sai_router_intfs_api->create_router_interface = _ut_create_router_interface;
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
+            sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
+            saw_loopback_action = false;
+            fail_next_rif_set = false;
+            last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
@@ -488,5 +513,59 @@ namespace intfsorch_test
         syncd = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        fail_next_rif_set = true;
+        entries = {
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_FALSE(saw_loopback_action);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(saw_loopback_action);
+        ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchIgnoresInvalidLoopbackActionField)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {
+                {"loopback_action", "invalid"},
+                {"nat_zone", "7"}
+            }}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(saw_loopback_action);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
 }
