@@ -5902,6 +5902,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             MacAddress mac;
             string hostif_name = "";
             string mac_learning = "";
+            string uuc_flood = "", umc_flood = "", bc_flood = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -5920,12 +5921,24 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 {
                     mac_learning = fvValue(i);
                 }
+                if (fvField(i) == "unknown_unicast_flood")
+                {
+                    uuc_flood = fvValue(i);
+                }
+                if (fvField(i) == "unknown_multicast_flood")
+                {
+                    umc_flood = fvValue(i);
+                }
+                if (fvField(i) == "broadcast_flood")
+                {
+                    bc_flood = fvValue(i);
+                }
             }
 
             /*
-             * Only creation is supported for now.
-             * We may add support for VLAN mac learning enable/disable,
-             * VLAN flooding control setting and etc. in the future.
+             * The VLAN is created on first sight. VLAN attribute updates
+             * (MTU, MAC, MAC learning, BUM flood control, host interface)
+             * are applied below on both create and subsequent change.
              */
             if (m_portList.find(vlan_alias) == m_portList.end())
             {
@@ -5965,6 +5978,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (!mac_learning.empty())
                 {
                     setVlanMacLearn(vl, mac_learning);
+                }
+                if (!uuc_flood.empty() || !umc_flood.empty() || !bc_flood.empty())
+                {
+                    setVlanFloodControl(vl, uuc_flood, umc_flood, bc_flood);
                 }
                 if (!hostif_name.empty())
                 {
@@ -7592,6 +7609,84 @@ bool PortsOrch::setVlanMacLearn(Port &vlan, const string &mac_learning)
     }
 
     SWSS_LOG_NOTICE("Set MAC learning to %s on VLAN %s", mac_learning.c_str(), vlan.m_alias.c_str());
+    return true;
+}
+
+bool PortsOrch::setVlanFloodControl(Port &vlan, const string &uuc_flood,
+                                   const string &umc_flood, const string &bc_flood)
+{
+    SWSS_LOG_ENTER();
+
+    /*
+     * Config-driven per-VLAN BUM flood control applies only to a pure-L2 VLAN.
+     * If a VXLAN/EVPN flood group (COMBINED) already owns the flood type, leave
+     * it untouched so that feature keeps working.
+     */
+    if (vlan.m_vlan_info.uuc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED ||
+        vlan.m_vlan_info.bc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
+    {
+        SWSS_LOG_WARN("VLAN %s uses a VXLAN/EVPN flood group; skipping per-VLAN BUM flood config",
+                      vlan.m_alias.c_str());
+        return true;
+    }
+
+    auto applyFlood = [&](const string &value, sai_vlan_attr_t attr_id,
+                          sai_vlan_flood_control_type_t &field) -> bool
+    {
+        if (value.empty())
+        {
+            return true;
+        }
+
+        sai_vlan_flood_control_type_t flood_type =
+            (value == "disabled") ? SAI_VLAN_FLOOD_CONTROL_TYPE_NONE
+                                  : SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+
+        sai_attribute_t attr;
+        attr.id = attr_id;
+        attr.value.s32 = flood_type;
+
+        sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set flood control attr %d on VLAN %s, rv:%d",
+                           attr_id, vlan.m_alias.c_str(), status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        field = flood_type;
+        return true;
+    };
+
+    /*
+     * applyFlood() updates the cached flood type in vlan.m_vlan_info only for
+     * each attribute it programs successfully. Persist the (possibly partial)
+     * result to m_portList unconditionally so the cache stays consistent with
+     * the ASIC even if one attribute set fails midway.
+     */
+    bool applied = applyFlood(uuc_flood, SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE,
+                              vlan.m_vlan_info.uuc_flood_type) &&
+                   applyFlood(umc_flood, SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE,
+                              vlan.m_vlan_info.umc_flood_type) &&
+                   applyFlood(bc_flood, SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE,
+                              vlan.m_vlan_info.bc_flood_type);
+
+    m_portList[vlan.m_alias] = vlan;
+
+    if (!applied)
+    {
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Set per-VLAN BUM flood on %s (uuc=%s umc=%s bc=%s)",
+                    vlan.m_alias.c_str(),
+                    uuc_flood.empty() ? "-" : uuc_flood.c_str(),
+                    umc_flood.empty() ? "-" : umc_flood.c_str(),
+                    bc_flood.empty() ? "-" : bc_flood.c_str());
     return true;
 }
 
