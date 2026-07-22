@@ -517,7 +517,6 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             intfs_entry.ref_count = 0;
             intfs_entry.proxy_arp = false;
             intfs_entry.vrf_id = vrf_id;
-            intfs_entry.sag_enabled = false;
             // use the configured MAC address for setting router interface's attribute via SAI api
             // or use the system's MAC address instead
             if (port.m_mac)
@@ -552,12 +551,6 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             }
 
             IntfsEntry intfs_entry = it_intfs->second;
-            if (intfs_entry.sag_enabled)
-            {
-                SWSS_LOG_WARN("Cannot move SAG-enabled interface %s between VRFs", alias.c_str());
-                return false;
-            }
-
             Port rehome_port = port;
             rehome_port.m_mac = intfs_entry.mac;
             if (rehome_port.m_type == Port::SUBPORT)
