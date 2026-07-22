@@ -26,6 +26,46 @@
  * Each orch therefore drives only its own namespace below.
  */
 
+#include <functional>
+#include <utility>
+
+#include <saitypes.h>
+#include <saiobject.h>
+
+/**
+ * Generic per-attribute capability override for the single shared
+ * sai_query_attribute_capability() --wrap. Return true to handle the query
+ * (filling *cap and *status); return false to fall through to the default
+ * per-orch behaviour. Usable by any mock test (e.g. the ACL match-field gate).
+ */
+namespace sai_cap_ut
+{
+    using AttrCapabilityOverride = std::function<bool(
+        sai_object_type_t object_type,
+        sai_attr_id_t attr_id,
+        sai_attr_capability_t *cap,
+        sai_status_t *status)>;
+
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn);
+    void clearAttrCapabilityOverride();
+
+    /** RAII: clears the override on scope exit. */
+    struct AttrCapabilityOverrideGuard
+    {
+        explicit AttrCapabilityOverrideGuard(AttrCapabilityOverride fn)
+        {
+            setAttrCapabilityOverride(std::move(fn));
+        }
+        ~AttrCapabilityOverrideGuard()
+        {
+            clearAttrCapabilityOverride();
+        }
+
+        AttrCapabilityOverrideGuard(const AttrCapabilityOverrideGuard &) = delete;
+        AttrCapabilityOverrideGuard &operator=(const AttrCapabilityOverrideGuard &) = delete;
+    };
+}
+
 /**
  * Test hooks for the SAI calls on the ICMP echo session stats count mode path
  * (orchagent/icmporch.cpp, IcmpOrch::resolve_stats_count_mode).
