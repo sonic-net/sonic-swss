@@ -365,9 +365,23 @@ class TestPfcwdFunc(object):
             self.config_db.delete_field("PFC_WD", "GLOBAL", "BIG_RED_SWITCH")
             time.sleep(1)
 
-            # Verify orchagent survived: restore GLOBAL and confirm pfcwd still works
+            # Verify orchagent survived: restore GLOBAL and confirm pfcwd still works.
+            # BIG_RED_SWITCH:enable above put pfcwdorch into big-red-switch mode, which
+            # force-drops monitored queues and bypasses normal storm detection. Deleting
+            # the field does not transition BRS off, so explicitly disable it before
+            # verifying storm detection, otherwise the queue stays operational.
+            self.config_db.update_entry("PFC_WD", "GLOBAL", {"BIG_RED_SWITCH": "disable"})
+            time.sleep(1)
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+            time.sleep(1)
             self.config_db.update_entry("PFC_WD", "GLOBAL", {"POLL_INTERVAL": "200"})
             time.sleep(1)
+
+            # The BIG_RED_SWITCH enable/disable cycle above force-drops and restores the
+            # monitored queues, bumping the cumulative DEADLOCK_DETECTED/RESTORED counters.
+            # Reset them so the single storm below yields the expected detected=1,
+            # restored=0 that verify_pfcwd_counters checks.
+            self.reset_pfcwd_counters(storm_queue)
 
             self.set_storm_state(storm_queue)
             self.verify_pfcwd_state(storm_queue)
