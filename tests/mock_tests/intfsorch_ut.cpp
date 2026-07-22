@@ -522,6 +522,8 @@ namespace intfsorch_test
         syncd = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
     TEST_F(IntfsOrchTest, IntfsOrchVrfUpdateWaitsForDrain)
     {
         std::deque<KeyOpFieldsValuesTuple> entries{
