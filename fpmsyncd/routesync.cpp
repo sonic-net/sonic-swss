@@ -13,8 +13,12 @@
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
+#include "table.h"
 #include <string.h>
 #include <arpa/inet.h>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <linux/pkt_cls.h>
 #include <linux/nexthop.h>
 #include <linux/lwtunnel.h>
@@ -23,6 +27,16 @@
 
 using namespace std;
 using namespace swss;
+
+/* ZMQ route-drop telemetry — STATE_DB surface. */
+#define STATE_FPMSYNCD_ROUTE_STAT_TABLE_NAME "FPMSYNCD_ROUTE_STAT_TABLE"
+#define FPMSYNCD_ROUTE_STAT_KEY              "global"
+/* Throttle the drop ERROR log to at most once per this many seconds under a sustained burst. */
+#define ZMQ_ROUTE_DROP_LOG_THROTTLE_SECS     5
+/* Publish the running route stats to STATE_DB at most once per this many seconds on the
+ * success path (drops publish immediately). Keeps the hot path off per-route STATE_DB writes
+ * while still giving a fresh throughput denominator for the drop rate. */
+#define ZMQ_ROUTE_STAT_PUBLISH_INTERVAL_SECS 10
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 #define ntohll(x) (((uint64_t)ntohl((x)&0xFFFFFFFF) << 32) | ntohl((uint32_t)(((x)>>32) & 0xFFFFFFFFU)))
@@ -188,6 +202,135 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
+/* ZMQ route-drop telemetry: lazily open the STATE_DB stat table on
+ * first use. Only reached from the record* path, which is gated on isNbZmqEnabled(),
+ * so no STATE_DB connector/table is created when northbound ZMQ is disabled. */
+void RouteSync::ensureRouteStatTable()
+{
+    if (!m_zmqRouteStatTable)
+    {
+        m_stateDb = std::make_unique<DBConnector>("STATE_DB", 0);
+        m_zmqRouteStatTable = std::make_unique<Table>(m_stateDb.get(),
+                                                      STATE_FPMSYNCD_ROUTE_STAT_TABLE_NAME);
+    }
+}
+
+void RouteSync::trySetRoute(ProducerStateTable & table,
+                            const std::vector<KeyOpFieldsValuesTuple> & kcos)
+{
+    try
+    {
+        table.set(kcos);
+    }
+    catch (const std::exception &)
+    {
+        const std::string key = kcos.empty() ? "<unknown>" : kfvKey(kcos.front());
+        recordRouteDrop(key, kcos.size());
+        throw;
+    }
+    recordRouteSuccess(kcos.size());
+}
+
+void RouteSync::trySetRoute(ProducerStateTable & table,
+                            const std::string & key,
+                            const std::vector<FieldValueTuple> & fvs)
+{
+    try
+    {
+        table.set(key, fvs);
+    }
+    catch (const std::exception &)
+    {
+        recordRouteDrop(key, 1);
+        throw;
+    }
+    recordRouteSuccess(1);
+}
+
+void RouteSync::recordRouteSuccess(uint64_t routeCount)
+{
+    /* Telemetry is scoped to the northbound ZMQ producer path only. When ZMQ is
+     * disabled the same set() sites reach Redis directly; counting them would
+     * mislabel non-ZMQ activity as zmq_route_* stats. */
+    if (!isNbZmqEnabled())
+    {
+        return;
+    }
+    ensureRouteStatTable();
+    m_zmqRouteProcessed += routeCount;
+    time_t now = time(nullptr);
+    m_lastSuccessTime = now;
+    /* Off the hot path: publish at most once per interval on success (drops publish
+     * immediately). Provides the throughput denominator for the drop rate without a
+     * STATE_DB write per route. */
+    if (now - m_lastStatPublishTime >= ZMQ_ROUTE_STAT_PUBLISH_INTERVAL_SECS)
+    {
+        publishRouteStats();
+        m_lastStatPublishTime = now;
+    }
+}
+
+void RouteSync::recordRouteDrop(const std::string & routeKey, uint64_t routeCount)
+{
+    /* Telemetry is scoped to the northbound ZMQ producer path only (see
+     * recordRouteSuccess). A failure on the non-ZMQ Redis path is not a ZMQ drop. */
+    if (!isNbZmqEnabled())
+    {
+        return;
+    }
+    ensureRouteStatTable();
+    m_zmqRouteDropMsgs   += 1;
+    m_zmqRouteDropRoutes += routeCount;
+    m_lastDropPrefix      = routeKey;
+    m_lastDropTime        = time(nullptr);
+
+    /* Rate-limit the ERROR log so a sustained burst does not flood syslog. */
+    if (m_lastDropTime - m_lastDropLogTime >= ZMQ_ROUTE_DROP_LOG_THROTTLE_SECS)
+    {
+        SWSS_LOG_ERROR("fpmsyncd dropped route update over ZMQ: prefix=%s, "
+                       "dropped_msgs_total=%s, dropped_routes_total=%s",
+                       routeKey.c_str(),
+                       std::to_string(m_zmqRouteDropMsgs).c_str(),
+                       std::to_string(m_zmqRouteDropRoutes).c_str());
+        m_lastDropLogTime = m_lastDropTime;
+    }
+
+    /* A drop publishes immediately (unthrottled) so the loss is visible at once. */
+    m_lastStatPublishTime = m_lastDropTime;
+    publishRouteStats();
+}
+
+std::string RouteSync::formatUtcTime(time_t t)
+{
+    if (t == 0)
+    {
+        return "";
+    }
+    struct tm tm_utc;
+    gmtime_r(&t, &tm_utc);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_utc, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+void RouteSync::publishRouteStats()
+{
+    if (!m_zmqRouteStatTable)
+    {
+        return;
+    }
+
+    std::vector<FieldValueTuple> fvs = {
+        {"zmq_route_processed_total",   std::to_string(m_zmqRouteProcessed)},
+        {"zmq_route_drop_msgs_total",   std::to_string(m_zmqRouteDropMsgs)},
+        {"zmq_route_drop_routes_total", std::to_string(m_zmqRouteDropRoutes)},
+        {"zmq_route_last_drop_prefix",  m_lastDropPrefix},
+        {"zmq_route_last_drop_time",    formatUtcTime(m_lastDropTime)},
+        {"zmq_route_last_success_time", formatUtcTime(m_lastSuccessTime)},
+    };
+    m_zmqRouteStatTable->set(FPMSYNCD_ROUTE_STAT_KEY, fvs);
+}
+
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
@@ -195,7 +338,7 @@ void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
 
     if (!warmRestartInProgress)
     {
-        table.set(fvw.KeyOpFieldsValuesTupleVector());
+        trySetRoute(table, fvw.KeyOpFieldsValuesTupleVector());
     }
     else
     {
@@ -1946,7 +2089,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
                 FieldValueTuple wg("weight", weights.c_str());
                 fvVector.push_back(wg);
             }
-            m_routeTable->set(routeTableKey, fvVector);
+            trySetRoute(*m_routeTable, routeTableKey, fvVector);
 
             SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
@@ -1974,7 +2117,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
             fvVectorVpnRoute.push_back(vpn_sid);
             fvVectorVpnRoute.push_back(seg_srcs_route);
             fvVectorVpnRoute.push_back(intf);
-            m_routeTable->set(routeTableKey, fvVectorVpnRoute);
+            trySetRoute(*m_routeTable, routeTableKey, fvVectorVpnRoute);
         }
     }
 
