@@ -24,6 +24,8 @@ extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
+extern string gMyAsicName;
+extern bool gMultiAsicVoq;
 
 extern bool isChassisDbInUse();
 
@@ -2247,11 +2249,29 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        size_t pos = alias.find('|');
-        std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
-        if(gIntfsOrch->isLocalSystemPortIntf(alias))
+        // Multi-ASIC VoQ aliases use <hostname>|<asic>|<local-alias>.
+        const auto alias_tokens = tokenize(alias, '|');
+        std::string port_hostname = alias_tokens.empty() ? alias : alias_tokens[0];
+        bool is_local_by_host_asic = false;
+        if (gMySwitchType == "voq" && gMyHostName == port_hostname)
         {
-            //Synced local neighbor. Skip
+            if (!gMultiAsicVoq)
+            {
+                is_local_by_host_asic = true;
+            }
+            else
+            {
+                std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
+                               alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+                is_local_by_host_asic = (port_asic == gMyAsicName);
+            }
+        }
+        bool is_local_intf = gIntfsOrch->isLocalSystemPortIntf(alias);
+        if(is_local_intf || is_local_by_host_asic)
+        {
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: skipping local neighbor %s (isLocalIntf=%d isLocalByHostAsic=%d)",
+                           alias.c_str(), is_local_intf, is_local_by_host_asic);
             it = consumer.m_toSync.erase(it);
             continue;
         }
