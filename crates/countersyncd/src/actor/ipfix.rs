@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{cell::RefCell, collections::BTreeSet, collections::LinkedList, rc::Rc, time::SystemTime};
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -494,6 +494,20 @@ pub struct IpfixActor {
     applied_templates_map: HashMap<String, Vec<u16>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: HashMap<String, HashMap<u16, String>>,
+    /// Per-session permanent record of template IDs the session registered.
+    /// Unlike `temporary_templates_map` (last-writer-wins on conflict) or
+    /// `applied_templates_map` (populated lazily on first data record), this
+    /// lives for the lifetime of the session entry. Supports aggregating
+    /// object_names across MIXED-mode per-group sessions that share a
+    /// template_id - the orchagent guarantees labels are unique per profile
+    /// so the union of their object_id_name_map entries has no collisions.
+    session_template_ids: HashMap<String, BTreeSet<u16>>,
+    /// Lazily populated cache of the per-template_id aggregated label lookup.
+    /// Avoids rebuilding the union over `session_template_ids` /
+    /// `object_id_name_map` for every IPFIX data set on the hot record path.
+    /// Cleared in full whenever any of those inputs changes (see
+    /// `invalidate_aggregated_lookup_cache`).
+    aggregated_lookup_cache: HashMap<u16, HashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -518,6 +532,8 @@ impl IpfixActor {
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
+            session_template_ids: HashMap::new(),
+            aggregated_lookup_cache: HashMap::new(),
         }
     }
 
@@ -540,7 +556,17 @@ impl IpfixActor {
         templates.iter_template_records().for_each(|record| {
             self.temporary_templates_map
                 .insert(record.template_id, msg_key.clone());
+            // Permanent per-session record so MIXED-mode aggregating lookups
+            // can find every session that registered this template_id even
+            // after the last-writer-wins overwrite in temporary_templates_map.
+            self.session_template_ids
+                .entry(msg_key.clone())
+                .or_default()
+                .insert(record.template_id);
         });
+        // session_template_ids changed, so any cached aggregated lookups are
+        // stale.
+        self.invalidate_aggregated_lookup_cache();
     }
 
     /// Returns true if the template is still known (temporary or applied).
@@ -577,13 +603,38 @@ impl IpfixActor {
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
-        })
+    /// Returns the aggregated label lookup for `template_id`, populating the
+    /// cache on miss. Callers must invalidate via
+    /// `invalidate_aggregated_lookup_cache` whenever the underlying
+    /// `session_template_ids` or `object_id_name_map` changes.
+    fn aggregated_lookup_for(&mut self, template_id: u16) -> &HashMap<u16, String> {
+        if !self.aggregated_lookup_cache.contains_key(&template_id) {
+            let lookup: HashMap<u16, String> = self
+                .all_template_keys_for(template_id)
+                .into_iter()
+                .filter_map(|key| self.object_id_name_map.get(key))
+                .flat_map(|m| m.iter().map(|(k, v)| (*k, v.clone())))
+                .collect();
+            self.aggregated_lookup_cache.insert(template_id, lookup);
+        }
+        self.aggregated_lookup_cache
+            .get(&template_id)
+            .expect("aggregated_lookup_cache entry was just inserted")
+    }
+
+    /// Drops every entry from the aggregated label lookup cache. Cheap, and
+    /// strictly more conservative than per-template_id invalidation - rebuilt
+    /// lazily on the next lookup.
+    fn invalidate_aggregated_lookup_cache(&mut self) {
+        self.aggregated_lookup_cache.clear();
+    }
+
+    fn all_template_keys_for(&self, template_id: u16) -> Vec<&String> {
+        self.session_template_ids
+            .iter()
+            .filter(|(_, ids)| ids.contains(&template_id))
+            .map(|(key, _)| key)
+            .collect()
     }
 
     /// Processes IPFIX template messages and stores them for later use.
@@ -664,6 +715,11 @@ impl IpfixActor {
         } else {
             self.object_id_name_map.remove(&templates.key);
         }
+        // object_id_name_map changed in every branch above; aggregated lookups
+        // built from it are now stale. insert_temporary_template below will
+        // also invalidate, but doing it here makes the dependency explicit and
+        // is cheap (the cache is empty in the common path).
+        self.invalidate_aggregated_lookup_cache();
 
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
@@ -732,6 +788,9 @@ impl IpfixActor {
 
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
+        self.session_template_ids.remove(key);
+        // Both inputs to the aggregated lookup were just modified.
+        self.invalidate_aggregated_lookup_cache();
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -820,9 +879,23 @@ impl IpfixActor {
                     _ => continue,
                 };
 
-                let object_name_lookup = self
-                    .get_template_key(template_id)
-                    .and_then(|key| self.object_id_name_map.get(key));
+                // In MIXED mode multiple per-group sessions share a
+                // template_id (the orchagent replicates the combined IPFIX
+                // template into each per-group SESSION entry). Union the
+                // per-session object_id_name_map entries so labels owned by
+                // any contributing session resolve. The orchagent guarantees
+                // labels are unique per profile, so the union has no
+                // collisions. SINGLE mode resolves to a single-session union
+                // - same result as the prior single-key lookup. Cached per
+                // template_id and invalidated whenever the underlying maps
+                // change, so we pay the union cost once per (template_id,
+                // session-set) rather than once per data set.
+                let aggregated_lookup = self.aggregated_lookup_for(template_id);
+                let object_name_lookup = if aggregated_lookup.is_empty() {
+                    None
+                } else {
+                    Some(aggregated_lookup)
+                };
 
                 let mut observation_time: Option<u64>;
 
@@ -878,24 +951,12 @@ impl IpfixActor {
                     }
 
                     for (key, val) in record.values.iter() {
-                        // Check if this is the observation time field or system time field
-                        let is_time_field = match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let field_id = field_spec.information_element_identifier;
-                                let is_standard_field = field_spec.enterprise_number.is_none();
-
-                                (field_id == OBSERVATION_TIME_NANOSECONDS
-                                    || field_id == OBSERVATION_TIME_SECONDS)
-                                    && is_standard_field
-                            }
-                            _ => false,
-                        };
-
-                        if is_time_field {
+                        if should_skip_field(key) {
                             if let DataRecordKey::Unrecognized(field_spec) = key {
                                 debug!(
-                                    "Skipping time field (ID: {})",
-                                    field_spec.information_element_identifier
+                                    "Skipping non-counter field (ID: {}, enterprise: {:?})",
+                                    field_spec.information_element_identifier,
+                                    field_spec.enterprise_number
                                 );
                             }
                             continue;
@@ -1011,6 +1072,34 @@ const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 /// - Semantics: default
 /// - Status: current
 const OBSERVATION_TIME_SECONDS: u16 = 322;
+
+/// Returns `true` for IPFIX data record fields that should not be turned into a SAIStat.
+///
+/// Two field shapes are skipped:
+/// 1. **Standard IPFIX time fields** (E-bit unset, Element ID 322 or 325). These are
+///    parsed elsewhere to populate observation_time and are not counters.
+/// 2. **Vendor padding fields** (E-bit set, Enterprise Number == 0). Some SAI
+///    implementations emit placeholder field specifiers with `Enterprise=0x00000000`
+///    inside the IPFIX template. IANA reserves Private Enterprise Number 0
+///    (RFC 5102 §3.1), so any such field cannot identify a real SAI counter — without
+///    this check it would be reported as a synthetic `unknown_0` stat.
+fn should_skip_field(key: &DataRecordKey) -> bool {
+    match key {
+        DataRecordKey::Unrecognized(field_spec) => {
+            let field_id = field_spec.information_element_identifier;
+            let ent = field_spec.enterprise_number;
+
+            let is_time_field = ent.is_none()
+                && (field_id == OBSERVATION_TIME_NANOSECONDS
+                    || field_id == OBSERVATION_TIME_SECONDS);
+
+            let is_vendor_padding = matches!(ent, Some(0));
+
+            is_time_field || is_vendor_padding
+        }
+        _ => false,
+    }
+}
 
 /// Extracts observation time from an IPFIX data record.
 ///
@@ -1204,6 +1293,47 @@ mod test {
         );
     }
 
+    fn unrecognized_field(element_id: u16, enterprise: Option<u32>) -> DataRecordKey {
+        DataRecordKey::Unrecognized(ipfixrw::parser::FieldSpecifier::new(
+            enterprise, element_id, 8,
+        ))
+    }
+
+    #[test]
+    fn test_should_skip_time_fields() {
+        // observationTimeNanoseconds and observationTimeSeconds with E-bit unset
+        // are standard IPFIX time fields and must be dropped before SAIStat creation.
+        assert!(should_skip_field(&unrecognized_field(325, None)));
+        assert!(should_skip_field(&unrecognized_field(322, None)));
+    }
+
+    #[test]
+    fn test_should_skip_vendor_padding_field() {
+        // E-bit set, Enterprise Number 0 — vendor padding field. IANA reserves PEN 0,
+        // so this cannot identify a real SAI counter and must be dropped to avoid
+        // emitting a synthetic unknown_0 stat.
+        assert!(should_skip_field(&unrecognized_field(0, Some(0))));
+        // Padding fields with non-zero element ID but Enterprise=0 are still padding.
+        assert!(should_skip_field(&unrecognized_field(42, Some(0))));
+    }
+
+    #[test]
+    fn test_should_not_skip_real_stat_fields() {
+        // E-bit set with a valid (non-zero) Enterprise Number is a real SAI counter
+        // field — PORT IF_IN_OCTETS, QUEUE BYTES, IPG CURR_OCCUPANCY_CELLS, etc.
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x0001_0000)))); // PORT
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x0015_0001)))); // QUEUE
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x001a_0009)))); // IPG
+    }
+
+    #[test]
+    fn test_should_not_skip_non_time_standard_fields() {
+        // Standard IPFIX fields (E-bit unset) other than 322/325 are not handled
+        // here and should fall through (they'll be processed downstream).
+        assert!(!should_skip_field(&unrecognized_field(8, None)));
+        assert!(!should_skip_field(&unrecognized_field(324, None))); // microseconds, not handled
+    }
+
     #[test]
     fn test_object_names_follow_template_id() {
         let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
@@ -1286,6 +1416,122 @@ mod test {
             saw_session_b,
             "did not observe any stats for session B/template 257"
         );
+    }
+
+    #[test]
+    fn test_mixed_mode_aggregates_object_names_across_sessions() {
+        // Models the MIXED-mode shape: three per-group sessions (PORT, QUEUE,
+        // INGRESS_PRIORITY_GROUP) all register the same template_id (256),
+        // each with their own object_names list. The orchagent guarantees
+        // labels are unique within a profile (1,2,3,4 here), so the
+        // per-record lookup must aggregate every session's object_id_name_map
+        // entry that contributed to this template_id - otherwise labels owned
+        // by sibling sessions fall back to "unknown_<label>".
+        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
+        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+
+        // Template 256, 5 fields:
+        //   - observationTimeNanoseconds (E=0, ID=325, 8B)
+        //   - 4x E=1 fields with element IDs 1..=4 carrying PORT/QUEUE/IPG
+        //     enterprise numbers, matching the orchagent's per-profile-unique
+        //     label allocation for a PORT+QUEUE+IPG MIXED profile.
+        let template_bytes: [u8; 60] = [
+            0x00, 0x0A, 0x00, 0x3C, // IPFIX hdr: version 10, length 60
+            0x00, 0x00, 0x00, 0x00, // export time
+            0x00, 0x00, 0x00, 0x01, // sequence
+            0x00, 0x00, 0x00, 0x00, // observation domain
+            0x00, 0x02, 0x00, 0x2C, // set hdr: set_id=2 (template), len=44
+            0x01, 0x00, 0x00, 0x05, // tmpl hdr: id=256, 5 fields
+            0x01, 0x45, 0x00, 0x08, // ID=325 observationTimeNanoseconds, 8B (E=0)
+            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, // label 1, enterprise PORT/IF_IN_OCTETS
+            0x80, 0x02, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, // label 2, enterprise PORT/IF_IN_OCTETS
+            0x80, 0x03, 0x00, 0x08, 0x00, 0x15, 0x00, 0x01, // label 3, enterprise QUEUE/BYTES
+            0x80, 0x04, 0x00, 0x08, 0x00, 0x1A, 0x00, 0x09, // label 4, enterprise IPG/CURR_OCCUPANCY_CELLS
+        ];
+
+        // Three per-group sessions registering the same template_id. Each
+        // carries the same template bytes (the replicated combined template)
+        // but its own object_names / object_ids list. Labels 1..=4 are
+        // unique across the profile - the orchagent's m_next_label
+        // allocator (HLD §7.4) guarantees this in MIXED mode.
+        for (key, names, ids) in [
+            (
+                "profile|PORT",
+                vec!["Ethernet0".to_string(), "Ethernet8".to_string()],
+                vec![1u16, 2u16],
+            ),
+            ("profile|QUEUE", vec!["Ethernet0|0".to_string()], vec![3u16]),
+            (
+                "profile|INGRESS_PRIORITY_GROUP",
+                vec!["Ethernet0|0".to_string()],
+                vec![4u16],
+            ),
+        ] {
+            actor.handle_template(IPFixTemplatesMessage::new(
+                String::from(key),
+                Arc::new(Vec::from(template_bytes)),
+                Some(names),
+                Some(ids),
+            ));
+        }
+
+        // Sanity-check the new bookkeeping: all three sessions registered
+        // template 256.
+        let mut keys = actor.all_template_keys_for(256);
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![
+                &String::from("profile|INGRESS_PRIORITY_GROUP"),
+                &String::from("profile|PORT"),
+                &String::from("profile|QUEUE"),
+            ],
+            "all three sessions must be discoverable via template_id 256"
+        );
+
+        // Data record for template 256: observation time + 4 counter values.
+        let record_bytes: [u8; 60] = [
+            0x00, 0x0A, 0x00, 0x3C, // IPFIX hdr: length 60
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x00, 0x2C, // set hdr: set_id=256, len=44
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // observation time
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, // label 1 counter
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, // label 2 counter
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, // label 3 counter
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0D, // label 4 counter
+        ];
+
+        let messages = actor.handle_record(Arc::new(Vec::from(record_bytes)));
+        let stats: Vec<SAIStat> = messages
+            .into_iter()
+            .flat_map(|msg| {
+                Arc::try_unwrap(msg)
+                    .expect("single-owner test stats")
+                    .stats
+            })
+            .collect();
+
+        // Every label must resolve to its concrete object_name from the
+        // owning session. No "unknown_<N>" fallbacks.
+        let names: Vec<&str> = stats.iter().map(|s| s.object_name.as_str()).collect();
+        assert!(
+            !names.iter().any(|n| n.starts_with("unknown_")),
+            "label resolution should not fall back to 'unknown_<N>'; got {:?}",
+            names
+        );
+
+        // Confirm each expected object_name is present at least once. We
+        // don't pin the order because record-field iteration order is an
+        // implementation detail.
+        for expected in ["Ethernet0", "Ethernet8", "Ethernet0|0"] {
+            assert!(
+                names.iter().any(|n| *n == expected),
+                "expected object_name {:?} not found in {:?}",
+                expected,
+                names
+            );
+        }
     }
 
     #[test]

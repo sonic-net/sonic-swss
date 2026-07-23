@@ -74,6 +74,13 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookSwitchNotifySetNotImplemented();
     void setSaiHookAllSupported();
 
+    // Pin what SAI_TAM_TEL_TYPE_ATTR_MODE enum-values capability advertises.
+    void setSaiHookModeAdvertisedSingleOnly();
+    void setSaiHookModeAdvertisedMixedOnly();
+    void setSaiHookModeAdvertisedBoth();
+    void setSaiHookModeAdvertisedNeither();
+    void setSaiHookModeQueryNotSupported();
+
     /** RAII: restores the HFTel hook to None on scope exit. */
     struct HFTelSaiHookGuard
     {
