@@ -591,6 +591,30 @@ namespace intfsorch_test
                   MacAddress("00:11:22:33:44:55"));
     }
 
+    TEST_F(IntfsOrchTest, IntfsOrchExplicitZeroMacRestoresSystemMac)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mac_addr", "00:11:22:33:44:55"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac,
+                  MacAddress("00:11:22:33:44:55"));
+
+        entries = {
+            {"Ethernet0", "SET", {{"mac_addr", "00:00:00:00:00:00"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_mac, gMacAddress);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac, gMacAddress);
+    }
+
     TEST_F(IntfsOrchTest, IntfsOrchPartialUpdatePreservesVrf)
     {
         std::deque<KeyOpFieldsValuesTuple> entries{
