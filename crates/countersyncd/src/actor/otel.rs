@@ -370,8 +370,8 @@ impl OtelActor {
                 };
 
                 proto_metrics.push(Metric {
-                    name: gauge.name.clone(),
-                    description: gauge.description.clone(),
+                    name: gauge.name.to_string(),
+                    description: gauge.description.to_string(),
                     metadata: vec![],
                     data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
                     ..Default::default()
