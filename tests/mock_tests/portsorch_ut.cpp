@@ -5784,4 +5784,151 @@ namespace portsorch_test
 
         ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
+
+    static bool _vlan_learn_disable_seen = false;
+    static bool _vlan_learn_disable_value = false;
+    static sai_vlan_api_t *_org_vlan_api_for_learn = nullptr;
+
+    static sai_status_t _ut_stub_set_vlan_attr_capture_learn(sai_object_id_t vlan_oid,
+                                                             const sai_attribute_t *attr)
+    {
+        if (attr && attr->id == SAI_VLAN_ATTR_LEARN_DISABLE)
+        {
+            _vlan_learn_disable_seen = true;
+            _vlan_learn_disable_value = attr->value.booldata;
+        }
+        return _org_vlan_api_for_learn->set_vlan_attribute(vlan_oid, attr);
+    }
+
+    TEST_F(PortsOrchTest, VlanMacLearn)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        // Bring up ports.
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Hook set_vlan_attribute to capture SAI_VLAN_ATTR_LEARN_DISABLE.
+        _vlan_learn_disable_seen = false;
+        _vlan_learn_disable_value = false;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_learn = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_learn;
+        sai_vlan_api = &ut_vlan_api;
+
+        // Create a VLAN with MAC learning disabled.
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"mac_learning", "disabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Restore the SAI vlan api before asserting.
+        sai_vlan_api = _org_vlan_api_for_learn;
+
+        // Remove the VLAN so the test leaves no SAI-VS state behind for the next
+        // test case (the mock SAI object store persists across test cases).
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // PortsOrch must have programmed SAI_VLAN_ATTR_LEARN_DISABLE = true.
+        ASSERT_TRUE(_vlan_learn_disable_seen);
+        ASSERT_TRUE(_vlan_learn_disable_value);
+    }
+
+    static bool _vlan_flood_seen_uuc = false, _vlan_flood_seen_umc = false, _vlan_flood_seen_bc = false;
+    static sai_int32_t _vlan_flood_uuc = -1, _vlan_flood_umc = -1, _vlan_flood_bc = -1;
+    static sai_vlan_api_t *_org_vlan_api_for_flood = nullptr;
+
+    static sai_status_t _ut_stub_set_vlan_attr_capture_flood(sai_object_id_t vlan_oid,
+                                                             const sai_attribute_t *attr)
+    {
+        if (attr)
+        {
+            if (attr->id == SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE)
+            {
+                _vlan_flood_seen_uuc = true;
+                _vlan_flood_uuc = attr->value.s32;
+            }
+            else if (attr->id == SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE)
+            {
+                _vlan_flood_seen_umc = true;
+                _vlan_flood_umc = attr->value.s32;
+            }
+            else if (attr->id == SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE)
+            {
+                _vlan_flood_seen_bc = true;
+                _vlan_flood_bc = attr->value.s32;
+            }
+        }
+        return _org_vlan_api_for_flood->set_vlan_attribute(vlan_oid, attr);
+    }
+
+    TEST_F(PortsOrchTest, VlanBumFloodControl)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        // Bring up ports.
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Hook set_vlan_attribute to capture the BUM flood control types.
+        _vlan_flood_seen_uuc = _vlan_flood_seen_umc = _vlan_flood_seen_bc = false;
+        _vlan_flood_uuc = _vlan_flood_umc = _vlan_flood_bc = -1;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_flood = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_flood;
+        sai_vlan_api = &ut_vlan_api;
+
+        // Create a VLAN with all BUM flooding disabled.
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"unknown_unicast_flood", "disabled"},
+                {"unknown_multicast_flood", "disabled"},
+                {"broadcast_flood", "disabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Restore the SAI vlan api before asserting.
+        sai_vlan_api = _org_vlan_api_for_flood;
+
+        // Remove the VLAN so the test leaves no SAI-VS state behind for the next
+        // test case (the mock SAI object store persists across test cases).
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // PortsOrch must have programmed all three flood control types to NONE.
+        ASSERT_TRUE(_vlan_flood_seen_uuc);
+        ASSERT_TRUE(_vlan_flood_seen_umc);
+        ASSERT_TRUE(_vlan_flood_seen_bc);
+        ASSERT_EQ(_vlan_flood_uuc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+        ASSERT_EQ(_vlan_flood_umc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+        ASSERT_EQ(_vlan_flood_bc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+    }
 }

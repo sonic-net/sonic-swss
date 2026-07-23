@@ -381,6 +381,57 @@ class TestFdb(object):
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
 
+    def test_FdbConfigStaticMac(self, dvs, testlog):
+        # A static MAC configured in CONFIG_DB FDB (as "config mac add" does) is
+        # handled by vlanmgr -> APPL_DB FDB_TABLE -> FdbOrch, and programmed into
+        # the ASIC as a SAI static FDB entry.
+        dvs.setup_db()
+
+        dvs.clear_fdb()
+        time.sleep(2)
+
+        # create vlan and add a member port
+        dvs.create_vlan("3")
+        dvs.create_vlan_member("3", "Ethernet0")
+        time.sleep(1)
+
+        # Get bvid from vlanid
+        ok, bvid = dvs.get_vlan_oid(dvs.adb, "3")
+        assert ok, bvid
+
+        iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
+
+        # configure a static MAC via CONFIG_DB FDB table
+        create_entry_tbl(
+            dvs.cdb,
+            "FDB", "Vlan3|52:54:00:25:06:09",
+            [
+                ("port", "Ethernet0"),
+            ]
+        )
+        time.sleep(2)
+
+        # check that the entry was programmed into ASIC DB as a static FDB entry
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:09"), ("bvid", bvid)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])])
+        assert ok, str(extra)
+
+        # remove the static MAC from CONFIG_DB
+        tbl = swsscommon.Table(dvs.cdb, "FDB")
+        tbl._del("Vlan3|52:54:00:25:06:09")
+        time.sleep(2)
+
+        # check that the entry was removed from ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:09"), ("bvid", bvid)], [])
+        assert ok == False, "The static fdb entry was not removed from ASIC"
+
+        dvs.clear_fdb()
+        dvs.remove_vlan_member("3", "Ethernet0")
+        dvs.remove_vlan("3")
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
