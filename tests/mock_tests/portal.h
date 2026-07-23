@@ -111,6 +111,21 @@ struct Portal
             return obj.m_sflowPortInfoMap;
         }
 
+        static bool getSflowDropMonitorStatusEnable(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_enable;
+        }
+
+        static int32_t getSflowDropMonitorLimitRate(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_limitRate;
+        }
+
+        static uint32_t getSflowDropMonitorCpuQueue(SflowOrch &obj, const std::string& path)
+        {
+            return obj.m_sflowDropMonitor.getDropMonitorCpuQueue(path);
+        }
+
         static bool sflowAddPort(SflowOrch &obj, sai_object_id_t sample_id,
                                  sai_object_id_t port_id, std::string direction)
         {
