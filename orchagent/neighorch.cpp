@@ -1650,6 +1650,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         return false;
     }
 
+    if (isHwConfigured(neighborEntry) && !disable)
+    {
+        NeighborUpdate update = { neighborEntry, MacAddress(), false };
+        notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    }
+
     if (isHwConfigured(neighborEntry))
     {
         sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);

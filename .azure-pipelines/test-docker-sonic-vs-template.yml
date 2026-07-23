@@ -118,7 +118,8 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo uv pip install --system pytest flaky exabgp docker lcov_cobertura
+      sudo apt-get -o DPkg::Lock::Timeout=600 install -y python3-pip
+      sudo pip3 install pytest flaky exabgp docker lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
