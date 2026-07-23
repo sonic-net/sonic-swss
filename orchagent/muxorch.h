@@ -227,15 +227,12 @@ const request_description_t mux_cfg_request_description = {
             { }
 };
 
-struct NHTunnel
-{
-    sai_object_id_t nh_id;
-    int             ref_count;
-};
-
 typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
-typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
+/* IPinIP tunnel next hops created/owned by MuxOrch, keyed by peer IP and
+ * caching the SAI next-hop OID. Consumer reference counting (and the decision
+ * of when teardown is safe) lives in NeighOrch's tunnel next-hop tracking. */
+typedef std::map<IpAddress, sai_object_id_t> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
 typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
