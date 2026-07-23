@@ -973,6 +973,90 @@ void OrchDaemon::logRotate() {
 }
 
 
+void OrchDaemon::initTaskStatsChannel()
+{
+    SWSS_LOG_ENTER();
+
+    m_taskStatsDb = std::make_unique<swss::DBConnector>("APPL_DB", 0);
+    m_taskStatsQuery = std::make_unique<swss::NotificationConsumer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_QUERY");
+    m_taskStatsReply = std::make_unique<swss::NotificationProducer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_REPLY");
+
+    m_select->addSelectable(m_taskStatsQuery.get());
+}
+
+void OrchDaemon::handleTaskStatsQuery()
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> req_values;
+    m_taskStatsQuery->pop(op, data, req_values);
+
+    std::vector<swss::FieldValueTuple> reply_values;
+
+    if (op == "show")
+    {
+        reply_values.reserve(m_taskStats.size());
+        // Helper: round a P^2 double estimate to a non-negative uint64.
+        auto round_p2 = [](double v) -> uint64_t
+        {
+            return static_cast<uint64_t>(v < 0.0 ? 0.0 : v + 0.5);
+        };
+
+        for (auto &kv : m_taskStats)
+        {
+            auto &s = kv.second;
+            // Pipe-separated, 14 fields:
+            //   count | total_run_ns
+            //   | median_run_ns | q1_run_ns | q3_run_ns | max_run_ns
+            //   | high_outliers | low_outliers
+            //   | sched_count | total_sched_ns
+            //   | median_sched_ns | q1_sched_ns | q3_sched_ns | max_sched_ns
+            // Empty slots emit zeros so the CLI can format them as "-".
+            uint64_t med_run = (s.count == 0) ? 0 : round_p2(s.median.value());
+            uint64_t q1_run  = (s.count == 0) ? 0 : round_p2(s.q1.value());
+            uint64_t q3_run  = (s.count == 0) ? 0 : round_p2(s.q3.value());
+
+            uint64_t med_sched = (s.sched_count == 0) ? 0 : round_p2(s.sched_median.value());
+            uint64_t q1_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q1.value());
+            uint64_t q3_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q3.value());
+
+            std::string v = std::to_string(s.count) + "|"
+                          + std::to_string(s.total_ns) + "|"
+                          + std::to_string(med_run) + "|"
+                          + std::to_string(q1_run) + "|"
+                          + std::to_string(q3_run) + "|"
+                          + std::to_string(s.max_ns) + "|"
+                          + std::to_string(s.high_outliers) + "|"
+                          + std::to_string(s.low_outliers) + "|"
+                          + std::to_string(s.sched_count) + "|"
+                          + std::to_string(s.total_sched_ns) + "|"
+                          + std::to_string(med_sched) + "|"
+                          + std::to_string(q1_sched) + "|"
+                          + std::to_string(q3_sched) + "|"
+                          + std::to_string(s.sched_max_ns);
+            reply_values.emplace_back(kv.first, v);
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else if (op == "clear")
+    {
+        for (auto &kv : m_taskStats)
+        {
+            kv.second.reset();
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else
+    {
+        SWSS_LOG_WARN("ORCH_TASK_STATS_QUERY: unknown op '%s'", op.c_str());
+        m_taskStatsReply->send("error", "unknown op", reply_values);
+    }
+}
+
 void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
@@ -985,6 +1069,8 @@ void OrchDaemon::start(long heartBeatInterval)
     {
         m_select->addSelectables(o->getSelectables());
     }
+
+    initTaskStatsChannel();
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
@@ -1016,6 +1102,7 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             tstart = std::chrono::high_resolution_clock::now();
 
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
             /*
              * Log an error message periodically if a previous SAI API call failed with
              * an unrecoverable error.
@@ -1047,7 +1134,7 @@ void OrchDaemon::start(long heartBeatInterval)
              * accumulated. Still it is possible that small amount of
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
-            flush();
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
 
             if (gRingBuffer)
             {
@@ -1070,11 +1157,17 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             SWSS_LOG_NOTICE("Performing %s log rotate", Recorder::Instance().sairedis.getName().c_str());
             Recorder::Instance().sairedis.setRotate(false);
-            logRotate();
+            { TaskTimer t(m_taskStats["logRotate"]); logRotate(); }
+        }
+
+        if (s == m_taskStatsQuery.get())
+        {
+            handleTaskStatsQuery();
+            continue;
         }
 
         auto *c = (Executor *)s;
-        c->execute();
+        { TaskTimer t(m_taskStats[c->getName()]); c->execute(); }
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -1122,7 +1215,7 @@ void OrchDaemon::start(long heartBeatInterval)
                     }
 
                     // Flush sairedis's redis pipeline
-                    flush();
+                    { TaskTimer t(m_taskStats["flush"]); flush(); }
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     freezeAndHeartBeat(UINT_MAX, heartBeatInterval);
