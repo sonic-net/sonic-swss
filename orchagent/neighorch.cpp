@@ -261,14 +261,30 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
+    if (!m_intfsOrch->isRemoteSystemPortIntf(nh.alias) &&
+        (m_intfsOrch->isIntfRemovalPending(nh.alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(nh.alias)))
+    {
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", nh.alias.c_str());
+        return false;
+    }
+
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to get rif_id for %s", nexthop.alias.c_str());
+        return false;
+    }
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -346,7 +362,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -405,6 +421,18 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     }
 
     NextHopKey nexthop(nh);
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
+
+        nexthop.alias = inbp.m_alias;
+    }
+
     if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
     {
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
@@ -438,7 +466,7 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -655,8 +683,11 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -667,13 +698,13 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
 
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
-                       ipAddress.to_string().c_str(), alias.c_str());
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s requested on %s, tracked on %s",
+                       ipAddress.to_string().c_str(), alias.c_str(), nexthop.alias.c_str());
         return false;
     }
 
     m_syncdNextHops.erase(nexthop);
-    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+    m_intfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
     return true;
 }
 
@@ -686,8 +717,12 @@ bool NeighOrch::removeMplsNextHop(const NextHopKey& nh)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                          nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -1201,6 +1236,14 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     bool bulk_op = ctx.bulk_op;
 
+    if (!m_intfsOrch->isRemoteSystemPortIntf(alias) &&
+        (m_intfsOrch->isIntfRemovalPending(alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(alias)))
+    {
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", alias.c_str());
+        return false;
+    }
+
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
     {
@@ -1324,9 +1367,12 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         if (bulk_op)
         {
             SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
+            if (!addNextHop(ctx))
+            {
+                return false;
+            }
             object_statuses.emplace_back();
             gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            addNextHop(ctx);
             return true;
         }
 
@@ -1452,6 +1498,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     bool bulk_op = ctx.bulk_op;
 
     NextHopKey nexthop = { ip_address, alias };
+    auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+    if (neighborIt == m_syncdNeighbors.end())
+    {
+        return true;
+    }
+
     sai_object_id_t port_vrf_id;
     port_vrf_id = gVirtualRouterId;
 
@@ -1459,8 +1511,11 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote neighbor %s", nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -1474,6 +1529,9 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     {
         SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
     }
+
+    SWSS_LOG_INFO("Try to remove neighbor %s on %s",
+                  ip_address.to_string().c_str(), alias.c_str());
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {
@@ -1579,7 +1637,10 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            removeNextHop(ip_address, alias);
+            if (!removeNextHop(ip_address, nexthop.alias))
+            {
+                return false;
+            }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
                     m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -1728,10 +1789,23 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
     const NeighborEntry neighborEntry = ctx.neighborEntry;
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
+    NextHopKey nexthop = { ip_address, alias };
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {
         return true;
+    }
+
+    if (m_intfsOrch->isRemoteSystemPortIntf(alias))
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote neighbor %s", nexthop.to_string().c_str());
+            return false;
+        }
+
+        nexthop.alias = inbp.m_alias;
     }
 
     SWSS_LOG_INFO("Checking neighbor remove entry status %s on %s.", ip_address.to_string().c_str(), m_syncdNeighbors[neighborEntry].mac.to_string().c_str());
@@ -1809,7 +1883,10 @@ bool NeighOrch::processBulkDisableNeighbor(NeighborContext& ctx)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            removeNextHop(ip_address, alias);
+            if (!removeNextHop(ip_address, nexthop.alias))
+            {
+                return false;
+            }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
                     m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -1883,13 +1960,13 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         if (isHwConfigured(neighborEntry))
         {

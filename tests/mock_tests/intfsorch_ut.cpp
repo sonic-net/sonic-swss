@@ -16,6 +16,10 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    bool saw_loopback_action = false;
+    bool fail_next_rif_set = false;
+    bool fail_next_rif_create = false;
+    sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
@@ -26,14 +30,46 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
-        return SAI_STATUS_SUCCESS;
+        if (fail_next_rif_create)
+        {
+            fail_next_rif_create = false;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        }
+        for (uint32_t i = 0; i < attr_count; ++i)
+        {
+            if (attr_list[i].id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+            {
+                saw_loopback_action = true;
+                last_loopback_action = static_cast<sai_packet_action_t>(attr_list[i].value.s32);
+            }
+        }
+        return pold_sai_rif_api->create_router_interface(
+            router_interface_id, switch_id, attr_count, attr_list);
     }
 
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
         ++remove_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->remove_router_interface(router_interface_id);
+    }
+
+    sai_status_t _ut_set_router_interface_attribute(
+            _In_ sai_object_id_t router_interface_id,
+            _In_ const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+        {
+            if (fail_next_rif_set)
+            {
+                fail_next_rif_set = false;
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+            saw_loopback_action = true;
+            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
+        }
+        return pold_sai_rif_api->set_router_interface_attribute(
+            router_interface_id, attr);
     }
 
     struct IntfsOrchTest : public ::testing::Test
@@ -61,6 +97,13 @@ namespace intfsorch_test
 
             sai_router_intfs_api->create_router_interface = _ut_create_router_interface;
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
+            sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
+            create_rif_count = 0;
+            remove_rif_count = 0;
+            saw_loopback_action = false;
+            fail_next_rif_set = false;
+            fail_next_rif_create = false;
+            last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
@@ -308,17 +351,30 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_create_count + 1, create_rif_count);
 
+        // Add a prefix so the whole-interface DEL is processed before its dependency DEL.
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", {
+            {"scope", "global"},
+            {"family", "IPv4"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
         // create dependency to the interface
         gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
 
-        // delete the interface, expect retry because dependency exists
+        // Delete the interface and prefix in lexical order. The successful prefix
+        // DEL must not clear the whole-interface removal fence.
         entries.clear();
         entries.push_back({"Ethernet0", "DEL", { {} }});
+        entries.push_back({"Ethernet0:10.0.0.1/24", "DEL", { {} }});
         consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
         auto current_remove_count = remove_rif_count;
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_remove_count, remove_rif_count);
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_TRUE(gIntfsOrch->isIntfRemovalPending("Ethernet0"));
 
         // create the interface again, expect retry because interface is in removing
         entries.clear();
@@ -394,5 +450,305 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
+    }
+    // Regression test for the batched IP-removal + VRF-bind race.
+    // m_toSync is an ordered multimap, so within a single drain the bare interface
+    // key ("Loopback6") is processed before the per-IP key ("Loopback6:6.6.6.6/32").
+    // When a config sequence removes the loopback IPs and rebinds the interface to a
+    // VRF back-to-back, both land in one batch and the VRF-change SET is evaluated
+    // while the IP is still present. The fix defers (retains) that SET instead of
+    // logging an error and dropping it, so the bind converges on a later drain.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfBindDeferredUntilIpRemoved)
+    {
+        // create a new vrf
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+        auto base_vrf_ref = gVrfOrch->getVrfRefCount("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        // create a loopback in the default vrf and give it an IP address
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", {}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "SET", {{"scope", "global"}, {"family", "IPv4"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(1));
+
+        // Single batch: remove the IP AND rebind the interface to Vrf-Blue.
+        // The bare "Loopback6" SET sorts before "Loopback6:6.6.6.6/32" DEL, so the
+        // bind is evaluated first (IP still present) and must be deferred, not dropped.
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "DEL", {}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // After the first drain: IP removed, interface still present and still in the
+        // default vrf (the bind is pending, not lost).
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Loopback6"), syncd.end());
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(0));
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+
+        // The deferred bind is retried on the next drain and now succeeds.
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        fail_next_rif_set = true;
+        entries = {
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_FALSE(saw_loopback_action);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(saw_loopback_action);
+        ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchIgnoresInvalidLoopbackActionField)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {
+                {"loopback_action", "invalid"},
+                {"nat_zone", "7"}
+            }}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(saw_loopback_action);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_nat_zone_id, 7u);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchVrfUpdateWaitsForDrain)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {
+                {"mtu", "9100"},
+                {"loopback_action", "drop"},
+                {"mpls", "enable"},
+                {"mac_addr", "00:11:22:33:44:55"}
+            }},
+            {"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"}, {"family", "IPv4"}}}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
+
+        entries = {
+            {"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}},
+            {"Ethernet0:10.0.0.1/24", "DEL", {}},
+            {"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"}, {"family", "IPv4"}}}
+        };
+        saw_loopback_action = false;
+        consumer->addToSync(entries);
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 2u);
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_TRUE(gIntfsOrch->isIntfVrfUpdatePending("Ethernet0"));
+        ASSERT_NE(gIntfsOrch->getRouterIntfsId("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 2u);
+        ASSERT_EQ(remove_count, remove_rif_count);
+
+        gIntfsOrch->decreaseRouterIntfsRefCount("Ethernet0");
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.count(
+                      IpPrefix("10.0.0.1/24")),
+                  1u);
+        ASSERT_TRUE(saw_loopback_action);
+        ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_TRUE(port.m_mpls);
+        ASSERT_EQ(port.m_mac, MacAddress("00:11:22:33:44:55"));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac,
+                  MacAddress("00:11:22:33:44:55"));
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchExplicitZeroMacRestoresSystemMac)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mac_addr", "00:11:22:33:44:55"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac,
+                  MacAddress("00:11:22:33:44:55"));
+
+        entries = {
+            {"Ethernet0", "SET", {{"mac_addr", "00:00:00:00:00:00"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_mac, gMacAddress);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").mac, gMacAddress);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchPartialUpdatePreservesVrf)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0.10", "SET", {
+                {"vlan", "10"},
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        entries = {
+            {"Ethernet0.10", "SET", {
+                {"vrf_name", "Vrf-Blue"},
+                {"admin_status", "down"},
+                {"mtu", "1500"}
+            }}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_FALSE(port.m_admin_state_up);
+        ASSERT_EQ(port.m_mtu, 1500u);
+
+        create_count = create_rif_count;
+        remove_count = remove_rif_count;
+        entries = {
+            {"Ethernet0.10", "SET", {{"admin_status", "up"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_TRUE(port.m_admin_state_up);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchVrfUpdateRollsBackCreateFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {{"mtu", "9100"}, {"loopback_action", "drop"}}}
+        };
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        fail_next_rif_create = true;
+        entries = {
+            {"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}},
+            {"Ethernet4", "SET", {{"loopback_action", "drop"}}}
+        };
+        consumer->addToSync(entries);
+        EXPECT_NO_THROW(gIntfsOrch->doTask(*consumer));
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_EQ(consumer->m_toSync.begin()->first, "Ethernet0");
+        ASSERT_EQ(create_count + 3, create_rif_count);
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_TRUE(gIntfsOrch->isIntfVrfUpdatePending("Ethernet0"));
+        ASSERT_NE(gIntfsOrch->getRouterIntfsId("Ethernet0"), SAI_NULL_OBJECT_ID);
+        ASSERT_NE(gIntfsOrch->getSyncdIntfses().find("Ethernet4"),
+                  gIntfsOrch->getSyncdIntfses().end());
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(create_count + 4, create_rif_count);
+        ASSERT_EQ(remove_count + 2, remove_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id,
+                  gVrfOrch->getVRFid("Vrf-Blue"));
     }
 }
