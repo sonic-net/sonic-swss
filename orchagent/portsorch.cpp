@@ -23,6 +23,7 @@
 #include <tuple>
 #include <sstream>
 #include <unordered_set>
+#include <nlohmann/json.hpp>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -94,6 +95,11 @@ extern bool gMultiAsicVoq;
 #define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
+
+/* pmon_daemon_control.json: decides whether xcvrd (and thus SI settings) is supposed to run.
+   hwsku file wins over the platform file, matching docker-pmon's docker_init.j2 lookup. */
+#define PMON_DAEMON_CONTROL_HWSKU_FILE    "/usr/share/sonic/hwsku/pmon_daemon_control.json"
+#define PMON_DAEMON_CONTROL_PLATFORM_FILE "/usr/share/sonic/platform/pmon_daemon_control.json"
 
 // types --------------------------------------------------------------------------------------------------------------
 
@@ -736,6 +742,36 @@ static bool isMlnxPlatform()
 
 // Port OA ------------------------------------------------------------------------------------------------------------
 
+/* Decide if xcvrd is running
+ * xcvrd is supposed to send si setting notification for port and admin_state call will be gated on it
+ */
+bool PortsOrch::isXcvrdExpectedToRun()
+{
+    for (const auto &path : { std::string(PMON_DAEMON_CONTROL_HWSKU_FILE),
+                              std::string(PMON_DAEMON_CONTROL_PLATFORM_FILE) })
+    {
+        std::ifstream ifs(path);
+        if (!ifs.good())
+        {
+            continue;
+        }
+
+        try
+        {
+            nlohmann::json j;
+            ifs >> j;
+            return !j.value("skip_xcvrd", false);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_WARN("Failed to parse %s: %s; assuming xcvrd runs", path.c_str(), e.what());
+            return true;
+        }
+    }
+
+    return true;
+}
+
 /*
  * Initialize PortsOrch
  * 0) If Gearbox is enabled, then initialize the external PHYs as defined in
@@ -1014,6 +1050,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_TRANSCEIVER_INFO_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, STATE_TRANSCEIVER_INFO_TABLE_NAME));
     }
+
+    // Determine whether xcvrd is expected to run on this platform (i.e. SI settings will
+    // be provided by xcvrd). This is independent of the SAI capability above.
+    m_xcvrdSiSyncExpected = isXcvrdExpectedToRun();
+    SWSS_LOG_NOTICE("xcvrd expected to run (SI settings will be provided): %s",
+                    m_xcvrdSiSyncExpected ? "true" : "false");
 
     if (gMySwitchType != "dpu")
     {
@@ -2365,6 +2407,20 @@ void PortsOrch::setHostTxReady(Port port, const std::string &status)
         SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
         m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
     }
+}
+
+void PortsOrch::setPortSiSettingsSyncStatus(const Port& port, const std::string& status)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("si_settings_ack", status);
+    tuples.push_back(tuple);
+
+    m_portStateTable.set(port.m_alias, tuples);
+
+    SWSS_LOG_NOTICE("Set port %s SI settings sync status to %s",
+                    port.m_alias.c_str(), status.c_str());
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
@@ -4615,6 +4671,104 @@ void PortsOrch::doSendToIngressPortTask(Consumer &consumer)
     }
 }
 
+// Helper function to apply port serdes configurations for all sides (ASIC, line, system)
+bool PortsOrch::applyPortSerdesConfig(Port &port, const PortConfig &pCfg)
+{
+    SWSS_LOG_ENTER();
+
+    // Get serdes attributes from port config
+    PortSerdesAttrMap_t serdes_attr;
+    PortSerdesAttrMap_t line_serdes_attr;
+    PortSerdesAttrMap_t system_serdes_attr;
+    uint32_t si_sync_count;
+    std::string si_settings_notification;
+
+    getPortSerdesAttr(serdes_attr, pCfg.serdes);
+    getPortSerdesAttr(line_serdes_attr, pCfg.serdes_gb_line);
+    getPortSerdesAttr(system_serdes_attr, pCfg.serdes_gb_system);
+
+
+    if (!pCfg.serdes_settings_sync_status.is_set)
+    {
+        return false;
+    }
+
+    si_sync_count = pCfg.serdes_settings_sync_status.count;
+    si_settings_notification = pCfg.serdes_settings_sync_status.type;
+
+    /* xcvrd has no SI settings for this port (e.g. SFF/CMIS manager not running, or no media
+     * settings entry). Nothing to program; acknowledge the (counterless) notification.
+     */
+    if (si_settings_notification == PORT_SI_SETTINGS_UNAVAIL)
+    {
+        setPortSiSettingsSyncStatus(port, PORT_SI_SETTINGS_UNAVAIL);
+        return true;
+    }
+
+    /* Default settings requested from xcvrd, cleanup happens in next programming
+     * Update the sync_status to default for warm restart scenarios
+     */
+    if (si_settings_notification == PORT_SI_SETTINGS_DEFAULT)
+    {
+        setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":" + std::to_string(si_sync_count));
+        return true;
+    }
+
+    /* NOTIFIED: program serdes (if any) and acknowledge with SI_SYNC_DONE below. The SI-settings
+     * admin gate (see doPortTask) holds the MAC admin-down until SI is notified, so serdes is
+     * always applied on a down port - we must not bounce the link here. An empty attribute set
+     * is still acknowledged so xcvrd does not wait forever. */
+
+    /* Handle ASIC-side serdes configuration */
+    if (!serdes_attr.empty())
+    {
+        if (port.m_link_training)
+        {
+            SWSS_LOG_NOTICE("Save port %s preemphasis for LT", port.m_alias.c_str());
+            port.m_serdes_attrs = serdes_attr;
+            m_portList[port.m_alias] = port;
+        }
+        else
+        {
+            if (!programSerdes(port, port.m_port_id, gSwitchId, serdes_attr))
+            {
+                return false;
+            }
+            port.m_serdes_attrs = serdes_attr;
+            m_portList[port.m_alias] = port;
+        }
+    }
+
+    // Handle gearbox line-side serdes configuration
+    if (port.m_line_side_id && !line_serdes_attr.empty())
+    {
+        if (m_gearboxPortMap[port.m_index].line_training)
+        {
+            SWSS_LOG_NOTICE("Line-side link training is enabled on port %s. Skipping setting serdes attributes", port.m_alias.c_str());
+        }
+        else if (!programSerdes(port, port.m_line_side_id, port.m_switch_id, line_serdes_attr))
+        {
+            return false;
+        }
+    }
+
+    // Handle gearbox system-side serdes configuration
+    if (port.m_system_side_id && !system_serdes_attr.empty())
+    {
+        if (m_gearboxPortMap[port.m_index].system_training)
+        {
+            SWSS_LOG_NOTICE("System-side link training is enabled on port %s. Skipping setting serdes attributes", port.m_alias.c_str());
+        }
+        else if (!programSerdes(port, port.m_system_side_id, port.m_switch_id, system_serdes_attr))
+        {
+            return false;
+        }
+    }
+
+    setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SYNC_DONE) + ":" + std::to_string(si_sync_count));
+    return true;
+}
+
 // Helper function to program serdes with admin state management
 bool PortsOrch::programSerdes(
     Port &port,
@@ -4650,20 +4804,6 @@ bool PortsOrch::programSerdes(
                       port_id, port.m_alias.c_str(),
                       port.m_port_id, port.m_line_side_id, port.m_system_side_id);
         return false;
-    }
-
-    if (port.m_admin_state_up)
-    {
-        /* Bring port down before applying serdes attribute */
-        if (!setPortAdminStatus(port, false))
-        {
-            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set %s serdes attr",
-                          port.m_alias.c_str(), serdes_type_name);
-            return false;
-        }
-
-        port.m_admin_state_up = false;
-        m_portList[port.m_alias] = port;
     }
 
     if (setPortSerdesAttribute(port_id, switch_id, serdes_attr))
@@ -5578,25 +5718,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (!serdes_attr.empty())
-                {
-                    if (p.m_link_training)
-                    {
-                        SWSS_LOG_NOTICE("Save port %s serdes attributes for LT", p.m_alias.c_str());
-                        p.m_serdes_attrs = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
-                    else
-                    {
-                        if (!programSerdes(p, p.m_port_id, gSwitchId, serdes_attr))
-                        {
-                            it++;
-                            continue;
-                        }
-                        p.m_serdes_attrs = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
-                }
                 if (pCfg.media_type.is_set)
                 {
                     if (setPortMediaType(p, pCfg.media_type.value))
@@ -5613,18 +5734,75 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (p.m_line_side_id && !line_serdes_attr.empty())
+                /* SI-settings admin gate: when xcvrd is expected to provide SI settings for
+                 * this front-panel port, hold the NPU MAC admin-up until the settings are
+                 * notified (so serdes is applied on a down port - never bouncing the link),
+                 * then replay the deferred admin-up so the link comes up exactly once. This
+                 * shapes pCfg.admin_status BEFORE serdes is applied. */
+                auto &siGate = m_portAdminSiGate[p.m_alias];
+                bool gateAdminOnSi = m_xcvrdSiSyncExpected && isFrontPanelPort(p);
+
+                if (pCfg.serdes_settings_sync_status.is_set)
                 {
-                    if (!programSerdes(p, p.m_line_side_id, p.m_switch_id, line_serdes_attr))
+                    /* If we get UNAVIL or NOTIFIED, we can allow admin_up to proceed */
+                    siGate.si_notified =
+                        (pCfg.serdes_settings_sync_status.type != PORT_SI_SETTINGS_DEFAULT);
+                }
+
+                if (gateAdminOnSi && pCfg.admin_status.is_set)
+                {
+                    if (pCfg.admin_status.value && !siGate.si_notified && !p.m_admin_state_up)
                     {
-                        it++;
-                        continue;
+                        // Hold admin-up until SI settings are notified; replay it later.
+                        siGate.admin_up_deferred = true;
+                        pCfg.admin_status.is_set = false;
+                        SWSS_LOG_NOTICE("Port %s: deferring admin-up until SI settings are notified",
+                                        p.m_alias.c_str());
+                    }
+                    else if (!pCfg.admin_status.value)
+                    {
+                        // Explicit admin-down supersedes any pending deferral.
+                        siGate.admin_up_deferred = false;
                     }
                 }
 
-                if (p.m_system_side_id && !system_serdes_attr.empty())
+                /* A NOTIFIED for an already-up MAC means new SI must be (re)programmed (e.g. a
+                   new transceiver was inserted). Bring the MAC down so serdes is applied on a
+                   down port; it is restored to up by the replay below / the admin decision. */
+                if (gateAdminOnSi
+                    && pCfg.serdes_settings_sync_status.is_set
+                    && pCfg.serdes_settings_sync_status.type == PORT_SI_SETTINGS_NOTIFIED
+                    && p.m_admin_state_up)
                 {
-                    if (!programSerdes(p, p.m_system_side_id, p.m_switch_id, system_serdes_attr))
+                    setPortAdminStatus(p, false);
+                    p.m_admin_state_up = false;
+                    m_portList[p.m_alias] = p;
+                    if (!pCfg.admin_status.is_set)
+                    {
+                        // No admin_status in this update; replay will bring the MAC back up.
+                        siGate.admin_up_deferred = true;
+                    }
+                    SWSS_LOG_NOTICE("Port %s: MAC brought down to apply updated SI settings",
+                                    p.m_alias.c_str());
+                }
+
+                /* Replay a previously-deferred admin-up now that SI settings have arrived
+                   (the SI-only APPL_DB update carries no admin_status of its own). */
+                if (gateAdminOnSi && siGate.si_notified && siGate.admin_up_deferred && !pCfg.admin_status.is_set)
+                {
+                    pCfg.admin_status.is_set = true;
+                    pCfg.admin_status.value  = true;   // we only ever defer admin-up
+                    // Keep the raw config string in sync so getAdminStatusStr() (used for
+                    // logging) reflects the replayed admin-up instead of an empty value.
+                    pCfg.fieldValueMap[PORT_ADMIN_STATUS] = "up";
+                    siGate.admin_up_deferred = false;
+                }
+
+                /* Apply serdes settings (and write the SI_SYNC_DONE/UNAVAIL/DEFAULT ack) when
+                 * an SI notification is present. */
+                if (pCfg.serdes_settings_sync_status.is_set)
+                {
+                    if (!applyPortSerdesConfig(p, pCfg))
                     {
                         it++;
                         continue;
@@ -5856,6 +6034,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             /* Delete port from port list */
             m_portConfigMap.erase(alias);
             m_portList.erase(alias);
+            m_portAdminSiGate.erase(alias);
             saiOidToAlias.erase(port_id);
 
             SWSS_LOG_NOTICE("Removed port %s", alias.c_str());
@@ -6760,6 +6939,9 @@ bool PortsOrch::initializePorts(std::vector<Port>& ports)
         initializePortHostTxReadyBulk(ports);
     }
 
+    /* initialize port SI settings sync status in STATE_DB */
+    initializePortSiSettingsSyncStatusBulk(ports);
+
     initializePortMtuBulk(ports);
 
     // Create host interfaces
@@ -6840,6 +7022,20 @@ bool PortsOrch::initializePorts(std::vector<Port>& ports)
     }
 
     return status;
+}
+
+void PortsOrch::initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_TIMER(__FUNCTION__);
+
+    for (auto& port : ports)
+    {
+        setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":0");
+        SWSS_LOG_NOTICE("Initialize si_settings_ack as %s:0 for port %s",
+                        PORT_SI_SETTINGS_DEFAULT, port.m_alias.c_str());
+    }
 }
 
 void PortsOrch::initializePortHostTxReadyBulk(std::vector<Port>& ports)
