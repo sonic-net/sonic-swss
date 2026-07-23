@@ -6,6 +6,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 def create_entry(tbl, key, pairs):
@@ -410,6 +411,56 @@ def test_vnet_cleanup_config_reload(dvs, env_setup):
     ret, stdout = dvs.runcmd(["ip", "link", "show"])
     assert "Vxlan1" in stdout
     assert "Brvxlan1" in stdout
+
+def test_vxlanmgr_destructor_bulk_delete(dvs, env_setup):
+    """~VxlanMgr() bulk-deletes vxlan/bridge netdevs via IFLA_GROUP on SIGTERM"""
+
+    num_vnets = 50
+    vxlan_group = 0x534F4E01  # matches VXLAN_MGR_NETLINK_GROUP
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    vnet_names = [f"Vnet_{i}" for i in range(num_vnets)]
+    for i, name in enumerate(vnet_names):
+        create_entry_tbl(
+            cfg_db,
+            "VNET", '|', name,
+            [
+                ("vxlan_tunnel", "tunnel1"),
+                ("vni", str(2000 + i)),
+            ],
+        )
+
+    def _count_group100():
+        _, out = dvs.runcmd(['sh', '-c',
+            f"ip -d link show | grep -c 'group {vxlan_group} ' || true"])
+        return int(out.strip()) if out.strip() else 0
+
+    # Each VNET produces a Vxlan + Brvxlan; +1 pair from env_setup tunnel1
+    expected_group100 = 2 * (num_vnets + 1)
+
+    wait_for_result(
+        lambda: (_count_group100() >= expected_group100, _count_group100()),
+        polling_config=PollingConfig(polling_interval=1, timeout=60, strict=True),
+        failure_message=f"vxlanmgrd did not create {expected_group100} group-100 netdevs",
+    )
+
+    # SIGTERM triggers ~VxlanMgr() bulk delete
+    dvs.runcmd(['sh', '-c', "supervisorctl stop vxlanmgrd"])
+
+    def _check_devices_gone():
+        remaining = _count_group100()
+        return (remaining == 0, remaining)
+
+    try:
+        wait_for_result(
+            _check_devices_gone,
+            polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+            failure_message="~VxlanMgr() did not bulk-delete group-100 devices on SIGTERM",
+        )
+    finally:
+        for name in vnet_names:
+            delete_entry_tbl(cfg_db, "VNET", name)
+        dvs.runcmd(['sh', '-c', "supervisorctl start vxlanmgrd"])
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

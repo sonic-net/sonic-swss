@@ -1,4 +1,5 @@
 #include <string.h>
+#include <unistd.h>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -14,6 +15,8 @@
 #define TABLE_LOCAL_PREF 1001 // after l3mdev-table
 #define MGMT_VRF_TABLE_ID 6000
 #define MGMT_VRF          "mgmt"
+// IFLA_GROUP for vrfmgr-owned VRF netdevs.
+#define VRF_MGR_NETLINK_GROUP   0x534F4E02u
 
 using namespace swss;
 
@@ -111,6 +114,21 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     }
 }
 
+VrfMgr::~VrfMgr()
+{
+    if (WarmStart::isWarmStart())
+    {
+        SWSS_LOG_NOTICE("vrfmgr: warm restart, skipping bulk delete");
+        return;
+    }
+    std::string res;
+    std::ostringstream cmd;
+    cmd << IP_CMD << " link delete group " << VRF_MGR_NETLINK_GROUP << " type vrf";
+    int rc = swss::exec(cmd.str(), res);
+    SWSS_LOG_NOTICE("vrfmgr: bulk delete group 0x%x rc=%d out=%s",
+                    (unsigned)VRF_MGR_NETLINK_GROUP, rc, res.c_str());
+}
+
 uint32_t VrfMgr::getFreeTable(void)
 {
     SWSS_LOG_ENTER();
@@ -188,7 +206,9 @@ bool VrfMgr::setLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link add " << shellquote(vrfName) << " type vrf table " << table;
+    cmd << IP_CMD << " link add " << shellquote(vrfName)
+        << " group " << VRF_MGR_NETLINK_GROUP
+        << " type vrf table " << table;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     m_vrfTableMap.emplace(vrfName, table);
