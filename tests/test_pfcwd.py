@@ -295,6 +295,141 @@ class TestPfcwdFunc(object):
             self.reset_pfcwd_counters(test_queues)
             self.stop_pfcwd_on_ports()
 
+    def test_pfcwd_global_key_del_no_crash(self, dvs, setup_teardown_test):
+        """
+        Verify orchagent does not crash when PFC_WD|GLOBAL is deleted from CONFIG_DB.
+
+        Deleting PFC_WD|GLOBAL fires a "del" keyspace notification which routes to
+        deleteEntry("GLOBAL"). Before the fix, getPort("GLOBAL") failed silently,
+        leaving a default-constructed Port with empty m_queue_ids. unregisterFromWdDb()
+        then accessed m_queue_ids[0] on the empty vector (null data pointer), causing
+        SIGSEGV at address 0. After the fix, deleteEntry() short-circuits the GLOBAL
+        key (returning task_success) before the port lookup, so the null-deref path is
+        never reached; genuinely invalid port keys still return task_invalid_entry.
+        """
+        storm_queue = [3]
+        try:
+            test_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+
+            # Start pfcwd — writes POLL_INTERVAL to PFC_WD|GLOBAL
+            self.start_pfcwd_on_ports()
+            time.sleep(1)
+
+            # Delete PFC_WD|GLOBAL entirely.
+            # Fires "del" keyspace notification → deleteEntry("GLOBAL") in orchagent.
+            # Before fix: SIGSEGV in unregisterFromWdDb() accessing null m_queue_ids[0].
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+            time.sleep(1)
+
+            # Verify orchagent survived: restore GLOBAL and confirm pfcwd still works
+            self.config_db.update_entry("PFC_WD", "GLOBAL", {"POLL_INTERVAL": "200"})
+            time.sleep(1)
+
+            self.set_storm_state(storm_queue)
+            self.verify_pfcwd_state(storm_queue)
+            self.verify_pfcwd_counters(storm_queue)
+
+        finally:
+            self.set_storm_state(storm_queue, state="disabled")
+            self.reset_pfcwd_counters(storm_queue)
+            self.stop_pfcwd_on_ports()
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+
+    def test_pfcwd_global_hdel_last_field_no_crash(self, dvs, setup_teardown_test):
+        """
+        Verify orchagent does not crash when hdel removes the last field of PFC_WD|GLOBAL.
+
+        With Redis notify-keyspace-events=AKE (which includes 'g' for generic commands),
+        hdel of the last field causes Redis to auto-delete the key and fire both "hdel"
+        and "del" keyspace notifications. The "del" notification triggers
+        deleteEntry("GLOBAL"), hitting the same crash path as test_pfcwd_global_key_del_no_crash.
+        """
+        storm_queue = [3]
+        try:
+            test_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+
+            self.start_pfcwd_on_ports()
+            time.sleep(1)
+
+            # Replace GLOBAL entry with only BIG_RED_SWITCH so hdel of it is the last field
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+            time.sleep(0.5)
+            self.config_db.update_entry("PFC_WD", "GLOBAL", {"BIG_RED_SWITCH": "enable"})
+            time.sleep(1)
+
+            # Hdel the only remaining field.
+            # With AKE keyspace events, Redis fires "hdel" + "del" → deleteEntry("GLOBAL").
+            self.config_db.delete_field("PFC_WD", "GLOBAL", "BIG_RED_SWITCH")
+            time.sleep(1)
+
+            # Verify orchagent survived: restore GLOBAL and confirm pfcwd still works.
+            # BIG_RED_SWITCH:enable above put pfcwdorch into big-red-switch mode, which
+            # force-drops monitored queues and bypasses normal storm detection. Deleting
+            # the field does not transition BRS off, so explicitly disable it before
+            # verifying storm detection, otherwise the queue stays operational.
+            self.config_db.update_entry("PFC_WD", "GLOBAL", {"BIG_RED_SWITCH": "disable"})
+            time.sleep(1)
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+            time.sleep(1)
+            self.config_db.update_entry("PFC_WD", "GLOBAL", {"POLL_INTERVAL": "200"})
+            time.sleep(1)
+
+            # The BIG_RED_SWITCH enable/disable cycle above force-drops and restores the
+            # monitored queues, bumping the cumulative DEADLOCK_DETECTED/RESTORED counters.
+            # Reset them so the single storm below yields the expected detected=1,
+            # restored=0 that verify_pfcwd_counters checks.
+            self.reset_pfcwd_counters(storm_queue)
+
+            self.set_storm_state(storm_queue)
+            self.verify_pfcwd_state(storm_queue)
+            self.verify_pfcwd_counters(storm_queue)
+
+        finally:
+            self.set_storm_state(storm_queue, state="disabled")
+            self.reset_pfcwd_counters(storm_queue)
+            self.stop_pfcwd_on_ports()
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+
+    def test_pfcwd_del_unknown_port_no_crash(self, dvs, setup_teardown_test):
+        """
+        Verify orchagent handles deletion of a PFC_WD entry for an unknown/invalid
+        port gracefully, exercising the invalid-key guard in deleteEntry().
+        """
+        storm_queue = [3]
+        invalid_port = "Ethernet9999"
+        try:
+            self.start_pfcwd_on_ports()
+            time.sleep(1)
+
+            self.config_db.create_entry("PFC_WD", invalid_port,
+                                        {"action": "drop",
+                                         "detection_time": "200",
+                                         "restoration_time": "200"})
+            time.sleep(1)
+            self.config_db.delete_entry("PFC_WD", invalid_port)
+            time.sleep(1)
+
+            # Verify orchagent survived and pfcwd still works on real ports.
+            test_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+            self.reset_pfcwd_counters(storm_queue)
+            self.set_storm_state(storm_queue)
+            self.verify_pfcwd_state(storm_queue)
+            self.verify_pfcwd_counters(storm_queue)
+
+        finally:
+            self.set_storm_state(storm_queue, state="disabled")
+            self.reset_pfcwd_counters(storm_queue)
+            self.stop_pfcwd_on_ports()
+            self.config_db.delete_entry("PFC_WD", invalid_port)
+            self.config_db.delete_entry("PFC_WD", "GLOBAL")
+
+
 #
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
