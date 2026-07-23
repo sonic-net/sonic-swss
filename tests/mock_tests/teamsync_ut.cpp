@@ -5,7 +5,11 @@
 #include <team.h>
 #include <teamdctl.h>
 #include "schema.h"
+#define protected public
+#define private public
 #include "teamsync.h"
+#undef protected
+#undef private
 #include "mock_table.h"
 
 static unsigned int (*callback_sleep)(unsigned int seconds) = NULL;
@@ -317,5 +321,48 @@ namespace teamsync_test
         std::vector<std::string> keys;
         appLagTable.getKeys(keys);
         EXPECT_TRUE(keys.empty());
+    }
+
+    /* When TeamPortSync exists with tracked members, removeLag() must delete
+     * each APP_LAG_MEMBER entry before removing the LAG itself. */
+    TEST_F(TeamSyncTest, RemoveLagWithTeamPortSyncMembers)
+    {
+        setTeamSyncSuccessMocks();
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        ts.addLag("testLag", 4, true, true, 1500);
+
+        ASSERT_NE(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
+
+        ts.m_teamSelectables["testLag"]->m_lagMembers["Ethernet0"] = true;
+        ts.m_teamSelectables["testLag"]->m_lagMembers["Ethernet4"] = false;
+
+        std::vector<swss::FieldValueTuple> memberFv;
+        memberFv.emplace_back("status", "enabled");
+        ts.m_lagMemberTable.set("testLag:Ethernet0", memberFv);
+        ts.m_lagMemberTable.set("testLag:Ethernet4", memberFv);
+
+        ts.removeLag("testLag");
+
+        swss::Table appLagMemberTable(&db, APP_LAG_MEMBER_TABLE_NAME);
+        std::vector<std::string> memberKeys;
+        appLagMemberTable.getKeys(memberKeys);
+        EXPECT_TRUE(memberKeys.empty());
+
+        swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
+        std::vector<std::string> lagKeys;
+        appLagTable.getKeys(lagKeys);
+        EXPECT_TRUE(lagKeys.empty());
+
+        swss::Table stateLagTable(&stateDb, STATE_LAG_TABLE_NAME);
+        std::vector<std::string> stateKeys;
+        stateLagTable.getKeys(stateKeys);
+        EXPECT_TRUE(stateKeys.empty());
+
+        EXPECT_EQ(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
+        EXPECT_EQ(ts.m_selectablesToRemove.count("testLag"), 1u);
     }
 }
