@@ -118,6 +118,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    string vpn_sid = string();
     bool includeEmptyFields = false;
 };
 
@@ -267,6 +268,8 @@ public:
     }
 
 private:
+    /* ApplDB connector */
+    shared_ptr<DBConnector> m_appDb;
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
@@ -365,7 +368,8 @@ private:
                         string& intf_list);
 
     bool getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
-                        struct rtattr *tb[], string &vpn_sid, string &src_addr);
+                        struct rtattr *tb[], string &vpn_sid, string &src_addr,
+                        string &nexthops, string &ifnames);
     bool getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
                                struct rtattr *tb[], uint32_t &pic_id,uint32_t &nhg_id);
 
@@ -413,6 +417,8 @@ private:
     {
         return m_zmqClient != nullptr;
     }
+
+    bool getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists);
 
 };
 struct NextHopField {
