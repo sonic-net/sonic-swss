@@ -51,6 +51,12 @@ class DVSVlan(object):
         member = "Vlan{}|{}".format(vlanID, interface)
         self.config_db.delete_entry("VLAN_MEMBER", member)
 
+    def update_vlan_member_tagging_mode(self, vlanID, interface, tagging_mode):
+        member = "Vlan{}|{}".format(vlanID, interface)
+        member_entry = self.config_db.get_entry("VLAN_MEMBER", member)
+        member_entry["tagging_mode"] = tagging_mode
+        self.config_db.update_entry("VLAN_MEMBER", member, member_entry)
+
     def remove_vlan_interface(self, vlanID):
         vlan = "Vlan{}".format(vlanID)
         self.config_db.delete_entry("VLAN_INTERFACE", vlan)
@@ -82,11 +88,20 @@ class DVSVlan(object):
         return [v for v in vlan_entries if v != self.asic_db.default_vlan_id]
 
     def verify_vlan_member(self, vlan_oid, iface, tagging_mode="SAI_VLAN_TAGGING_MODE_UNTAGGED"):
-        member_ids = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER", 1)
-        member = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER", member_ids[0])
-        assert member == {"SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE": tagging_mode,
-                          "SAI_VLAN_MEMBER_ATTR_VLAN_ID": vlan_oid,
-                          "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID": self.get_bridge_port_id(iface)}
+        expected = {"SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE": tagging_mode,
+                    "SAI_VLAN_MEMBER_ATTR_VLAN_ID": vlan_oid,
+                    "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID": self.get_bridge_port_id(iface)}
+
+        # Re-resolve the VLAN member OID while polling, since tagging_mode updates replace the object.
+        def access_function():
+            member_ids = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+            if len(member_ids) != 1:
+                return (False, {})
+            member = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER", member_ids[0])
+            return (member == expected, member)
+
+        status, member = wait_for_result(access_function, PollingConfig(strict=False))
+        assert status, "expected={}, received={}".format(expected, member)
 
     def get_and_verify_vlan_member_ids(self, expected_num):
         return self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER", expected_num)

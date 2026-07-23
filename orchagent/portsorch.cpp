@@ -6075,10 +6075,13 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            /* Duplicate entry */
+            /* Existing member: apply tagging_mode change in place, or no-op if unchanged */
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                it = consumer.m_toSync.erase(it);
+                if (setVlanMemberTaggingMode(vlan, port, tagging_mode))
+                    it = consumer.m_toSync.erase(it);
+                else
+                    it++;
                 continue;
             }
 
@@ -7692,6 +7695,18 @@ bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan)
     return false;
 }
 
+static sai_vlan_tagging_mode_t taggingModeStrToSai(const string &tagging_mode)
+{
+    if (tagging_mode == "untagged")
+        return SAI_VLAN_TAGGING_MODE_UNTAGGED;
+    else if (tagging_mode == "tagged")
+        return SAI_VLAN_TAGGING_MODE_TAGGED;
+    else if (tagging_mode == "priority_tagged")
+        return SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
+    assert(false);
+    return SAI_VLAN_TAGGING_MODE_TAGGED;
+}
+
 bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, string end_point_ip)
 {
     SWSS_LOG_ENTER();
@@ -7721,15 +7736,8 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attrs.push_back(attr);
 
 
-    sai_vlan_tagging_mode_t sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
+    sai_vlan_tagging_mode_t sai_tagging_mode = taggingModeStrToSai(tagging_mode);
     attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
-    if (tagging_mode == "untagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_UNTAGGED;
-    else if (tagging_mode == "tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
-    else if (tagging_mode == "priority_tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
-    else assert(false);
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 
@@ -7776,6 +7784,59 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
 
     VlanMemberUpdate update = { vlan, port, true };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+    return true;
+}
+
+/* Update the tagging mode of a port that is already a member of the VLAN */
+bool PortsOrch::setVlanMemberTaggingMode(Port &vlan, Port &port, const string &tagging_mode)
+{
+    SWSS_LOG_ENTER();
+
+    auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
+    if (vlan_member == m_portVlanMember[port.m_alias].end())
+    {
+        /* Clear stale vlan.m_members state so retries take the addVlanMember path safely. */
+        SWSS_LOG_ERROR("Member %s missing from tracked VLAN members for VLAN %s vid:%hu, "
+                "treating as removed and retrying as a new add with tagging mode %s",
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, tagging_mode.c_str());
+        vlan.m_members.erase(port.m_alias);
+        m_portList[vlan.m_alias] = vlan;
+        return false;
+    }
+
+    sai_vlan_tagging_mode_t old_mode = vlan_member->second.vlan_mode;
+    sai_vlan_tagging_mode_t new_mode = taggingModeStrToSai(tagging_mode);
+
+    if (old_mode == new_mode)
+    {
+        /* True duplicate, tagging_mode did not change */
+        return true;
+    }
+
+    /* An in-place SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE SET was tried first, but the
+     * Broadcom DNX vendor SAI does not support changing tagging mode on an existing
+     * VLAN member (returns SAI_STATUS_NOT_IMPLEMENTED). Remove+recreate is the fallback,
+     * which is traffic-hitful for this port (see PR description for details). */
+    if (!removeVlanMember(vlan, port))
+    {
+        SWSS_LOG_ERROR("Failed to remove member %s from VLAN %s vid:%hu while updating tagging mode to %s",
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, tagging_mode.c_str());
+        return false;
+    }
+
+    /* The bridge port carries no tagging-mode attribute and survives the member removal,
+     * so it is reused as-is (addBridgePort is a no-op when the bridge port already exists). */
+    string new_tagging_mode = tagging_mode;
+    if (!addBridgePort(port) || !addVlanMember(vlan, port, new_tagging_mode))
+    {
+        SWSS_LOG_ERROR("Failed to re-add member %s to VLAN %s vid:%hu with tagging mode %s",
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, tagging_mode.c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Updated member %s tagging mode to %s in VLAN %s vid:%hu",
+            port.m_alias.c_str(), tagging_mode.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
 
     return true;
 }
