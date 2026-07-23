@@ -28,6 +28,7 @@ struct IntfsEntry
     bool                proxy_arp;
     bool                sag_enabled = false;
     MacAddress          mac;
+    std::string         loopback_action;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -39,6 +40,8 @@ public:
     static const int intfsorch_pri;
 
     sai_object_id_t getRouterIntfsId(const string&);
+    bool isIntfRemovalPending(const string&) const;
+    bool isIntfVrfUpdatePending(const string&) const;
     bool isPrefixSubnet(const IpPrefix&, const string&);
     bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
@@ -60,7 +63,7 @@ public:
 
     bool setIntfLoopbackAction(const Port &port, string actionStr);
     bool getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action);
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, string loopbackAction = "");
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, string loopbackAction = "", const bool vrfIdIsExplicit = false);
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
@@ -99,6 +102,7 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    std::set<std::string> m_pendingVrfUpdates;
 
     std::string getRifFlexCounterTableKey(std::string s);
 

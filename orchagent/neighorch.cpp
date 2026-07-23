@@ -379,6 +379,14 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     }
 
     assert(!hasNextHop(nexthop));
+    if (!m_intfsOrch->isRemoteSystemPortIntf(nh.alias) &&
+        (m_intfsOrch->isIntfRemovalPending(nh.alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(nh.alias)))
+    {
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", nh.alias.c_str());
+        return false;
+    }
+
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
@@ -1324,6 +1332,14 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     bool bulk_op = ctx.bulk_op;
 
+    if (!m_intfsOrch->isRemoteSystemPortIntf(alias) &&
+        (m_intfsOrch->isIntfRemovalPending(alias) ||
+         m_intfsOrch->isIntfVrfUpdatePending(alias)))
+    {
+        SWSS_LOG_INFO("Interface %s is pending removal or VRF update", alias.c_str());
+        return false;
+    }
+
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
     {
@@ -2065,6 +2081,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!addNeighbor(*ctx))
         {
             SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
     }
