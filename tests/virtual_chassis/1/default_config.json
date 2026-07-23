@@ -29,6 +29,10 @@
         },
         "Ethernet8": {
             "admin_status": "up"
+        },
+        "Ethernet12": {
+            "admin_status": "up",
+            "role": "Rec"
         }
     },
     "SYSTEM_PORT": {
