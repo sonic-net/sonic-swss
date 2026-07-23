@@ -6,7 +6,7 @@ import pytest
 import ipaddress
 
 from swsscommon import swsscommon
-from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 class TestRouteBase(object):
     def setup_db(self, dvs):
@@ -1077,16 +1077,39 @@ class TestFpmSyncResponse(TestRouteBase):
         route_entry = json.loads(output)
         return bool(route_entry[route][0].get('offloaded'))
 
-    @pytest.mark.xfail(reason="BGP suppress FIB disabled on master/202405 - https://github.com/sonic-net/sonic-buildimage/issues/19092")
+    def wait_for_nexthop_reachable(self, dvs, nexthop):
+        # Poll until intfmgrd has reprogrammed the interface IP after a restart.
+        def _nexthop_reachable():
+            rc, _ = dvs.runcmd(f"ping -c 1 -W 1 {nexthop}")
+            return (rc == 0, None)
+
+        wait_for_result(
+            _nexthop_reachable,
+            PollingConfig(polling_interval=1, timeout=300, strict=True),
+            failure_message=f"Nexthop {nexthop} not reachable after swss/fpmsyncd restart",
+        )
+
     @pytest.mark.parametrize("suppress_state", ["enabled", "disabled"])
     def test_offload(self, suppress_state, setup, dvs):
         route = "1.1.1.0/24"
 
-        # enable route suppression
+        # configure suppress-fib-pending
         rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
         assert rc == 0, "Failed to configure suppress-fib-pending"
 
-        time.sleep(5)
+        # Container restart is used here as a quick substitute for a full config
+        # reload or device reboot, which is the only supported way to apply
+        # suppress-fib-pending config changes. This is intentionally unsupported
+        # in production but sufficient for DVS unit test purposes.
+        dvs.stop_fpmsyncd()
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.start_fpmsyncd()
+
+        dvs.check_swss_ready()
+
+        # Wait for the BGP nexthop to become reachable before suspending orchagent.
+        self.wait_for_nexthop_reachable(dvs, "10.0.0.1")
 
         try:
             rc, _ = dvs.runcmd("bash -c 'kill -SIGSTOP $(pidof orchagent)'")
@@ -1116,6 +1139,11 @@ class TestFpmSyncResponse(TestRouteBase):
 
             # make sure route suppression is disabled
             dvs.runcmd("config suppress-fib-pending disabled")
+            dvs.stop_fpmsyncd()
+            dvs.stop_swss()
+            dvs.start_swss()
+            dvs.start_fpmsyncd()
+            dvs.check_swss_ready()
 
 
 class TestSubnetDecapVipRoute(TestRouteBase):
