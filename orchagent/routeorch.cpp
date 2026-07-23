@@ -858,7 +858,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    else if (alsv.size() != ipv.size())
+                    else if (!srv6_nh && (alsv.size() != ipv.size()))
                     {
                         SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
                         ipv.resize(alsv.size());
