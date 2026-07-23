@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <deque>
 #include <orch.h>
 #include "zmqserver.h"
 
@@ -22,15 +23,42 @@ public:
     void drain() override;
 };
 
+class ZmqRouteConsumer : public ZmqConsumer
+{
+public:
+    ZmqRouteConsumer(swss::ZmqConsumerStateTable *select, Orch *orch, const std::string &name)
+        : ZmqConsumer(select, orch, name)
+    {
+    }
+
+    void execute() override;
+};
+
 class ZmqOrch : public Orch
 {
 public:
-    ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
-    ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer);
+    ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+    ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
 
+protected:
+    // For subclasses that want to register their own consumer types instead of
+    // ZmqConsumer; they skip the base table-iterating constructors and call
+    // their own addConsumer().
+    ZmqOrch() = default;
+
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer);
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+};
+
+class ZmqRouteOrch : public ZmqOrch
+{
+public:
+    ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+    ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+
+private:
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 };

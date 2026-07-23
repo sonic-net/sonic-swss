@@ -5,12 +5,17 @@ from swsscommon import swsscommon
 
 
 class TestIcmpEcho(object):
+    ICMP_COUNTER_GROUP_KEY = "ICMP_SESSION"
+    ICMP_COUNTER_NAME_MAP = "COUNTERS_ICMP_ECHO_SESSION_NAME_MAP"
+
     def setup_db(self, dvs):
         dvs.setup_db()
         self.pdb = dvs.get_app_db()
         self.adb = dvs.get_asic_db()
         self.sdb = dvs.get_state_db()
         self.cdb = dvs.get_config_db()
+        self.fdb = dvs.get_flex_db()
+        self.cntdb = dvs.get_counters_db()
         # Set switch icmp offload capability
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'ICMP_OFFLOAD_CAPABLE', 'true')
 
@@ -28,11 +33,21 @@ class TestIcmpEcho(object):
 
     def check_asic_icmp_echo_session_value(self, key, expected_values):
         fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", key)
+        for _ in range(30):
+            if all(fvs.get(k) == v for k, v in expected_values.items()):
+                break
+            time.sleep(1)
+            fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", key)
         for k, v in expected_values.items():
             assert fvs[k] == v
 
     def check_state_icmp_echo_session_value(self, key, expected_values):
         fvs = self.sdb.get_entry("ICMP_ECHO_SESSION_TABLE", key)
+        for _ in range(30):
+            if all(fvs.get(k) == v for k, v in expected_values.items()):
+                break
+            time.sleep(1)
+            fvs = self.sdb.get_entry("ICMP_ECHO_SESSION_TABLE", key)
         for k, v in expected_values.items():
             assert fvs[k] == v
 
@@ -47,6 +62,27 @@ class TestIcmpEcho(object):
 
     def set_admin_status(self, interface, status):
         self.cdb.update_entry("PORT", interface, {"admin_status": status})
+
+    def set_icmp_counter_group_status(self, status):
+        self.cdb.create_entry("FLEX_COUNTER_TABLE", self.ICMP_COUNTER_GROUP_KEY,
+                              {"FLEX_COUNTER_STATUS": status})
+
+    def wait_for_icmp_counter_name_map_fields(self, expected_fields, present=True, timeout=10):
+        for _ in range(timeout):
+            name_map = self.cntdb.db_connection.hgetall(self.ICMP_COUNTER_NAME_MAP)
+            if present:
+                if all(field in name_map and name_map[field] for field in expected_fields):
+                    return
+            else:
+                if all(field not in name_map for field in expected_fields):
+                    return
+            time.sleep(1)
+
+        assert False, "ICMP counter name-map fields {} not {} in {}".format(
+            expected_fields, "present" if present else "removed", self.ICMP_COUNTER_NAME_MAP)
+
+    def _counter_map_fields_for_session(self, session_key):
+        return [session_key + "|IN", session_key + "|OUT"]
 
     def create_vrf(self, vrf_name):
         initial_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
@@ -76,7 +112,62 @@ class TestIcmpEcho(object):
     def remove_ip_address(self, interface, ip):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
 
-    @pytest.mark.skip(reason="This test is flaky")
+    def test_icmp_counter_name_map_enable_disable(self, dvs):
+        self.setup_db(dvs)
+
+        session_key = "default:default:7001:NORMAL"
+        fieldValues = {
+            "session_cookie": "701",
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.2",
+            "tx_interval": "10",
+            "rx_interval": "10",
+        }
+
+        before = self.get_exist_icmp_echo_session()
+        self.create_icmp_echo_session(session_key, fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(before) + 1)
+
+        expected_fields = self._counter_map_fields_for_session(session_key)
+        self.set_icmp_counter_group_status("enable")
+        self.wait_for_icmp_counter_name_map_fields(expected_fields, present=True)
+
+        self.set_icmp_counter_group_status("disable")
+        self.wait_for_icmp_counter_name_map_fields(expected_fields, present=False)
+
+        created = self.get_exist_icmp_echo_session() - before
+        assert len(created) == 1
+        self.remove_icmp_echo_session(session_key)
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", created.pop())
+
+    def test_icmp_counter_name_map_backfill_existing_session(self, dvs):
+        self.setup_db(dvs)
+
+        session_key = "default:default:7002:NORMAL"
+        fieldValues = {
+            "session_cookie": "702",
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.3",
+            "tx_interval": "10",
+            "rx_interval": "10",
+        }
+
+        before = self.get_exist_icmp_echo_session()
+        self.create_icmp_echo_session(session_key, fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", len(before) + 1)
+
+        expected_fields = self._counter_map_fields_for_session(session_key)
+        self.wait_for_icmp_counter_name_map_fields(expected_fields, present=False, timeout=2)
+
+        self.set_icmp_counter_group_status("enable")
+        self.wait_for_icmp_counter_name_map_fields(expected_fields, present=True)
+
+        created = self.get_exist_icmp_echo_session() - before
+        assert len(created) == 1
+        self.remove_icmp_echo_session(session_key)
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_ICMP_ECHO_SESSION", created.pop())
+        self.wait_for_icmp_counter_name_map_fields(expected_fields, present=False)
+
     def test_addUpdateRemoveIcmpEchoSession(self, dvs):
         self.setup_db(dvs)
 
@@ -224,7 +315,6 @@ class TestIcmpEcho(object):
         keys = self.sdb.get_keys("ICMP_ECHO_SESSION_TABLE")
         assert len(keys) == 0
 
-    @pytest.mark.skip(reason="This test is flaky")
     def test_multipleIcmpEchoSessions(self, dvs):
         self.setup_db(dvs)
 

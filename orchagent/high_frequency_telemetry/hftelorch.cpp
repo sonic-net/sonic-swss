@@ -20,8 +20,6 @@
 using namespace std;
 using namespace swss;
 
-#define CONSTANTS_FILE "/et/sonic/constants.yml"
-
 const unordered_map<string, sai_object_type_t> HFTelOrch::SUPPORT_COUNTER_TABLES = {
     {COUNTERS_PORT_NAME_MAP, SAI_OBJECT_TYPE_PORT},
     {COUNTERS_BUFFER_POOL_NAME_MAP, SAI_OBJECT_TYPE_BUFFER_POOL},
@@ -78,14 +76,16 @@ HFTelOrch::HFTelOrch(
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
 
-    m_asic_notification_consumer = make_shared<NotificationConsumer>(&m_asic_db, "NOTIFICATIONS");
-    auto notifier = new Notifier(m_asic_notification_consumer.get(), this, "TAM_TEL_TYPE_STATE");
+    m_asic_notification_consumer = new NotificationConsumer(&m_asic_db, "NOTIFICATIONS");
+    auto notifier = new Notifier(m_asic_notification_consumer, this, "TAM_TEL_TYPE_STATE");
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_tam_tel_type_config_change;
     if (sai_switch_api->set_switch_attribute(gSwitchId, &attr) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY");
+        delete notifier;
+        m_asic_notification_consumer = nullptr;
         throw runtime_error("HFTelOrch initialization failure (failed to set tam tel type config change notify)");
     }
 
@@ -110,23 +110,23 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     auto counter_itr = HFTelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
     if (counter_itr == HFTelOrch::SUPPORT_COUNTER_TABLES.end())
     {
-        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name);
+        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name.c_str());
         return;
     }
 
     SWSS_LOG_NOTICE("The counter table %s is updated, operation %d, object %s",
-                    msg.m_table_name,
+                    msg.m_table_name.c_str(),
                     msg.m_operation,
-                    msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name);
+                    msg.m_counter_name.c_str());
 
     // Update the local cache
     if (msg.m_operation == CounterNameMapUpdater::SET)
     {
-        m_counter_name_cache[counter_itr->second][msg.m_set.m_counter_name] = msg.m_set.m_oid;
+        m_counter_name_cache[counter_itr->second][msg.m_counter_name] = msg.m_oid;
     }
     else if (msg.m_operation == CounterNameMapUpdater::DEL)
     {
-        m_counter_name_cache[counter_itr->second].erase(msg.m_del.m_counter_name);
+        m_counter_name_cache[counter_itr->second].erase(msg.m_counter_name);
     }
 
     // Update the profile
@@ -138,24 +138,30 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     for (auto profile_itr = type_itr->second.begin(); profile_itr != type_itr->second.end(); profile_itr++)
     {
         auto profile = *profile_itr;
-        const char *counter_name = msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name;
+        const auto &counter_name = msg.m_counter_name;
 
         if (!profile->canBeUpdated(counter_itr->second))
         {
             // TODO: Here is a potential issue, we might need to retry the task.
             // Because the Syncd is generating the configuration(template),
             // we cannot update the monitor objects at this time.
-            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
+            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name.c_str());
             continue;
         }
 
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(counter_itr->second, counter_name, msg.m_set.m_oid);
+            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+            {
+                continue;
+            }
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(counter_itr->second, counter_name);
+            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+            {
+                continue;
+            }
         }
         else
         {
@@ -173,8 +179,96 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
     stats_st_capability.count = 0;
     stats_st_capability.list = nullptr;
     sai_status_t status = sai_query_stats_st_capability(switch_id, SAI_OBJECT_TYPE_PORT, &stats_st_capability);
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_NOTICE("Streaming stats not supported, HFTel disabled");
+        return false;
+    }
 
-    return status == SAI_STATUS_SUCCESS || status == SAI_STATUS_BUFFER_OVERFLOW;
+    struct { sai_object_type_t obj; sai_attr_id_t attr; bool needCreate; bool needSet; const char *name; } attrChecks[] = {
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_SRC_IP,       true, false, "SAI_TAM_COLLECTOR_ATTR_SRC_IP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_DST_IP,       true, false, "SAI_TAM_COLLECTOR_ATTR_DST_IP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_TRANSPORT,    true, false, "SAI_TAM_COLLECTOR_ATTR_TRANSPORT"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_LOCALHOST,    true, false, "SAI_TAM_COLLECTOR_ATTR_LOCALHOST"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP,  true, false, "SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_DSCP_VALUE,   true, false, "SAI_TAM_COLLECTOR_ATTR_DSCP_VALUE"},
+        {SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY, false, true, "SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY"},
+        {SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_TAM_OBJECT_ID,                     false, true, "SAI_SWITCH_ATTR_TAM_OBJECT_ID"},
+    };
+
+    for (const auto &chk : attrChecks)
+    {
+        sai_attr_capability_t capability = {};
+        status = sai_query_attribute_capability(switch_id, chk.obj, chk.attr, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s capability query failed, HFTel disabled", chk.name);
+            return false;
+        }
+
+        if (chk.needCreate && !capability.create_implemented)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s create not supported, HFTel disabled", chk.name);
+            return false;
+        }
+
+        if (chk.needSet && !capability.set_implemented)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s set not supported, HFTel disabled", chk.name);
+            return false;
+        }
+    }
+
+    struct { sai_object_type_t obj; sai_attr_id_t attr; int32_t val; const char *valName; } enumChecks[] = {
+        {SAI_OBJECT_TYPE_TAM_TRANSPORT,
+            SAI_TAM_TRANSPORT_ATTR_TRANSPORT_TYPE,
+            SAI_TAM_TRANSPORT_TYPE_NONE,
+            "SAI_TAM_TRANSPORT_TYPE_NONE"},
+        {SAI_OBJECT_TYPE_TAM,
+            SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST,
+            SAI_TAM_BIND_POINT_TYPE_SWITCH,
+            "SAI_TAM_BIND_POINT_TYPE_SWITCH"},
+    };
+
+    for (const auto &chk : enumChecks)
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(chk.obj, chk.attr);
+        if (!meta || (!meta->isenum && !meta->isenumlist))
+        {
+            SWSS_LOG_NOTICE("HFTel: %s is not an enum attribute, HFTel disabled", chk.valName);
+            return false;
+        }
+
+        std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(valuesList.size());
+        values.list = valuesList.data();
+
+        status = sai_query_attribute_enum_values_capability(switch_id, chk.obj, chk.attr, &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("HFTel: enum capability query for %s failed, HFTel disabled", chk.valName);
+            return false;
+        }
+
+        bool found = false;
+        for (uint32_t i = 0; i < values.count; i++)
+        {
+            if (values.list[i] == chk.val)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SWSS_LOG_NOTICE("HFTel: enum value %s not supported, HFTel disabled", chk.valName);
+            return false;
+        }
+    }
+
+    return true;
 }
 
 task_process_status HFTelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)
@@ -402,7 +496,7 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
     std::string data;
     std::vector<swss::FieldValueTuple> values;
 
-    if (&consumer != m_asic_notification_consumer.get())
+    if (&consumer != m_asic_notification_consumer)
     {
         SWSS_LOG_DEBUG("Is not TAM notification");
         return;
@@ -583,10 +677,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     strncpy(attr.value.chardata, genl_group.c_str(), sizeof(attr.value.chardata));
     attrs.push_back(attr);
 
-    sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
-
-    // // Create hostif trap group object
-    // sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 
     // Create hostif user defined trap object
     attrs.clear();
@@ -595,11 +692,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
     attrs.push_back(attr);
 
-    // attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-    // attr.value.oid = m_sai_hostif_trap_group_obj;
-    // attrs.push_back(attr);
-
-    sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 
     // Create hostif table entry object
     attrs.clear();
@@ -620,7 +719,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.oid = m_sai_hostif_obj;
     attrs.push_back(attr);
 
-    sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 }
 
 void HFTelOrch::deleteNetlinkChannel()

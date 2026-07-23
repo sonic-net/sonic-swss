@@ -13,6 +13,8 @@
 #include "crmorch.h"
 #include "sai_serialize.h"
 #include "directory.h"
+#include "saihelper.h"
+#include "policerorch.h"
 
 using namespace std;
 using namespace swss;
@@ -31,6 +33,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -85,6 +88,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
     { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
     { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP},
+    { MATCH_INNER_SRC_IPV6,    SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6},
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -110,7 +114,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -261,7 +266,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             },
             {
@@ -279,7 +285,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             },
             {
@@ -522,6 +529,37 @@ static map<AclObjectStatus, string> aclObjectStatusLookup =
     {AclObjectStatus::PENDING_CREATION, "Pending creation"},
     {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
+
+static bool isSubnetNotation(const string& value)
+{
+    return value.find('/') != string::npos;
+}
+
+static bool parseIpv4Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (!ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v4 type");
+        return false;
+    }
+    matchData.data.ip4 = ip.getIp().getV4Addr();
+    matchData.mask.ip4 = ip.getMask().getV4Addr();
+    return true;
+}
+
+static bool parseIpv6Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v6 type");
+        return false;
+    }
+    memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
+    memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+    return true;
+}
 
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
 {
@@ -938,6 +976,17 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     matchData.enable = true;
 
+    // *_MASK fields have no direct SAI entry attribute mapping; they are stored
+    // here and combined with the companion IP field in processPendingIpFields().
+    // This check must come before the aclMatchLookup guard below.
+    if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK ||
+        attr_name == MATCH_SRC_IPV6_MASK || attr_name == MATCH_DST_IPV6_MASK)
+    {
+        string ip_field = attr_name.substr(0, attr_name.length() - 5);
+        m_pendingIpMasks[ip_field] = attr_value;
+        return true;
+    }
+
     try
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
@@ -1097,26 +1146,41 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
-            IpPrefix ip(attr_value);
-
-            if (!ip.isV4())
+            if (isSubnetNotation(attr_value))
             {
-                SWSS_LOG_ERROR("IP type is not v4 type");
-                return false;
+                if (!parseIpv4Subnet(attr_value, matchData))
+                {
+                    return false;
+                }
             }
-            matchData.data.ip4 = ip.getIp().getV4Addr();
-            matchData.mask.ip4 = ip.getMask().getV4Addr();
+            else
+            {
+                // Intentional deferred validation: a plain IP address (no CIDR) may be paired
+                // with a separate *_MASK field. Both are stored here and combined in
+                // processPendingIpFields(). If no *_MASK field is provided, processPendingIpFields()
+                // applies a host mask (all-ones), making it equivalent to an exact-host match.
+                // Note: INNER_SRC_IP has no *_MASK counterpart and does not support non-CIDR
+                // notation in practice, but a plain address is accepted here and treated as a
+                // host match (same as passing /32) for consistency.
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
         }
-        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
         {
-            IpPrefix ip(attr_value);
-            if (ip.isV4())
+            if (isSubnetNotation(attr_value))
             {
-                SWSS_LOG_ERROR("IP type is not v6 type");
-                return false;
+                if (!parseIpv6Subnet(attr_value, matchData))
+                {
+                    return false;
+                }
             }
-            memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+            else
+            {
+                // Intentional deferred validation: see comment above for IPv4 case.
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
@@ -1251,8 +1315,97 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
     return true;
 }
 
+bool AclRule::processPendingIpFields()
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& entry : m_pendingIpFields)
+    {
+        const string& field = entry.first;
+        const string& addr  = entry.second;
+
+        sai_acl_field_data_t matchData{};
+        matchData.enable = true;
+
+        bool isV6 = (field == MATCH_SRC_IPV6 || field == MATCH_DST_IPV6);
+
+        try
+        {
+            auto maskIt = m_pendingIpMasks.find(field);
+
+            if (!isV6)
+            {
+                IpAddress ip(addr);
+                matchData.data.ip4 = ip.getV4Addr();
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    matchData.mask.ip4 = mask.getV4Addr();
+                    m_pendingIpMasks.erase(maskIt);
+                }
+                else
+                {
+                    matchData.mask.ip4 = 0xFFFFFFFF;
+                }
+            }
+            else
+            {
+                IpAddress ip(addr);
+                memcpy(matchData.data.ip6, ip.getV6Addr(), 16);
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    memcpy(matchData.mask.ip6, mask.getV6Addr(), 16);
+                    m_pendingIpMasks.erase(maskIt);
+                }
+                else
+                {
+                    memset(matchData.mask.ip6, 0xFF, 16);
+                }
+            }
+        }
+        catch (exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to process IP field %s=%s: %s", field.c_str(), addr.c_str(), e.what());
+            return false;
+        }
+
+        if (!setMatch(aclMatchLookup[field], matchData))
+        {
+            return false;
+        }
+    }
+
+    m_pendingIpFields.clear();
+
+    // Any masks still in the map were not consumed: either the paired IP field was absent,
+    // or it was given in CIDR notation (which bypasses m_pendingIpFields). Both are invalid
+    // because the resulting rule would silently match differently from what was configured.
+    for (const auto& entry : m_pendingIpMasks)
+    {
+        SWSS_LOG_ERROR("IP mask field %s_MASK has no paired plain-address %s field; rule rejected",
+            entry.first.c_str(), entry.first.c_str());
+    }
+    if (!m_pendingIpMasks.empty())
+    {
+        m_pendingIpMasks.clear();
+        return false;
+    }
+    return true;
+}
+
 bool AclRule::create()
 {
+    // processPendingIpFields() is also called in doAclRuleTask/updateAclRule before validate(),
+    // because validate() checks m_matches and IP fields must be moved there first.
+    // This call handles the addAclRule() code path which bypasses doAclRuleTask entirely
+    // (e.g. used by other orchs and unit tests). When coming via doAclRuleTask the maps
+    // are already cleared, so this is a no-op on that path.
+    if (!processPendingIpFields())
+    {
+        return false;
+    }
+
     if (m_createCounter && !createCounter())
     {
         return false;
@@ -1339,6 +1492,7 @@ bool AclRule::createRule()
     }
 
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
+    m_lastSaiStatus = status;
     if (status != SAI_STATUS_SUCCESS)
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
@@ -1709,6 +1863,7 @@ bool AclRule::setMatch(sai_acl_entry_attr_t matchId, sai_acl_field_data_t matchD
 
     if (!m_pTable->validateAclRuleMatch(matchId, *this))
     {
+        m_matches.erase(matchId);
         return false;
     }
 
@@ -1786,6 +1941,11 @@ const vector<AclRangeConfig>& AclRule::getRangeConfig() const
 bool AclRule::getCreateCounter() const
 {
     return m_createCounter;
+}
+
+uint32_t AclRule::getPriority() const
+{
+    return m_priority;
 }
 
 shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
@@ -2060,6 +2220,26 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    // SET_POLICER attaches a policer (by name -> OID) to the ACL entry.
+    else if (attr_name == ACTION_POLICER_ACTION)
+    {
+        if (_attr_value.empty())
+        {
+            SWSS_LOG_ERROR("Empty policer name for action %s in rule %s", attr_name.c_str(), m_id.c_str());
+            return false;
+        }
+
+        sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+        if (!gPolicerOrch->getPolicerOid(_attr_value, policer_oid))
+        {
+            SWSS_LOG_ERROR("Failed to add policer action to rule %s: policer %s does not exist",
+                    m_id.c_str(), _attr_value.c_str());
+            return false;
+        }
+
+        actionData.parameter.oid = policer_oid;
+        m_policerName = _attr_value;
+    }
     else
     {
         return false;
@@ -2165,7 +2345,27 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
+    {
+        return false;
+    }
+
+    // A packet rule must carry at least one action.
+    if (m_actions.empty())
+    {
+        return false;
+    }
+
+    size_t nonPolicerActions = 0;
+    for (const auto& action : m_actions)
+    {
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        {
+            nonPolicerActions++;
+        }
+    }
+
+    if (nonPolicerActions > 1)
     {
         return false;
     }
@@ -2176,6 +2376,57 @@ bool AclRulePacket::validate()
 void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
+}
+
+bool AclRulePacket::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    // When the rule binds a policer, take the policer reference BEFORE creating the
+    // SAI ACL entry (same ordering as AclRuleMirror's session policer). This way a
+    // refcount failure -- only reachable if the policer disappeared after validate()
+    // -- leaves nothing to unwind. m_policerRefHeld keeps the count balanced across
+    // recreate cycles.
+    if (!m_policerName.empty() && !m_policerRefHeld)
+    {
+        if (!gPolicerOrch->increaseRefCount(m_policerName))
+        {
+            SWSS_LOG_ERROR("Failed to increase reference count for policer %s bound by rule %s",
+                    m_policerName.c_str(), m_id.c_str());
+            return false;
+        }
+        m_policerRefHeld = true;
+    }
+
+    if (!AclRule::createRule())
+    {
+        if (m_policerRefHeld)
+        {
+            gPolicerOrch->decreaseRefCount(m_policerName);
+            m_policerRefHeld = false;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePacket::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (m_policerRefHeld)
+    {
+        gPolicerOrch->decreaseRefCount(m_policerName);
+        m_policerRefHeld = false;
+    }
+
+    return true;
 }
 
 AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
@@ -2229,7 +2480,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
  {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
     {
         return false;
     }
@@ -3658,6 +3909,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
     }
+
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
     vector<FieldValueTuple> fvVector;
@@ -4211,6 +4463,11 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
     SWSS_LOG_ENTER();
 
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
+
+    /* Initialize retry caches for rule consumers so that resource-exhaustion
+     * failures can be parked and retried only when resources are freed. */
+    createRetryCache(CFG_ACL_RULE_TABLE_NAME);
+    createRetryCache(APP_ACL_RULE_TABLE_NAME);
 
     if (m_dTelOrch)
     {
@@ -5171,6 +5428,11 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> updatedRule)
         return false;
     }
 
+    if (!updatedRule->processPendingIpFields())
+    {
+        return false;
+    }
+
     if (!m_AclTables[tableOid].updateRule(updatedRule))
     {
         return false;
@@ -5512,17 +5774,178 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Structure to hold rule information with priority for sorting
+    struct RuleEntry {
+        SyncMap::iterator iter;
+        string key;
+        string table_id;
+        string rule_id;
+        string op;
+        uint32_t priority;
+        const KeyOpFieldsValuesTuple* tuple;
+    };
+
+    // Collect all rules and extract their priorities
+    vector<RuleEntry> setRules;
+    vector<RuleEntry> delRules;
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
+        const KeyOpFieldsValuesTuple* data_ptr = &(it->second);
+        string key = kfvKey(*data_ptr);
         size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
-        string op = kfvOp(t);
+        string op = kfvOp(*data_ptr);
 
-        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
+        RuleEntry entry;
+        entry.iter = it;
+        entry.key = key;
+        entry.table_id = table_id;
+        entry.rule_id = rule_id;
+        entry.op = op;
+        entry.tuple = data_ptr;
+        entry.priority = 0;
+
+        // Extract priority based on operation type
+        if (op == SET_COMMAND)
+        {
+            bool invalidPriority = false;
+            // For SET operations, extract priority from field values
+            for (const auto& fv : kfvFieldsValues(*data_ptr))
+            {
+                string attr_name = to_upper(fvField(fv));
+                if (attr_name == "PRIORITY")
+                {
+                    const string &prioStr = fvValue(fv);
+                    try
+                    {
+                        size_t idx = 0;
+                        unsigned long prio = stoul(prioStr, &idx, 10);
+                        if (idx != prioStr.length() || prio > UINT32_MAX)
+                        {
+                            SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s",
+                                         prioStr.c_str(), rule_id.c_str(), table_id.c_str());
+                            invalidPriority = true;
+                        }
+                        else
+                        {
+                            entry.priority = static_cast<uint32_t>(prio);
+                        }
+                    }
+                    catch (const std::exception &e)
+                    {
+                        SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s: %s",
+                                     prioStr.c_str(), rule_id.c_str(), table_id.c_str(), e.what());
+                        invalidPriority = true;
+                    }
+                    break;
+                }
+            }
+            if (invalidPriority)
+            {
+                // Treat invalid priority as invalid entry: skip processing this rule
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            setRules.push_back(entry);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // Redis DEL operations do not carry field values, only the key is present.
+            // Look up priority from existing in-memory rule map
+            auto existingRule = getAclRule(table_id, rule_id);
+            if (existingRule)
+            {
+                entry.priority = existingRule->getPriority();
+            }
+            delRules.push_back(entry);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s for ACL rule %s", op.c_str(), key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        it++;
+    }
+
+    // Optimization: Sort rules by priority to minimize hardware TCAM shifting.
+    // This priority-based sorting is specifically optimized for bulk-update scenarios.
+    // In low-load scenarios with few entries, the shifting overhead is minimal, but in high-scale
+    // updates, this reduces programming time by ensuring rules are sent to SAI in priority order.
+    // Sort SET rules by priority (higher priority value = higher priority, so descending order)
+    sort(setRules.begin(), setRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority > b.priority;
+    });
+
+    // Sort DEL rules by priority (lower priority values deleted first, so ascending order)
+    sort(delRules.begin(), delRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority < b.priority;
+    });
+
+    // Note: All DEL operations are processed before SET operations
+    // to facilitate priority-based sorting and ensure correct rule re-programming.
+    //
+    // Safety invariant: the RuleEntry objects below hold iterators (entry.iter) into
+    // consumer.m_toSync that were captured during the collection loop above. This is
+    // safe because m_toSync is a std::map: erasing one element only invalidates the
+    // iterator to that element, leaving all other captured iterators valid. m_toSync
+    // is also keyed by rule key and holds a single op per key, so no two RuleEntry
+    // objects ever reference the same map node. Erasing one entry here therefore never
+    // invalidates the iterator of any other entry we still have to process.
+    for (auto& entry : delRules)
+    {
+        it = entry.iter;
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing DEL in ascending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
+
+        if (table_id.empty())
+        {
+            SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
+            consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
+        if (removeAclRule(table_id, rule_id))
+        {
+            removeAclRuleStatus(table_id, rule_id);
+            consumer.m_toSync.erase(it);
+
+            /* Notify retry cache that resources may have been freed for this table,
+             * but only if the rule actually existed (i.e., ASIC resources were freed).
+             * This lets rules parked on SAI resource exhaustion be retried. */
+            if (ruleExisted)
+            {
+                notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+            }
+        }
+        else
+        {
+            // Mark pending removal status if removeAclRule returns error
+            setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
+        }
+    }
+
+    // Process SET rules in priority order
+    for (auto& entry : setRules)
+    {
+        it = entry.iter;
+        const KeyOpFieldsValuesTuple& t = *(entry.tuple);
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing SET in descending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
 
         if (table_id.empty())
         {
@@ -5563,6 +5986,29 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 type = table_id == m_mirrorTableId[stage] ? TABLE_TYPE_MIRROR : TABLE_TYPE_MIRRORV6;
             }
 
+            /* If the rule references a policer that has not been created yet,
+             * defer it and rely on the Consumer m_toSync retry (same pattern as
+             * "Wait for ACL table" above). This covers the case where the
+             * POLICER table is synced after the ACL_RULE table. */
+            bool waitForPolicer = false;
+            for (const auto& itr : kfvFieldsValues(t))
+            {
+                if (to_upper(fvField(itr)) == ACTION_POLICER_ACTION)
+                {
+                    if (!fvValue(itr).empty() && !gPolicerOrch->policerExists(fvValue(itr)))
+                    {
+                        SWSS_LOG_INFO("Wait for policer %s to be created for ACL rule %s",
+                                fvValue(itr).c_str(), key.c_str());
+                        waitForPolicer = true;
+                    }
+                    break;
+                }
+            }
+            if (waitForPolicer)
+            {
+                it++;
+                continue;
+            }
 
             try
             {
@@ -5592,7 +6038,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasIPV4 = true;
                 }
-                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
                 {
                     bHasIPV6 = true;
                 }
@@ -5654,12 +6100,33 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
 
             // validate and create ACL rule
-            if (bAllAttributesOk && newRule->validate())
+            if (bAllAttributesOk && newRule->processPendingIpFields() && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
+                }
+                else if (isSaiStatusResourceFull(newRule->getLastSaiStatus()))
+                {
+                    /* Park resource-exhaustion failures in the retry cache.
+                     * They will be re-queued when resources are freed (i.e.,
+                     * when an ACL rule is successfully removed from this table). */
+                    SWSS_LOG_WARN("ACL rule %s in table %s failed due to resource exhaustion, parking for retry",
+                            rule_id.c_str(), table_id.c_str());
+                    auto cst = make_constraint(RETRY_CST_SAI_RESOURCE, table_id);
+                    if (consumer.addToRetry(it->second, cst))
+                    {
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to park ACL rule %s in table %s in retry cache",
+                                rule_id.c_str(), table_id.c_str());
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it++;
+                    }
                 }
                 else
                 {
@@ -5674,25 +6141,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeAclRule(table_id, rule_id))
-            {
-                removeAclRuleStatus(table_id, rule_id);
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                // Mark pending removal status if removeAclRule returns error
-                setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
-                it++;
-            }
-        }
-        else
-        {
-            it = consumer.m_toSync.erase(it);
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
     }
 }

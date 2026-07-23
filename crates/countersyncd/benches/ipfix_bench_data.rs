@@ -83,7 +83,7 @@ impl PreparedDataset {
 
         let template_messages = key_to_templates
             .into_iter()
-            .map(|(key, bytes)| IPFixTemplatesMessage::new(key, Arc::new(bytes), None))
+            .map(|(key, bytes)| IPFixTemplatesMessage::new(key, Arc::new(bytes), None, None))
             .collect();
 
         Self {

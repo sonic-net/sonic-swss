@@ -63,6 +63,7 @@ jobs:
       ls -A1 | xargs -I{} sudo rm -rf {}
     displayName: "Clean workspace"
   - checkout: self
+  - template: merge-target-branch.yml
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.docker_sonic_vs_name }}
@@ -89,10 +90,8 @@ jobs:
       path: $(Build.ArtifactStagingDirectory)/download
       artifact: common-lib
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb
-        target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb
-        target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
     displayName: "Download libyang from common lib"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -119,7 +118,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker lcov_cobertura
+      sudo uv pip install --system pytest flaky exabgp docker lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
@@ -129,15 +128,27 @@ jobs:
           libzmq5 \
           libhiredis0.14 \
           libpcre3-dev \
-          python3-redis
+          python3-redis \
+          parallel
 
       sudo .azure-pipelines/build_and_install_module.sh
 
       # Install libyang packages from downloaded artifacts
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-*_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang_1.0*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-cpp_*.deb \
-                   $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/python3-yang_*.deb
+      sudo apt-get  install -y \
+        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang3_*.deb \
+        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
+
+      # python3-libyang's bookworm .deb pins python3 (>= 3.11~, << 3.12)
+      # and the sonictest pool host runs Ubuntu 22.04 (python 3.10), so the
+      # .deb won't install regardless of resolver. Build the Python bindings
+      # from PyPI instead — same fallback as the inline amd64/ubuntu-22.04
+      # job. --no-build-isolation + apt's python3-cffi sidesteps a cffi
+      # version-mismatch Exception that jammy's pip 22.0.2 build-isolation
+      # env otherwise triggers. --no-build-isolation needs wheel present
+      # in the environment to provide bdist_wheel, so install it first.
+      sudo apt-get install -y python3-cffi python3-dev
+      sudo uv pip install --system wheel
+      sudo uv pip install --system --no-build-isolation 'libyang==3.3.0'
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
@@ -155,7 +166,7 @@ jobs:
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      params=""
+      params="--force-flaky"
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         cp $(Build.ArtifactStagingDirectory)/download/coverage.info ./
         cp $(Build.ArtifactStagingDirectory)/download/coverage.xml ./
@@ -176,10 +187,12 @@ jobs:
       fi
       # Run the tests in parallel and retry
       retry=3
+      parallel=8
       IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
+      echo $all_tests | xargs -n 1 | parallel -j${parallel} sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh \'"$IMAGE_NAME"\' \'"$params"\' "{}" $retry
       single_asic_voq_tests="test_portchannel.py test_neighbor.py test_route.py"
-      echo $single_asic_voq_tests | xargs -n 1 | xargs -P 3 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "--force-recreate-dvs --switch-mode=single_asic_voq_fs" "TEST_MODULE" 3
+      parallel=3
+      echo $single_asic_voq_tests | xargs -n 1 | parallel -j${parallel} sudo ./run-tests.sh \'"$IMAGE_NAME"\' \'"--force-flaky --force-recreate-dvs --switch-mode=single_asic_voq_fs"\' "{}" $retry
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"

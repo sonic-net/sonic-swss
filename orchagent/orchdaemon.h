@@ -1,6 +1,8 @@
 #ifndef SWSS_ORCHDAEMON_H
 #define SWSS_ORCHDAEMON_H
 
+#include <unistd.h>
+
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "consumertable.h"
@@ -29,6 +31,8 @@
 #include "crmorch.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
+#include "evpnmhorch.h"
+#include "l2nhgorch.h"
 #include "vnetorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
@@ -56,10 +60,12 @@
 #include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
 #include "dash/dashhaorch.h"
+#include "dash/dashhafloworch.h"
 #include "dash/dashmeterorch.h"
 #include "dash/dashportmaporch.h"
 #include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
+#include "shlorch.h"
 
 using namespace swss;
 
@@ -116,6 +122,10 @@ protected:
     DBConnector *m_chassisAppDb;
     ZmqServer *m_zmqServer;
 
+    // Use a dedicated zmq server for p4Orch.
+    const std::string m_p4OrchZmqServerEp = "ipc:///zmq_swss/p4orch_zmq_swss_ep";
+    ZmqServer *m_p4OrchZmqServer = nullptr;
+
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;
     bool m_fabricQueueStatEnabled = true;
@@ -151,4 +161,15 @@ private:
     DBConnector *m_dpu_appDb;
     DBConnector *m_dpu_appstateDb;
 };
+
+/*
+ * If a graceful shutdown was requested (SIGTERM/SIGINT set
+ * gOrchShutdownRequested and OrchDaemon::start() returned), drain the async
+ * swss recorder so pending records are flushed and terminate the process via
+ * exit_fn without running the OrchDaemon destructor chain. No-op when no
+ * shutdown was requested. exit_fn is injectable for unit tests; production
+ * callers use the default _exit.
+ */
+void exit_if_graceful_shutdown_requested(void (*exit_fn)(int) = _exit);
+
 #endif /* SWSS_ORCHDAEMON_H */

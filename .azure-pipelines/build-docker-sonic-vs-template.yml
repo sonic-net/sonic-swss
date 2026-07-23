@@ -24,6 +24,10 @@ parameters:
 - name: debian_version
   type: string
 
+- name: vpp_artifact_name
+  type: string
+  default: 'vpp-bookworm'
+
 - name: artifact_name
   type: string
 
@@ -75,6 +79,8 @@ jobs:
     vmImage: 'ubuntu-22.04'
 
   steps:
+  - checkout: self
+  - template: merge-target-branch.yml
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -152,9 +158,9 @@ jobs:
       source: specific
       project: build
       pipeline: sonic-net.sonic-platform-vpp
-      artifact: vpp
+      artifact: ${{ parameters.vpp_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/main'
+      runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic platform-vpp deb packages"

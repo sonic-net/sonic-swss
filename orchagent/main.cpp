@@ -50,8 +50,7 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
-bool gOrchUnhealthy = false;
-string gSaiErrorString;
+extern volatile sig_atomic_t gOrchShutdownRequested;
 
 extern size_t gMaxBulkSize;
 
@@ -81,6 +80,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = false;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
@@ -91,7 +91,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -104,6 +104,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
+    cout << "    -A: enable async swss.rec recording and async route state publish path" << endl;
     cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
@@ -116,7 +117,6 @@ void usage()
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
-    cout << "    -D Delay in seconds before flex counter processing begins after orchagent startup (default 0)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -128,6 +128,61 @@ void sighup_handler(int signo)
     Recorder::Instance().swss.setRotate(true);
     Recorder::Instance().sairedis.setRotate(true);
     Recorder::Instance().respub.setRotate(true);
+}
+
+void fatal_signal_handler(int signo)
+{
+    /*
+     * Do not use SWSS logging here since it takes locks. Dump only the
+     * async recorder counters with async-signal-safe write() and then
+     * re-raise the original signal so the default fatal action can produce
+     * the expected core dump.
+     */
+    dumpAsyncSwssRecorderSignalSafeStats(STDERR_FILENO, signo);
+
+    /*
+     * The handler is registered with SA_RESETHAND, so only the handled
+     * signal remains blocked here. Unblock it and re-raise so the default
+     * fatal action runs instead of short-circuiting through _exit().
+     */
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, signo);
+    sigprocmask(SIG_UNBLOCK, &sigset, nullptr);
+    kill(getpid(), signo);
+}
+
+void graceful_shutdown_signal_handler(int signo)
+{
+    gOrchShutdownRequested = signo;
+}
+
+void register_fatal_signal_handler(int signo)
+{
+    struct sigaction sigact = {};
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_handler = fatal_signal_handler;
+    sigact.sa_flags = SA_RESETHAND;
+
+    if (sigaction(signo, &sigact, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to setup fatal signal handler for signal %d", signo);
+        exit(1);
+    }
+}
+
+void register_graceful_shutdown_signal_handler(int signo)
+{
+    struct sigaction sigact = {};
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_handler = graceful_shutdown_signal_handler;
+    sigact.sa_flags = 0;
+
+    if (sigaction(signo, &sigact, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to setup graceful shutdown handler for signal %d", signo);
+        exit(1);
+    }
 }
 
 void syncd_apply_view()
@@ -373,15 +428,28 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
+
+    /*
+     * Construct the Recorder singleton before registering fatal handlers so
+     * fatal_signal_handler() never triggers function-local static initialization.
+     */
+    (void)Recorder::Instance();
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
         SWSS_LOG_ERROR("failed to setup SIGHUP action");
         exit(1);
     }
+
+    register_fatal_signal_handler(SIGABRT);
+    register_fatal_signal_handler(SIGSEGV);
+    register_fatal_signal_handler(SIGBUS);
+    register_fatal_signal_handler(SIGILL);
+    register_fatal_signal_handler(SIGFPE);
+    register_graceful_shutdown_signal_handler(SIGTERM);
+    register_graceful_shutdown_signal_handler(SIGINT);
 
     int opt;
     sai_status_t status;
@@ -400,7 +468,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RD:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RM")) != -1)
     {
         switch (opt)
         {
@@ -432,6 +500,11 @@ int main(int argc, char **argv)
                 usage();
                 exit(EXIT_FAILURE);
             }
+            break;
+        case 'A':
+            Recorder::Instance().swss.setAsync(true);
+            gRouteStateAsyncPublish = true;
+            SWSS_LOG_NOTICE("Async swss recorder and async route state publish enabled");
             break;
         case 'd':
             record_location = optarg;
@@ -521,7 +594,6 @@ int main(int argc, char **argv)
          case 'M':
             macsec_post_enabled = true;
             break;
-        case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -535,6 +607,11 @@ int main(int argc, char **argv)
     );
     Recorder::Instance().sairedis.setLocation(record_location);
     Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
+
+    /* Initialize SAI failure health table before SAI init so all
+     * handleSaiFailure() paths can persist status to STATE_DB. */
+    initSaiFailureTable();
+    setSaiFailureStatus(false);
 
     /* Initialize sairedis */
     initSaiApi();
@@ -965,6 +1042,22 @@ int main(int argc, char **argv)
     }
 
     orchDaemon->start(heartBeatInterval);
+
+    /*
+     * On SIGTERM/SIGINT the signal handler sets gOrchShutdownRequested and
+     * start() returns. Do not fall through to `return 0;`: running ~OrchDaemon
+     * and its member destructors is unsafe here. FlexCounterManager destruction
+     * issues SAI calls (stopFlexCounterPolling -> set_switch_attribute) that
+     * round-trip through sairedis's ZMQ channel and park the main thread in
+     * zmq_poll while libzmq I/O threads are still alive; orchs torn down earlier
+     * in the reverse-order loop have already freed buffers those threads still
+     * reference, corrupting the heap.
+     *
+     * Instead, drain the async swss recorder so pending records flush, then
+     * _exit() to let the kernel reclaim the rest of the process without the
+     * destructor chain.
+     */
+    exit_if_graceful_shutdown_requested();
 
     return 0;
 }

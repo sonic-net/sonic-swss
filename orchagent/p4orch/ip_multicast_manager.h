@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dbconnector.h"
 #include "ipaddress.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
@@ -12,6 +13,7 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
@@ -93,6 +95,9 @@ class IpMulticastManager : public ObjectManagerInterface {
   // Creates a router interface object to be used by the RPF group member.
   ReturnCode createRouterInterfaceForDefaultRpfGroupMember();
 
+  // Deletes the default RPF group.
+  ReturnCode deleteDefaultRpfGroup();
+
   // Creates a list of IP multicast entries.
   std::vector<ReturnCode> createIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
@@ -123,6 +128,8 @@ class IpMulticastManager : public ObjectManagerInterface {
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
+  swss::DBConnector m_asic_db;
+  swss::Table m_asic_state_table;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
