@@ -303,8 +303,9 @@ class TestPfcwdFunc(object):
         deleteEntry("GLOBAL"). Before the fix, getPort("GLOBAL") failed silently,
         leaving a default-constructed Port with empty m_queue_ids. unregisterFromWdDb()
         then accessed m_queue_ids[0] on the empty vector (null data pointer), causing
-        SIGSEGV at address 0. After the fix, deleteEntry() checks the getPort() return
-        value and returns task_invalid_entry cleanly for non-port keys.
+        SIGSEGV at address 0. After the fix, deleteEntry() short-circuits the GLOBAL
+        key (returning task_success) before the port lookup, so the null-deref path is
+        never reached; genuinely invalid port keys still return task_invalid_entry.
         """
         storm_queue = [3]
         try:
