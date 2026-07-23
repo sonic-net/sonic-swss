@@ -419,6 +419,9 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
             m_appCoppTable.del(it);
         }
     }
+
+    /* Reconcile STATE_DB COPP_TRAP_TABLE: remove stale entries not in m_coppTrapConfMap */
+    cleanupStateDb();
 }
 
 void CoppMgr::setCoppGroupStateOk(string alias)
@@ -449,6 +452,31 @@ void CoppMgr::delCoppTrapStateOk(string alias)
 {
     m_stateCoppTrapTable.del(alias);
     SWSS_LOG_NOTICE("Delete %s(ok) from state db", alias.c_str());
+}
+
+void CoppMgr::cleanupStateDb()
+{
+    SWSS_LOG_ENTER();
+
+    // Reconcile STATE_COPP_TRAP_TABLE: remove only stale entries not in m_coppTrapConfMap
+    vector<string> state_trap_keys;
+    m_stateCoppTrapTable.getKeys(state_trap_keys);
+    SWSS_LOG_DEBUG("cleanupStateDb: Found %zu STATE_DB COPP_TRAP_TABLE entries",
+                    state_trap_keys.size());
+
+    size_t removed_count = 0;
+    for (const auto& key : state_trap_keys)
+    {
+        // Only delete if this trap is NOT in the current configuration
+        if (m_coppTrapConfMap.find(key) == m_coppTrapConfMap.end())
+        {
+            m_stateCoppTrapTable.del(key);
+            removed_count++;
+            SWSS_LOG_NOTICE("cleanupStateDb: Removed stale STATE_DB COPP trap: %s", key.c_str());
+        }
+    }
+    SWSS_LOG_DEBUG("cleanupStateDb: Removed %zu stale entries, kept %zu valid entries",
+                    removed_count, state_trap_keys.size() - removed_count);
 }
 
 void CoppMgr::addTrapIdsToTrapGroup(string trap_group, string trap_ids)

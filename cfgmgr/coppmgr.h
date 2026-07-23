@@ -93,6 +93,8 @@ private:
     void setCoppGroupStateOk(std::string alias);
     void delCoppGroupStateOk(std::string alias);
 
+    void cleanupStateDb();
+
     void setCoppTrapStateOk(std::string alias);
     void delCoppTrapStateOk(std::string alias);
     void coppGroupGetModifiedFvs(std::string key, std::vector<FieldValueTuple> &trap_group_fvs,
