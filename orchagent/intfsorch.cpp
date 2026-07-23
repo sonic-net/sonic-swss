@@ -1128,6 +1128,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
+            if (macIsExplicit && !mac)
+            {
+                mac = gMacAddress;
+            }
+
             // update mac if it is changed
             if (macIsExplicit && m_syncdIntfses.find(alias) != m_syncdIntfses.end())
             {
