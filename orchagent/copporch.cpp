@@ -7,6 +7,7 @@ extern "C" {
 #include "sai.h"
 #include "copporch.h"
 #include "portsorch.h"
+#include "switchorch.h"
 #include "flexcounterorch.h"
 #include "tokenize.h"
 #include "logger.h"
@@ -30,6 +31,7 @@ extern sai_switch_api_t*    sai_switch_api;
 
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
+extern SwitchOrch*          gSwitchOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
 extern bool                 gTraditionalFlexCounter;
@@ -187,6 +189,21 @@ const vector<sai_hostif_trap_type_t> default_trap_ids = {
 };
 
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
+const uint POLICER_COUNTER_POLLING_INTERVAL_MS = 10000;
+
+// Full set of policer stats we would like to bind. The intersection with what
+// the underlying SAI implementation actually reports as supported is computed
+// at runtime by CoppOrch::getSupportedPolicerStatIds().
+static const std::vector<std::pair<sai_policer_stat_t, const char*>> policer_stat_wishlist = {
+    {SAI_POLICER_STAT_PACKETS,        "SAI_POLICER_STAT_PACKETS"},
+    {SAI_POLICER_STAT_ATTR_BYTES,     "SAI_POLICER_STAT_ATTR_BYTES"},
+    {SAI_POLICER_STAT_GREEN_PACKETS,  "SAI_POLICER_STAT_GREEN_PACKETS"},
+    {SAI_POLICER_STAT_GREEN_BYTES,    "SAI_POLICER_STAT_GREEN_BYTES"},
+    {SAI_POLICER_STAT_YELLOW_PACKETS, "SAI_POLICER_STAT_YELLOW_PACKETS"},
+    {SAI_POLICER_STAT_YELLOW_BYTES,   "SAI_POLICER_STAT_YELLOW_BYTES"},
+    {SAI_POLICER_STAT_RED_PACKETS,    "SAI_POLICER_STAT_RED_PACKETS"},
+    {SAI_POLICER_STAT_RED_BYTES,      "SAI_POLICER_STAT_RED_BYTES"},
+};
 
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
@@ -196,6 +213,8 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
     m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
     m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false),
+    m_policerCounterTable(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_POLICER_NAME_MAP))),
+    m_policer_counter_manager(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, POLICER_COUNTER_POLLING_INTERVAL_MS, false),
     m_trapCapabilityTable(std::unique_ptr<Table>(new Table(m_state_db.get(), STATE_COPP_TRAP_CAPABILITY_TABLE_NAME))),
     m_trapTable(std::unique_ptr<Table>(new Table(m_state_db.get(), STATE_COPP_TRAP_TABLE_NAME)))
 {
@@ -207,6 +226,11 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
 
     /* Query SAI for supported trap IDs and publish to STATE_DB */
     publishTrapIdsCapability();
+
+    /* Probe SAI for policer-stats support and publish a STATE_DB capability flag
+     * that sonic-utilities CLI and sonic-mgmt tests read instead of inferring
+     * support from $platform substrings. */
+    publishPolicerStatsCapability();
 
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
@@ -546,6 +570,8 @@ bool CoppOrch::removePolicer(string trap_group_name)
         return true;
     }
 
+    unbindPolicerCounter(policer_id);
+
     attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_POLICER;
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
@@ -651,6 +677,9 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
 
     SWSS_LOG_NOTICE("Bind policer to trap group %s:", trap_group_name.c_str());
     m_trap_group_policer_map[m_trap_group_map[trap_group_name]] = obj;
+
+    bindPolicerCounter(policer_id, trap_group_name);
+
     return true;
 }
 
@@ -1523,5 +1552,231 @@ void CoppOrch::clearHostIfTrapCounterIdList()
     for (const auto &kv : m_syncdTrapIds)
     {
         unbindTrapCounter(kv.second.trap_obj);
+    }
+}
+
+void CoppOrch::generatePolicerCounterIdList()
+{
+    SWSS_LOG_ENTER();
+
+    if (!isPolicerStatsCapable())
+    {
+        SWSS_LOG_NOTICE("COPP_STATS enabled but SAI does not advertise policer stats; skipping counter generation");
+        return;
+    }
+
+    // Iterate through all trap groups that have policers
+    for (const auto& kv : m_trap_group_policer_map)
+    {
+        sai_object_id_t trap_group_id = kv.first;
+        const policer_object& policer = kv.second;
+
+        if (policer.policer_id == SAI_NULL_OBJECT_ID)
+        {
+            continue;
+        }
+
+        // Find the trap group name from the trap_group_map
+        std::string trap_group_name;
+        for (const auto& tg : m_trap_group_map)
+        {
+            if (tg.second == trap_group_id)
+            {
+                trap_group_name = tg.first;
+                break;
+            }
+        }
+
+        if (trap_group_name.empty())
+        {
+            SWSS_LOG_WARN("Could not find trap group name for trap group OID %" PRIx64, trap_group_id);
+            continue;
+        }
+
+        bindPolicerCounter(policer.policer_id, trap_group_name);
+    }
+}
+
+void CoppOrch::clearPolicerCounterIdList()
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& kv : m_trap_group_policer_map)
+    {
+        const policer_object& policer = kv.second;
+
+        if (policer.policer_id != SAI_NULL_OBJECT_ID)
+        {
+            unbindPolicerCounter(kv.second.policer_id);
+        }
+    }
+}
+
+bool CoppOrch::bindPolicerCounter(sai_object_id_t policer_id, const std::string &trap_group_name)
+{
+    SWSS_LOG_ENTER();
+
+    auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
+
+    if (!flex_counters_orch || !flex_counters_orch->getCoppPolicerCounterState())
+    {
+        return false;
+    }
+
+    if (policer_id == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    // SAI capability gate: if the underlying SAI does not advertise any of our
+    // wishlisted policer stats, bind is a no-op and COUNTERS_POLICER_NAME_MAP
+    // stays clean. This handles every call site uniformly — including the
+    // synchronous bindPolicerCounter() invoked from createPolicer() during
+    // trap-group create, which fires before the user toggles COPP_STATS.
+    auto supported_stats = getSupportedPolicerStatIds();
+    if (supported_stats.empty())
+    {
+        SWSS_LOG_INFO("Policer stats not supported by SAI; skipping bind for trap group %s",
+                      trap_group_name.c_str());
+        return false;
+    }
+
+    // Check if already bound (avoid duplicate binding)
+    std::string existing_oid;
+    if (m_policerCounterTable->hget("", trap_group_name, existing_oid))
+    {
+        SWSS_LOG_DEBUG("Policer counter already bound for trap group %s", trap_group_name.c_str());
+        return true;
+    }
+
+    // Update COUNTERS_POLICER_NAME_MAP
+    vector<FieldValueTuple> nameMapFvs;
+    nameMapFvs.emplace_back(trap_group_name, sai_serialize_object_id(policer_id));
+    m_policerCounterTable->set("", nameMapFvs);
+
+    // Register policer with FlexCounter — only the SAI-reported subset
+    m_policer_counter_manager.setCounterIdList(policer_id, CounterType::POLICER, supported_stats);
+
+    SWSS_LOG_INFO("Bound policer counter for trap group %s, policer OID %" PRIx64 " (%zu stats)",
+                  trap_group_name.c_str(), policer_id, supported_stats.size());
+
+    return true;
+}
+
+void CoppOrch::unbindPolicerCounter(sai_object_id_t policer_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (policer_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Policer id provided is null, unable to unbind policer counter");
+        return;
+    }
+
+    m_policer_counter_manager.clearCounterIdList(policer_id);
+
+    // Remove from COUNTERS_POLICER_NAME_MAP
+    for (const auto& kv : m_trap_group_policer_map)
+    {
+        if (kv.second.policer_id == policer_id)
+        {
+            // Find trap group name
+            for (const auto& tg : m_trap_group_map)
+            {
+                if (tg.second == kv.first)
+                {
+                    m_policerCounterTable->hdel("", tg.first);
+                    SWSS_LOG_INFO("Unbound policer counter for trap group %s", tg.first.c_str());
+                    return;
+                }
+            }
+        }
+    }
+
+    SWSS_LOG_WARN("Policer %" PRIx64 " not found in trap group map during unbind", policer_id);
+}
+
+// SAI policer-stats capability probe. Two-call pattern (sizing + fetch) cached
+// on the CoppOrch instance for orchagent's lifetime. Mirrors portsorch.cpp's
+// isPortStatSupported().
+bool CoppOrch::isPolicerStatSupported(sai_policer_stat_t stat)
+{
+    if (!m_policer_stats_caps_queried)
+    {
+        sai_stat_capability_list_t cap_list = { .count = 0, .list = nullptr };
+
+        auto status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_POLICER, &cap_list);
+        if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            SWSS_LOG_NOTICE("sai_query_stats_capability(POLICER) returned %d; treating policer stats as unsupported",
+                            status);
+            m_policer_stats_caps_queried = true;
+            return false;
+        }
+
+        m_policer_stats_caps.resize(cap_list.count);
+        cap_list.list = m_policer_stats_caps.data();
+
+        status = sai_query_stats_capability(gSwitchId, SAI_OBJECT_TYPE_POLICER, &cap_list);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("sai_query_stats_capability(POLICER) second call returned %d; treating policer stats as unsupported",
+                            status);
+            m_policer_stats_caps.clear();
+            m_policer_stats_caps_queried = true;
+            return false;
+        }
+        m_policer_stats_caps_queried = true;
+    }
+
+    return std::any_of(m_policer_stats_caps.cbegin(), m_policer_stats_caps.cend(),
+        [stat](const sai_stat_capability_t& c) {
+            return static_cast<sai_policer_stat_t>(c.stat_enum) == stat;
+        });
+}
+
+// Intersection of policer_stat_wishlist and what the vendor SAI advertises.
+// Uses .first/.second instead of C++17 structured bindings — swss builds at
+// -std=c++14 -Werror, see configure.ac.
+std::unordered_set<std::string> CoppOrch::getSupportedPolicerStatIds()
+{
+    std::unordered_set<std::string> out;
+    for (const auto& entry : policer_stat_wishlist)
+    {
+        if (isPolicerStatSupported(entry.first))
+        {
+            out.emplace(entry.second);
+        }
+    }
+    return out;
+}
+
+bool CoppOrch::isPolicerStatsCapable()
+{
+    return !getSupportedPolicerStatIds().empty();
+}
+
+// Publish to STATE_DB:SWITCH_CAPABILITY|switch so sonic-utilities CLI and
+// sonic-mgmt tests can gate behavior on the actual SAI capability rather than
+// on a $platform substring.
+void CoppOrch::publishPolicerStatsCapability()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fv;
+    fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE,
+                    isPolicerStatsCapable() ? "true" : "false");
+
+    if (gSwitchOrch)
+    {
+        gSwitchOrch->set_switch_capability(fv);
+        SWSS_LOG_NOTICE("Published %s = %s",
+                        SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE,
+                        fv.front().second.c_str());
+    }
+    else
+    {
+        SWSS_LOG_WARN("gSwitchOrch unavailable; cannot publish %s",
+                      SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE);
     }
 }

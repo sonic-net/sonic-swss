@@ -99,6 +99,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
+                hftelorch_is_supported_sai_wrap.cpp \
+                coppstats_sai_wrap.cpp \
                 shlorch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
@@ -239,7 +241,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
-                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
+                -Wl,--wrap=sai_query_stats_capability -Wl,--wrap=sai_query_attribute_enum_values_capability \
+                -Wl,--wrap=sai_metadata_get_attr_metadata
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 

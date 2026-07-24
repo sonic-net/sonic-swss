@@ -46,6 +46,7 @@ enum class CounterType
     SRV6,
     SWITCH,
     HA_SET,
+    POLICER,
     OFFLOAD_SESSION,
     ICMP_ECHO_SESSION,
 };
