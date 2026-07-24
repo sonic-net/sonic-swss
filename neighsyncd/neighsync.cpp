@@ -42,6 +42,11 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
     }
 
+    std::vector<std::string> peerSwitchKeys;
+    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
+    m_isDualToR = peerSwitchKeys.size() > 0;
+    SWSS_LOG_NOTICE("neighsyncd: dualtor=%s", m_isDualToR ? "true" : "false");
+
     m_nl_sock = nl_socket_alloc();
     if (!m_nl_sock)
     {
@@ -156,9 +161,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key;
     string family;
     string intfName;
-    std::vector<std::string> peerSwitchKeys;
-    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
-    bool is_dualtor = peerSwitchKeys.size() > 0;
+    bool is_dualtor = m_isDualToR;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
