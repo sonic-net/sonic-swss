@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, pinned_state=pinned_state, metric=metric)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1, consistent_hashing_buckets=0):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, pinned_state=pinned_state, metric=metric, consistent_hashing_buckets=consistent_hashing_buckets)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1, consistent_hashing_buckets=0):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -187,9 +187,15 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     if metric >= 0:
         attrs.append(('metric', str(metric)))
 
+    if consistent_hashing_buckets > 0:
+        attrs.append(('consistent_hashing_buckets', str(consistent_hashing_buckets)))
+
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
-    tbl.set("%s|%s" % (vnet_name, prefix), fvs)
+    key = "%s|%s" % (vnet_name, prefix)
+    if consistent_hashing_buckets <= 0:
+        tbl.hdel(key, 'consistent_hashing_buckets')
+    tbl.set(key, fvs)
 
     time.sleep(2)
 
@@ -1194,7 +1200,7 @@ class VnetVxlanVrfTunnel(object):
 
         if nhg:
             new_nhg = nhg
-        elif endpoint_str in self.nhg_ids:
+        elif endpoint_str in self.nhg_ids and self.nhg_ids[endpoint_str] in self.nhgs:
             new_nhg = self.nhg_ids[endpoint_str]
         else:
             new_nhg = get_created_entry(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)

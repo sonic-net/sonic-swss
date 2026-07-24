@@ -9,6 +9,7 @@ from swsscommon import swsscommon
 from pprint import pprint
 from dvslib.dvs_common import wait_for_result
 from vnet_lib import *
+import test_fgnhg
 
 class TestVnetOrch(object):
 
@@ -3574,7 +3575,298 @@ class TestVnetOrch(object):
         self.remove_neighbor("Ethernet4", "9.1.0.1")
         self.remove_ip_address("Ethernet4", "9.1.0.1/32")
         self.set_admin_status("Ethernet4", "down")
+        
 
+    '''
+    Test 37 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
+    '''
+    def test_vnet_orch_37(self, dvs, testlog):
+        self.setup_db(dvs)
+        vnet_obj = self.get_vnet_obj()
+        asic_db = dvs.get_asic_db()
+        state_db = dvs.get_state_db()
+
+        tunnel_name = 'tunnel_37'
+        vnet_name = 'Vnet37'
+        fg_nhg_prefix = "100.100.37.0/24"
+        bucket_size = 60
+
+        vnet_obj.fetch_exist_entries(dvs)
+        initial_nhop_count = len(asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP))
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10037', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10037')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        vr_id = vnet_obj.vr_map[vnet_name]['ing']
+
+        # Create VNET route with consistent_hashing_buckets and 3 tunnel next hops for fine-grained ECMP
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id)
+        
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        
+        ip_to_if_map = {
+            '37.0.0.1': '',
+            '37.0.0.2': '',
+            '37.0.0.3': '',
+            '37.0.0.4': '',
+            '37.0.0.5': '',
+            '37.0.0.6': '',
+            '37.0.0.7': '',
+            '37.0.0.8': '',
+            '38.0.0.1': '',
+            '38.0.0.2': '',
+            '38.0.0.3': ''
+        }
+        
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'37.0.0.1': 20, '37.0.0.2': 20, '37.0.0.3': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add 3 more nexthops
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.5,37.0.0.6',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', 
+                          consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.5','37.0.0.6'])
+        
+        num_exp_changes = 30
+        nh_memb_exp_count = {'37.0.0.1': 10, '37.0.0.2': 10, '37.0.0.3': 10, '37.0.0.4': 10, '37.0.0.5': 10, '37.0.0.6': 10}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+        
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Update route with different endpoints
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7,37.0.0.8',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E,00:12:34:56:78:8F', 
+                          consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.7','37.0.0.8'])
+        
+        num_exp_changes = 20
+        nh_memb_exp_count = {'37.0.0.1': 10, '37.0.0.2': 10, '37.0.0.3': 10, '37.0.0.4': 10, '37.0.0.7': 10, '37.0.0.8': 10}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Remove one endpoint
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E', 
+                          consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.7'])
+        
+        num_exp_changes = 10
+        nh_memb_exp_count = {'37.0.0.1': 12, '37.0.0.2': 12, '37.0.0.3': 12, '37.0.0.4': 12, '37.0.0.7': 12}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            memb_dict, 10, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+        
+        # create route for new vnet with same IP space
+        vnet_name_2 = 'Vnet38'
+        create_vnet_entry(dvs, vnet_name_2, tunnel_name, '10038', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name_2)
+        
+        # Get VR ID for vnet_name_2
+        vr_id_2 = vnet_obj.vr_map[vnet_name_2]['ing']
+        
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2, '38.0.0.1,38.0.0.2,38.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+        
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 120)
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id_2)
+        
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+                
+        check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['38.0.0.1', '38.0.0.2', '38.0.0.3'])
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'38.0.0.1': 20, '38.0.0.2': 20, '38.0.0.3': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name_2)
+
+        # Clean up
+        vnet_obj.fetch_exist_entries(dvs)
+        asic_rt_key_1 = test_fgnhg.get_asic_route_key(asic_db, fg_nhg_prefix, vr_id)
+        asic_rt_key_2 = test_fgnhg.get_asic_route_key(asic_db, fg_nhg_prefix, vr_id_2)
+        
+        delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name)
+        delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2)
+        
+        time.sleep(2)
+        
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [fg_nhg_prefix])
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name_2, [fg_nhg_prefix])
+        check_remove_state_db_routes(dvs, vnet_name, fg_nhg_prefix)
+        check_remove_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix)
+
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 0)
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG, 0)
+        asic_db.wait_for_n_keys(vnet_obj.ASIC_NEXT_HOP, initial_nhop_count)
+        
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_1)
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_2)
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+
+        delete_vnet_entry(dvs, vnet_name_2)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name_2)
+
+        # Route Type Transitions (Regular ECMP <-> Fine-Grained ECMP)
+        transition_prefix = "100.100.37.1/32"
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Regular ECMP -> FG ECMP with same NHG key 
+        create_vnet_routes(dvs, transition_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C')
+        route1, nhg1 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['37.0.0.1', '37.0.0.2', '37.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, transition_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Regular -> FG transition path 
+        create_vnet_routes(dvs, transition_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+
+        time.sleep(2)
+
+        # Verify FG NHG is created and route is updated
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, transition_prefix, bucket_size, vr_id)
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        check_state_db_routes(dvs, vnet_name, transition_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Verify the old regular ECMP NHG was removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1 not in vnet_obj.nhgs
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'37.0.0.1': 20, '37.0.0.2': 20, '37.0.0.3': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, transition_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+
+        # Fine-Grained ECMP -> Regular ECMP transition
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, transition_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C')
+
+        time.sleep(2)
+
+        # Verify FG NHG is removed and regular ECMP NHG is created
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+        route1, nhg1 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['37.0.0.1', '37.0.0.2', '37.0.0.3'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, transition_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Regular ECMP -> FG with different endpoints 
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, transition_prefix, vnet_name, '37.0.0.4,37.0.0.5,37.0.0.6',
+                          '00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', consistent_hashing_buckets=bucket_size)
+
+        time.sleep(2)
+
+        # Verify FG NHG is created with new endpoints
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, transition_prefix, bucket_size, vr_id)
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        check_state_db_routes(dvs, vnet_name, transition_prefix, ['37.0.0.4', '37.0.0.5', '37.0.0.6'])
+
+        # Verify old regular ECMP NHG was cleaned up
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1 not in vnet_obj.nhgs
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'37.0.0.4': 20, '37.0.0.5': 20, '37.0.0.6': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, transition_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+
+        # Regular with different endpoints
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, transition_prefix, vnet_name, '37.0.0.7,37.0.0.8',
+                          '00:12:34:56:78:8E,00:12:34:56:78:8F')
+
+        time.sleep(2)
+
+        # Verify FG NHG is removed and regular ECMP NHG is created with new endpoints
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+        route1, nhg1 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['37.0.0.7', '37.0.0.8'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, transition_prefix, ['37.0.0.7', '37.0.0.8'])
+
+        # Clean up transition test route
+        delete_vnet_routes(dvs, transition_prefix, vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [transition_prefix])
+        check_remove_state_db_routes(dvs, vnet_name, transition_prefix)
+
+        # FG route with more distinct next hops than configured buckets must be rejected
+        oversized_prefix = "100.100.37.20/32"
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, oversized_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=2)
+        time.sleep(2)
+        assert (vnet_name + '|' + oversized_prefix) not in state_db.get_keys("FG_ROUTE_TABLE")
+        delete_vnet_routes(dvs, oversized_prefix, vnet_name)
+        time.sleep(2)
+
+        # Re-applying an unchanged FG route (identical prefix/endpoints/buckets) is a no-op
+        idempotent_prefix = "100.100.37.21/32"
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, idempotent_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, idempotent_prefix, bucket_size, vr_id)
+        check_state_db_routes(dvs, vnet_name, idempotent_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        create_vnet_routes(dvs, idempotent_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+        time.sleep(2)
+        nhgid_unchanged = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, idempotent_prefix, bucket_size, vr_id)
+        assert nhgid == nhgid_unchanged
+        check_state_db_routes(dvs, vnet_name, idempotent_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Isolated deletion of a non-shared FG route drives full FG NHG teardown
+        vnet_obj.fetch_exist_entries(dvs)
+        asic_rt_key_iso = test_fgnhg.get_asic_route_key(asic_db, idempotent_prefix, vr_id)
+        delete_vnet_routes(dvs, idempotent_prefix, vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [idempotent_prefix])
+        check_remove_state_db_routes(dvs, vnet_name, idempotent_prefix)
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_iso)
+
+        # cleanup
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
 
     '''
     VNET tunnel route with a directly-connected local endpoint.
