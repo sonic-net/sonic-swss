@@ -324,9 +324,24 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
-        createPfcAclTable(port, m_strIngressTable, true);
-        shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strIngressTable);
-        createPfcAclRule(newRule, queueId, m_strIngressTable, port);
+        if (createPfcAclTable(port, m_strIngressTable, true))
+        {
+            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strIngressTable);
+            if (!createPfcAclRule(newRule, queueId, m_strIngressTable, port))
+            {
+                SWSS_LOG_ERROR("Failed to create ingress PFCWD drop rule %s, last SAI status %s",
+                               m_strRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                m_rolledBack = true;
+                return;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to create ingress PFCWD ACL table %s; PFCWD drop action is not installed",
+                           m_strIngressTable.c_str());
+            m_rolledBack = true;
+            return;
+        }
     }
     else
     {
@@ -334,9 +349,15 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         if (rule == nullptr)
         {
             shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strIngressTable);
-            createPfcAclRule(newRule, queueId, m_strIngressTable, port);
-        } 
-        else 
+            if (!createPfcAclRule(newRule, queueId, m_strIngressTable, port))
+            {
+                SWSS_LOG_ERROR("Failed to create ingress PFCWD drop rule %s, last SAI status %s",
+                               m_strRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                m_rolledBack = true;
+                return;
+            }
+        }
+        else
         {
             gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
         }
@@ -365,9 +386,28 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         if (found == m_aclTables.end())
         {
             // First time of handling PFC, create ACL table and also ACL rule.
-            createPfcAclTable(port, m_strEgressTable, false);
-            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strEgressRule, m_strEgressTable);
-            createPfcAclRule(newRule, queueId, m_strEgressTable, port);
+            if (createPfcAclTable(port, m_strEgressTable, false))
+            {
+                shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strEgressRule, m_strEgressTable);
+                if (!createPfcAclRule(newRule, queueId, m_strEgressTable, port))
+                {
+                    SWSS_LOG_ERROR("Failed to create egress PFCWD drop rule %s, last SAI status %s",
+                                   m_strEgressRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                    // Roll back the egress table created just above (no rule could be
+                    // installed in it) along with the ingress drop rule.
+                    gAclOrch->removeAclTable(m_strEgressTable);
+                    m_aclTables.erase(m_strEgressTable);
+                    removeIngressBinding(port);
+                    m_rolledBack = true;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to create egress PFCWD ACL table %s; rolling back ingress PFCWD drop rule %s",
+                               m_strEgressTable.c_str(), m_strRule.c_str());
+                removeIngressBinding(port);
+                m_rolledBack = true;
+            }
         }
         else
         {
@@ -376,7 +416,14 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
             if (rule == nullptr)
             {
                 shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strEgressRule, m_strEgressTable);
-                createPfcAclRule(newRule, queueId, m_strEgressTable, port);
+                if (!createPfcAclRule(newRule, queueId, m_strEgressTable, port))
+                {
+                    // The egress table is shared with other queues/ports - leave it in place.
+                    SWSS_LOG_ERROR("Failed to create egress PFCWD drop rule %s, last SAI status %s",
+                                   m_strEgressRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                    removeIngressBinding(port);
+                    m_rolledBack = true;
+                }
             }
         }
     }
@@ -387,9 +434,28 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         if (found == m_aclTables.end())
         {
             // First time of handling PFC for this queue, create ACL table, and bind
-            createPfcAclTable(port, m_strEgressTable, false);
-            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strEgressTable);
-            createPfcAclRule(newRule, queueId, m_strEgressTable, port);
+            if (createPfcAclTable(port, m_strEgressTable, false))
+            {
+                shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strEgressTable);
+                if (!createPfcAclRule(newRule, queueId, m_strEgressTable, port))
+                {
+                    SWSS_LOG_ERROR("Failed to create egress PFCWD drop rule %s, last SAI status %s",
+                                   m_strRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                    // Roll back the egress table created just above (no rule could be
+                    // installed in it) along with the ingress drop rule.
+                    gAclOrch->removeAclTable(m_strEgressTable);
+                    m_aclTables.erase(m_strEgressTable);
+                    removeIngressBinding(port);
+                    m_rolledBack = true;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to create egress PFCWD ACL table %s; rolling back ingress PFCWD drop rule %s",
+                               m_strEgressTable.c_str(), m_strRule.c_str());
+                removeIngressBinding(port);
+                m_rolledBack = true;
+            }
         }
         else
         {
@@ -399,41 +465,60 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     }
 }
 
-PfcWdAclHandler::~PfcWdAclHandler(void)
+void PfcWdAclHandler::removeIngressBinding(sai_object_id_t port)
 {
     SWSS_LOG_ENTER();
 
+    // The rule may be absent if creation was skipped (egress PMF full) - clean up
+    // gracefully; this must not throw when called from the destructor.
     AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
     if (rule == nullptr)
     {
-        SWSS_LOG_THROW("ACL Rule does not exist for rule %s", m_strRule.c_str());
+        SWSS_LOG_NOTICE("ACL Rule %s does not exist for table %s", m_strRule.c_str(), m_strIngressTable.c_str());
+        return;
     }
 
     vector<sai_object_id_t> port_set = rule->getInPorts();
-    sai_object_id_t port = getPort();
-
     if ((port_set.size() == 1) && (port_set[0] == port))
     {
         gAclOrch->removeAclRule(m_strIngressTable, m_strRule);
     }
-    else 
+    else
     {
         gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_DELETE);
-    } 
+    }
+}
+
+PfcWdAclHandler::~PfcWdAclHandler(void)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t port = getPort();
+
+    if (!m_rolledBack)
+    {
+        removeIngressBinding(port);
+    }
 
     if (shared_egress_acl_table)
     {
-        rule = gAclOrch->getAclRule(m_strEgressTable, m_strEgressRule);
+        AclRule* rule = gAclOrch->getAclRule(m_strEgressTable, m_strEgressRule);
         if (rule == nullptr)
         {
-            SWSS_LOG_THROW("Egress ACL Rule does not exist for rule %s", m_strEgressRule.c_str());
+            SWSS_LOG_NOTICE("Egress ACL Rule %s does not exist for table %s", m_strEgressRule.c_str(), m_strEgressTable.c_str());
         }
-        gAclOrch->removeAclRule(m_strEgressTable, m_strEgressRule);
+        else
+        {
+            gAclOrch->removeAclRule(m_strEgressTable, m_strEgressRule);
+        }
     }
     else
     {
         auto found = m_aclTables.find(m_strEgressTable);
-        found->second.unbind(port);
+        if (found != m_aclTables.end())
+        {
+            found->second.unbind(port);
+        }
     }
 }
 
@@ -448,7 +533,7 @@ void PfcWdAclHandler::clear()
     }
 }
 
-void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, bool ingress)
+bool PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, bool ingress)
 {
     SWSS_LOG_ENTER();
 
@@ -466,7 +551,7 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
         // DROP ACL table is already created
         SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
         aclTable = *(gAclOrch->getTableByOid(table_oid));
-        return;
+        return true;
     }
 
     // Link port only for ingress ACL table or unshared egress ACL table.
@@ -489,11 +574,20 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
         aclTable.validateAddType(*pfcwdType);
         aclTable.stage = ACL_STAGE_EGRESS;
     }
-    
-    gAclOrch->addAclTable(aclTable);
+
+    if (!gAclOrch->addAclTable(aclTable))
+    {
+        // ACL table create failed (e.g. egress PMF full). Drop the half-built
+        // entry so the caller skips rule creation instead of throwing later.
+        SWSS_LOG_ERROR("Failed to create PFCWD ACL table %s", strTable.c_str());
+        m_aclTables.erase(strTable);
+        return false;
+    }
+
+    return true;
 }
 
-void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t portOid)
+bool PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t portOid)
 {
     SWSS_LOG_ENTER();
 
@@ -522,9 +616,9 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t q
         if (!gPortsOrch->getPort(portOid, p))
         {
             SWSS_LOG_ERROR("Failed to get port structure from port oid 0x%" PRIx64, portOid);
-            return;
+            return false;
         }
-    
+
         attr_value = p.m_alias;
         rule->validateAddMatch(attr_name, attr_value);
     }
@@ -533,7 +627,7 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t q
     attr_value = PACKET_ACTION_DROP;
     rule->validateAddAction(attr_name, attr_value);
 
-    gAclOrch->addAclRule(rule, strTable);
+    return gAclOrch->addAclRule(rule, strTable);
 }
 
 std::map<std::string, AclTable> PfcWdAclHandler::m_aclTables;
