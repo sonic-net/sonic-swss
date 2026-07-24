@@ -19,6 +19,7 @@ extern "C" {
 #define DEBUG_COUNTER_FLEX_COUNTER_GROUP "DEBUG_COUNTER"
 #define DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP "DEBUG_MONITOR_COUNTER"
 #define DEBUG_DROP_MONITOR_FLEX_COUNTER_POLLING_INTERVAL_MS "60000"
+#define DEBUG_DROP_MONITOR_SECONDARY_POLL_FACTOR "0"
 
 using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
 
