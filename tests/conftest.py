@@ -313,7 +313,8 @@ class DockerVirtualSwitch:
             "portsyncd",
             "vlanmgrd",
             "vrfmgrd",
-            "portmgrd"
+            "portmgrd",
+            "llrmgrd"
         ]
         self.syncd = ["syncd"]
         self.rtd = ["fpmsyncd", "zebra", "staticd", "mgmtd"]
