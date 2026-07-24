@@ -4889,6 +4889,183 @@ namespace portsorch_test
     }
 
     /*
+    * Verify the MACsec / LAG-member data-plane interaction:
+    *  - setLagMemberState(false) disables collection + distribution on the
+    *    member via SAI and records the MACsec-down intent.
+    *  - A subsequent teamsyncd "enabled" refresh on APP_LAG_MEMBER_TABLE does
+    *    NOT re-enable the member while MACsec is down.
+    *  - setLagMemberState(true) clears the suppression flag and teamsyncd drives
+    *    the SAI re-enable (no direct SAI enable on recovery).
+    */
+    TEST_F(PortsOrchTest, MacsecDownDisablesLagMemberAndSuppressesTeamdReEnable)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel999", { {"admin_status", "up"}, {"mtu", "9100"} });
+
+        const std::string memberAlias = ports.begin()->first;
+        const std::string memberKey =
+            std::string("PortChannel999") + lagMemberTable.getTableNameSeparator() + memberAlias;
+        lagMemberTable.set(memberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // The member should now exist and have a LAG member id.
+        Port member;
+        ASSERT_TRUE(gPortsOrch->getPort(memberAlias, member));
+        ASSERT_NE(member.m_lag_member_id, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(member.m_macsec_sa_active);
+
+        // Spy on set_lag_member_attribute to capture EGRESS/INGRESS disable values.
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        bool egressDisable = false, ingressDisable = false;
+        int setAttrCalls = 0;
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+        lagSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t
+            {
+                setAttrCalls++;
+                if (attr->id == SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE)
+                    egressDisable = attr->value.booldata;
+                else if (attr->id == SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE)
+                    ingressDisable = attr->value.booldata;
+                return orig_lag_api->set_lag_member_attribute(oid, attr);
+            }
+        );
+
+        // --- MACsec session down: disable the member directly ---
+        gPortsOrch->setLagMemberState(member, false);
+        ASSERT_TRUE(egressDisable);
+        ASSERT_TRUE(ingressDisable);
+
+        Port afterDown;
+        ASSERT_TRUE(gPortsOrch->getPort(memberAlias, afterDown));
+        ASSERT_FALSE(afterDown.m_macsec_sa_active);
+
+        // --- redundant disable (both SCs empty) must be a no-op ---
+        setAttrCalls = 0;
+        gPortsOrch->setLagMemberState(afterDown, false);
+        ASSERT_EQ(setAttrCalls, 0);
+
+        // --- teamsyncd refresh: a status=enabled write must be suppressed ---
+        setAttrCalls = 0;
+        lagMemberTable.set(memberKey, { {"status", "enabled"} });
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // No SAI re-enable should have happened, and the task should be drained.
+        ASSERT_EQ(setAttrCalls, 0);
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer*>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty());
+        }
+
+        // --- MACsec session restored: clear suppression, teamsyncd re-enables ---
+        setAttrCalls = 0;
+        gPortsOrch->setLagMemberState(afterDown, true);
+        ASSERT_EQ(setAttrCalls, 0) << "Recovery must not SAI-enable directly";
+
+        Port afterFlagSet;
+        ASSERT_TRUE(gPortsOrch->getPort(memberAlias, afterFlagSet));
+        ASSERT_TRUE(afterFlagSet.m_macsec_sa_active);
+
+        egressDisable = ingressDisable = true;
+        lagMemberTable.set(memberKey, { {"status", "enabled"} });
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_FALSE(egressDisable);
+        ASSERT_FALSE(ingressDisable);
+
+        sai_lag_api = orig_lag_api;
+    }
+
+    /*
+    * setLagMemberState(false) on a non-LAG port must only persist
+    * m_macsec_sa_active and must not flap the host interface or touch SAI LAG
+    * member attributes.
+    */
+    TEST_F(PortsOrchTest, MacsecDownDoesNotFlapNonLagPort)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        const std::string portAlias = ports.begin()->first;
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(portAlias, port));
+        ASSERT_EQ(port.m_lag_member_id, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(port.m_macsec_sa_active);
+
+        auto orig_hostif_api = sai_hostif_api;
+        sai_hostif_api = new sai_hostif_api_t();
+        memcpy(sai_hostif_api, orig_hostif_api, sizeof(*sai_hostif_api));
+
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        int hostifOperStatusCalls = 0;
+        int lagMemberAttrCalls = 0;
+        auto hostifSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->set_hostif_attribute);
+        hostifSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t
+            {
+                if (attr->id == SAI_HOSTIF_ATTR_OPER_STATUS)
+                {
+                    hostifOperStatusCalls++;
+                }
+                return orig_hostif_api->set_hostif_attribute(oid, attr);
+            }
+        );
+
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+        lagSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t
+            {
+                lagMemberAttrCalls++;
+                return orig_lag_api->set_lag_member_attribute(oid, attr);
+            }
+        );
+
+        gPortsOrch->setLagMemberState(port, false);
+
+        Port afterDown;
+        ASSERT_TRUE(gPortsOrch->getPort(portAlias, afterDown));
+        ASSERT_FALSE(afterDown.m_macsec_sa_active);
+        ASSERT_EQ(hostifOperStatusCalls, 0);
+        ASSERT_EQ(lagMemberAttrCalls, 0);
+
+        sai_hostif_api = orig_hostif_api;
+        sai_lag_api = orig_lag_api;
+    }
+
+    /*
     * The scope of this test is a negative test which verify that:
     * if port operational status is up but operational speed is 0, the port speed should not be
     * updated to DB.

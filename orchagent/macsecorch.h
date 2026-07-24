@@ -281,6 +281,9 @@ private:
         sai_object_id_t entry_id,
         sai_object_id_t flow_id,
         bool active);
+    bool bothDirectionsUp(const MACsecPort &macsec_port) const;
+    bool bothDirectionsDown(const MACsecPort &macsec_port) const;
+    bool hasActiveSaInDirection(const std::map<sai_uint64_t, MACsecSC> &scs) const;
     bool deleteMACsecACLEntry(sai_object_id_t entry_id);
     bool getAclPriority(
         sai_object_id_t switch_id,
