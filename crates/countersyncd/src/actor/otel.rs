@@ -314,23 +314,27 @@ impl OtelActor {
         self.client.as_mut()
     }
 
-    async fn send_request(
-        &mut self,
-        request: ExportMetricsServiceRequest,
-    ) -> Result<(), Box<dyn ExportError>> {
+    async fn send_request(&mut self) -> Result<(), Box<dyn ExportError>> {
         for attempt in 1..=MAX_EXPORT_RETRIES {
-            // Ensure we have a client
-            let client = match self.get_client() {
-                Some(c) => c, // Use existing or newly created client
-                _none => { // Failed to create client
-                    self.client = None;
-                    self.backoff(attempt).await; // Wait before retrying
-                    continue;
-                }
+            // Ensure a client can be created before doing request
+            // construction; when get_client() fails the build below is skipped.
+            if self.get_client().is_none() {
+                self.client = None;
+                self.backoff(attempt).await; // Wait before retrying
+                continue;
+            }
+
+            // Client is available, build a fresh request
+            let request = match self.build_export_request() {
+                Some(r) => r,
+                None => return Ok(()),
             };
 
+            // Re-borrow the client for the actual send
+            let client = self.client.as_mut().expect("client ensured above");
+
             // Attempt to send the request
-            match client.export(request.clone()).await {
+            match client.export(request).await {
                 Ok(_) => { // Successful export
                     self.exports_performed += 1;
                     self.consecutive_failures = 0;
@@ -349,12 +353,10 @@ impl OtelActor {
         Err(Box::new(OtelActorExportError("Max export retries exceeded".to_string())))
     }
 
-    // Export buffered metrics to OpenTelemetry collector 
-    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-
+    /// Build an export request from the currently buffered metrics.
+    /// Returns `None` when there is nothing to export (empty metrics).
+    /// The buffer is left intact so it can be rebuilt on retry.
+    fn build_export_request(&self) -> Option<ExportMetricsServiceRequest> {
         let mut proto_metrics: Vec<Metric> = Vec::new();
 
         for otel_metrics in &self.buffer {
@@ -368,8 +370,8 @@ impl OtelActor {
                 };
 
                 proto_metrics.push(Metric {
-                    name: gauge.name.clone(),
-                    description: gauge.description.clone(),
+                    name: gauge.name.to_string(),
+                    description: gauge.description.to_string(),
                     metadata: vec![],
                     data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
                     ..Default::default()
@@ -378,9 +380,7 @@ impl OtelActor {
         }
 
         if proto_metrics.is_empty() {
-            self.buffer.clear();
-            self.buffered_counters = 0;
-            return Ok(());
+            return None;
         }
 
         let resource_metrics = ResourceMetrics {
@@ -393,12 +393,20 @@ impl OtelActor {
             schema_url: String::new(),
         };
 
-        let request = ExportMetricsServiceRequest {
+        Some(ExportMetricsServiceRequest {
             resource_metrics: vec![resource_metrics],
-        };
+        })
+    }
 
-        // Send the export request
-        let result = self.send_request(request).await;
+    // Export buffered metrics to OpenTelemetry collector 
+    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        // The request is built lazily inside send_request from the intact
+        // buffer (rebuilt per retry)
+        let result = self.send_request().await;
 
         if let Err(e) = &result {
             self.export_failures += 1;

@@ -3,7 +3,13 @@
 //! This module defines data structures for converting SAI statistics
 //! to OpenTelemetry gauge format for export to observability systems.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+
 use crate::message::saistats::{SAIStat, SAIStats};
+use crate::sai::{
+    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
+};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
     metrics::v1::{NumberDataPoint, number_data_point},
@@ -16,12 +22,12 @@ use opentelemetry_proto::tonic::{
 /// from SAI statistics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelGauge {
-    /// Metric name (e.g., "sai_counter_type_100_stat_200")
-    pub name: String,
+    /// Metric name (e.g., "SAI_PORT_STAT_IF_IN_UCAST_PKTS")
+    pub name: Cow<'static, str>,
     /// Description of the metric
-    pub description: String,
+    pub description: Cow<'static, str>,
     /// Unit of measurement (typically "1" for counters)
-    pub unit: String,
+    pub unit: Cow<'static, str>,
     /// Data points for this gauge
     pub data_points: Vec<OtelDataPoint>,
 }
@@ -46,14 +52,14 @@ pub struct OtelDataPoint {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelAttribute {
     /// Attribute key
-    pub key: String,
+    pub key: Cow<'static, str>,
     /// Attribute value
-    pub value: String,
+    pub value: Cow<'static, str>,
 }
 
 impl OtelAttribute {
     /// Creates a new OtelAttribute
-    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new(key: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
         Self {
             key: key.into(),
             value: value.into(),
@@ -63,11 +69,41 @@ impl OtelAttribute {
     /// Converts to OpenTelemetry protobuf KeyValue
     pub fn to_proto(&self) -> ProtoKeyValue {
         ProtoKeyValue {
-            key: self.key.clone(),
+            key: self.key.to_string(),
             value: Some(AnyValue {
-                value: Some(Value::StringValue(self.value.clone())),
+                value: Some(Value::StringValue(self.value.to_string())),
             }),
         }
+    }
+}
+
+/// Returns the readable SAI object-type name for a `type_id`
+/// (e.g. `1` -> `"SAI_OBJECT_TYPE_PORT"`). Unknown ids fall back to a
+/// synthetic name so no information is lost.
+fn sai_type_name(type_id: u32) -> Cow<'static, str> {
+    match SaiObjectType::from_u32(type_id) {
+        Some(object_type) => Cow::Borrowed(object_type.to_c_name()),
+        None => Cow::Owned(format!("SAI_OBJECT_TYPE_UNKNOWN_{}", type_id)),
+    }
+}
+
+/// Returns the readable SAI stat name for a `(type_id, stat_id)` pair
+/// (e.g. `(1, 1)` -> `"SAI_PORT_STAT_IF_IN_UCAST_PKTS"`), dispatching on the
+/// object type. Unknown ids fall back to a synthetic name.
+fn sai_stat_name(type_id: u32, stat_id: u32) -> Cow<'static, str> {
+    let name = SaiObjectType::from_u32(type_id).and_then(|object_type| match object_type {
+        SaiObjectType::Port => SaiPortStat::from_u32(stat_id).map(|s| s.to_c_name()),
+        SaiObjectType::Queue => SaiQueueStat::from_u32(stat_id).map(|s| s.to_c_name()),
+        SaiObjectType::BufferPool => SaiBufferPoolStat::from_u32(stat_id).map(|s| s.to_c_name()),
+        SaiObjectType::IngressPriorityGroup => {
+            SaiIngressPriorityGroupStat::from_u32(stat_id).map(|s| s.to_c_name())
+        }
+        _ => None,
+    });
+
+    match name {
+        Some(c_name) => Cow::Borrowed(c_name),
+        None => Cow::Owned(format!("SAI_STAT_UNKNOWN_TYPE_{}_STAT_{}", type_id, stat_id)),
     }
 }
 
@@ -75,9 +111,9 @@ impl OtelDataPoint {
     /// Creates a new OtelDataPoint from SAI statistic
     pub fn from_sai_stat(sai_stat: &SAIStat, observation_time_nano: u64) -> Self {
         let attributes = vec![
-            OtelAttribute::new("object_name", &sai_stat.object_name),
-            OtelAttribute::new("sai_type_id", sai_stat.type_id.to_string()),
-            OtelAttribute::new("sai_stat_id", sai_stat.stat_id.to_string()),
+            OtelAttribute::new("object_name", sai_stat.object_name.clone()),
+            OtelAttribute::new("sai_type_name", sai_type_name(sai_stat.type_id)),
+            OtelAttribute::new("sai_stat_name", sai_stat_name(sai_stat.type_id, sai_stat.stat_id)),
         ];
 
         Self {
@@ -99,33 +135,44 @@ impl OtelDataPoint {
 }
 
 impl OtelGauge {
-    /// Creates a new OtelGauge from SAI statistic
-    pub fn from_sai_stat(sai_stat: &SAIStat, observation_time_nano: u64) -> Self {
-        let name = format!("sai_counter_type_{}_stat_{}", sai_stat.type_id, sai_stat.stat_id);
-        let description = format!(
-            "SAI counter for object {} (type:{}, stat:{})",
-            sai_stat.object_name, sai_stat.type_id, sai_stat.stat_id
-        );
-
-        let data_point = OtelDataPoint::from_sai_stat(sai_stat, observation_time_nano);
-
+    /// Creates an empty gauge (metadata only, no data points yet) for a (type_id, stat_id) key.
+    fn empty_for(type_id: u32, stat_id: u32) -> Self {
+        let type_name = sai_type_name(type_id);
+        let stat_name = sai_stat_name(type_id, stat_id);
         Self {
-            name,
-            description,
-            unit: "1".to_string(),
-            data_points: vec![data_point],
+            description: Cow::Owned(format!("{} / {}", type_name, stat_name)),
+            name: stat_name,
+            unit: Cow::Borrowed("1"),
+            data_points: Vec::new(),
         }
     }
 
-    /// Creates multiple OtelGauges from SAI statistics collection
+    /// Creates OtelGauges from a SAI statistics collection, merging all stats
+    /// that share the same (type_id, stat_id) into a single gauge with one data
+    /// point per object. 
     pub fn from_sai_stats(sai_stats: &SAIStats) -> Vec<Self> {
-        // Use the observation_time from the SAI statistics
         let observation_time_nano = sai_stats.observation_time;
 
-        sai_stats.stats
-            .iter()
-            .map(|stat| Self::from_sai_stat(stat, observation_time_nano))
-            .collect()
+        let mut index: HashMap<(u32, u32), usize> = HashMap::new();
+        let mut gauges: Vec<OtelGauge> = Vec::new();
+
+        for stat in &sai_stats.stats {
+            let key = (stat.type_id, stat.stat_id);
+            let data_point = OtelDataPoint::from_sai_stat(stat, observation_time_nano);
+
+            let gauge_index = match index.get(&key).copied() {
+                Some(i) => i,
+                None => {
+                    let i = gauges.len();
+                    index.insert(key, i);
+                    gauges.push(OtelGauge::empty_for(stat.type_id, stat.stat_id));
+                    i
+                }
+            };
+            gauges[gauge_index].data_points.push(data_point);
+        }
+
+        gauges
     }
 }
 
@@ -205,8 +252,8 @@ mod tests {
     fn test_otel_data_point_from_sai_stat() {
         let sai_stat = SAIStat {
             object_name: "Ethernet0".to_string(),
-            type_id: 100,
-            stat_id: 200,
+            type_id: 1,
+            stat_id: 1,
             counter: 1500,
         };
 
@@ -217,40 +264,52 @@ mod tests {
         assert_eq!(data_point.value, 1500);
         assert_eq!(data_point.attributes.len(), 3);
 
-        // Check attributes
         let object_name_attr = data_point.attributes.iter()
             .find(|attr| attr.key == "object_name").unwrap();
         assert_eq!(object_name_attr.value, "Ethernet0");
 
-        let type_id_attr = data_point.attributes.iter()
-            .find(|attr| attr.key == "sai_type_id").unwrap();
-        assert_eq!(type_id_attr.value, "100");
+        let type_name_attr = data_point.attributes.iter()
+            .find(|attr| attr.key == "sai_type_name").unwrap();
+        assert_eq!(type_name_attr.value, "SAI_OBJECT_TYPE_PORT");
 
-        let stat_id_attr = data_point.attributes.iter()
-            .find(|attr| attr.key == "sai_stat_id").unwrap();
-        assert_eq!(stat_id_attr.value, "200");
+        let stat_name_attr = data_point.attributes.iter()
+            .find(|attr| attr.key == "sai_stat_name").unwrap();
+        assert_eq!(stat_name_attr.value, "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
     }
 
     #[test]
-    fn test_otel_gauge_from_sai_stat() {
-        let sai_stat = SAIStat {
-            object_name: "BufferPool1".to_string(),
-            type_id: 24,
-            stat_id: 2,
-            counter: 5000,
-        };
-
+    fn test_otel_gauge_from_single_sai_stat() {
         let observation_time_nano = 0u64; // 1970-01-01 00:00:00 UTC
-        let gauge = OtelGauge::from_sai_stat(&sai_stat, observation_time_nano);
+        let sai_stats = SAIStats::new(
+            observation_time_nano,
+            vec![SAIStat {
+                object_name: "BufferPool1".to_string(),
+                type_id: 24,
+                stat_id: 2,
+                counter: 5000,
+            }],
+        );
 
-        assert_eq!(gauge.name, "sai_counter_type_24_stat_2");
-        assert_eq!(gauge.description, "SAI counter for object BufferPool1 (type:24, stat:2)");
+        let gauges = OtelGauge::from_sai_stats(&sai_stats);
+        assert_eq!(gauges.len(), 1);
+        let gauge = &gauges[0];
+
+        assert_eq!(gauge.name, "SAI_BUFFER_POOL_STAT_DROPPED_PACKETS");
+        assert_eq!(
+            gauge.description,
+            "SAI_OBJECT_TYPE_BUFFER_POOL / SAI_BUFFER_POOL_STAT_DROPPED_PACKETS"
+        );
         assert_eq!(gauge.unit, "1");
         assert_eq!(gauge.data_points.len(), 1);
 
         let data_point = &gauge.data_points[0];
         assert_eq!(data_point.value, 5000);
         assert_eq!(data_point.time_unix_nano, observation_time_nano);
+        // object_name is preserved as a data-point attribute.
+        assert!(data_point
+            .attributes
+            .iter()
+            .any(|a| a.key == "object_name" && a.value == "BufferPool1"));
     }
 
     #[test]
@@ -262,8 +321,15 @@ mod tests {
 
         // Check first gauge
         let first_gauge = &gauges[0];
-        assert_eq!(first_gauge.name, "sai_counter_type_1_stat_1");
-        assert!(first_gauge.description.contains("Ethernet0"));
+        assert_eq!(first_gauge.name, "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
+        assert_eq!(
+            first_gauge.description,
+            "SAI_OBJECT_TYPE_PORT / SAI_PORT_STAT_IF_IN_UCAST_PKTS"
+        );
+        assert!(first_gauge.data_points[0]
+            .attributes
+            .iter()
+            .any(|a| a.key == "object_name" && a.value == "Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
         let expected_time_nano = 1672531200u64; 
@@ -302,11 +368,11 @@ mod tests {
 
         // Check individual gauges
         let port_gauge = otel_metrics.gauges.iter()
-            .find(|g| g.name == "sai_counter_type_1_stat_1").unwrap();
+            .find(|g| g.name == "SAI_PORT_STAT_IF_IN_UCAST_PKTS").unwrap();
         assert_eq!(port_gauge.data_points[0].value, 12345);
 
         let buffer_gauge = otel_metrics.gauges.iter()
-            .find(|g| g.name == "sai_counter_type_24_stat_2").unwrap();
+            .find(|g| g.name == "SAI_BUFFER_POOL_STAT_DROPPED_PACKETS").unwrap();
         assert_eq!(buffer_gauge.data_points[0].value, 67890);
     }
 
@@ -378,30 +444,48 @@ fn test_sai_to_otel_gauge_conversion() {
         info!("Raw gauge: {:#?}", gauge);
     }
 
-    assert_eq!(otel_metrics.len(), 4);
+    assert_eq!(otel_metrics.len(), 3);
 
-    // Verify port stats conversion
-    let port_stats: Vec<_> = otel_metrics.gauges.iter()
-        .filter(|g| g.description.contains("Ethernet"))
-        .collect();
-    assert_eq!(port_stats.len(), 3);
+    // (type 1, stat 1) merges Ethernet0 + Ethernet1 into one gauge with 2 data points.
+    let type1_stat1 = otel_metrics.gauges.iter()
+        .find(|g| g.name == "SAI_PORT_STAT_IF_IN_UCAST_PKTS").unwrap();
+    assert_eq!(type1_stat1.description, "SAI_OBJECT_TYPE_PORT / SAI_PORT_STAT_IF_IN_UCAST_PKTS");
+    assert_eq!(type1_stat1.data_points.len(), 2);
 
-    // Verify buffer pool stats conversion
-    let buffer_stats: Vec<_> = otel_metrics.gauges.iter()
-        .filter(|g| g.description.contains("BufferPool"))
-        .collect();
-    assert_eq!(buffer_stats.len(), 1);
+    // Each object keeps its own value, timestamp, and object_name attribute.
+    let e0 = type1_stat1.data_points.iter()
+        .find(|dp| dp.attributes.iter().any(|a| a.key == "object_name" && a.value == "Ethernet0"))
+        .unwrap();
+    assert_eq!(e0.value, 1000000);
+    assert_eq!(e0.time_unix_nano, 1672531200);
+    let e1 = type1_stat1.data_points.iter()
+        .find(|dp| dp.attributes.iter().any(|a| a.key == "object_name" && a.value == "Ethernet1"))
+        .unwrap();
+    assert_eq!(e1.value, 1500000);
+    assert_eq!(e1.time_unix_nano, 1672531200);
 
-    // Check that all metrics have proper timestamps 
-    let expected_time = 1672531200u64; 
+    // (type 1, stat 2) has a single data point (Ethernet0).
+    let type1_stat2 = otel_metrics.gauges.iter()
+        .find(|g| g.name == "SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS").unwrap();
+    assert_eq!(type1_stat2.data_points.len(), 1);
+    assert_eq!(type1_stat2.data_points[0].value, 2000000);
+
+    // Buffer pool stat (type 24, stat 1) has a single data point.
+    let type24_stat1 = otel_metrics.gauges.iter()
+        .find(|g| g.name == "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES").unwrap();
+    assert_eq!(type24_stat1.data_points.len(), 1);
+    assert!(type24_stat1.data_points[0]
+        .attributes.iter()
+        .any(|a| a.key == "object_name" && a.value == "BufferPool_ingress_lossless_pool"));
+    assert_eq!(type24_stat1.data_points[0].value, 500000);
+
+    // All data points retain the message observation time.
+    let expected_time = 1672531200u64;
     for gauge in &otel_metrics.gauges {
-        assert_eq!(gauge.data_points[0].time_unix_nano, expected_time);
+        for dp in &gauge.data_points {
+            assert_eq!(dp.time_unix_nano, expected_time);
+        }
     }
-
-    // Verify metric naming
-    let port_rx_metric = otel_metrics.gauges.iter()
-        .find(|g| g.name == "sai_counter_type_1_stat_1").unwrap();
-    assert!(port_rx_metric.description.contains("type:1, stat:1"));
 }
 
     #[test]
