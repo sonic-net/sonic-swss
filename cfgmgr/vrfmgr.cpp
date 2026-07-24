@@ -93,16 +93,24 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         }
     }
 
-    cmd.str("");
-    cmd.clear();
-    cmd << IP_CMD << " rule | grep '^0:'";
-    if (swss::exec(cmd.str(), res) == 0)
+    for (const char *family : {" -4", " -6"})
     {
         cmd.str("");
         cmd.clear();
-        cmd << IP_CMD << " rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " rule del pref 0 && "
-            << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0";
+        res.clear();
+        cmd << IP_CMD << family << " rule show table local | grep 'from all lookup local'";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        table = static_cast<uint32_t>(stoul(res));
+
+        if (table != TABLE_LOCAL_PREF)
+        {
+            cmd.str("");
+            cmd.clear();
+            res.clear();
+            cmd << IP_CMD << family << " rule add pref " << TABLE_LOCAL_PREF << " table local && "
+                << IP_CMD << family << " rule del pref " << table << " table local";
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        }
     }
 
     if (!WarmStart::isWarmStart())
@@ -552,4 +560,3 @@ uint32_t VrfMgr::getVRFmappedVNI(const std::string& vrf_name)
         return 0;
     }
 }
-
