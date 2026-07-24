@@ -483,7 +483,7 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 }
 
 bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
-                        const bool adminUp, const uint32_t mtu, string loopbackAction)
+                        const bool adminUp, const uint32_t mtu, string loopbackAction, bool appl_intf_tbl)
 
 {
     SWSS_LOG_ENTER();
@@ -497,6 +497,47 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     gPortsOrch->getPort(alias, port);
 
     auto it_intfs = m_syncdIntfses.find(alias);
+
+    /*
+     * VRF change on an existing non-loopback router interface issues a DEL then SET
+     * on the same INTF_TABLE key; the ProducerStateTable coalesces these into a single SET,
+     * so the DEL that would tear down the RIF is lost. The RIF is then left in the old VRF
+     * and a later route insert into the new VRF fails with SAI_STATUS_ITEM_NOT_FOUND.
+     */
+    if (it_intfs != m_syncdIntfses.end() && !ip_prefix && appl_intf_tbl && it_intfs->second.vrf_id != vrf_id)
+    {
+        if (!it_intfs->second.ip_addresses.empty())
+        {
+            return false;
+        }
+
+        if (it_intfs->second.ref_count > 0)
+        {
+            return false;
+        }
+
+        sai_object_id_t old_vrf_id = it_intfs->second.vrf_id;
+        bool sag_enabled = it_intfs->second.sag_enabled;
+
+        if (!removeRouterIntfs(port))
+        {
+            return false;
+        }
+
+        gPortsOrch->decreasePortRefCount(alias);
+
+        if (sag_enabled)
+        {
+            removeLinkLocalRouteToMeSag(old_vrf_id);
+        }
+
+        m_syncdIntfses.erase(it_intfs);
+        m_vrfOrch->decreaseVrfRefCount(old_vrf_id);
+
+        // Fall through to the creation path below to recreate the RIF in the new VRF.
+        it_intfs = m_syncdIntfses.end();
+    }
+
     if (it_intfs == m_syncdIntfses.end())
     {
         if (!ip_prefix && addRouterIntfs(vrf_id, port, loopbackAction))
@@ -1016,7 +1057,9 @@ void IntfsOrch::doTask(Consumer &consumer)
                     adminUp = port.m_admin_state_up;
                 }
 
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction))
+                bool appl_intf_tbl = (table_name == APP_INTF_TABLE_NAME);
+
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction, appl_intf_tbl))
                 {
                     it++;
                     continue;
@@ -1330,6 +1373,7 @@ void IntfsOrch::removeLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
             gRouteOrch->delLinkLocalRouteToMe(vrf_id, linklocal_prefix);
 
             m_sagVrfRefTable.erase(vrf_id);
+            return;
         }
         else
         {
