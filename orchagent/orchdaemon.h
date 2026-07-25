@@ -1,6 +1,8 @@
 #ifndef SWSS_ORCHDAEMON_H
 #define SWSS_ORCHDAEMON_H
 
+#include <unistd.h>
+
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "consumertable.h"
@@ -156,4 +158,15 @@ private:
     DBConnector *m_dpu_appDb;
     DBConnector *m_dpu_appstateDb;
 };
+
+/*
+ * If a graceful shutdown was requested (SIGTERM/SIGINT set
+ * gOrchShutdownRequested and OrchDaemon::start() returned), drain the async
+ * swss recorder so pending records are flushed and terminate the process via
+ * exit_fn without running the OrchDaemon destructor chain. No-op when no
+ * shutdown was requested. exit_fn is injectable for unit tests; production
+ * callers use the default _exit.
+ */
+void exit_if_graceful_shutdown_requested(void (*exit_fn)(int) = _exit);
+
 #endif /* SWSS_ORCHDAEMON_H */

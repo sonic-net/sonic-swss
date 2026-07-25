@@ -1098,6 +1098,39 @@ void OrchDaemon::start(long heartBeatInterval)
     }
 }
 
+#ifdef GCOV_ENABLED
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+#endif
+
+void exit_if_graceful_shutdown_requested(void (*exit_fn)(int))
+{
+    if (gOrchShutdownRequested == 0)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Exiting on graceful shutdown request (signal %d) without running destructors", gOrchShutdownRequested);
+
+    /*
+     * Drain the async swss recorder before exiting: setAsync(false) stops the
+     * recorder worker only after any queued records have been written out.
+     */
+    Recorder::Instance().swss.setAsync(false);
+
+#ifdef GCOV_ENABLED
+    /*
+     * _exit() skips libgcov's exit hook, so persist coverage data explicitly.
+     * Reset the counters afterwards so a unit-test caller passing a
+     * non-exiting exit_fn still dumps the remainder of its run at exit.
+     */
+    __gcov_dump();
+    __gcov_reset(); // LCOV_EXCL_LINE (resets its own arc counter, so it can never self-report)
+#endif
+
+    exit_fn(0);
+}
+
 /*
  * Try to perform orchagent state restore and dynamic states sync up if
  * warm start request is detected.
