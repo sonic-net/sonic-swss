@@ -23,6 +23,26 @@ namespace orchdaemon_test
     using ::testing::StrictMock;
     using ::testing::InSequence;
 
+    class PrioritySelectable : public swss::Selectable
+    {
+    public:
+        explicit PrioritySelectable(int priority) : Selectable(priority) {}
+
+        int getFd() override { return -1; }
+        uint64_t readData() override { return 0; }
+    };
+
+    TEST(ExecutorPriorityTest, ForwardsWrappedSelectablePriority)
+    {
+        Executor intfsExecutor(new PrioritySelectable(35), nullptr, "INTF_TABLE");
+        Executor routeExecutor(new PrioritySelectable(5), nullptr, "ROUTE_TABLE");
+        swss::Selectable *intfsSelectable = &intfsExecutor;
+        swss::Selectable *routeSelectable = &routeExecutor;
+
+        EXPECT_EQ(intfsSelectable->getPri(), 35);
+        EXPECT_EQ(routeSelectable->getPri(), 5);
+    }
+
     DBConnector appl_db("APPL_DB", 0);
     DBConnector state_db("STATE_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);

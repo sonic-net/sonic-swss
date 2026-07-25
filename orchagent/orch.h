@@ -118,6 +118,7 @@ public:
 
     // Decorating Selectable
     int getFd() override { return m_selectable->getFd(); }
+    int getPri() const override { return m_selectable->getPri(); }
     uint64_t readData() override { return m_selectable->readData(); }
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
