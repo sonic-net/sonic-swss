@@ -36,7 +36,7 @@ TunnelDecapOrch::TunnelDecapOrch(
 {
     SWSS_LOG_ENTER();
 
-    auto cfgSubnetDecapSubTable = new SubscriberStateTable(configDb, CFG_SUBNET_DECAP_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0);
+    auto cfgSubnetDecapSubTable = new SubscriberStateTable(configDb, CFG_SUBNET_DECAP_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE);
     deque<KeyOpFieldsValuesTuple> entries;
     cfgSubnetDecapSubTable->pops(entries);
     // init subnet decap config

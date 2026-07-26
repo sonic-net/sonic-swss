@@ -41,8 +41,6 @@ extern RouteOrch *gRouteOrch;
 extern bool gTraditionalFlexCounter;
 extern bool isChassisDbInUse();
 
-const int IntfsOrch::intfsorch_pri = 35;
-
 #define UPDATE_MAPS_SEC 1
 
 #define MGMT_VRF            "mgmt"
@@ -59,7 +57,7 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
     SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
 };
 
-IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
+IntfsOrch::IntfsOrch(DBConnector *db, vector<string> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
         Orch(db, tableNames), m_vrfOrch(vrf_orch)
 {
     SWSS_LOG_ENTER();
@@ -104,7 +102,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
     {
         //Add subscriber to process VOQ system interface
         string tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
         m_tableVoqSystemInterfaceTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME));
     }
 

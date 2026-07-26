@@ -207,14 +207,13 @@ namespace portphyserdesattr_test
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             // Create PortsOrch with all required table dependencies
-            const int portsorch_base_pri = 40;
-            vector<table_name_with_pri_t> port_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },                // Physical port config (highest priority)
-                { APP_SEND_TO_INGRESS_PORT_TABLE_NAME, portsorch_base_pri + 5 }, // Ingress port forwarding
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },                // VLAN configuration
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },             // VLAN membership (lowest priority)
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },                 // Link aggregation groups
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }               // LAG membership
+            vector<string> port_tables = {
+                APP_PORT_TABLE_NAME,                 // Physical port config
+                APP_SEND_TO_INGRESS_PORT_TABLE_NAME, // Ingress port forwarding
+                APP_VLAN_TABLE_NAME,                 // VLAN configuration
+                APP_VLAN_MEMBER_TABLE_NAME,          // VLAN membership
+                APP_LAG_TABLE_NAME,                  // Link aggregation groups
+                APP_LAG_MEMBER_TABLE_NAME            // LAG membership
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);

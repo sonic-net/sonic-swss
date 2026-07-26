@@ -125,7 +125,7 @@ namespace dashenifwdorch_ut
               void doDashEniFwdTableTask(DBConnector* applDb, const deque<KeyOpFieldsValuesTuple> &entries)
               {
                      auto consumer = unique_ptr<Consumer>(new Consumer(
-                            new swss::ConsumerStateTable(applDb, APP_DASH_ENI_FORWARD_TABLE, 1, 1), 
+                            new swss::ConsumerStateTable(applDb, APP_DASH_ENI_FORWARD_TABLE, 1),
                             eniOrch.get(), APP_DASH_ENI_FORWARD_TABLE));
 
                      consumer->addToSync(entries);

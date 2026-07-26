@@ -35,8 +35,7 @@ typedef map<string, IntfsEntry> IntfsTable;
 class IntfsOrch : public Orch
 {
 public:
-    IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
-    static const int intfsorch_pri;
+    IntfsOrch(DBConnector *db, vector<string> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);

@@ -384,14 +384,12 @@ namespace qosorch_test
 
             // Create dependencies ...
 
-            const int portsorch_base_pri = 40;
-
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
 
             vector<string> flex_counter_tables = {
@@ -406,20 +404,18 @@ namespace qosorch_test
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
-            vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
-                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            vector<string> intf_tables = {
+                APP_INTF_TABLE_NAME,
+                APP_SAG_TABLE_NAME
             };
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
-            const int fdborch_pri = 20;
-
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
-                { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
+            vector<string> app_fdb_tables = {
+                APP_FDB_TABLE_NAME,
+                APP_VXLAN_FDB_TABLE_NAME,
+                APP_MCLAG_FDB_TABLE_NAME
             };
 
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);

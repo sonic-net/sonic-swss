@@ -124,7 +124,7 @@ class FdbOrch: public Orch, public Subject, public Observer
 
 public:
 
-    FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
+    FdbOrch(DBConnector* applDbConnector, vector<string> appFdbTables,
                 TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector,
                 PortsOrch *port,
                 DBConnector* configDb);
@@ -139,7 +139,6 @@ public:
     bool is_fdb_programmed_to_vxlan_tunnel(FdbEntry& entry);
     bool removeFdbEntry(const FdbEntry& entry, FdbOrigin origin=FDB_ORIGIN_PROVISIONED);
 
-    static const int fdborch_pri;
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
                          sai_object_id_t vlan_oid);
     void flushAllFDBEntries(sai_object_id_t bridge_port_oid,

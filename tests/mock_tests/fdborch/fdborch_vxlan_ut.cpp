@@ -161,13 +161,12 @@ namespace fdborch_vxlan_ut
             gDirectory.set(gSwitchOrch);
 
             // 2) Portsorch
-            const int portsorch_base_pri = 40;
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
             m_portsOrch = std::make_shared<PortsOrch>(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             gDirectory.set(m_portsOrch.get());
@@ -189,10 +188,10 @@ namespace fdborch_vxlan_ut
             gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
              // Construct fdborch
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
-                { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+            vector<string> app_fdb_tables = {
+                APP_FDB_TABLE_NAME,
+                APP_VXLAN_FDB_TABLE_NAME,
+                APP_MCLAG_FDB_TABLE_NAME
             };
 
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -218,8 +217,8 @@ namespace fdborch_vxlan_ut
 
             ASSERT_EQ(gIntfsOrch, nullptr);
 
-            vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri}
+            vector<string> intf_tables = {
+                APP_INTF_TABLE_NAME
             };
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
             ASSERT_EQ(gNeighOrch, nullptr);
@@ -246,11 +245,10 @@ namespace fdborch_vxlan_ut
             gDirectory.set(m_EvpnNvoOrch);
 
             gPortsOrch = m_portsOrch.get();
-            const int fgnhgorch_pri = 15;
-            vector<table_name_with_pri_t> fgnhg_tables = {
-                { CFG_FG_NHG, fgnhgorch_pri },
-                { CFG_FG_NHG_PREFIX, fgnhgorch_pri },
-                { CFG_FG_NHG_MEMBER, fgnhgorch_pri }
+            vector<string> fgnhg_tables = {
+                CFG_FG_NHG,
+                CFG_FG_NHG_PREFIX,
+                CFG_FG_NHG_MEMBER
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
             gDirectory.set(gFgNhgOrch);
@@ -264,10 +262,9 @@ namespace fdborch_vxlan_ut
             gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
             gDirectory.set(gSrv6Orch);
 
-            const int routeorch_pri = 5;
-            vector<table_name_with_pri_t> route_tables = {
-                { APP_ROUTE_TABLE_NAME, routeorch_pri },
-                { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
+            vector<string> route_tables = {
+                APP_ROUTE_TABLE_NAME,
+                APP_LABEL_ROUTE_TABLE_NAME
             };
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
             gDirectory.set(gRouteOrch);

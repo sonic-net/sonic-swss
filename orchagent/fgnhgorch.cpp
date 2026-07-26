@@ -22,7 +22,7 @@ extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 
-FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableNames),
         m_zmqClient(create_route_perf_zmq_client()),
         m_neighOrch(neighOrch),

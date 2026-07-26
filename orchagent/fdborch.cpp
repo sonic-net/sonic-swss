@@ -31,9 +31,7 @@ extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
 
-const int FdbOrch::fdborch_pri = 20;
-
-FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
+FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<string> appFdbTables,
     TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port,
     DBConnector* configDb) :
     Orch(applDbConnector, appFdbTables),
@@ -43,7 +41,7 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 {
     for(auto it: appFdbTables)
     {
-        m_appTables.push_back(new Table(applDbConnector, it.first));
+        m_appTables.push_back(new Table(applDbConnector, it));
     }
 
     m_portsOrch->attach(this);

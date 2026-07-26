@@ -160,7 +160,7 @@ namespace consumer_test
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
             consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", 1, 1), gPortsOrch, "CFG_TEST_TABLE"));
+                new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", 1), gPortsOrch, "CFG_TEST_TABLE"));
         }
 
         virtual void SetUp() override
@@ -480,7 +480,7 @@ namespace consumer_test
         int consumer_pops_batch_size = 10;
         TestOrch test_orch(m_config_db.get(), "CFG_TEST_TABLE");
         Consumer test_consumer(
-                new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", consumer_pops_batch_size, 1), &test_orch, "CFG_TEST_TABLE");
+                new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", consumer_pops_batch_size), &test_orch, "CFG_TEST_TABLE");
         swss::ProducerStateTable producer_table(m_config_db.get(), "CFG_TEST_TABLE");
 
         m_config_db->flushdb();

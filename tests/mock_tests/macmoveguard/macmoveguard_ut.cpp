@@ -326,13 +326,12 @@ namespace macmoveguard_test
             ASSERT_EQ(gSwitchOrch, nullptr);
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
-            const int portsorch_base_pri = 40;
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
             m_portsOrch = make_shared<PortsOrch>(m_app_db.get(), m_state_db.get(),
                                                  ports_tables, m_chassis_app_db.get());
@@ -372,10 +371,10 @@ namespace macmoveguard_test
         // post-construction state as before.
         void buildOrch()
         {
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri },
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri },
-                { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri }
+            vector<string> app_fdb_tables = {
+                APP_FDB_TABLE_NAME,
+                APP_VXLAN_FDB_TABLE_NAME,
+                APP_MCLAG_FDB_TABLE_NAME
             };
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
@@ -421,7 +420,7 @@ namespace macmoveguard_test
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_config_db.get(),
-                                             CFG_MAC_MOVE_GUARD_TABLE_NAME, 1, 1),
+                                             CFG_MAC_MOVE_GUARD_TABLE_NAME, 1),
                 m_fdbOrch.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
 
             KeyOpFieldsValuesTuple kfv;
@@ -437,7 +436,7 @@ namespace macmoveguard_test
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_config_db.get(),
-                                             CFG_MAC_MOVE_GUARD_TABLE_NAME, 1, 1),
+                                             CFG_MAC_MOVE_GUARD_TABLE_NAME, 1),
                 m_fdbOrch.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
             KeyOpFieldsValuesTuple kfv;
             kfvKey(kfv) = key;

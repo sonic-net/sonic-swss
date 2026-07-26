@@ -345,15 +345,13 @@ namespace flexcounter_test
             ASSERT_EQ(gSwitchOrch, nullptr);
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
-            const int portsorch_base_pri = 40;
-
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_SEND_TO_INGRESS_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_SEND_TO_INGRESS_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);
@@ -409,9 +407,9 @@ namespace flexcounter_test
             static_cast<Orch *>(gPortsOrch)->doTask();
 
 
-            vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
-                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            vector<string> intf_tables = {
+                APP_INTF_TABLE_NAME,
+                APP_SAG_TABLE_NAME
             };
 
             ASSERT_EQ(gIntfsOrch, nullptr);
@@ -1118,7 +1116,7 @@ namespace flexcounter_test
         m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
 
         auto consumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
             m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
         consumer->addToSync(

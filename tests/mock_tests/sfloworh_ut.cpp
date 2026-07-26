@@ -31,7 +31,7 @@ namespace sflow_test
         {
             // ConsumerStateTable is used for APP DB
             auto consumer = std::unique_ptr<Consumer>(new Consumer(
-                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_TABLE_NAME, 1, 1),
+                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_TABLE_NAME, 1),
                 this->sflowOrch.get(), APP_SFLOW_TABLE_NAME
             ));
 
@@ -43,7 +43,7 @@ namespace sflow_test
         {
             // ConsumerStateTable is used for APP DB
             auto consumer = std::unique_ptr<Consumer>(new Consumer(
-                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SESSION_TABLE_NAME, 1, 1),
+                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SESSION_TABLE_NAME, 1),
                 this->sflowOrch.get(), APP_SFLOW_SESSION_TABLE_NAME
             ));
 
@@ -55,7 +55,7 @@ namespace sflow_test
         {
             // ConsumerStateTable is used for APP DB
             auto consumer = std::unique_ptr<Consumer>(new Consumer(
-                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SAMPLE_RATE_TABLE_NAME, 1, 1),
+                new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SAMPLE_RATE_TABLE_NAME, 1),
                 this->sflowOrch.get(), APP_SFLOW_SAMPLE_RATE_TABLE_NAME
             ));
 
@@ -176,14 +176,12 @@ namespace sflow_test
             // PortsOrch
             //
 
-            const int portsorchBasePri = 40;
-
-            std::vector<table_name_with_pri_t> portTableList = {
-                { APP_PORT_TABLE_NAME,        portsorchBasePri + 5 },
-                { APP_VLAN_TABLE_NAME,        portsorchBasePri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorchBasePri     },
-                { APP_LAG_TABLE_NAME,         portsorchBasePri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME,  portsorchBasePri     }
+            std::vector<std::string> portTableList = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
 
             gPortsOrch = new PortsOrch(this->appDb.get(), this->stateDb.get(), portTableList, this->chassisAppDb.get());

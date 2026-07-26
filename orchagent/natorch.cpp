@@ -43,7 +43,7 @@ extern DebugDumpOrch      *gDebugDumpOrch;
 uint32_t  natTimerTickCntr  = 0;
 bool      gNhTrackingSupported = false;
 
-NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
+NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames,
          RouteOrch *routeOrch, NeighOrch *neighOrch):
          Orch(appDb, tableNames),
          m_neighOrch(neighOrch),

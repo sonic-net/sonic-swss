@@ -27,12 +27,10 @@ extern string gMyHostName;
 
 extern bool isChassisDbInUse();
 
-const int neighorch_pri = 30;
-
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
         gNeighBulker(sai_neighbor_api, gMaxBulkSize),
         gNextHopBulker(sai_next_hop_api, gSwitchId, gMaxBulkSize),
-        Orch(appDb, tableName, neighorch_pri),
+        Orch(appDb, tableName),
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
         m_portsOrch(portsOrch),
@@ -52,7 +50,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
         m_tableVoqSystemNeighTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME));
 
         //STATE DB connection for setting state of the remote neighbor SAI programming

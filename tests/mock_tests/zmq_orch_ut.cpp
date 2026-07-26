@@ -19,10 +19,10 @@ using namespace std;
 
 TEST(ZmqOrchTest, CreateZmqOrchWitTableNames)
 {   
-    vector<table_name_with_pri_t> tables = {
-        { "TABLE_1", 1 },
-        { "TABLE_2", 2 },
-        { "TABLE_3", 3 }
+    vector<string> tables = {
+        "TABLE_1",
+        "TABLE_2",
+        "TABLE_3"
     };
 
     auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -65,14 +65,14 @@ TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
     // Hosting ZmqRouteOrch — used only as the parent Orch pointer for the
     // ZmqRouteConsumer below (nullptr server so it doesn't register a real
     // ZMQ consumer of its own).
-    vector<table_name_with_pri_t> empty_tables;
+    vector<string> empty_tables;
     auto host_orch = make_shared<ZmqRouteOrch>(app_db.get(), empty_tables, nullptr);
 
     // Construct ZmqConsumerStateTable with dbPersistence=false so no
     // AsyncDBUpdater / Redis activity happens.
     auto* cst = new swss::ZmqConsumerStateTable(
         app_db.get(), "ROUTE_TABLE_E", *zmq_server,
-        /*popBatchSize=*/128, /*pri=*/1, /*dbPersistence=*/false);
+        /*popBatchSize=*/128, /*pri=*/0, /*dbPersistence=*/false);
     auto* consumer = new ZmqRouteConsumer(cst, host_orch.get(), "ROUTE_TABLE_E");
 
     // With no messages received, pops() returns empty, addToSync returns 0,

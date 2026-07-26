@@ -226,21 +226,19 @@ bool OrchDaemon::init()
 
     gSwitchOrch = new SwitchOrch(m_applDb, switch_tables, stateDbSwitchTable);
 
-    const int portsorch_base_pri = 40;
-
-    vector<table_name_with_pri_t> ports_tables = {
-        { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
-        { APP_SEND_TO_INGRESS_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
-        { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
-        { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
-        { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
-        { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
+    vector<string> ports_tables = {
+        APP_PORT_TABLE_NAME,
+        APP_SEND_TO_INGRESS_PORT_TABLE_NAME,
+        APP_VLAN_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME,
+        APP_LAG_TABLE_NAME,
+        APP_LAG_MEMBER_TABLE_NAME
     };
 
-    vector<table_name_with_pri_t> app_fdb_tables = {
-        { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
-        { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+    vector<string> app_fdb_tables = {
+        APP_FDB_TABLE_NAME,
+        APP_VXLAN_FDB_TABLE_NAME,
+        APP_MCLAG_FDB_TABLE_NAME
     };
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
@@ -321,9 +319,9 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    vector<table_name_with_pri_t> intf_tables = {
-        { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
-        { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+    vector<string> intf_tables = {
+        APP_INTF_TABLE_NAME,
+        APP_SAG_TABLE_NAME
     };
 
     gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
@@ -332,12 +330,10 @@ bool OrchDaemon::init()
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
 
-    const int fgnhgorch_pri = 15;
-
-    vector<table_name_with_pri_t> fgnhg_tables = {
-        { CFG_FG_NHG,                 fgnhgorch_pri },
-        { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
-        { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
+    vector<string> fgnhg_tables = {
+        CFG_FG_NHG,
+        CFG_FG_NHG_PREFIX,
+        CFG_FG_NHG_MEMBER
     };
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
@@ -358,10 +354,9 @@ bool OrchDaemon::init()
     gSrv6Orch = new Srv6Orch(m_configDb, m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
     gDirectory.set(gSrv6Orch);
 
-    const int routeorch_pri = 5;
-    vector<table_name_with_pri_t> route_tables = {
-        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
-        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    vector<string> route_tables = {
+        APP_ROUTE_TABLE_NAME,
+        APP_LABEL_ROUTE_TABLE_NAME
     };
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
@@ -485,15 +480,13 @@ bool OrchDaemon::init()
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
 
-    const int natorch_base_pri = 50;
-
-    vector<table_name_with_pri_t> nat_tables = {
-        { APP_NAT_DNAT_POOL_TABLE_NAME,  natorch_base_pri + 5 },
-        { APP_NAT_TABLE_NAME,            natorch_base_pri + 4 },
-        { APP_NAPT_TABLE_NAME,           natorch_base_pri + 3 },
-        { APP_NAT_TWICE_TABLE_NAME,      natorch_base_pri + 2 },
-        { APP_NAPT_TWICE_TABLE_NAME,     natorch_base_pri + 1 },
-        { APP_NAT_GLOBAL_TABLE_NAME,     natorch_base_pri     }
+    vector<string> nat_tables = {
+        APP_NAT_DNAT_POOL_TABLE_NAME,
+        APP_NAT_TABLE_NAME,
+        APP_NAPT_TABLE_NAME,
+        APP_NAT_TWICE_TABLE_NAME,
+        APP_NAPT_TWICE_TABLE_NAME,
+        APP_NAT_GLOBAL_TABLE_NAME
     };
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
@@ -644,10 +637,9 @@ bool OrchDaemon::init()
     if (m_fabricEnabled)
     {
         // register APP_FABRIC_MONITOR_PORT_TABLE_NAME table
-        const int fabric_portsorch_base_pri = 30;
-        vector<table_name_with_pri_t> fabric_port_tables = {
-           { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
-           { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
+        vector<string> fabric_port_tables = {
+           APP_FABRIC_MONITOR_PORT_TABLE_NAME,
+           APP_FABRIC_MONITOR_DATA_TABLE_NAME
         };
         gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
@@ -1371,10 +1363,9 @@ bool FabricOrchDaemon::init()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("FabricOrchDaemon init");
 
-    const int fabric_portsorch_base_pri = 30;
-    vector<table_name_with_pri_t> fabric_port_tables = {
-        { APP_FABRIC_MONITOR_PORT_TABLE_NAME, fabric_portsorch_base_pri },
-        { APP_FABRIC_MONITOR_DATA_TABLE_NAME, fabric_portsorch_base_pri }
+    vector<string> fabric_port_tables = {
+        APP_FABRIC_MONITOR_PORT_TABLE_NAME,
+        APP_FABRIC_MONITOR_DATA_TABLE_NAME
     };
     gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
     addOrchList(gFabricPortsOrch);

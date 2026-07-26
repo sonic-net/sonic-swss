@@ -200,7 +200,7 @@ TEST_F(P4OrchTest, ProcessInvalidEntry) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
@@ -224,7 +224,7 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -323,7 +323,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInvalidKey) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -346,7 +346,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -404,7 +404,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -503,7 +503,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -606,7 +606,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
@@ -686,7 +686,7 @@ TEST_F(P4OrchTest, TestP4OrchDumpPendingTasks)
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
@@ -735,7 +735,7 @@ TEST_F(P4OrchTest, P4OrchBakeWithAclTableDefinition) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
@@ -765,7 +765,7 @@ TEST_F(P4OrchTest, P4OrchBakeWithMultipleAclTables) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
@@ -806,7 +806,7 @@ TEST_F(P4OrchTest, P4OrchBakeEmptyConsumer) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
@@ -822,7 +822,7 @@ TEST_F(P4OrchTest, P4OrchBakeNonAclTableEntries) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
@@ -849,7 +849,7 @@ TEST_F(P4OrchTest, P4OrchBakeMixedAclAndNonAclEntries) {
   DBConnector db("APPL_DB", 0);
   ZmqConsumerStateTable* table =
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
-                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, /*pri=*/0,
                                 /*dbPersistence=*/false);
   ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
   consumer.setOrderedQueue(/*orderedQueue=*/true);
