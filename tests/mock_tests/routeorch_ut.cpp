@@ -20,6 +20,8 @@ using ::testing::_;
 
 EXTERN_MOCK_FNS
 
+extern bool gOrchUnhealthy;
+
 namespace routeorch_test
 {
     using namespace std;
@@ -873,6 +875,76 @@ namespace routeorch_test
         EXPECT_CALL(*mock_sai_route_api, create_route_entries)
             .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         static_cast<Orch *>(gRouteOrch)->doTask();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchCreateNotExecutedRetries)
+    {
+        ::gOrchUnhealthy = false;
+
+        std::string key = "3.3.3.0/24";
+        IpPrefix prefix(key);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({key, "SET", { {"ifname", "Ethernet0"},
+                                         {"nexthop", "10.0.0.2"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> exp_status{SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_NOT_EXECUTED)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_FALSE(::gOrchUnhealthy);
+        EXPECT_NE(consumer->m_toSync.find(key), consumer->m_toSync.end());
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix),
+                  gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+
+        exp_status = {SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.find(key), consumer->m_toSync.end());
+        EXPECT_NE(gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix),
+                  gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        EXPECT_FALSE(::gOrchUnhealthy);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchSetNotExecutedRetries)
+    {
+        ::gOrchUnhealthy = false;
+
+        std::string key = "4.4.4.0/24";
+        IpPrefix prefix(key);
+        NextHopGroupKey nhg_key("10.0.0.2");
+        RouteNhg route_nhg(nhg_key, "");
+
+        gRouteOrch->m_syncdRoutes[gVirtualRouterId][prefix] = route_nhg;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({key, "SET", { {"ifname", "Ethernet0"},
+                                         {"nexthop", "10.0.0.3"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> exp_status{SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_route_api, set_route_entries_attribute)
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_NOT_EXECUTED)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_FALSE(::gOrchUnhealthy);
+        EXPECT_NE(consumer->m_toSync.find(key), consumer->m_toSync.end());
+
+        exp_status = {SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, set_route_entries_attribute)
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.find(key), consumer->m_toSync.end());
+        EXPECT_FALSE(::gOrchUnhealthy);
     }
 
     /* Test default route DEL followed by SET scenario to verify bulker state handling */

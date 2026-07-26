@@ -3603,8 +3603,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         if (it_route == routeTableIter->second.end())
         {
             /* First time route addition pointing to FG nhg */
-            if (*it_status++ != SAI_STATUS_SUCCESS)
+            sai_status_t status = *it_status++;
+            if (status != SAI_STATUS_SUCCESS)
             {
+                /* Retry if bulk operation did not execute */
+                if (status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    return false;
+                }
                 SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
                         ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
                 /* Clean up the newly created next hop group entry */
@@ -3647,6 +3653,15 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         sai_status_t status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
         {
+            /* Retry if bulk operation did not execute.
+             * Mellanox SAI can leave later chunks as NOT_EXECUTED after an early
+             * per-entry failure; do not dump or tear down the NHG in that case.
+             */
+            if (status == SAI_STATUS_NOT_EXECUTED)
+            {
+                return false;
+            }
+
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
 

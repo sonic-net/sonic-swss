@@ -394,9 +394,8 @@ namespace saihelper_test
         ASSERT_EQ(status, task_failed);
 
         status = handleSaiSetStatus(SAI_API_ROUTE, SAI_STATUS_NOT_EXECUTED);
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
+        ASSERT_EQ(*_sai_syncd_notifications_count, notif_count);
+        ASSERT_EQ(status, task_need_retry);
 
         status = handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
@@ -526,6 +525,10 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_need_retry);
 
+        status = handleSaiCreateStatus(SAI_API_ROUTE, SAI_STATUS_NOT_EXECUTED);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
         _unhook_sai_apis();
     }
 
@@ -539,6 +542,10 @@ namespace saihelper_test
         task_process_status status;
 
         status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, SAI_STATUS_OBJECT_IN_USE);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiRemoveStatus(SAI_API_ROUTE, SAI_STATUS_NOT_EXECUTED);
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_need_retry);
 
