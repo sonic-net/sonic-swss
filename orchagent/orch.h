@@ -119,6 +119,9 @@ public:
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }
 
+    // Executors have priority 0 and are scheduled in least-recently-used order.
+    int getPri() const override { return 0; }
+
     // Disable copying
     Executor(const Executor&) = delete;
     Executor& operator=(const Executor&) = delete;
