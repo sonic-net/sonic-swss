@@ -230,7 +230,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                     SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
                     return task_process_status::task_invalid_entry;
                 }
-                if ((m_platform == CISCO_8000_PLATFORM_SUBSTRING) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
+                if (isCiscoPlatform(m_platform) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
                     SWSS_LOG_ERROR("Unsupported action %s for platform %s", value.c_str(), m_platform.c_str());
                     return task_process_status::task_invalid_entry;
                 }
@@ -711,12 +711,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     SWSS_LOG_ENTER();
 
     string detectSha, restoreSha;
-    string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
+    string pluginPlatform = getPfcWdPluginPlatform(this->m_platform);
+    string detectPluginName = "pfc_detect_" + pluginPlatform + ".lua";
     string restorePluginName;
     string pollIntervalStr = to_string(m_pollInterval);
     string plugins;
-    if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
-        restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
+    if (isCiscoPlatform(this->m_platform)) {
+        restorePluginName = "pfc_restore_" + pluginPlatform + ".lua";
     } else {
         restorePluginName = "pfc_restore.lua";
     }

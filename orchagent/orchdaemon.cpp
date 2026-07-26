@@ -844,7 +844,7 @@ bool OrchDaemon::init()
                         queueAttrIds,
                         PFC_WD_POLL_MSECS));
         }
-    } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    } else if (isCiscoPlatform(platform))
     {
         static const vector<sai_port_stat_t> portStatIds =
         {

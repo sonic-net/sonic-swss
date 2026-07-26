@@ -17,6 +17,11 @@ extern "C" {
 
 const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
 
+inline std::string getPfcWdPluginPlatform(const std::string &platform)
+{
+    return isCiscoPlatform(platform) ? CISCO_8000_PLATFORM_SUBSTRING : platform;
+}
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
