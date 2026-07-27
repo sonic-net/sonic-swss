@@ -1361,6 +1361,13 @@ namespace flexcounter_test
         ASSERT_FALSE(coppOrch->isPolicerStatsCapable());
         EXPECT_TRUE(coppOrch->getSupportedPolicerStatIds().empty());
 
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "false");
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+        EXPECT_EQ(val, "");
+
         // Even with COPP_STATS toggled enable, no binding should occur.
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
@@ -1388,6 +1395,15 @@ namespace flexcounter_test
         EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_ATTR_BYTES"), 1u);
         EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_GREEN_PACKETS"), 0u);
         EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_RED_BYTES"), 0u);
+
+        // CoppOrch's ctor publishes both capability fields to STATE_DB; the
+        // supported list is comma-joined in wishlist order.
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "true");
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+        EXPECT_EQ(val, "SAI_POLICER_STAT_PACKETS,SAI_POLICER_STAT_ATTR_BYTES");
 
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
