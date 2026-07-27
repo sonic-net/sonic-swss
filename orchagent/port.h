@@ -213,8 +213,6 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
-    /* PHY port admin state is overriden by parent LAG admin-down */
-    bool                m_lag_forced_admin_down = false;
     /* MACsec data-plane state for a LAG member. Set false when the last
      * MACsec SA on the port is torn down (session timeout) so a teamsyncd
      * refresh of APP_LAG_MEMBER_TABLE does not silently re-enable the member
