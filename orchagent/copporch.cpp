@@ -1763,9 +1763,29 @@ void CoppOrch::publishPolicerStatsCapability()
 {
     SWSS_LOG_ENTER();
 
+    // Comma-joined SAI stat names in wishlist order (deterministic; an
+    // unordered_set iteration would produce an unstable string). The names
+    // double as COUNTERS_DB field names, so the CLI needs no mapping table.
+    auto supported = getSupportedPolicerStatIds();
+    std::string supported_csv;
+    for (const auto& entry : policer_stat_wishlist)
+    {
+        if (supported.find(entry.second) == supported.end())
+        {
+            continue;
+        }
+        if (!supported_csv.empty())
+        {
+            supported_csv += ",";
+        }
+        supported_csv += entry.second;
+    }
+
     std::vector<FieldValueTuple> fv;
     fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE,
-                    isPolicerStatsCapable() ? "true" : "false");
+                    supported.empty() ? "false" : "true");
+    fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED,
+                    supported_csv);
 
     if (gSwitchOrch)
     {
