@@ -1,0 +1,46 @@
+# Reusable step template for PR validation builds.
+#
+# When a pipeline runs as part of pull request validation it fetches and merges
+# the tip of the target branch ($(BUILD_BRANCH)) into the checked-out sources.
+# This guarantees the PR is always built and tested against the latest version
+# of the target branch, catching integration issues even when the PR branch is
+# stale. Merge conflicts fail the step, signalling that the PR needs a rebase.
+#
+# For non-PR builds (CI, scheduled, manual) the template expands to no steps.
+#
+# Usage - add immediately after the "checkout: self" step of a job:
+#   steps:
+#   - checkout: self
+#   - template: merge-target-branch.yml
+
+steps:
+- ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+  - script: |
+      set -ex
+      git config user.name "SONiC CI"
+      git config user.email "sonic-ci@users.noreply.github.com"
+
+      # PR source branch head - the commit under review. Sourced from a pipeline
+      # runtime variable so it is pinned to the commit that triggered this build
+      # (no extra fetch, no risk of racing a newer push to the PR branch).
+      echo "PR source branch head: $(System.PullRequest.SourceCommitId)"
+
+      # Currently checked-out commit. For a PR build this is the auto-generated
+      # merge ref (PR source merged with the target branch at queue time).
+      echo "Checked-out HEAD before merge:"
+      git --no-pager log -1 --format='%H %s'
+
+      # Deepen a shallow checkout so a merge base with the target branch exists.
+      git fetch --unshallow 2>/dev/null || true
+      git fetch origin $(BUILD_BRANCH)
+
+      # Tip of the target branch that is about to be merged in.
+      echo "Fetched $(BUILD_BRANCH) tip:"
+      git --no-pager log -1 --format='%H %s' FETCH_HEAD
+
+      git merge --no-edit FETCH_HEAD
+
+      # Resulting merge commit that will actually be built and tested.
+      echo "Resulting HEAD after merge:"
+      git --no-pager log -1 --format='%H %s'
+    displayName: "Merge latest $(BUILD_BRANCH) into PR"

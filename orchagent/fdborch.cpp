@@ -1758,7 +1758,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     {
         swss::Port vlan = update.vlan;
         swss::Port port = update.member;
-        flushAllFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
+        flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
         notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
         return;
     }
@@ -2086,10 +2086,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if (fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) {
-            /* Try to remvoe local neighbor entry if exists
-            * Since this mac is at the remote vxlan side now
-            */
+        if ((fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) &&
+            macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
+            (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
+            /* Try to remove the local neighbor entry if a local MAC moved to
+             * the remote VXLAN side now.
+             */
             gNeighOrch->processFDBDelete(entry);
         }
     }

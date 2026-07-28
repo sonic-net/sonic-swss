@@ -1533,8 +1533,12 @@ mod test {
 
         let mut received_stats = Vec::new();
         while let Some(stats) = saistats_receiver.recv().await {
-            let unwrapped_stats =
-                Arc::try_unwrap(stats).expect("Failed to unwrap Arc<SAIStatsMessage>");
+            // The actor keeps its own Arc clone of each message until it finishes
+            // the current send batch, so the strong count can still be > 1 when we
+            // receive here. Clone the inner value instead of requiring exclusive
+            // ownership (Arc::try_unwrap), which races on slow/emulated runners
+            // such as armhf under QEMU.
+            let unwrapped_stats = (*stats).clone();
             received_stats.push(unwrapped_stats);
             if received_stats.len() == expected_stats.len() {
                 break;
