@@ -2492,6 +2492,159 @@ class TestWarmReboot(object):
         # Start fpmsyncd
         dvs.start_fpmsyncd()
 
+
+class TestSrv6MySidWarmRestart(object):
+    MY_SID_ASIC_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY"
+
+    @staticmethod
+    def snapshot_table(table):
+        snapshot = {}
+        for key in table.getKeys():
+            status, fvs = table.get(key)
+            assert status
+            snapshot[key] = dict(fvs)
+        return snapshot
+
+    def test_orchagent_static_mysid_warm_restart(self, dvs):
+        dvs.setup_db()
+
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        state_db = dvs.get_state_db()
+        asic_db = dvs.get_asic_db()
+
+        config_vrf = swsscommon.Table(config_db, "VRF")
+        config_intf = swsscommon.Table(config_db, "INTERFACE")
+        config_locator = swsscommon.Table(config_db, "SRV6_MY_LOCATORS")
+        config_mysid = swsscommon.Table(config_db, "SRV6_MY_SIDS")
+        app_neighbor = swsscommon.ProducerStateTable(appl_db, "NEIGH_TABLE")
+        app_mysid = swsscommon.ProducerStateTable(appl_db, "SRV6_MY_SID_TABLE")
+        app_mysid_view = swsscommon.Table(appl_db, "SRV6_MY_SID_TABLE")
+        asic_mysid = swsscommon.Table(asic_db.db_connection, self.MY_SID_ASIC_TABLE)
+
+        initial_mysids = set(asic_mysid.getKeys())
+        initial_tunnels = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"))
+        initial_tunnel_terms = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"))
+
+        dvs.runcmd("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
+        config_vrf.set("VrfWarm", swsscommon.FieldValuePairs([("empty", "empty")]))
+        config_intf.set("Ethernet104", swsscommon.FieldValuePairs([("NULL", "NULL")]))
+        config_intf.set("Ethernet104|2001::2/126", swsscommon.FieldValuePairs([("NULL", "NULL")]))
+        dvs.port_admin_set("Ethernet104", "up")
+        app_neighbor.set("Ethernet104:2001::1", swsscommon.FieldValuePairs([
+            ("neigh", "00:00:00:01:02:04"),
+            ("family", "IPv6"),
+        ]))
+
+        config_locator.set("loc-warm", swsscommon.FieldValuePairs([
+            ("prefix", "fc00:0:1::/48"),
+            ("block_len", "32"),
+            ("node_len", "16"),
+            ("func_len", "16"),
+            ("arg_len", "0"),
+        ]))
+        config_mysid.set("loc-warm|fc00:0:1:103::/64", swsscommon.FieldValuePairs([
+            ("decap_dscp_mode", "uniform"),
+        ]))
+
+        entries = {
+            "32:16:16:0:fc00:0:1:100::": [("action", "end")],
+            "32:16:16:0:fc00:0:1:101::": [("action", "end.dt46"), ("vrf", "VrfWarm")],
+            "32:16:16:0:fc00:0:1:102::": [("action", "end.x"), ("adj", "2001::1")],
+            "32:16:16:0:fc00:0:1:103::": [("action", "un")],
+        }
+        for key, fields in entries.items():
+            app_mysid.set(key, swsscommon.FieldValuePairs(fields))
+
+        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids) + len(entries))
+        app_before = self.snapshot_table(app_mysid_view)
+        asic_before = self.snapshot_table(asic_mysid)
+
+        dvs.warm_restart_swss("true")
+        exitcode, result = dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
+        assert exitcode == 0
+        assert result == "RESTARTCHECK succeeded\n"
+
+        pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
+        state_db.wait_for_field_match(
+            swsscommon.STATE_WARM_RESTART_TABLE_NAME,
+            "orchagent",
+            {"state": "reconciled"},
+        )
+
+        assert self.snapshot_table(app_mysid_view) == app_before
+        assert self.snapshot_table(asic_mysid) == asic_before
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub)
+        assert nadd == 0
+        assert ndel == 0
+
+        for key in entries:
+            app_mysid._del(key)
+        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(initial_tunnels))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(initial_tunnel_terms))
+
+        app_neighbor._del("Ethernet104:2001::1")
+        config_mysid._del("loc-warm|fc00:0:1:103::/64")
+        config_locator._del("loc-warm")
+        config_intf._del("Ethernet104|2001::2/126")
+        config_intf._del("Ethernet104")
+        config_vrf._del("VrfWarm")
+
+    def test_fpmsyncd_static_mysid_timer_replay(self, dvs):
+        _, output = dvs.runcmd("vtysh -c 'show zebra dplane providers'")
+        if "dplane_fpm_sonic" not in output:
+            pytest.skip("dplane_fpm_sonic is required for static MySID replay")
+
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        asic_db = dvs.get_asic_db()
+        app_mysid = swsscommon.Table(appl_db, "SRV6_MY_SID_TABLE")
+        asic_mysid = swsscommon.Table(asic_db.db_connection, self.MY_SID_ASIC_TABLE)
+        key = "32:16:16:0:fc00:0:1:200::"
+
+        initial_mysids = set(asic_mysid.getKeys())
+        dvs.runcmd("ip link add sr-warm type dummy")
+        dvs.runcmd("ip link set sr-warm up")
+        dvs.runcmd("vtysh -c 'configure terminal' -c 'segment-routing' -c 'srv6' -c 'locators' -c 'locator loc-warm' -c 'prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16'")
+        dvs.runcmd("ip -6 route add fc00:0:1:200::/128 encap seg6local action End dev sr-warm")
+
+        dvs.get_app_db().wait_for_entry("SRV6_MY_SID_TABLE", key)
+        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids) + 1)
+        app_before = self.snapshot_table(app_mysid)
+        asic_before = self.snapshot_table(asic_mysid)
+
+        warm_restart_set(dvs, "bgp", "true")
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", "5")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
+
+        pubsub_app = dvs.SubscribeAppDbObject("SRV6_MY_SID_TABLE")
+        pubsub_asic = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        dvs.stop_fpmsyncd()
+        dvs.start_fpmsyncd()
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        time.sleep(6)
+        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+        assert self.snapshot_table(app_mysid) == app_before
+        assert self.snapshot_table(asic_mysid) == asic_before
+        addobjs, delobjs = dvs.GetSubscribedAppDbObjects(pubsub_app)
+        assert len(addobjs) == 0
+        assert len(delobjs) == 0
+        nadd, ndel = dvs.CountSubscribedObjects(pubsub_asic)
+        assert nadd == 0
+        assert ndel == 0
+
+        dvs.runcmd("ip -6 route del fc00:0:1:200::/128 encap seg6local action End dev sr-warm")
+        dvs.get_app_db().wait_for_deleted_entry("SRV6_MY_SID_TABLE", key)
+        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
+        dvs.runcmd("vtysh -c 'configure terminal' -c 'segment-routing' -c 'no srv6'")
+        dvs.runcmd("ip link del sr-warm")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

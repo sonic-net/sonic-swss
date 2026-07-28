@@ -1,3 +1,4 @@
+#include <array>
 #include <iostream>
 #include <sstream>
 #include <inttypes.h>
@@ -13,6 +14,7 @@
 #include "redisutility.h"
 #include "flex_counter_manager.h"
 #include "flow_counter_handler.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -34,6 +36,7 @@ extern sai_srv6_api_t* sai_srv6_api;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_counter_api_t* sai_counter_api;
 
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
@@ -109,6 +112,8 @@ Srv6Orch::Srv6Orch(DBConnector *cfgDb, DBConnector *applDb, const vector<TableCo
     m_counter_manager(SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, SRV6_STAT_COUNTER_POLLING_INTERVAL_MS, false)
 {
     m_neighOrch->attach(this);
+    createRetryCache(APP_SRV6_MY_SID_TABLE_NAME);
+    createRetryCache(APP_PIC_CONTEXT_TABLE_NAME);
 
     initializeCounters();
 }
@@ -139,7 +144,6 @@ void Srv6Orch::initializeCounters()
     m_counter_update_timer = new SelectableTimer(timespec { .tv_sec = SRV6_FLEX_COUNTER_UPDATE_TIMER , .tv_nsec = 0 });
     auto et = new ExecutableTimer(m_counter_update_timer, this, "SRV6_FLEX_COUNTER_UPDATE_TIMER");
     Orch::addExecutor(et);
-    createRetryCache(APP_PIC_CONTEXT_TABLE_NAME);
 }
 
 bool Srv6Orch::queryMySidCountersCapability() const
@@ -210,13 +214,20 @@ bool Srv6Orch::addMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_i
     return true;
 }
 
-void Srv6Orch::removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid)
+bool Srv6Orch::removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid)
 {
     SWSS_LOG_ENTER();
 
     if (counter_oid == SAI_NULL_OBJECT_ID)
     {
-        return;
+        return true;
+    }
+
+    auto status = sai_counter_api->remove_counter(counter_oid);
+    if (status != SAI_STATUS_SUCCESS &&
+        handleSaiRemoveStatus(SAI_API_COUNTER, status) != task_success)
+    {
+        return false;
     }
 
     auto key = getMySidCounterKey(sai_entry);
@@ -230,8 +241,8 @@ void Srv6Orch::removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_objec
         m_counter_manager.clearCounterIdList(counter_oid);
     }
 
-    FlowCounterHandler::removeGenericCounter(counter_oid);
     counter_oid = SAI_NULL_OBJECT_ID;
+    return true;
 }
 
 void Srv6Orch::setMySidEntryCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t counter_oid)
@@ -277,7 +288,10 @@ void Srv6Orch::setCountersState(bool enable)
             setMySidEntryCounter(sai_entry, counter_oid);
         } else {
             setMySidEntryCounter(sai_entry, SAI_NULL_OBJECT_ID);
-            removeMySidCounter(sai_entry, counter_oid);
+            if (!removeMySidCounter(sai_entry, counter_oid))
+            {
+                SWSS_LOG_ERROR("Failed to remove counter while disabling MySID counters");
+            }
         }
     }
 
@@ -540,6 +554,8 @@ bool Srv6Orch::initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create MySID IPinIP tunnel: %d", status);
+        sai_router_intfs_api->remove_router_interface(tunnel.overlay_rif_oid);
+        tunnel.overlay_rif_oid = SAI_NULL_OBJECT_ID;
         return false;
     }
 
@@ -552,23 +568,29 @@ bool Srv6Orch::deinitIpInIpTunnel(MySidIpInIpTunnel& tunnel)
 {
     SWSS_LOG_ENTER();
 
-    auto status = sai_tunnel_api->remove_tunnel(tunnel.tunnel_oid);
-    if (status != SAI_STATUS_SUCCESS)
+    if (tunnel.tunnel_oid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel: %d", status);
-        return false;
+        auto status = sai_tunnel_api->remove_tunnel(tunnel.tunnel_oid);
+        if (status != SAI_STATUS_SUCCESS &&
+            handleSaiRemoveStatus(SAI_API_TUNNEL, status) != task_success)
+        {
+            SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel: %d", status);
+            return false;
+        }
+        tunnel.tunnel_oid = SAI_NULL_OBJECT_ID;
     }
 
-    tunnel.tunnel_oid = SAI_NULL_OBJECT_ID;
-
-    status = sai_router_intfs_api->remove_router_interface(tunnel.overlay_rif_oid);
-    if (status != SAI_STATUS_SUCCESS)
+    if (tunnel.overlay_rif_oid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel RIF: %d", status);
-        return false;
+        auto status = sai_router_intfs_api->remove_router_interface(tunnel.overlay_rif_oid);
+        if (status != SAI_STATUS_SUCCESS &&
+            handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            SWSS_LOG_ERROR("Failed to remove MySID IPinIP tunnel RIF: %d", status);
+            return false;
+        }
+        tunnel.overlay_rif_oid = SAI_NULL_OBJECT_ID;
     }
-
-    tunnel.overlay_rif_oid = SAI_NULL_OBJECT_ID;
 
     SWSS_LOG_INFO("Removed MySID IPinIP tunnel");
 
@@ -607,11 +629,16 @@ bool Srv6Orch::removeMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode)
     MySidIpInIpTunnel& pipe_tunnel = my_sid_ipinip_tunnels_.dscp_pipe_tunnel;
 
     MySidIpInIpTunnel& tunnel_info = (dscp_mode == SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL) ? uniform_tunnel : pipe_tunnel;
-    tunnel_info.refcount--;
+    if (tunnel_info.refcount > 0)
+    {
+        tunnel_info.refcount--;
+    }
 
     SWSS_LOG_INFO("Decreased refcount for MySID IPinIP tunnel to %" PRIu64, tunnel_info.refcount);
 
-    if (tunnel_info.refcount == 0)
+    if (tunnel_info.refcount == 0 &&
+        (tunnel_info.tunnel_oid != SAI_NULL_OBJECT_ID ||
+         tunnel_info.overlay_rif_oid != SAI_NULL_OBJECT_ID))
     {
         return deinitIpInIpTunnel(tunnel_info);
     }
@@ -664,13 +691,37 @@ bool Srv6Orch::removeMySidIpInIpTunnelTermEntry(sai_object_id_t term_entry_oid)
     SWSS_LOG_ENTER();
 
     auto status = sai_tunnel_api->remove_tunnel_term_table_entry(term_entry_oid);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS &&
+        handleSaiRemoveStatus(SAI_API_TUNNEL, status) != task_success)
     {
         SWSS_LOG_ERROR("Failed to remove tunnel termination entry for MySID entry - %d", status);
         return false;
     }
 
     SWSS_LOG_INFO("Removed tunnel termination entry for MySID entry");
+
+    return true;
+}
+
+bool Srv6Orch::cleanupStaleMySidTunnel(MySidEntry& entry)
+{
+    if (entry.stale_tunnel_term_entry != SAI_NULL_OBJECT_ID)
+    {
+        if (!removeMySidIpInIpTunnelTermEntry(entry.stale_tunnel_term_entry))
+        {
+            return false;
+        }
+        entry.stale_tunnel_term_entry = SAI_NULL_OBJECT_ID;
+    }
+
+    if (entry.stale_tunnel_ref)
+    {
+        if (!removeMySidIpInIpTunnel(entry.stale_dscp_mode))
+        {
+            return false;
+        }
+        entry.stale_tunnel_ref = false;
+    }
 
     return true;
 }
@@ -1217,48 +1268,11 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
     /* Check if the received notification is a neighbor add or a neighbor delete */
     if (update.add)
     {
-        /*
-         * It's a neighbor add notification, let's walk through the list of SRv6 MySID entries
-         * that are waiting for that neighbor to be ready, and install them into the ASIC.
-         */
-
-        SWSS_LOG_INFO("Neighbor ADD event: %s alias '%s', installing pending SRv6 SIDs",
+        SWSS_LOG_INFO("Neighbor ADD event: %s alias '%s', retrying pending SRv6 SIDs",
                         update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
-
-        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string(), update.entry.alias));
-        if (it == m_pendingSRv6MySIDEntries.end())
-        {
-            /* No SID is waiting for this neighbor. Nothing to do */
-            return;
-        }
-        auto &nexthop_key = it->first;
-        auto &pending_my_sid_entries = it->second;
-
-        for (auto iter = pending_my_sid_entries.begin(); iter != pending_my_sid_entries.end();)
-        {
-            string my_sid_string = get<0>(*iter);
-            const string dt_vrf = get<1>(*iter);
-            const string adj = get<2>(*iter);
-            const string end_action = get<3>(*iter);
-
-            SWSS_LOG_INFO("Creating SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(), adj.c_str());
-        
-            if(!createUpdateMysidEntry(my_sid_string, dt_vrf, adj, end_action))
-            {
-                SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", my_sid_string.c_str());
-                ++iter;
-                continue;
-            }
-
-            SWSS_LOG_INFO("SID %s created successfully", my_sid_string.c_str());
-
-            iter = pending_my_sid_entries.erase(iter);
-        }
-
-        if (pending_my_sid_entries.size() == 0)
-        {
-            m_pendingSRv6MySIDEntries.erase(nexthop_key);
-        }
+        NextHopKey nexthop(update.entry.ip_address.to_string(), update.entry.alias);
+        notifyRetry(this, APP_SRV6_MY_SID_TABLE_NAME,
+                    make_constraint(RETRY_CST_MYSID_NEXTHOP, nexthop.to_string()));
     }
     else
     {
@@ -1281,8 +1295,9 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
 
             try
             {
-                /* Skip SIDs that are not associated with this neighbor */
-                if (IpAddress(it->second.endAdjString) != update.entry.ip_address)
+                NextHopKey entry_nexthop(it->second.endAdjString);
+                NextHopKey updated_nexthop(update.entry.ip_address, update.entry.alias);
+                if (entry_nexthop != updated_nexthop)
                 {
                     ++it;
                     continue;
@@ -1324,7 +1339,7 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
             /* Let's delete the SID from the ASIC */
             unordered_map<string, MySidEntry>::iterator tmp = it;
             ++tmp;
-            if(!deleteMysidEntry(it->first))
+            if (deleteMysidEntry(it->first) != task_success)
             {
                 SWSS_LOG_ERROR("Failed to delete my_sid entry for sid %s", it->first.c_str());
                 ++it;
@@ -1334,14 +1349,22 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
 
             SWSS_LOG_INFO("SID %s removed successfully", my_sid_string.c_str());
 
-            /*
-             * Finally, add the SID to the pending MySID entries set, so that we can re-install it 
-             * when the neighbor comes back
-             */
-            auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
-            m_pendingSRv6MySIDEntries[NextHopKey(update.entry.ip_address.to_string(), update.entry.alias)].insert(pending_mysid_entry);
+            vector<FieldValueTuple> fields = {{"action", end_action}, {"adj", adj}};
+            if (!dt_vrf.empty())
+            {
+                fields.emplace_back("vrf", dt_vrf);
+            }
+            addToRetry(APP_SRV6_MY_SID_TABLE_NAME,
+                       Task{my_sid_string, SET_COMMAND, fields},
+                       make_constraint(RETRY_CST_MYSID_NEXTHOP, NextHopKey(adj).to_string()));
         }
     }
+}
+
+void Srv6Orch::notifyVrfAvailable(const std::string &vrf)
+{
+    notifyRetry(this, APP_SRV6_MY_SID_TABLE_NAME,
+                make_constraint(RETRY_CST_MYSID_VRF, vrf));
 }
 
 void Srv6Orch::update(SubjectType type, void *cntx)
@@ -1429,288 +1452,572 @@ bool Srv6Orch::mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_e
     return status && dscp_mode.has_value();
 }
 
-bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
+task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
+                                                     const string adj, const string end_action)
 {
     SWSS_LOG_ENTER();
-    vector<sai_attribute_t> attributes;
-    sai_attribute_t attr;
-    string key_string = my_sid_string;
+    const string key_string = my_sid_string;
     sai_my_sid_entry_endpoint_behavior_t end_behavior;
     sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE;
 
-    bool entry_exists = false;
-    if (mySidExists(key_string))
+    if (!sidEntryEndpointBehavior(end_action, end_behavior, end_flavor))
     {
-        entry_exists = true;
+        SWSS_LOG_ERROR("Invalid my_sid action %s", end_action.c_str());
+        return task_invalid_entry;
     }
 
-    sai_my_sid_entry_t my_sid_entry;
-    if (!entry_exists)
-    {
-        vector<string>keys = tokenize(my_sid_string, MY_SID_KEY_DELIMITER);
+    sai_my_sid_entry_t my_sid_entry{};
+    my_sid_entry.vr_id = gVirtualRouterId;
+    my_sid_entry.switch_id = gSwitchId;
 
-        my_sid_entry.vr_id = gVirtualRouterId;
-        my_sid_entry.switch_id = gSwitchId;
-        my_sid_entry.locator_block_len = (uint8_t)stoi(keys[0]);
-        my_sid_entry.locator_node_len = (uint8_t)stoi(keys[1]);
-        my_sid_entry.function_len = (uint8_t)stoi(keys[2]);
-        my_sid_entry.args_len = (uint8_t)stoi(keys[3]);
-        size_t keylen = keys[0].length()+keys[1].length()+keys[2].length()+keys[3].length() + 4;
-        my_sid_string.erase(0, keylen);
-        string my_sid = my_sid_string;
-        SWSS_LOG_INFO("MY SID STRING %s", my_sid.c_str());
-        IpAddress address(my_sid);
+    array<uint8_t, 4> lengths{};
+    size_t offset = 0;
+    try
+    {
+        for (size_t index = 0; index < lengths.size(); ++index)
+        {
+            auto delimiter = key_string.find(MY_SID_KEY_DELIMITER, offset);
+            if (delimiter == string::npos || delimiter == offset)
+            {
+                SWSS_LOG_ERROR("Invalid MySID key %s", key_string.c_str());
+                return task_invalid_entry;
+            }
+            auto value = stoi(key_string.substr(offset, delimiter - offset));
+            if (value < 0 || value > 128)
+            {
+                SWSS_LOG_ERROR("Invalid MySID locator length in key %s", key_string.c_str());
+                return task_invalid_entry;
+            }
+            lengths[index] = static_cast<uint8_t>(value);
+            offset = delimiter + 1;
+        }
+
+        my_sid_string = key_string.substr(offset);
+        IpAddress address(my_sid_string);
+        if (address.isV4())
+        {
+            SWSS_LOG_ERROR("MySID address must be IPv6 in key %s", key_string.c_str());
+            return task_invalid_entry;
+        }
         memcpy(my_sid_entry.sid, address.getV6Addr(), sizeof(my_sid_entry.sid));
     }
-    else
+    catch (const exception& error)
     {
-        my_sid_entry = srv6_my_sid_table_[key_string].entry;
+        SWSS_LOG_ERROR("Invalid MySID key %s: %s", key_string.c_str(), error.what());
+        return task_invalid_entry;
+    }
+
+    my_sid_entry.locator_block_len = lengths[0];
+    my_sid_entry.locator_node_len = lengths[1];
+    my_sid_entry.function_len = lengths[2];
+    my_sid_entry.args_len = lengths[3];
+    uint32_t total_length = static_cast<uint32_t>(lengths[0]) + lengths[1] + lengths[2] + lengths[3];
+    if (total_length > 128)
+    {
+        SWSS_LOG_ERROR("MySID locator lengths exceed 128 bits in key %s", key_string.c_str());
+        return task_invalid_entry;
     }
 
     SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s, adj %s",
       my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(),my_sid_entry.locator_block_len, my_sid_entry.locator_node_len,
       my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str(), adj.c_str());
 
-    if (sidEntryEndpointBehavior(end_action, end_behavior, end_flavor) != true)
-    {
-        SWSS_LOG_ERROR("Invalid my_sid action %s", end_action.c_str());
-        return false;
-    }
-    sai_attribute_t vrf_attr;
-    bool vrf_update = false;
+    sai_object_id_t vrf_oid = gVirtualRouterId;
     if (mySidVrfRequired(end_behavior))
     {
-        sai_object_id_t dt_vrf_id;
-        SWSS_LOG_INFO("DT VRF name %s", dt_vrf.c_str());
         if (dt_vrf == "default")
         {
-            dt_vrf_id = gVirtualRouterId;
+            vrf_oid = gVirtualRouterId;
         }
         else if (m_vrfOrch->isVRFexists(dt_vrf))
         {
-            SWSS_LOG_INFO("VRF %s exists in DB", dt_vrf.c_str());
-            dt_vrf_id = m_vrfOrch->getVRFid(dt_vrf);
-            if(dt_vrf_id == SAI_NULL_OBJECT_ID)
+            vrf_oid = m_vrfOrch->getVRFid(dt_vrf);
+            if (vrf_oid == SAI_NULL_OBJECT_ID)
             {
-              SWSS_LOG_ERROR("VRF object not created for DT VRF %s", dt_vrf.c_str());
-              return false;
+                return task_need_retry;
             }
         }
         else
         {
-            SWSS_LOG_ERROR("VRF %s doesn't exist in DB", dt_vrf.c_str());
-            return false;
+            return task_need_retry;
         }
-        vrf_attr.id = SAI_MY_SID_ENTRY_ATTR_VRF;
-        vrf_attr.value.oid = dt_vrf_id;
-        attributes.push_back(vrf_attr);
-        vrf_update = true;
     }
-    sai_attribute_t nh_attr;
+
     NextHopKey nexthop;
-    bool nh_update = false;
+    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
     if (mySidNextHopRequired(end_behavior))
     {
-        sai_object_id_t next_hop_id;
-
         vector<string> adjv = tokenize(adj, ADJ_DELIMITER);
         if (adjv.size() > 1)
         {
             SWSS_LOG_ERROR("Failed to create my_sid entry %s adj %s: ECMP adjacency not yet supported", key_string.c_str(), adj.c_str());
-            return false;
+            return task_invalid_entry;
         }
 
-        nexthop = NextHopKey(adj); 
-        SWSS_LOG_INFO("Adjacency %s", adj.c_str());
-        if (m_neighOrch->hasNextHop(nexthop))
+        nexthop = NextHopKey(adj);
+        if (!m_neighOrch->hasNextHop(nexthop))
         {
-            SWSS_LOG_INFO("Nexthop for adjacency %s exists in DB", adj.c_str());
-            next_hop_id = m_neighOrch->getNextHopId(nexthop);
-            if(next_hop_id == SAI_NULL_OBJECT_ID)
+            return task_need_retry;
+        }
+        next_hop_oid = m_neighOrch->getNextHopId(nexthop);
+        if (next_hop_oid == SAI_NULL_OBJECT_ID)
+        {
+            return task_need_retry;
+        }
+    }
+
+    boost::optional<sai_tunnel_dscp_mode_t> dscp_mode;
+    bool tunnel_required = mySidTunnelRequired(my_sid_string, my_sid_entry, end_behavior, dscp_mode);
+    bool counter_required = getMySidCountersSupported() && getMySidCountersEnabled();
+    if (tunnel_required)
+    {
+        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
+    }
+    auto existing = srv6_my_sid_table_.find(key_string);
+    bool entry_exists = existing != srv6_my_sid_table_.end();
+
+    if (entry_exists && existing->second.sai_removed)
+    {
+        auto cleanup_status = deleteMysidEntry(key_string);
+        if (cleanup_status != task_success)
+        {
+            return cleanup_status;
+        }
+        existing = srv6_my_sid_table_.end();
+        entry_exists = false;
+    }
+
+    if (entry_exists && !cleanupStaleMySidTunnel(existing->second))
+    {
+        return task_need_retry;
+    }
+
+    if (entry_exists)
+    {
+        const auto& current = existing->second;
+        bool same_tunnel = tunnel_required
+                        ? current.tunnel_oid != SAI_NULL_OBJECT_ID &&
+                            current.tunnel_term_entry != SAI_NULL_OBJECT_ID &&
+                            current.dscp_mode == dscp_mode.get()
+            : current.tunnel_oid == SAI_NULL_OBJECT_ID;
+        bool same_counter = !counter_required || current.counter != SAI_NULL_OBJECT_ID;
+        if (!current.sai_removed && current.endBehavior == end_behavior &&
+            current.endFlavor == end_flavor &&
+            current.endVrfString == (mySidVrfRequired(end_behavior) ? dt_vrf : "") &&
+            current.endAdjString == (mySidNextHopRequired(end_behavior) ? adj : "") &&
+            current.vrf_oid == vrf_oid && current.next_hop_oid == next_hop_oid &&
+            same_tunnel && same_counter)
+        {
+            SWSS_LOG_INFO("MySID entry %s already matches desired state", key_string.c_str());
+            return task_success;
+        }
+    }
+
+    sai_object_id_t tunnel_oid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t tunnel_term_entry = SAI_NULL_OBJECT_ID;
+    bool acquired_tunnel = false;
+    bool created_tunnel_term = false;
+    bool retarget_tunnel_term = false;
+    if (tunnel_required)
+    {
+        bool reuse_tunnel = entry_exists && existing->second.tunnel_oid != SAI_NULL_OBJECT_ID &&
+                            existing->second.dscp_mode == dscp_mode.get();
+        if (reuse_tunnel)
+        {
+            tunnel_oid = existing->second.tunnel_oid;
+            tunnel_term_entry = existing->second.tunnel_term_entry;
+            if (tunnel_term_entry == SAI_NULL_OBJECT_ID)
             {
-              SWSS_LOG_INFO("Failed to get nexthop for adjacency %s", adj.c_str());
-              SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
-              auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
-              m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
-              return false;
+                if (!createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, tunnel_term_entry))
+                {
+                    return task_need_retry;
+                }
+                created_tunnel_term = true;
             }
         }
         else
         {
-            SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
-            auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
-            m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
-            return false;
+            if (!createMySidIpInIpTunnel(dscp_mode.get(), tunnel_oid))
+            {
+                return task_need_retry;
+            }
+            acquired_tunnel = true;
+            if (entry_exists && existing->second.tunnel_term_entry != SAI_NULL_OBJECT_ID)
+            {
+                tunnel_term_entry = existing->second.tunnel_term_entry;
+                retarget_tunnel_term = true;
+            }
+            else if (!createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, tunnel_term_entry))
+            {
+                removeMySidIpInIpTunnel(dscp_mode.get());
+                return task_need_retry;
+            }
+            else
+            {
+                created_tunnel_term = true;
+            }
         }
-        nh_attr.id = SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID;
-        nh_attr.value.oid = next_hop_id;
-        attributes.push_back(nh_attr);
-        nh_update = true;
     }
 
-    boost::optional<sai_tunnel_dscp_mode_t> dscp_mode;
-    if (mySidTunnelRequired(my_sid_string, my_sid_entry, end_behavior, dscp_mode))
+    auto makeOidAttr = [](sai_attr_id_t id, sai_object_id_t oid)
     {
-        sai_object_id_t tunnel_oid;
-        auto ok = createMySidIpInIpTunnel(dscp_mode.get(), tunnel_oid);
-        if (!ok)
-        {
-            return false;
-        }
-
-        sai_object_id_t term_entry_oid;
-        ok = createMySidIpInIpTunnelTermEntry(tunnel_oid, my_sid_entry.sid, term_entry_oid);
-        if (!ok)
-        {
-            removeMySidIpInIpTunnel(dscp_mode.get());
-            return false;
-        }
-
-        srv6_my_sid_table_[key_string].tunnel_term_entry = term_entry_oid;
-        srv6_my_sid_table_[key_string].dscp_mode = dscp_mode.get();
-
-        attr.id = SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID;
-        attr.value.oid = tunnel_oid;
-        attributes.push_back(attr);
-
-        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
-    }
-
-    attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR;
-    attr.value.s32 = end_behavior;
-    attributes.push_back(attr);
-
-    if (end_flavor != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE)
+        sai_attribute_t attr{};
+        attr.id = id;
+        attr.value.oid = oid;
+        return attr;
+    };
+    auto makeS32Attr = [](sai_attr_id_t id, int32_t value)
     {
-        attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR;
-        attr.value.s32 = end_flavor;
-        attributes.push_back(attr);
-    }
+        sai_attribute_t attr{};
+        attr.id = id;
+        attr.value.s32 = value;
+        return attr;
+    };
 
-    sai_status_t status = SAI_STATUS_SUCCESS;
     if (!entry_exists)
     {
-        sai_object_id_t counter_oid = SAI_NULL_OBJECT_ID;
-        if (getMySidCountersSupported() && getMySidCountersEnabled())
+        vector<sai_attribute_t> attributes;
+        if (mySidVrfRequired(end_behavior))
         {
-            auto ok = addMySidCounter(my_sid_entry, counter_oid);
-            if (!ok)
-            {
-                return false;
-            }
-
-            attr.id = SAI_MY_SID_ENTRY_ATTR_COUNTER_ID;
-            attr.value.oid = counter_oid;
-            attributes.push_back(attr);
+            attributes.push_back(makeOidAttr(SAI_MY_SID_ENTRY_ATTR_VRF, vrf_oid));
+        }
+        if (mySidNextHopRequired(end_behavior))
+        {
+            attributes.push_back(makeOidAttr(SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID, next_hop_oid));
+        }
+        if (tunnel_required)
+        {
+            attributes.push_back(makeOidAttr(SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID, tunnel_oid));
+        }
+        attributes.push_back(makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, end_behavior));
+        if (end_flavor != SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE)
+        {
+            attributes.push_back(makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR, end_flavor));
         }
 
-        status = sai_srv6_api->create_my_sid_entry(&my_sid_entry, (uint32_t) attributes.size(), attributes.data());
+        sai_object_id_t counter_oid = SAI_NULL_OBJECT_ID;
+        if (counter_required)
+        {
+            if (!addMySidCounter(my_sid_entry, counter_oid))
+            {
+                if (created_tunnel_term)
+                {
+                    removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
+                }
+                if (acquired_tunnel)
+                {
+                    removeMySidIpInIpTunnel(dscp_mode.get());
+                }
+                return task_need_retry;
+            }
+            attributes.push_back(makeOidAttr(SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, counter_oid));
+        }
+
+        auto status = sai_srv6_api->create_my_sid_entry(&my_sid_entry, (uint32_t) attributes.size(), attributes.data());
         if (status != SAI_STATUS_SUCCESS)
         {
-          SWSS_LOG_ERROR("Failed to create my_sid entry %s, rv %d", key_string.c_str(), status);
-          return false;
+            SWSS_LOG_ERROR("Failed to create my_sid entry %s, rv %d", key_string.c_str(), status);
+            auto handle_status = handleSaiCreateStatus(SAI_API_SRV6, status);
+            if (handle_status != task_success)
+            {
+                removeMySidCounter(my_sid_entry, counter_oid);
+                if (created_tunnel_term)
+                {
+                    removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
+                }
+                if (acquired_tunnel)
+                {
+                    removeMySidIpInIpTunnel(dscp_mode.get());
+                }
+                return handle_status;
+            }
         }
+
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
-        srv6_my_sid_table_[key_string].counter = counter_oid;
+        MySidEntry applied;
+        applied.entry = my_sid_entry;
+        applied.endBehavior = end_behavior;
+        applied.endFlavor = end_flavor;
+        applied.endVrfString = mySidVrfRequired(end_behavior) ? dt_vrf : "";
+        applied.endAdjString = mySidNextHopRequired(end_behavior) ? adj : "";
+        applied.vrf_oid = vrf_oid;
+        applied.next_hop_oid = next_hop_oid;
+        applied.tunnel_oid = tunnel_oid;
+        applied.tunnel_term_entry = tunnel_term_entry;
+        if (tunnel_required)
+        {
+            applied.dscp_mode = dscp_mode.get();
+        }
+        applied.counter = counter_oid;
+        srv6_my_sid_table_.emplace(key_string, applied);
+
+        if (mySidVrfRequired(end_behavior))
+        {
+            m_vrfOrch->increaseVrfRefCount(dt_vrf);
+        }
+        if (mySidNextHopRequired(end_behavior))
+        {
+            m_neighOrch->increaseNextHopRefCount(nexthop, 1);
+        }
+        return task_success;
     }
-    else
+
+    auto current = existing->second;
+    sai_object_id_t counter_oid = current.counter;
+    bool created_counter = false;
+    if (counter_required && counter_oid == SAI_NULL_OBJECT_ID)
     {
-        if (vrf_update)
+        if (!addMySidCounter(my_sid_entry, counter_oid))
         {
-            status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &vrf_attr);
-            if(status != SAI_STATUS_SUCCESS)
+            if (created_tunnel_term)
             {
-                SWSS_LOG_ERROR("Failed to update VRF to my_sid_entry %s, rv %d", key_string.c_str(), status);
-                return false;
+                removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
             }
+            if (acquired_tunnel)
+            {
+                removeMySidIpInIpTunnel(dscp_mode.get());
+            }
+            return task_need_retry;
         }
-        if (nh_update)
+        created_counter = true;
+    }
+
+    struct AttributeChange
+    {
+        sai_attribute_t desired;
+        sai_attribute_t previous;
+    };
+    vector<AttributeChange> changes;
+    if (current.endBehavior != end_behavior)
+    {
+        changes.push_back({
+            makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, end_behavior),
+            makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, current.endBehavior)});
+    }
+    if (current.endFlavor != end_flavor)
+    {
+        changes.push_back({
+            makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR, end_flavor),
+            makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR, current.endFlavor)});
+    }
+    if (current.vrf_oid != vrf_oid)
+    {
+        changes.push_back({
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_VRF, vrf_oid),
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_VRF, current.vrf_oid)});
+    }
+    if (current.next_hop_oid != next_hop_oid)
+    {
+        changes.push_back({
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID, next_hop_oid),
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID, current.next_hop_oid)});
+    }
+    if (current.tunnel_oid != tunnel_oid)
+    {
+        changes.push_back({
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID, tunnel_oid),
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID, current.tunnel_oid)});
+    }
+    if (current.counter != counter_oid)
+    {
+        changes.push_back({
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, counter_oid),
+            makeOidAttr(SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, current.counter)});
+    }
+
+    size_t applied_count = 0;
+    for (const auto& change : changes)
+    {
+        auto status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &change.desired);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &nh_attr);
-            if(status != SAI_STATUS_SUCCESS)
+            while (applied_count > 0)
             {
-                SWSS_LOG_ERROR("Failed to update nexthop to my_sid_entry %s, rv %d", key_string.c_str(), status);
-                return false;
+                --applied_count;
+                auto rollback_status = sai_srv6_api->set_my_sid_entry_attribute(
+                    &my_sid_entry, &changes[applied_count].previous);
+                if (rollback_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to roll back my_sid entry %s attribute %d, rv %d",
+                                   key_string.c_str(), changes[applied_count].previous.id, rollback_status);
+                }
             }
+            if (created_tunnel_term)
+            {
+                removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
+            }
+            if (acquired_tunnel)
+            {
+                removeMySidIpInIpTunnel(dscp_mode.get());
+            }
+            if (created_counter)
+            {
+                removeMySidCounter(my_sid_entry, counter_oid);
+            }
+            return handleSaiSetStatus(SAI_API_SRV6, status);
+        }
+        ++applied_count;
+    }
+
+    if (retarget_tunnel_term)
+    {
+        sai_attribute_t tunnel_attr{};
+        tunnel_attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
+        tunnel_attr.value.oid = tunnel_oid;
+        auto status = sai_tunnel_api->set_tunnel_term_table_entry_attribute(
+            tunnel_term_entry, &tunnel_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            while (applied_count > 0)
+            {
+                --applied_count;
+                auto rollback_status = sai_srv6_api->set_my_sid_entry_attribute(
+                    &my_sid_entry, &changes[applied_count].previous);
+                if (rollback_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to roll back my_sid entry %s attribute %d, rv %d",
+                                   key_string.c_str(), changes[applied_count].previous.id, rollback_status);
+                }
+            }
+            if (acquired_tunnel)
+            {
+                removeMySidIpInIpTunnel(dscp_mode.get());
+            }
+            if (created_counter)
+            {
+                removeMySidCounter(my_sid_entry, counter_oid);
+            }
+            return handleSaiSetStatus(SAI_API_TUNNEL, status);
         }
     }
-    SWSS_LOG_INFO("Store keystring %s in cache", key_string.c_str());
-    if(vrf_update)
+
+    MySidEntry applied = current;
+    applied.entry = my_sid_entry;
+    applied.endBehavior = end_behavior;
+    applied.endFlavor = end_flavor;
+    applied.endVrfString = mySidVrfRequired(end_behavior) ? dt_vrf : "";
+    applied.endAdjString = mySidNextHopRequired(end_behavior) ? adj : "";
+    applied.vrf_oid = vrf_oid;
+    applied.next_hop_oid = next_hop_oid;
+    applied.tunnel_oid = tunnel_oid;
+    applied.tunnel_term_entry = tunnel_term_entry;
+    applied.counter = counter_oid;
+    applied.sai_removed = false;
+    if (tunnel_required)
+    {
+        applied.dscp_mode = dscp_mode.get();
+    }
+    if (current.tunnel_oid != SAI_NULL_OBJECT_ID && current.tunnel_oid != tunnel_oid)
+    {
+        if (current.tunnel_term_entry != tunnel_term_entry)
+        {
+            applied.stale_tunnel_term_entry = current.tunnel_term_entry;
+        }
+        applied.stale_dscp_mode = current.dscp_mode;
+        applied.stale_tunnel_ref = true;
+    }
+    srv6_my_sid_table_[key_string] = applied;
+
+    bool old_vrf_required = mySidVrfRequired(current.endBehavior);
+    bool new_vrf_required = mySidVrfRequired(end_behavior);
+    if (new_vrf_required && (!old_vrf_required || current.endVrfString != dt_vrf))
     {
         m_vrfOrch->increaseVrfRefCount(dt_vrf);
-        srv6_my_sid_table_[key_string].endVrfString = dt_vrf;
     }
-    if(nh_update)
+    if (old_vrf_required && (!new_vrf_required || current.endVrfString != dt_vrf))
+    {
+        m_vrfOrch->decreaseVrfRefCount(current.endVrfString);
+    }
+
+    bool old_nh_required = mySidNextHopRequired(current.endBehavior);
+    bool new_nh_required = mySidNextHopRequired(end_behavior);
+    if (new_nh_required && (!old_nh_required || current.endAdjString != adj))
     {
         m_neighOrch->increaseNextHopRefCount(nexthop, 1);
-
-        SWSS_LOG_INFO("Increasing refcount to %d for Nexthop %s",
-          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
-
-        srv6_my_sid_table_[key_string].endAdjString = adj;
     }
-    srv6_my_sid_table_[key_string].endBehavior = end_behavior;
-    srv6_my_sid_table_[key_string].entry = my_sid_entry;
+    if (old_nh_required && (!new_nh_required || current.endAdjString != adj))
+    {
+        m_neighOrch->decreaseNextHopRefCount(NextHopKey(current.endAdjString), 1);
+    }
 
-    return true;
+    return cleanupStaleMySidTunnel(srv6_my_sid_table_[key_string]) ? task_success : task_need_retry;
 }
 
-bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
+task_process_status Srv6Orch::deleteMysidEntry(const string my_sid_string)
 {
-    sai_status_t status = SAI_STATUS_SUCCESS;
-    if (!mySidExists(my_sid_string))
+    auto it = srv6_my_sid_table_.find(my_sid_string);
+    if (it == srv6_my_sid_table_.end())
     {
-        SWSS_LOG_ERROR("My_sid_entry doesn't exist for %s", my_sid_string.c_str());
-        return false;
+        SWSS_LOG_INFO("My_sid_entry already absent for %s", my_sid_string.c_str());
+        return task_success;
     }
-    sai_my_sid_entry_t my_sid_entry = srv6_my_sid_table_[my_sid_string].entry;
-    sai_object_id_t& counter = srv6_my_sid_table_[my_sid_string].counter;
+
+    auto& cached = it->second;
+    auto& my_sid_entry = cached.entry;
 
     SWSS_LOG_NOTICE("MySid Delete: sid %s", my_sid_string.c_str());
-    status = sai_srv6_api->remove_my_sid_entry(&my_sid_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!cached.sai_removed)
     {
-        SWSS_LOG_ERROR("Failed to delete my_sid entry rv %d", status);
-        return false;
-    }
-    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
-
-    removeMySidCounter(my_sid_entry, counter);
-
-    auto endBehavior = srv6_my_sid_table_[my_sid_string].endBehavior;
-    /* Decrease VRF refcount */
-    if (mySidVrfRequired(endBehavior))
-    {
-        m_vrfOrch->decreaseVrfRefCount(srv6_my_sid_table_[my_sid_string].endVrfString);
-    }
-    /* Decrease NextHop refcount */
-    if (mySidNextHopRequired(endBehavior))
-    {
-        NextHopKey nexthop = NextHopKey(srv6_my_sid_table_[my_sid_string].endAdjString);
-        m_neighOrch->decreaseNextHopRefCount(nexthop, 1);
-
-        SWSS_LOG_INFO("Decreasing refcount to %d for Nexthop %s",
-          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
-    }
-
-    auto tunnel_term_entry = srv6_my_sid_table_[my_sid_string].tunnel_term_entry;
-    if (tunnel_term_entry != SAI_NULL_OBJECT_ID)
-    {
-        auto ok = removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
-        if (!ok)
+        auto status = sai_srv6_api->remove_my_sid_entry(&my_sid_entry);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
+            auto handle_status = handleSaiRemoveStatus(SAI_API_SRV6, status);
+            if (handle_status != task_success)
+            {
+                return handle_status;
+            }
         }
-
-        ok = removeMySidIpInIpTunnel(srv6_my_sid_table_[my_sid_string].dscp_mode);
-        if (!ok)
-        {
-            return false;
-        }
+        cached.sai_removed = true;
     }
 
-    srv6_my_sid_table_.erase(my_sid_string);
-    return true;
+    if (!cached.crm_released)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
+        cached.crm_released = true;
+    }
+
+    if (!removeMySidCounter(my_sid_entry, cached.counter))
+    {
+        return task_need_retry;
+    }
+
+    if (!cached.references_released)
+    {
+        if (mySidVrfRequired(cached.endBehavior))
+        {
+            m_vrfOrch->decreaseVrfRefCount(cached.endVrfString);
+        }
+        if (mySidNextHopRequired(cached.endBehavior))
+        {
+            m_neighOrch->decreaseNextHopRefCount(NextHopKey(cached.endAdjString), 1);
+        }
+        cached.references_released = true;
+    }
+
+    if (!cleanupStaleMySidTunnel(cached))
+    {
+        return task_need_retry;
+    }
+
+    if (cached.tunnel_term_entry != SAI_NULL_OBJECT_ID)
+    {
+        if (!removeMySidIpInIpTunnelTermEntry(cached.tunnel_term_entry))
+        {
+            return task_need_retry;
+        }
+        cached.tunnel_term_entry = SAI_NULL_OBJECT_ID;
+    }
+    if (cached.tunnel_oid != SAI_NULL_OBJECT_ID)
+    {
+        if (!removeMySidIpInIpTunnel(cached.dscp_mode))
+        {
+            return task_need_retry;
+        }
+        cached.tunnel_oid = SAI_NULL_OBJECT_ID;
+    }
+
+    srv6_my_sid_table_.erase(it);
+    return task_success;
 }
 
 uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
@@ -2202,7 +2509,7 @@ bool Srv6Orch::deleteSrv6Vpn(const std::string &endpoint, const std::string &sid
     return true;
 }
 
-void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
+Srv6Orch::MySidTaskResult Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     string op = kfvOp(tuple);
@@ -2228,24 +2535,67 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     }
     if (op == SET_COMMAND)
     {
-        if(!createUpdateMysidEntry(keyString, dt_vrf, adj, end_action))
+        sai_my_sid_entry_endpoint_behavior_t end_behavior;
+        sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor;
+        if (!sidEntryEndpointBehavior(end_action, end_behavior, end_flavor))
+        {
+            SWSS_LOG_ERROR("Invalid my_sid action %s for sid %s", end_action.c_str(), keyString.c_str());
+            return {task_invalid_entry, boost::none};
+        }
+
+        if (mySidVrfRequired(end_behavior))
+        {
+            if (dt_vrf.empty())
+            {
+                SWSS_LOG_ERROR("Missing VRF for my_sid entry %s", keyString.c_str());
+                return {task_invalid_entry, boost::none};
+            }
+            if (dt_vrf != "default" && !m_vrfOrch->isVRFexists(dt_vrf))
+            {
+                return {task_need_retry, make_constraint(RETRY_CST_MYSID_VRF, dt_vrf)};
+            }
+        }
+
+        if (mySidNextHopRequired(end_behavior))
+        {
+            if (adj.empty())
+            {
+                SWSS_LOG_ERROR("Missing adjacency for my_sid entry %s", keyString.c_str());
+                return {task_invalid_entry, boost::none};
+            }
+
+            NextHopKey nexthop(adj);
+            if (!m_neighOrch->hasNextHop(nexthop) ||
+                m_neighOrch->getNextHopId(nexthop) == SAI_NULL_OBJECT_ID)
+            {
+                return {task_need_retry,
+                        make_constraint(RETRY_CST_MYSID_NEXTHOP, nexthop.to_string())};
+            }
+        }
+
+                auto status = createUpdateMysidEntry(keyString, dt_vrf, adj, end_action);
+                if (status != task_success)
         {
           SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", keyString.c_str());
-          return;
+                    return {status, boost::none};
         }
     }
     else if(op == DEL_COMMAND)
     {
-        if(!deleteMysidEntry(keyString))
+                auto status = deleteMysidEntry(keyString);
+                if (status != task_success)
         {
           SWSS_LOG_ERROR("Failed to delete my_sid entry for sid %s", keyString.c_str());
-          return;
+                    return {status, boost::none};
         }
     }
     else
     {
-        SWSS_LOG_ERROR("Invalid command");
+        SWSS_LOG_ERROR("Invalid command %s for my_sid entry %s", op.c_str(), keyString.c_str());
+        return {task_invalid_entry, boost::none};
     }
+
+    return {task_success, boost::none};
 }
 
 void Srv6Orch::doTaskCfgMySidTable(const KeyOpFieldsValuesTuple &tuple)
@@ -2371,7 +2721,24 @@ void Srv6Orch::doTask(Consumer &consumer)
         }
         else if (table_name == APP_SRV6_MY_SID_TABLE_NAME)
         {
-            doTaskMySidTable(t);
+            auto result = doTaskMySidTable(t);
+            if (result.dependency &&
+                addToRetry(APP_SRV6_MY_SID_TABLE_NAME, Task(t), *result.dependency))
+            {
+                consumer.m_toSync.erase(it++);
+                continue;
+            }
+            WarmStart::WarmStartState warm_state = WarmStart::RECONCILED;
+            WarmStart::getWarmStartState("orchagent", warm_state);
+            bool warm_restore_in_progress = WarmStart::isWarmStart() &&
+                                            warm_state == WarmStart::INITIALIZED;
+            if (result.status == task_need_retry ||
+                ((result.status == task_failed || result.status == task_invalid_entry) &&
+                 warm_restore_in_progress))
+            {
+                ++it;
+                continue;
+            }
         }
         else if (table_name == APP_PIC_CONTEXT_TABLE_NAME)
         {

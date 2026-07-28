@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <map>
+#include <memory>
 #include <unordered_map>
 #include <algorithm>
 
@@ -50,9 +51,16 @@ class WarmStartHelper {
 
     uint32_t getRestartTimer(void) const;
 
+    void registerTable(RedisPipeline *pipeline,
+               ProducerStateTable *syncTable,
+               const std::string &syncTableName);
+
     bool runRestoration(void);
 
     void insertRefreshMap(const KeyOpFieldsValuesTuple &kfv);
+
+    void insertRefreshMap(const std::string &syncTableName,
+                const KeyOpFieldsValuesTuple &kfv);
 
     void reconcile(void);
 
@@ -66,13 +74,28 @@ class WarmStartHelper {
 
     bool compareOneFV(const std::string &v1, const std::string &v2);
 
-    ProducerStateTable       *m_syncTable;         // producer-table to sync/push state to
-    Table                     m_restorationTable;  // redis table to import current-state from
-    kfvVector                 m_restorationVector; // buffer struct to hold old state
-    kfvMap                    m_refreshMap;        // buffer struct to hold new state
+    struct TableContext
+    {
+      TableContext(RedisPipeline *pipeline,
+             ProducerStateTable *producer,
+             const std::string &tableName) :
+        syncTable(producer),
+        restorationTable(pipeline, tableName, false)
+      {
+      }
+
+      ProducerStateTable *syncTable;
+      Table restorationTable;
+      kfvVector restorationVector;
+      kfvMap refreshMap;
+    };
+
+    using TableContextMap = std::map<std::string, std::unique_ptr<TableContext>>;
+
+    TableContextMap           m_tableContexts;
     WarmStart::WarmStartState m_state;             // cached value of warmStart's FSM state
     bool                      m_enabled;           // warm-reboot enabled/disabled status
-    std::string               m_syncTableName;     // producer-table-name to sync/push state to
+    std::string               m_syncTableName;     // primary producer-table name
     std::string               m_dockName;          // sonic-docker requesting warmStart services
     std::string               m_appName;           // sonic-app requesting warmStart services
 };
