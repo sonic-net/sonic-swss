@@ -1561,7 +1561,7 @@ void CoppOrch::generatePolicerCounterIdList()
 
     if (!isPolicerStatsCapable())
     {
-        SWSS_LOG_NOTICE("COPP_STATS enabled but SAI does not advertise policer stats; skipping counter generation");
+        SWSS_LOG_INFO("COPP_STATS enabled but SAI does not advertise policer stats; skipping counter generation");
         return;
     }
 
