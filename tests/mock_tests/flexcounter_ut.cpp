@@ -1361,12 +1361,15 @@ namespace flexcounter_test
         ASSERT_FALSE(coppOrch->isPolicerStatsCapable());
         EXPECT_TRUE(coppOrch->getSupportedPolicerStatIds().empty());
 
+        // The not-capable path publishes only the boolean; clear any leftover
+        // list from earlier tests sharing this STATE_DB before asserting.
         swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        capTable.hdel("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED);
+        coppOrch->publishPolicerStatsCapability();
         std::string val;
         EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
         EXPECT_EQ(val, "false");
-        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
-        EXPECT_EQ(val, "");
+        EXPECT_FALSE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
 
         // Even with COPP_STATS toggled enable, no binding should occur.
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
