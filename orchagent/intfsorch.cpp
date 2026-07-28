@@ -194,6 +194,11 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
+bool IntfsOrch::isIntfChangeInProgress(const string &alias)
+{
+    return m_removingIntfses.find(alias) != m_removingIntfses.end();
+}
+
 bool IntfsOrch::setRouterIntfsMpls(const Port &port)
 {
     SWSS_LOG_ENTER();

@@ -324,8 +324,22 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
 {
     SWSS_LOG_ENTER();
 
+    // GLOBAL is a valid config key (handled specially in createEntry), not a port.
+    // Deleting PFC_WD|GLOBAL is a legitimate no-op for the per-port teardown path,
+    // so short-circuit it here before the port lookup. This both avoids the
+    // null-deref crash and prevents a spurious "Invalid port interface" error on
+    // routine GLOBAL removal.
+    if (name == PFC_WD_GLOBAL)
+    {
+        return task_process_status::task_success;
+    }
+
     Port port;
-    gPortsOrch->getPort(name, port);
+    if (!gPortsOrch->getPort(name, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", name.c_str());
+        return task_process_status::task_invalid_entry;
+    }
 
     if (!stopWdOnPort(port))
     {
