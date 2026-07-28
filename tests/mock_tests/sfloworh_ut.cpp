@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 #include <map>
@@ -49,6 +50,161 @@ namespace sflow_test
         SaiApi *&target;
         SaiApi *original;
         SaiApi replacement;
+    };
+
+    // Identifies an object created or removed during MOD initialization.
+    // Declared in initializeDropMonitor() create order; cleanup removes them in reverse.
+    enum class ObjectType
+    {
+        TamReport,
+        TamEventAction,
+        TamTransport,
+        Policer,
+        HostifTrapGroup,
+        HostifUserDefinedTrap,
+        TamCollector,
+        TamEvent,
+        Tam,
+    };
+
+    // Size of the ObjectType-indexed callback tables; Tam must stay the last enumerator.
+    constexpr size_t kObjectTypeCount = static_cast<size_t>(ObjectType::Tam) + 1;
+
+    // Created: the create call succeeded. Destroyed: a later remove call also succeeded.
+    enum class ObjectStatus
+    {
+        Created,
+        Destroyed,
+    };
+
+    // Stores the final status of an object successfully created during initialization.
+    struct TrackedObject
+    {
+        ObjectType type;
+        ObjectStatus status;
+
+        bool operator==(const TrackedObject &other) const
+        {
+            return type == other.type && status == other.status;
+        }
+    };
+
+    // Tracks successfully created objects and updates their status after successful cleanup.
+    class ObjectTracker final
+    {
+    public:
+        using CreateFn = sai_status_t (*)(sai_object_id_t *, sai_object_id_t, uint32_t,
+                                          const sai_attribute_t *);
+        using RemoveFn = sai_status_t (*)(sai_object_id_t);
+
+        // Remembers the callbacks that the wrappers of one object type delegate to.
+        static void save(ObjectType type, CreateFn create, RemoveFn remove)
+        {
+            auto &state = getState();
+            state.creates.at(index(type)) = create;
+            state.removes.at(index(type)) = remove;
+        }
+
+        static void reset()
+        {
+            getState() = {};
+        }
+        static const std::vector<TrackedObject> &objects()
+        {
+            return getState().objects;
+        }
+
+        // One distinct wrapper per object type; the template argument carries the tag that a
+        // C function pointer cannot capture.
+        template <ObjectType Type>
+        static sai_status_t create(sai_object_id_t *oid, sai_object_id_t switch_id,
+                                   uint32_t attr_count, const sai_attribute_t *attr_list)
+        {
+            return createAndTrack(Type, oid, switch_id, attr_count, attr_list);
+        }
+        template <ObjectType Type>
+        static sai_status_t remove(sai_object_id_t oid)
+        {
+            return removeAndTrack(Type, oid);
+        }
+
+    private:
+        struct State
+        {
+            std::array<CreateFn, kObjectTypeCount> creates = {};
+            std::array<RemoveFn, kObjectTypeCount> removes = {};
+            std::vector<TrackedObject> objects;
+            std::map<sai_object_id_t, size_t> object_indices;
+        };
+
+        static State &getState()
+        {
+            static State state;
+            return state;
+        }
+        static constexpr size_t index(ObjectType type)
+        {
+            return static_cast<size_t>(type);
+        }
+        static sai_status_t createAndTrack(ObjectType type, sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count, const sai_attribute_t *attr_list)
+        {
+            const auto status = getState().creates.at(index(type))(oid, switch_id, attr_count, attr_list);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                auto &state = getState();
+                state.object_indices[*oid] = state.objects.size();
+                state.objects.push_back({ type, ObjectStatus::Created });
+            }
+            return status;
+        }
+        static sai_status_t removeAndTrack(ObjectType type, sai_object_id_t oid)
+        {
+            const auto status = getState().removes.at(index(type))(oid);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                auto &state = getState();
+                const auto object = state.object_indices.find(oid);
+                if (object != state.object_indices.end())
+                    state.objects[object->second].status = ObjectStatus::Destroyed;
+            }
+            return status;
+        }
+    };
+
+    // Redirects the create and remove callbacks of the copied API tables to ObjectTracker.
+    // Construct it after any injected failure so the tracker also wraps that callback.
+    class ScopedObjectTracker final
+    {
+    public:
+        ScopedObjectTracker(sai_tam_api_t &tam, sai_hostif_api_t &hostif, sai_policer_api_t &policer)
+        {
+            ObjectTracker::reset();
+            install<ObjectType::TamReport>(tam.create_tam_report, tam.remove_tam_report);
+            install<ObjectType::TamEventAction>(tam.create_tam_event_action, tam.remove_tam_event_action);
+            install<ObjectType::TamTransport>(tam.create_tam_transport, tam.remove_tam_transport);
+            install<ObjectType::Policer>(policer.create_policer, policer.remove_policer);
+            install<ObjectType::HostifTrapGroup>(hostif.create_hostif_trap_group, hostif.remove_hostif_trap_group);
+            install<ObjectType::HostifUserDefinedTrap>(hostif.create_hostif_user_defined_trap, hostif.remove_hostif_user_defined_trap);
+            install<ObjectType::TamCollector>(tam.create_tam_collector, tam.remove_tam_collector);
+            install<ObjectType::TamEvent>(tam.create_tam_event, tam.remove_tam_event);
+            install<ObjectType::Tam>(tam.create_tam, tam.remove_tam);
+        }
+        ~ScopedObjectTracker()
+        {
+            ObjectTracker::reset();
+        }
+        ScopedObjectTracker(const ScopedObjectTracker &) = delete;
+        ScopedObjectTracker &operator=(const ScopedObjectTracker &) = delete;
+
+    private:
+        // Saves the original callbacks of one object type, then points both slots at its wrappers.
+        template <ObjectType Type>
+        static void install(ObjectTracker::CreateFn &create_slot, ObjectTracker::RemoveFn &remove_slot)
+        {
+            ObjectTracker::save(Type, create_slot, remove_slot);
+            create_slot = ObjectTracker::create<Type>;
+            remove_slot = ObjectTracker::remove<Type>;
+        }
     };
 
     class MockSflowOrch final
@@ -552,6 +708,7 @@ namespace sflow_test
         ASSERT_EQ(queue, 47);
     }
 
+    /* Test: TAM report create failure keeps MOD disabled with no object to remove. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamReportCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
@@ -561,78 +718,195 @@ namespace sflow_test
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
     }
 
+    /* Test: TAM create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_tam() after its predecessor objects are created.
         tam_api_override.api().create_tam = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Destroyed },
+            { ObjectType::HostifUserDefinedTrap, ObjectStatus::Destroyed },
+            { ObjectType::TamCollector, ObjectStatus::Destroyed },
+            { ObjectType::TamEvent, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: HOSTIF trap group create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTrapGroupCreateFailure)
     {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
         ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_hostif_trap_group() after its predecessor objects are created.
         hostif_api_override.api().create_hostif_trap_group = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: TAM event action create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamEventActionCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_tam_event_action() after its predecessor objects are created.
         tam_api_override.api().create_tam_event_action = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: TAM transport create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamTransportCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_tam_transport() after its predecessor objects are created.
         tam_api_override.api().create_tam_transport = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: policer create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorPolicerCreateFailure)
     {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
         ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_policer() after its predecessor objects are created.
         policer_api_override.api().create_policer = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: HOSTIF user-defined trap create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorUserDefinedTrapCreateFailure)
     {
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
         ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_hostif_user_defined_trap() after its predecessor objects are created.
         hostif_api_override.api().create_hostif_user_defined_trap = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: TAM collector create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamCollectorCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_tam_collector() after its predecessor objects are created.
         tam_api_override.api().create_tam_collector = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Destroyed },
+            { ObjectType::HostifUserDefinedTrap, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: TAM event create failure keeps MOD disabled and removes earlier objects. */
     TEST_F(SflowOrchTest, SflowDropMonitorTamEventCreateFailure)
     {
         ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail create_tam_event() after its predecessor objects are created.
         tam_api_override.api().create_tam_event = failSaiCreate;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Destroyed },
+            { ObjectType::HostifUserDefinedTrap, ObjectStatus::Destroyed },
+            { ObjectType::TamCollector, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: MOD remains enabled when switch unbind fails during rate reconfiguration. */
     TEST_F(SflowOrchTest, SflowDropMonitorReconfigureSwitchUnbindFailure)
     {
         ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
@@ -644,15 +918,36 @@ namespace sflow_test
         EXPECT_TRUE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
     }
 
+    /* Test: switch bind failure keeps MOD disabled and removes every created object. */
     TEST_F(SflowOrchTest, SflowDropMonitorSwitchBindFailure)
     {
         ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // Fail the bind after initializeDropMonitor() created every object, including the TAM.
         switch_api_override.api().set_switch_attribute = failSaiSetSwitchAttribute;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
         MockSflowOrch mock_orch;
         setDropMonitorLimit(mock_orch, "100");
         EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Destroyed },
+            { ObjectType::TamEventAction, ObjectStatus::Destroyed },
+            { ObjectType::TamTransport, ObjectStatus::Destroyed },
+            { ObjectType::Policer, ObjectStatus::Destroyed },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Destroyed },
+            { ObjectType::HostifUserDefinedTrap, ObjectStatus::Destroyed },
+            { ObjectType::TamCollector, ObjectStatus::Destroyed },
+            { ObjectType::TamEvent, ObjectStatus::Destroyed },
+            { ObjectType::Tam, ObjectStatus::Destroyed },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
     }
 
+    /* Test: MOD remains enabled when switch unbind fails during disable. */
     TEST_F(SflowOrchTest, SflowDropMonitorSwitchUnbindFailure)
     {
         ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
