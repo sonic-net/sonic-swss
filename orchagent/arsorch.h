@@ -107,6 +107,7 @@ public:
             PortsOrch  *portsOrch);
 
     bool isArsEnabled() const { return m_arsEnabled; }
+    bool hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const;
     sai_object_id_t getArsProfileOid(const std::string &name) const;
     sai_object_id_t getArsObjectOid(const std::string &name) const;
     bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);

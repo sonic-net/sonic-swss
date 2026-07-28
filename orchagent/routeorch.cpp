@@ -488,7 +488,8 @@ void RouteOrch::updateDefRouteState(string ip, bool add)
 
 bool RouteOrch::hasNextHopGroup(const NextHopGroupKey& nexthops) const
 {
-    return m_syncdNextHopGroups.find(nexthops) != m_syncdNextHopGroups.end();
+    return m_syncdNextHopGroups.find(nexthops) != m_syncdNextHopGroups.end()
+        && m_nhgsPendingRemoval.count(nexthops) == 0;
 }
 
 sai_object_id_t RouteOrch::getNextHopGroupId(const NextHopGroupKey& nexthops)
@@ -851,6 +852,110 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         return;
     }
 #endif
+
+    /* Retry NHG removals that were deferred due to OBJECT_IN_USE in a
+     * previous cycle. By now the route bulker has flushed in the prior
+     * cycle, so the ASIC routes should no longer reference the old NHGs. */
+    if (!m_nhgsPendingRemoval.empty())
+    {
+        auto pendingCopy = m_nhgsPendingRemoval;
+        for (const auto &nhgKey : pendingCopy)
+        {
+            auto it_pend = m_syncdNextHopGroups.find(nhgKey);
+            if (it_pend == m_syncdNextHopGroups.end())
+            {
+                m_nhgsPendingRemoval.erase(nhgKey);
+                continue;
+            }
+
+            if (it_pend->second.ref_count != 0)
+            {
+                if (it_pend->second.nhopgroup_members.empty())
+                {
+                    SWSS_LOG_ERROR("NHG %s pending removal has ref_count=%d "
+                                   "but EMPTY members — SAI NHG is a shell, "
+                                   "forcing removal to prevent blackhole",
+                                   nhgKey.to_string().c_str(),
+                                   it_pend->second.ref_count);
+                    // Don't cancel — fall through to attempt removal.
+                    // The route referencing this NHG will fail and retry
+                    // with a fresh NHG via addNextHopGroup.
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("NHG %s pending removal re-acquired "
+                                    "ref_count=%d — cancelling deferred removal",
+                                    nhgKey.to_string().c_str(),
+                                    it_pend->second.ref_count);
+                    m_nhgsPendingRemoval.erase(nhgKey);
+                    continue;
+                }
+            }
+
+            sai_object_id_t nhgOid = it_pend->second.next_hop_group_id;
+            if (nhgOid == SAI_NULL_OBJECT_ID)
+            {
+                m_syncdNextHopGroups.erase(nhgKey);
+                m_nhgsPendingRemoval.erase(nhgKey);
+                continue;
+            }
+
+            sai_status_t st =
+                sai_next_hop_group_api->remove_next_hop_group(nhgOid);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("Deferred NHG removal succeeded: %" PRIx64
+                                " (%s)", nhgOid, nhgKey.to_string().c_str());
+                if (gArsOrch)
+                    gArsOrch->forgetNhg(nhgOid);
+                gCrmOrch->decCrmResUsedCounter(
+                    CrmResourceType::CRM_NEXTHOP_GROUP);
+                m_nextHopGroupCount--;
+
+                // Clean up overlay/MPLS next hops whose ref count may have
+                // reached zero when the OBJECT_IN_USE handler decremented
+                // refs earlier. NH ref counts were already decremented at
+                // deferral time; this handles the follow-up tunnel/MPLS
+                // object removal that the normal path performs.
+                bool nhgIsOverlay = nhgKey.is_overlay_nexthop();
+                bool nhgIsSrv6 = nhgKey.is_srv6_nexthop();
+                for (auto &nh : nhgKey.getNextHops())
+                {
+                    if (nhgIsOverlay && !nhgIsSrv6 &&
+                        !m_neighOrch->getNextHopRefCount(nh))
+                    {
+                        if (m_neighOrch->removeTunnelNextHop(nh))
+                        {
+                            m_neighOrch->removeOverlayNextHop(nh);
+                            deleteRemoteVtep(SAI_NULL_OBJECT_ID, nh);
+                        }
+                    }
+                    else if (nh.isMplsNextHop() &&
+                             m_neighOrch->getNextHopRefCount(nh) == 0)
+                    {
+                        m_neighOrch->removeMplsNextHop(nh);
+                    }
+                }
+
+                m_syncdNextHopGroups.erase(nhgKey);
+                m_nhgsPendingRemoval.erase(nhgKey);
+            }
+            else if (st == SAI_STATUS_OBJECT_IN_USE)
+            {
+                SWSS_LOG_WARN("Deferred NHG removal still blocked "
+                              "(OBJECT_IN_USE): %" PRIx64 " (%s) — "
+                              "will retry next cycle",
+                              nhgOid, nhgKey.to_string().c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Deferred NHG removal failed with "
+                               "unexpected status %d: %" PRIx64 " (%s) — "
+                               "will keep retrying",
+                               st, nhgOid, nhgKey.to_string().c_str());
+            }
+        }
+    }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
     auto it = consumer.m_toSync.begin();
@@ -1713,6 +1818,63 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 {
     SWSS_LOG_ENTER();
 
+    m_nhgDeferredForArs = false;
+
+    // If a previous NHG with this key is pending deferred removal, try to
+    // complete the removal now so we can create a fresh NHG.
+    if (m_nhgsPendingRemoval.count(nexthops))
+    {
+        auto old_it = m_syncdNextHopGroups.find(nexthops);
+        if (old_it != m_syncdNextHopGroups.end())
+        {
+            sai_object_id_t oldOid = old_it->second.next_hop_group_id;
+            if (oldOid != SAI_NULL_OBJECT_ID)
+            {
+                sai_status_t st =
+                    sai_next_hop_group_api->remove_next_hop_group(oldOid);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_NOTICE("Cleaned up pending-removal NHG %" PRIx64
+                                    " before re-creation of %s",
+                                    oldOid, nexthops.to_string().c_str());
+                    if (gArsOrch)
+                        gArsOrch->forgetNhg(oldOid);
+                    gCrmOrch->decCrmResUsedCounter(
+                        CrmResourceType::CRM_NEXTHOP_GROUP);
+                    m_nextHopGroupCount--;
+
+                    bool isOverlay = nexthops.is_overlay_nexthop();
+                    bool isSrv6 = nexthops.is_srv6_nexthop();
+                    for (auto &nh : nexthops.getNextHops())
+                    {
+                        if (isOverlay && !isSrv6 &&
+                            !m_neighOrch->getNextHopRefCount(nh))
+                        {
+                            if (m_neighOrch->removeTunnelNextHop(nh))
+                            {
+                                m_neighOrch->removeOverlayNextHop(nh);
+                                deleteRemoteVtep(SAI_NULL_OBJECT_ID, nh);
+                            }
+                        }
+                        else if (nh.isMplsNextHop() &&
+                                 m_neighOrch->getNextHopRefCount(nh) == 0)
+                        {
+                            m_neighOrch->removeMplsNextHop(nh);
+                        }
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_WARN("Could not remove pending NHG %" PRIx64
+                                  " (rv:%d) — old NHG leaked, creating "
+                                  "fresh NHG anyway", oldOid, st);
+                }
+            }
+            m_syncdNextHopGroups.erase(old_it);
+        }
+        m_nhgsPendingRemoval.erase(nexthops);
+    }
+
     assert(!hasNextHopGroup(nexthops));
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
@@ -1795,9 +1957,22 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     // On Mellanox, ARS binding is write-once: it MUST be set at NHG creation
     // time. If ARS is enabled and an ARS object can be resolved for this NHG,
     // include SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID in the create attributes.
+    //
+    // Check pending BEFORE resolveArsForNhg: resolveArsForNhg may
+    // erroneously succeed even when a port's ARS setup is incomplete,
+    // producing an ARS OID that the hardware cannot honour.
     sai_object_id_t createTimeArsOid = SAI_NULL_OBJECT_ID;
     if (gArsOrch && gArsOrch->isArsEnabled())
     {
+        if (gArsOrch->hasPortsPendingArsSetup(nexthops))
+        {
+            SWSS_LOG_NOTICE("ARS: deferring NHG %s creation — member ports "
+                            "have pending ARS setup (UPSW-7472)",
+                            nexthops.to_string().c_str());
+            m_nhgDeferredForArs = true;
+            return false;
+        }
+
         createTimeArsOid = gArsOrch->resolveArsForNhg(SAI_NULL_OBJECT_ID, nexthops);
         if (createTimeArsOid != SAI_NULL_OBJECT_ID)
         {
@@ -2076,13 +2251,34 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
 
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
-            SWSS_LOG_ERROR("NHG %" PRIx64 " stuck in ASIC (OBJECT_IN_USE) — erasing from "
-                           "m_syncdNextHopGroups to prevent stale NHG reuse by future routes. "
-                           "The ASIC NHG is leaked but will be reclaimed on restart.",
-                           next_hop_group_id);
-            if (gArsOrch)
-                gArsOrch->forgetNhg(next_hop_group_id);
-            m_syncdNextHopGroups.erase(nexthops);
+            SWSS_LOG_WARN("NHG %" PRIx64 " for %s still referenced in ASIC "
+                          "(OBJECT_IN_USE) — deferring removal to next doTask cycle "
+                          "(members already removed, NHG shell remains)",
+                          next_hop_group_id, nexthops.to_string().c_str());
+
+            // Members were already removed from SAI above — decrement NH
+            // ref counts now so NHs aren't artificially held alive.
+            MuxOrch* mux_orch_deferred = gDirectory.get<MuxOrch*>();
+            sai_object_id_t mux_nh_deferred = mux_orch_deferred->getTunnelNextHopId();
+            for (auto &nh : nexthops.getNextHops())
+            {
+                if (m_neighOrch->hasNextHop(nh))
+                {
+                    auto nh_id = m_neighOrch->getNextHopId(nh);
+                    if (nh_id != mux_nh_deferred)
+                        m_neighOrch->decreaseNextHopRefCount(nh);
+                }
+            }
+
+            // Also decrement refs for default-route swap members if this
+            // NHG had its members swapped with default route next hops.
+            if (is_default_route_nh_swap)
+            {
+                for (auto &nhop : next_hop_group_entry->second.default_route_nhopgroup_members)
+                    m_neighOrch->decreaseNextHopRefCount(nhop.first);
+            }
+
+            m_nhgsPendingRemoval.insert(nexthops);
             return true;
         }
 
@@ -2194,21 +2390,22 @@ void RouteOrch::bindArsToExistingNhgs()
     }
 
     // For NHGs where bindArsToNhg failed (Mellanox write-once: NHG has
-    // members), fall back to make-before-break NHG recreation. Find a
-    // port name from the NHG key to drive recreateNhgsWithArs.
+    // members), fall back to make-before-break NHG recreation.
+    // recreateNhgsWithArs(portName) recreates ALL NHGs containing that port
+    // and skips NHGs that already have ARS via in-place bind check. Collect
+    // all unique member ports across every failing NHG and process each port
+    // exactly once to avoid redundant scans on overlapping NHGs.
+    set<string> triggerPorts;
     for (auto &nhgInfo : nhgsNeedingArs)
     {
-        const NextHopGroupKey &nhgKey = nhgInfo.first;
-        auto nhSet = nhgKey.getNextHops();
-        if (!nhSet.empty())
-        {
-            const string &portName = nhSet.begin()->alias;
-            SWSS_LOG_NOTICE("ARS: falling back to make-before-break NHG "
-                            "recreation for NHG %s via port %s",
-                            nhgKey.to_string().c_str(), portName.c_str());
-            recreateNhgsWithArs(portName);
-            break;
-        }
+        for (auto &nh : nhgInfo.first.getNextHops())
+            triggerPorts.insert(nh.alias);
+    }
+    for (const auto &portName : triggerPorts)
+    {
+        SWSS_LOG_NOTICE("ARS: falling back to make-before-break NHG "
+                        "recreation via port %s", portName.c_str());
+        recreateNhgsWithArs(portName);
     }
 }
 
@@ -3204,6 +3401,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
          * disturbed.
          */
         if (!hasNextHopGroup(nextHops) &&
+            m_nhgsPendingRemoval.count(nextHops) == 0 &&
             it_route != m_syncdRoutes.at(vrf_id).end() &&
             ctx.nhg_index.empty() &&
             it_route->second.nhg_key.getSize() > 1 &&
@@ -3233,6 +3431,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 newEntry.is_default_route_nh_swap       = false;
                 newEntry.nh_member_install_count         = 0;
 
+                // Separate kept members from surplus members that need
+                // SAI removal. invalidnexthopinNextHopGroup only
+                // removes members whose ports went DOWN; surplus members
+                // from FRR reconvergence are still in the SAI NHG.
+                vector<pair<NextHopKey, sai_object_id_t>> surplus_members;
                 for (auto& nhop_pair : oldIt->second.nhopgroup_members)
                 {
                     if (nextHops.contains(nhop_pair.first))
@@ -3243,29 +3446,62 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                             newEntry.nh_member_install_count++;
                         }
                     }
-                }
-
-                m_syncdNextHopGroups[nextHops] = newEntry;
-
-                /* Increment neighbour ref-counts for new key (removeNextHopGroup
-                 * on the old key will decrement for all old-key NHs). */
-                MuxOrch* mux_orch_reuse = gDirectory.get<MuxOrch*>();
-                sai_object_id_t mux_nh_reuse = mux_orch_reuse->getTunnelNextHopId();
-                for (auto& nh : nextHops.getNextHops())
-                {
-                    if (m_neighOrch->hasNextHop(nh))
+                    else if (nhop_pair.second.next_hop_id != SAI_NULL_OBJECT_ID)
                     {
-                        auto nh_id = m_neighOrch->getNextHopId(nh);
-                        if (nh_id != mux_nh_reuse)
-                        {
-                            m_neighOrch->increaseNextHopRefCount(nh);
-                        }
+                        surplus_members.push_back({nhop_pair.first,
+                                                   nhop_pair.second.next_hop_id});
                     }
                 }
 
-                /* Mark old entry for no-SAI-cleanup */
-                oldIt->second.next_hop_group_id = SAI_NULL_OBJECT_ID;
-                oldIt->second.nhopgroup_members.clear();
+                bool surplusOk = true;
+                for (auto &surplus : surplus_members)
+                {
+                    sai_status_t rm_st =
+                        sai_next_hop_group_api->remove_next_hop_group_member(
+                            surplus.second);
+                    if (rm_st == SAI_STATUS_SUCCESS)
+                    {
+                        gCrmOrch->decCrmResUsedCounter(
+                            CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                        oldIt->second.nhopgroup_members.erase(surplus.first);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR(
+                            "Reuse: failed to remove surplus NHG member "
+                            "%" PRIx64 " from NHG %" PRIx64 ", rv:%d — "
+                            "aborting reuse",
+                            surplus.second,
+                            oldIt->second.next_hop_group_id, rm_st);
+                        surplusOk = false;
+                        break;
+                    }
+                }
+
+                if (surplusOk)
+                {
+                    m_syncdNextHopGroups[nextHops] = newEntry;
+
+                    /* Increment neighbour ref-counts for new key (removeNextHopGroup
+                     * on the old key will decrement for all old-key NHs). */
+                    MuxOrch* mux_orch_reuse = gDirectory.get<MuxOrch*>();
+                    sai_object_id_t mux_nh_reuse = mux_orch_reuse->getTunnelNextHopId();
+                    for (auto& nh : nextHops.getNextHops())
+                    {
+                        if (m_neighOrch->hasNextHop(nh))
+                        {
+                            auto nh_id = m_neighOrch->getNextHopId(nh);
+                            if (nh_id != mux_nh_reuse)
+                            {
+                                m_neighOrch->increaseNextHopRefCount(nh);
+                            }
+                        }
+                    }
+
+                    /* Mark old entry for no-SAI-cleanup */
+                    oldIt->second.next_hop_group_id = SAI_NULL_OBJECT_ID;
+                    oldIt->second.nhopgroup_members.clear();
+                }
             }
         }
 
@@ -3330,6 +3566,14 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                     }
                 }
 
+                /* When NHG creation was deferred for ARS setup, skip the
+                 * temp route — the full ECMP NHG will be retried once ARS
+                 * ports finish initialization (UPSW-7472). */
+                if (m_nhgDeferredForArs)
+                {
+                    return false;
+                }
+
                 /* Add a temporary route when a next hop group cannot be added,
                  * and there is no temporary route right now or the current temporary
                  * route is not pointing to a member of the next hop group to sync. */
@@ -3368,7 +3612,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
             if (!addNextHopGroup(nextHops))
             {
-                addTempRoute(ctx, nextHops);
+                if (!m_nhgDeferredForArs)
+                {
+                    addTempRoute(ctx, nextHops);
+                }
                 return false;
             }
             it_nhg = m_syncdNextHopGroups.find(nextHops);

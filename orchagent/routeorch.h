@@ -308,6 +308,18 @@ private:
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
 
+    // Set by addNextHopGroup when it returns false specifically because ARS
+    // port setup is still pending. Lets addRoute distinguish ARS deferral
+    // from other NHG creation failures (missing neighbors, CRM limits, etc.)
+    // and avoid suppressing a useful temp route in the non-ARS cases.
+    bool m_nhgDeferredForArs = false;
+
+    // NHGs whose SAI removal failed with OBJECT_IN_USE (a route was still
+    // referencing the NHG in SAI at the time of removal). Members have
+    // already been removed; the NHG shell remains in ASIC. Retried at
+    // the end of each doTask cycle after all route bulker flushes.
+    std::set<NextHopGroupKey> m_nhgsPendingRemoval;
+
     std::set<NextHopKey> v4_active_default_route_nhops;
     std::set<NextHopKey> v6_active_default_route_nhops;
     shared_ptr<DBConnector> m_stateDb;

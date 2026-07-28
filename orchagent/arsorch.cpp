@@ -3132,6 +3132,39 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     return arsOid;
 }
 
+bool ArsOrch::hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const
+{
+    if (!m_arsEnabled)
+        return false;
+
+    const auto &nextHops = nhgKey.getNextHops();
+    for (const auto &nh : nextHops)
+    {
+        const string &portName = nh.alias;
+
+        if (m_arsInterfacesPendingEnable.count(portName) > 0)
+            return true;
+
+        // Physical port: only pending if admin_state wants enabled but SAI
+        // hasn't enabled yet.  admin_state=down ports are intentionally
+        // disabled and must not block NHG creation.
+        auto ifIt = m_arsInterfaces.find(portName);
+        if (ifIt != m_arsInterfaces.end()
+            && ifIt->second.enabled
+            && m_arsEnabledPorts.count(portName) == 0)
+            return true;
+
+        // LAG: same logic — config wants enabled but not yet in
+        // m_arsEnabledLags.
+        auto lagIt = m_arsLags.find(portName);
+        if (lagIt != m_arsLags.end()
+            && lagIt->second.enabled
+            && m_arsEnabledLags.count(portName) == 0)
+            return true;
+    }
+    return false;
+}
+
 /* ── Per-port ARS enable via SAI_PORT_ATTR_ARS_ENABLE ─────────────────── */
 
 bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
