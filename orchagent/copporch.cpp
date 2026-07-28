@@ -1784,8 +1784,14 @@ void CoppOrch::publishPolicerStatsCapability()
     std::vector<FieldValueTuple> fv;
     fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE,
                     supported.empty() ? "false" : "true");
-    fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED,
-                    supported_csv);
+    // Published only when non-empty: an empty HSET value trips a
+    // RedisCommand::format bad_alloc via hiredis, and consumers gate on the
+    // boolean before reading the list anyway.
+    if (!supported_csv.empty())
+    {
+        fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED,
+                        supported_csv);
+    }
 
     if (gSwitchOrch)
     {
