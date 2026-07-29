@@ -226,12 +226,12 @@ namespace consumer_test
 
     TEST_F(ConsumerTest, ExecutorPriorityIgnoresWrappedSelectablePriority)
     {
-        Consumer consumer(
+        Consumer priorityConsumer(
             new swss::ConsumerStateTable(m_config_db.get(), "CFG_PRIORITY_TEST", 1, 100),
             gPortsOrch, "CFG_PRIORITY_TEST");
 
-        EXPECT_EQ(consumer.getConsumerTable()->getPri(), 100);
-        const swss::Selectable *selectable = &consumer;
+        EXPECT_EQ(priorityConsumer.getConsumerTable()->getPri(), 100);
+        const swss::Selectable *selectable = &priorityConsumer;
         EXPECT_EQ(selectable->getPri(), 0);
     }
 
