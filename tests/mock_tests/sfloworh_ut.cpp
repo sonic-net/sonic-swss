@@ -24,6 +24,11 @@ namespace sflow_test
         return SAI_STATUS_INSUFFICIENT_RESOURCES;
     }
 
+    sai_status_t failSaiRemove(sai_object_id_t)
+    {
+        return SAI_STATUS_FAILURE;
+    }
+
     template <typename SaiApi>
     class ScopedSaiApiOverride final
     {
@@ -281,6 +286,12 @@ namespace sflow_test
                     }
                 }
             });
+        mock_orch.doSflowTableTask(table);
+    }
+
+    void setSflowGlobal(MockSflowOrch &mock_orch, const vector<FieldValueTuple> &fvs)
+    {
+        auto table = deque<KeyOpFieldsValuesTuple>({ { "global", SET_COMMAND, fvs } });
         mock_orch.doSflowTableTask(table);
     }
 
@@ -945,6 +956,77 @@ namespace sflow_test
             { ObjectType::Tam, ObjectStatus::Destroyed },
         };
         EXPECT_EQ(ObjectTracker::objects(), expected_objects);
+    }
+
+    /* Test: cleanup after a switch bind failure reports every failed remove and refuses a retry. */
+    TEST_F(SflowOrchTest, SflowDropMonitorCleanupRemoveFailure)
+    {
+        ScopedSaiApiOverride<sai_switch_api_t> switch_api_override(sai_switch_api);
+        ScopedSaiApiOverride<sai_tam_api_t> tam_api_override(sai_tam_api);
+        ScopedSaiApiOverride<sai_hostif_api_t> hostif_api_override(sai_hostif_api);
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        // All nine objects are created, then the bind fails and cleanup runs.
+        switch_api_override.api().set_switch_attribute = failSaiSetSwitchAttribute;
+        // Cleanup must walk the whole list even though no object can be removed.
+        tam_api_override.api().remove_tam = failSaiRemove;
+        tam_api_override.api().remove_tam_event = failSaiRemove;
+        tam_api_override.api().remove_tam_collector = failSaiRemove;
+        tam_api_override.api().remove_tam_transport = failSaiRemove;
+        tam_api_override.api().remove_tam_event_action = failSaiRemove;
+        tam_api_override.api().remove_tam_report = failSaiRemove;
+        hostif_api_override.api().remove_hostif_user_defined_trap = failSaiRemove;
+        hostif_api_override.api().remove_hostif_trap_group = failSaiRemove;
+        policer_api_override.api().remove_policer = failSaiRemove;
+        ScopedObjectTracker object_tracker(tam_api_override.api(), hostif_api_override.api(),
+                                           policer_api_override.api());
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        // Every object was created and none could be removed, so each remove was attempted
+        // and reported an error.
+        const std::vector<TrackedObject> expected_objects = {
+            { ObjectType::TamReport, ObjectStatus::Created },
+            { ObjectType::TamEventAction, ObjectStatus::Created },
+            { ObjectType::TamTransport, ObjectStatus::Created },
+            { ObjectType::Policer, ObjectStatus::Created },
+            { ObjectType::HostifTrapGroup, ObjectStatus::Created },
+            { ObjectType::HostifUserDefinedTrap, ObjectStatus::Created },
+            { ObjectType::TamCollector, ObjectStatus::Created },
+            { ObjectType::TamEvent, ObjectStatus::Created },
+            { ObjectType::Tam, ObjectStatus::Created },
+        };
+        EXPECT_EQ(ObjectTracker::objects(), expected_objects);
+
+        // The failed removes left the object ids in place, so re-enabling is refused
+        // instead of creating a second set of objects.
+        setDropMonitorLimit(mock_orch, "200");
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        EXPECT_EQ(Portal::SflowOrchInternal::getSflowDropMonitorLimitRate(mock_orch.get()), 0);
+    }
+
+    /* Test: a drop_monitor_limit that is not a number is rejected and leaves MOD disabled. */
+    TEST_F(SflowOrchTest, SflowDropMonitorInvalidLimit)
+    {
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "abc");
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+        EXPECT_EQ(Portal::SflowOrchInternal::getSflowDropMonitorLimitRate(mock_orch.get()), 0);
+    }
+
+    /* Test: the global handler tolerates sample_rate, including the "error" value. */
+    TEST_F(SflowOrchTest, SflowGlobalSampleRateParsing)
+    {
+        MockSflowOrch mock_orch;
+        setSflowGlobal(mock_orch,
+                       { {"admin_state", "up"}, {"sample_rate", "1000"}, {"drop_monitor_limit", "0"} });
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+        EXPECT_FALSE(Portal::SflowOrchInternal::getSflowDropMonitorStatusEnable(mock_orch.get()));
+
+        setSflowGlobal(mock_orch,
+                       { {"admin_state", "up"}, {"sample_rate", "error"}, {"drop_monitor_limit", "0"} });
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
     }
 
     /* Test: MOD remains enabled when switch unbind fails during disable. */
