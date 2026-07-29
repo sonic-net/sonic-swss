@@ -1035,6 +1035,10 @@ class AclManagerTest : public ::testing::Test
         delete gP4Orch;
         delete gCoppOrch;
         delete gSwitchOrch;
+        // CoppOrch is constructed before SwitchOrch in SetUp and its ctor
+        // publishes capabilities through gSwitchOrch when non-null; a stale
+        // pointer from the previous test is a use-after-free (ASan aborts).
+        gSwitchOrch = nullptr;
         gMockResponsePublisher.reset();
     }
 
