@@ -10,14 +10,14 @@ ZmqRouteConsumer::ZmqRouteConsumer(ZmqRouteConsumerStateTable *select, Orch *orc
     : ConsumerBase(select, orch, name)
 {
     // mqPollThread delivers bursts of tuples through this callback. Stage them
-    // in the plain m_ingress map under m_toSyncMutex rather than merging into
+    // in the plain m_ingress map under m_ingressMutex rather than merging into
     // m_toSync here; the merge into m_toSync happens on the orch main thread in
     // execute(). The eventfd is fired once the staged batch reaches
     // gMaxBulkSize (so the main loop has a real batch to drain); otherwise
     // mqPollThread fires it once per burst after the burst quiesces.
     select->setIngressCallback(
         [this, select](const std::vector<std::shared_ptr<KeyOpFieldsValuesTuple>> &kcos) {
-            std::lock_guard<std::mutex> lk(m_toSyncMutex);
+            std::lock_guard<std::mutex> lk(m_ingressMutex);
             for (const auto &kco : kcos)
             {
                 // Plain last-writer-wins staging by key. The SyncMap merge into
@@ -39,7 +39,7 @@ void ZmqRouteConsumer::execute()
         // Drain the staged tuples into m_toSync under the lock, mirroring
         // ZmqConsumer::execute()'s pops() + addToSync(entries). The lock is
         // held only while moving tuples out of m_ingress.
-        std::lock_guard<std::mutex> lk(m_toSyncMutex);
+        std::lock_guard<std::mutex> lk(m_ingressMutex);
         std::deque<KeyOpFieldsValuesTuple> entries;
         for (auto &kv : m_ingress)
         {
@@ -50,12 +50,20 @@ void ZmqRouteConsumer::execute()
     }
 
     // m_toSync is mutated only by this (main) thread, so drain() — which reads
-    // m_toSync and hands it to doTask — does not need to hold m_toSyncMutex.
+    // m_toSync and hands it to doTask — does not need to hold m_ingressMutex.
+    // Releasing the lock before drain() also keeps mqPollThread free to stage
+    // further tuples into m_ingress while doTask is running.
     drain();
 }
 
 void ZmqRouteConsumer::drain()
 {
+    // TODO: doTask() currently walks the whole of m_toSync in one go. Per the
+    // route programming HLD -- doc/orchagent/orchagent_route_redesign.md
+    // sections 7.4 and 7.5 (sonic-net/SONiC#2328) -- this becomes a yieldable
+    // walk bounded by a time quantum, so the main loop returns to execute()
+    // and keeps draining m_ingress (and hence the ZMQ socket) instead of
+    // stalling ingress behind one large batch.
     if (!m_toSync.empty())
         (static_cast<ZmqRouteOrch*>(m_orch))->doTask(*this);
 }
@@ -107,5 +115,5 @@ void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqRo
 void ZmqRouteOrch::doTask(Consumer &consumer)
 {
     // When ZMQ disabled, forward data from Consumer
-    doTask((ConsumerBase &)consumer);
+    doTask(static_cast<ConsumerBase &>(consumer));
 }

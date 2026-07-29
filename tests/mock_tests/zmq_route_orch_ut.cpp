@@ -65,6 +65,7 @@ public:
         for (const auto &kv : consumer.m_toSync)
         {
             seenKeys.insert(kv.first);
+            ++totalEntries;
         }
         // Drain the consumer's m_toSync so subsequent drain() calls observe it
         // as empty (matches the contract a real orch would honor).
@@ -73,6 +74,9 @@ public:
 
     std::atomic<int> doTaskCount{0};
     std::set<std::string> seenKeys;
+    // Total entries handed to doTask across all invocations. Compared against
+    // seenKeys.size() it distinguishes "delivered once" from "delivered twice".
+    std::atomic<int> totalEntries{0};
 };
 
 } // namespace
@@ -334,4 +338,60 @@ TEST(ZmqRouteConsumerTest, IngressCallbackFiresNotifyAtMaxBulkSize)
     EXPECT_EQ(out, zrc);
 
     gMaxBulkSize = savedMaxBulk;
+}
+
+// The producer (and hence the mqPollThread ingress callback) keeps staging into
+// m_ingress while the orch main thread is inside execute()/drain()/doTask().
+// This is the concurrent pair in this design: the callback holds m_ingressMutex
+// only to stage, and execute() releases it before drain(), so doTask never runs
+// under the lock. Assert that the overlap loses nothing, duplicates nothing and
+// does not deadlock.
+TEST(ZmqRouteConsumerTest, IngressCallbackConcurrentWithDrain)
+{
+    const string tableName = "ZMQ_ROUTE_UT_CONCURRENT";
+    const string pushEndpoint = "tcp://localhost:1268";
+    const string pullEndpoint = "tcp://*:1268";
+    constexpr int kRoutes = 1000;
+
+    vector<table_name_with_pri_t> tables = { { tableName, 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server(pullEndpoint, "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    server.bind();
+
+    ZmqClient client(pushEndpoint, 0);
+    ZmqProducerStateTable p(app_db.get(), tableName, client, /*dbPersistence=*/false);
+
+    std::atomic<bool> producerDone{false};
+    std::thread producer([&] {
+        for (int i = 0; i < kRoutes; ++i)
+        {
+            p.set("10.0." + to_string(i / 256) + "." + to_string(i % 256) + "/32",
+                  vector<FieldValueTuple>{{"nh", "3.3.3.3"}});
+        }
+        producerDone = true;
+    });
+
+    // Spin execute() while the producer is still pushing, so staging and
+    // draining genuinely interleave rather than running back to back.
+    waitFor(30000, [&] {
+        zrc->execute();
+        return producerDone.load() && orch->seenKeys.size() == static_cast<size_t>(kRoutes);
+    });
+    producer.join();
+    // Final pass for anything staged after the last predicate evaluation.
+    ASSERT_TRUE(waitFor(5000, [&] {
+        zrc->execute();
+        return orch->seenKeys.size() == static_cast<size_t>(kRoutes);
+    }));
+
+    // Every key delivered, each exactly once (keys are unique per producer
+    // iteration, so a duplicate delivery would show up as totalEntries drift).
+    EXPECT_EQ(orch->seenKeys.size(), static_cast<size_t>(kRoutes));
+    EXPECT_EQ(orch->totalEntries.load(), kRoutes);
+    EXPECT_TRUE(zrc->m_toSync.empty());
 }

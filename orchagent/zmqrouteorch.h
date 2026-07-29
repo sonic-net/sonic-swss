@@ -10,8 +10,6 @@
 #include "zmqrouteserver.h"
 #include "zmqrouteconsumerstatetable.h"
 
-extern int gZmqExecuteTimeQuantaMsecs;
-
 class ZmqRouteConsumer : public ConsumerBase {
 public:
     ZmqRouteConsumer(ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name);
@@ -27,11 +25,16 @@ public:
 
 private:
     // Staging buffer for tuples delivered by the ZmqRouteServer mqPollThread
-    // ingress callback. The callback writes here under m_toSyncMutex (rather
-    // than merging into m_toSync directly); execute() drains it into m_toSync
-    // under the same lock. This keeps m_toSync single-threaded (touched only
-    // by the orch main thread), so the base ConsumerBase paths need no locking.
-    std::mutex m_toSyncMutex;
+    // ingress callback. The callback writes here (rather than merging into
+    // m_toSync directly); execute() drains it into m_toSync.
+    //
+    // Threading invariant: m_ingressMutex guards m_ingress only. m_toSync is
+    // owned exclusively by the orch main thread (execute() -> drain() ->
+    // doTask()), and no lock is held across doTask(). That is what keeps
+    // re-entrant addToSync() calls made from inside doTask() -- e.g. the route
+    // resync path in RouteOrch::doTask() -- safe rather than a self-deadlock,
+    // and it lets the base ConsumerBase paths stay lock-free.
+    std::mutex m_ingressMutex;
     std::unordered_map<std::string, swss::KeyOpFieldsValuesTuple> m_ingress;
 };
 
