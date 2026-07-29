@@ -2070,17 +2070,17 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     }
 
     // Check capability for SAI_TAM_ATTR_EVENT_OBJECTS_LIST
-    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_EVENT,
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM,
                                             SAI_TAM_ATTR_EVENT_OBJECTS_LIST, &capability);
     if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("Could not query TAM Event capability %d", status);
+            SWSS_LOG_WARN("Could not query TAM event objects list capability %d", status);
         }
         else
         {
-            SWSS_LOG_WARN("TAM Event capability not implemented");
+            SWSS_LOG_WARN("TAM event objects list capability not implemented");
         }
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
         set_switch_capability(fvVector);
@@ -2094,11 +2094,11 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("Could not query TAM Event capability %d", status);
+            SWSS_LOG_WARN("Could not query HOSTIF user defined trap capability %d", status);
         }
         else
         {
-            SWSS_LOG_WARN("TAM Event capability not implemented");
+            SWSS_LOG_WARN("HOSTIF user defined trap capability not implemented");
         }
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
         set_switch_capability(fvVector);
