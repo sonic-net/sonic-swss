@@ -118,6 +118,7 @@ end
 -- Calculate the headroom information
 local speed_of_light = 198000000
 local minimal_packet_size = 64
+local headroom_compensation = 2 * 1024
 local cell_occupancy
 local worst_case_factor
 local propagation_delay
@@ -163,6 +164,17 @@ propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_d
 -- Calculate the xoff and xon and then round up at 1024 bytes
 xoff_value = lossless_mtu + propagation_delay * cell_occupancy
 xoff_value = math.ceil(xoff_value / 1024) * 1024
+
+-- When SHP is disabled, compensate headroom calculated with a reduced small-
+-- packet percentage if it remains more than 2 kB below the worst case.
+if not shp_enabled and small_packet_percentage ~= 100 then
+    local full_small_packet_xoff = lossless_mtu + propagation_delay * worst_case_factor
+    full_small_packet_xoff = math.ceil(full_small_packet_xoff / 1024) * 1024
+    if xoff_value + headroom_compensation < full_small_packet_xoff then
+        xoff_value = xoff_value + headroom_compensation
+    end
+end
+
 xon_value = pipeline_latency
 xon_value = math.ceil(xon_value / 1024) * 1024
 
