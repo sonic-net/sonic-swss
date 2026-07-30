@@ -2527,37 +2527,78 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
                         "ports still had ARS enabled in ASIC).",
                         arsOid, name.c_str());
 
-        // Attempt to SET the requested attributes on the reused OID.
-        // Mellanox SAI fatally rejects set_ars_attribute when NHGs still
-        // reference the object (OBJECT_IN_USE). Only attempt if no
-        // ARS-bound NHGs are tracked — this covers the common case where
-        // topology cleanup already deleted all NHGs via forceUnbindArsFromNhg.
-        if (m_nhgStateKeys.empty())
+        // SET the requested attributes on the reused OID.
+        // removeArsObject now unbinds all NHGs before deferring, so the OID
+        // should have ref_count=0 and attribute SETs should succeed.
+        if (!m_nhgStateKeys.empty())
         {
-            for (const auto &a : attrs)
+            SWSS_LOG_WARN("ARS: deferred-OID reuse for '%s' — %zu stale "
+                          "m_nhgStateKeys entries remain (should have been "
+                          "purged during removal). Proceeding with attribute "
+                          "SET anyway.",
+                          name.c_str(), m_nhgStateKeys.size());
+        }
+
+        bool modeFailed = false;
+        for (const auto &a : attrs)
+        {
+            sai_status_t setRc = sai_ars_api->set_ars_attribute(arsOid, &a);
+            if (setRc != SAI_STATUS_SUCCESS)
             {
-                sai_status_t setRc = sai_ars_api->set_ars_attribute(arsOid, &a);
-                if (setRc != SAI_STATUS_SUCCESS)
-                {
-                    const char *attrName =
-                        (a.id == SAI_ARS_ATTR_MODE) ? "MODE" :
-                        (a.id == SAI_ARS_ATTR_IDLE_TIME) ? "IDLE_TIME" :
-                        (a.id == SAI_ARS_ATTR_MAX_FLOWS) ? "MAX_FLOWS" : "UNKNOWN";
-                    SWSS_LOG_WARN("ARS: deferred-OID reuse — SET %s on 0x%" PRIx64
-                                  " failed (%s). ASIC retains previous value; "
-                                  "config reload will reconcile.",
-                                  attrName, arsOid,
-                                  sai_serialize_status(setRc).c_str());
-                }
+                const char *attrName =
+                    (a.id == SAI_ARS_ATTR_MODE) ? "MODE" :
+                    (a.id == SAI_ARS_ATTR_IDLE_TIME) ? "IDLE_TIME" :
+                    (a.id == SAI_ARS_ATTR_MAX_FLOWS) ? "MAX_FLOWS" : "UNKNOWN";
+                SWSS_LOG_WARN("ARS: deferred-OID reuse — SET %s on 0x%" PRIx64
+                              " failed (%s). ASIC retains previous value; "
+                              "config reload will reconcile.",
+                              attrName, arsOid,
+                              sai_serialize_status(setRc).c_str());
+                if (a.id == SAI_ARS_ATTR_MODE)
+                    modeFailed = true;
             }
         }
-        else
+
+        if (modeFailed)
         {
-            SWSS_LOG_WARN("ARS: deferred-OID reuse for '%s' — %zu ARS NHG "
-                          "binding(s) still tracked, skipping attribute SET to "
-                          "avoid fatal SAI error. ASIC retains previous "
-                          "attributes; config reload will reconcile.",
-                          name.c_str(), m_nhgStateKeys.size());
+            SWSS_LOG_NOTICE("ARS: deferred-OID reuse for '%s' — MODE SET "
+                            "failed (create-only attribute). Attempting to "
+                            "remove deferred OID 0x%" PRIx64 " from SAI and "
+                            "create a fresh object.",
+                            name.c_str(), arsOid);
+
+            sai_status_t removeRc = sai_ars_api->remove_ars(arsOid);
+            if (removeRc == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("ARS: deferred OID 0x%" PRIx64 " removed "
+                                "from SAI. Creating fresh ARS object for "
+                                "'%s'.", arsOid, name.c_str());
+                m_nhgStateKeys.clear();
+
+                sai_status_t status = sai_ars_api->create_ars(
+                    &arsOid, gSwitchId,
+                    (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS: fresh create_ars failed for '%s' "
+                                   "after deferred OID removal: %s",
+                                   name.c_str(),
+                                   sai_serialize_status(status).c_str());
+                    return false;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ARS: deferred-OID 0x%" PRIx64 " MODE SET "
+                               "failed AND SAI remove failed (%s) for '%s'. "
+                               "Restoring deferred OID — ports may still "
+                               "reference it.",
+                               arsOid,
+                               sai_serialize_status(removeRc).c_str(),
+                               name.c_str());
+                m_deferredArsOid = arsOid;
+                return false;
+            }
         }
     }
     else
@@ -2635,6 +2676,38 @@ bool ArsOrch::removeArsObject(const string &name)
                         "object is created before reload.",
                         name.c_str(), oid, stuckPorts.size(),
                         portList.c_str());
+
+        // Unbind NHGs from this ARS object before deferring.  Without this,
+        // NHGs remain bound to the deferred OID in SAI and their entries
+        // persist in m_nhgStateKeys.  When createArsObject later reuses the
+        // deferred OID, the non-empty m_nhgStateKeys caused the attribute
+        // SET loop (including SAI_ARS_ATTR_MODE) to be skipped entirely,
+        // leaving the ASIC with the *previous* mode — a silent mismatch.
+        //
+        // rebindArsForAllNhgs will delete-and-recreate each NHG without an
+        // ARS binding (via forceUnbindArsFromNhg), which releases the SAI
+        // ref_count on this OID and cleans up m_nhgStateKeys.  Routes keep
+        // valid ECMP NHGs (just without ARS) until the replacement object is
+        // created and bindArsToExistingNhgs re-enables ARS on them.
+        it->second.enabled = false;
+        if (gRouteOrch)
+            gRouteOrch->rebindArsForAllNhgs();
+
+        // Unbind LAGs that reference this object, mirroring the non-deferral
+        // removal path. Without this, LAG SAI_LAG_ATTR_ARS_OBJECT_ID bindings
+        // keep the deferred OID in use and can cause MODE SET failure on reuse.
+        vector<string> lagsToUnbind;
+        for (const auto &kv : m_arsLags)
+        {
+            if (kv.second.arsObject == name && m_arsEnabledLags.count(kv.first))
+                lagsToUnbind.push_back(kv.first);
+        }
+        for (const auto &lag : lagsToUnbind)
+        {
+            unbindArsFromLag(lag);
+            m_arsEnabledLags.erase(lag);
+        }
+
         m_deferredArsOid = oid;
         m_arsObjects.erase(it);
         return true;
@@ -3198,11 +3271,11 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
         }
         else
         {
-            SWSS_LOG_ERROR("ARS: setPortArsEnable(%s, false) — port has "
-                           "RIF 0x%" PRIx64 ". Cannot disable ARS while "
-                           "RIF exists. Remove IPs first, then disable ARS.",
-                           portName.c_str(), port.m_rif_id);
-            return false;
+            SWSS_LOG_NOTICE("ARS: setPortArsEnable(%s, false) — port has "
+                            "RIF 0x%" PRIx64 ". Initiating reverse RIF "
+                            "migration to disable ARS dynamically.",
+                            portName.c_str(), port.m_rif_id);
+            return migratePortFromArs(portName);
         }
     }
 
@@ -3237,13 +3310,16 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     return true;
 }
 
-/* ── Orchestrated RIF migration for dynamic ARS enablement ──────────────
+/* ── Orchestrated RIF migration for dynamic ARS enable/disable ──────────
  *
  * Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE when the port has RIFs because
  * the SDK RIF type (SX_L2_INTERFACE_TYPE_ADAPTIVE_ROUTING vs PORT_VLAN) is
  * immutable after creation. This method performs a coordinated teardown and
- * rebuild of all objects that depend on the RIF, enabling ARS on the bare port
+ * rebuild of all objects that depend on the RIF, toggling ARS on the bare port
  * between removal and recreation.
+ *
+ * When enableArs=true  (forward): enables ARS, SAI picks AR RIF type.
+ * When enableArs=false (reverse): disables ARS, SAI picks standard RIF type.
  *
  * Sequence:
  *   1. Collect all neighbors/next-hops on this port
@@ -3252,21 +3328,31 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
  *   4. Remove next-hop SAI objects (decrements RIF ref_count)
  *   5. Remove neighbor SAI entries (decrements RIF ref_count)
  *   6. Remove the RIF (ref_count now 0)
- *   7. Enable ARS on the bare port
- *   8. Recreate the RIF (SAI picks AR type since port->ars_enable is true)
+ *   7. Set ARS enable/disable on the bare port
+ *   8. Recreate the RIF (SAI picks type based on port ARS state)
  *   9. Recreate neighbor entries with new RIF
  *  10. Recreate next-hop objects with new RIF OID
  *  11. Recreate NHG members (reusing same NHG OIDs where possible)
- *  12. Trigger make-before-break NHG recreation for ARS binding
+ *  12. (forward only) Trigger make-before-break NHG recreation for ARS binding
  *
  * Traffic impact: brief per-prefix blackhole during NHG member drain/refill
  * (sub-second with bulk ops). Significantly less disruptive than config reload.
  */
 bool ArsOrch::migratePortToArs(const string &portName)
 {
+    return migratePort(portName, true);
+}
+
+bool ArsOrch::migratePortFromArs(const string &portName)
+{
+    return migratePort(portName, false);
+}
+
+bool ArsOrch::migratePort(const string &portName, bool enableArs)
+{
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== BEGIN orchestrated RIF migration =====",
-                    portName.c_str());
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== BEGIN orchestrated RIF migration (%s) =====",
+                    portName.c_str(), enableArs ? "enable ARS" : "disable ARS");
 
     Port port;
     if (!m_portsOrch->getPort(portName, port))
@@ -3282,9 +3368,9 @@ bool ArsOrch::migratePortToArs(const string &portName)
 
     if (port.m_rif_id == 0)
     {
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: no RIF on port, falling through to direct enable",
-                        portName.c_str());
-        return setPortArsEnable(portName, true);
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: no RIF on port, falling through to direct %s",
+                        portName.c_str(), enableArs ? "enable" : "disable");
+        return setPortArsEnable(portName, enableArs);
     }
 
     sai_object_id_t oldRifId = port.m_rif_id;
@@ -3907,30 +3993,32 @@ phase5_success:
     port.m_rif_id = 0;
     m_portsOrch->setPort(portName, port);
 
-    // ─── Phase 6: Enable ARS on the bare port ────────────────────────────
+    // ─── Phase 6: Set ARS on the bare port ─────────────────────────────
 
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 setting SAI_PORT_ATTR_ARS_ENABLE=true "
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 setting SAI_PORT_ATTR_ARS_ENABLE=%s "
                     "on port_oid=0x%" PRIx64 " (port now has rifs=0)",
-                    portName.c_str(), port.m_port_id);
+                    portName.c_str(), enableArs ? "true" : "false",
+                    port.m_port_id);
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
-    attr.value.booldata = true;
+    attr.value.booldata = enableArs;
 
     st = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (st != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase6 CRITICAL FAILURE - "
-                       "set_port_attribute(ARS_ENABLE) on port_oid=0x%" PRIx64
+                       "set_port_attribute(ARS_ENABLE=%s) on port_oid=0x%" PRIx64
                        " returned SAI rc=%d even though RIF was removed. "
                        "Possible causes: (1) another RIF exists on this port/LAG, "
                        "(2) ARS profile not created, (3) SAI internal error. "
                        "Attempting emergency RIF restoration.",
-                       portName.c_str(), port.m_port_id, st);
+                       portName.c_str(), enableArs ? "true" : "false",
+                       port.m_port_id, st);
         goto restore_rif_without_ars;
     }
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 COMPLETE - ARS enabled on bare port",
-                    portName.c_str());
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 COMPLETE - ARS %s on bare port",
+                    portName.c_str(), enableArs ? "enabled" : "disabled");
 
     // ─── Phase 7: Recreate the RIF (SAI now picks AR type) ───────────────
     {
@@ -3960,10 +4048,11 @@ phase5_success:
             rif_attrs.push_back(rif_attr);
         }
 
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 creating RIF with ARS: "
-                        "vrf=0x%" PRIx64 " port_oid=0x%" PRIx64 " mtu=%u "
-                        "(SAI should pick SX_L2_INTERFACE_TYPE_ADAPTIVE_ROUTING)",
-                        portName.c_str(), vrfId, port.m_port_id, port.m_mtu);
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 creating RIF (%s): "
+                        "vrf=0x%" PRIx64 " port_oid=0x%" PRIx64 " mtu=%u",
+                        portName.c_str(),
+                        enableArs ? "AR type — ARS enabled" : "standard type — ARS disabled",
+                        vrfId, port.m_port_id, port.m_mtu);
 
         sai_object_id_t newRifId;
         st = sai_router_intfs_api->create_router_interface(
@@ -3973,17 +4062,20 @@ phase5_success:
         {
             SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase7 CRITICAL FAILURE - "
                            "create_router_interface returned SAI rc=%d. "
-                           "ARS is enabled on port but RIF creation failed. "
-                           "Disabling ARS and attempting non-AR RIF restore.",
-                           portName.c_str(), st);
-            attr.value.booldata = false;
+                           "ARS is %s on port but RIF creation failed. "
+                           "Restoring ARS to %s and attempting RIF restore.",
+                           portName.c_str(), st,
+                           enableArs ? "enabled" : "disabled",
+                           enableArs ? "disabled" : "enabled");
+            attr.value.booldata = !enableArs;
             sai_port_api->set_port_attribute(port.m_port_id, &attr);
             goto restore_rif_without_ars;
         }
 
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 COMPLETE - AR RIF created: "
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 COMPLETE - %s RIF created: "
                         "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64,
-                        portName.c_str(), oldRifId, newRifId);
+                        portName.c_str(), enableArs ? "AR" : "standard",
+                        oldRifId, newRifId);
 
         port.m_rif_id = newRifId;
         port.m_vr_id = vrfId;
@@ -4256,7 +4348,7 @@ phase5_success:
         // migrations.  processDeferredNhgMembers() then binds ARS to the
         // (empty) NHG and adds all members — all using AR RIFs.
 
-        if (m_batchMigrationMode)
+        if (m_batchMigrationMode && enableArs)
         {
             size_t deferred = 0;
             for (auto &rmInfo : removedMembers)
@@ -4435,13 +4527,22 @@ phase5_success:
                         removedMembers.size(), memberCreateFail);
 
         // ─── Phase 11: Recreate NHGs with ARS (make-before-break) ────────
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 triggering make-before-break "
-                        "NHG recreation for ARS binding",
-                        portName.c_str());
-
-        if (gRouteOrch)
+        if (enableArs)
         {
-            gRouteOrch->recreateNhgsWithArs(portName);
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 triggering make-before-break "
+                            "NHG recreation for ARS binding",
+                            portName.c_str());
+
+            if (gRouteOrch)
+            {
+                gRouteOrch->recreateNhgsWithArs(portName);
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 SKIPPED — ARS disabled, "
+                            "NHGs will use standard ECMP (no ARS binding)",
+                            portName.c_str());
         }
 
         bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0 ||

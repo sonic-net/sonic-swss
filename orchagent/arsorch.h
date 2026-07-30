@@ -124,6 +124,8 @@ public:
     void update(SubjectType type, void *cntx) override;
 
 private:
+    bool migratePort(const std::string &portName, bool enableArs);
+
     void doTask() override;
     void doTask(Consumer &consumer) override;
 
@@ -150,11 +152,14 @@ private:
     bool setPortArsEnable(const std::string &portName, bool enable);
 
     // Orchestrated RIF migration: when setPortArsEnable fails because the
-    // port already has a RIF, this method tears down neighbors/NHs/RIF via
-    // proper orch coordination, enables ARS on the bare port, then rebuilds
+    // port already has a RIF, these methods tear down neighbors/NHs/RIF via
+    // proper orch coordination, set ARS on the bare port, then rebuild
     // the RIF and all dependent objects. Uses make-before-break for NHGs
     // to minimize forwarding disruption.
+    // migratePortToArs: enable ARS on a port with an existing (non-AR) RIF.
+    // migratePortFromArs: disable ARS on a port with an existing (AR) RIF.
     bool migratePortToArs(const std::string &portName);
+    bool migratePortFromArs(const std::string &portName);
 
     // Wholesale enable/disable of the ARS data-plane state. Called from the
     // global ARS|GLOBAL admin_state transitions so that a toggle to "down"
