@@ -437,7 +437,7 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (!getSaiLoopbackAction(actionStr, action))
     {
-        return false;
+        return true;
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
@@ -881,15 +881,6 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
-            if (!loopbackAction.empty())
-            {
-                sai_packet_action_t action;
-                if (!getSaiLoopbackAction(loopbackAction, action))
-                {
-                    loopbackAction.clear();
-                }
-            }
-
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
