@@ -362,7 +362,10 @@ namespace teamsync_test
         stateLagTable.getKeys(stateKeys);
         EXPECT_TRUE(stateKeys.empty());
 
-        EXPECT_EQ(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
+        /* removeLag() defers erasing TeamPortSync until doSelectableTask().
+         * Do not call doSelectableTask() here: mocked team_init does not yield
+         * a valid team event fd, so epoll registration would fail in unit tests. */
         EXPECT_EQ(ts.m_selectablesToRemove.count("testLag"), 1u);
+        EXPECT_NE(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
     }
 }
