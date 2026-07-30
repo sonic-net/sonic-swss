@@ -30,6 +30,17 @@ extern size_t gMaxBulkSize;
 
 namespace {
 
+// Restores gMaxBulkSize on scope exit. The tests below lower it to force the
+// mid-burst notify branch; without this, an early return or a throw between
+// the set and the restore would leave the global clobbered for every later
+// test in the process.
+struct ScopedMaxBulkSize
+{
+    explicit ScopedMaxBulkSize(size_t v) : saved(gMaxBulkSize) { gMaxBulkSize = v; }
+    ~ScopedMaxBulkSize() { gMaxBulkSize = saved; }
+    size_t saved;
+};
+
 // Wait until pred() becomes true or deadlineMs elapses; returns the final value.
 template <typename Pred>
 bool waitFor(int deadlineMs, Pred pred)
@@ -320,8 +331,7 @@ TEST(ZmqRouteConsumerTest, IngressCallbackFiresNotifyAtMaxBulkSize)
     server.bind();
 
     // Force the mid-burst notify branch to trip on the very first callback.
-    const size_t savedMaxBulk = gMaxBulkSize;
-    gMaxBulkSize = 1;
+    ScopedMaxBulkSize maxBulkGuard(1);
 
     Select sel;
     sel.addSelectable(zrc);
@@ -336,8 +346,6 @@ TEST(ZmqRouteConsumerTest, IngressCallbackFiresNotifyAtMaxBulkSize)
     Selectable *out = nullptr;
     EXPECT_EQ(sel.select(&out, 2000), Select::OBJECT);
     EXPECT_EQ(out, zrc);
-
-    gMaxBulkSize = savedMaxBulk;
 }
 
 // The producer (and hence the mqPollThread ingress callback) keeps staging into

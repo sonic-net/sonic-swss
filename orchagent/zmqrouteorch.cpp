@@ -35,19 +35,21 @@ void ZmqRouteConsumer::execute()
 {
     SWSS_LOG_ENTER();
 
+    std::deque<KeyOpFieldsValuesTuple> entries;
     {
-        // Drain the staged tuples into m_toSync under the lock, mirroring
+        // Move the staged tuples out of m_ingress under the lock, mirroring
         // ZmqConsumer::execute()'s pops() + addToSync(entries). The lock is
-        // held only while moving tuples out of m_ingress.
+        // dropped before addToSync() below: m_toSync is owned by this (main)
+        // thread alone, so the merge needs no lock, and releasing early keeps
+        // mqPollThread free to stage the next burst while the merge runs.
         std::lock_guard<std::mutex> lk(m_ingressMutex);
-        std::deque<KeyOpFieldsValuesTuple> entries;
         for (auto &kv : m_ingress)
         {
             entries.push_back(std::move(kv.second));
         }
         m_ingress.clear();
-        addToSync(entries);
     }
+    addToSync(entries);
 
     // m_toSync is mutated only by this (main) thread, so drain() — which reads
     // m_toSync and hands it to doTask — does not need to hold m_ingressMutex.
@@ -72,7 +74,7 @@ void ZmqRouteConsumer::drain()
 ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, ZmqRouteServer *zmqServer)
 : Orch()
 {
-    for (auto it : tableNames)
+    for (const auto& it : tableNames)
     {
         addConsumer(db, it, default_orch_pri, zmqServer);
     }
