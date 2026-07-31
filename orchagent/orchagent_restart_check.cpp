@@ -121,7 +121,7 @@ int main(int argc, char **argv)
     std::string op = "orchagent";
 
     int retries = 0;
-    std::string failReason = "orchagent did not respond";
+    std::string failReason = "";
 
     while (retries <= retryCount)
     {
@@ -150,8 +150,7 @@ int main(int argc, char **argv)
         else if (result == swss::Select::TIMEOUT)
         {
             SWSS_LOG_NOTICE("RESTARTCHECK for %s timed out", op.c_str());
-            failReason = "timed out waiting for orchagent to respond; it may be busy processing tasks "
-                    "(e.g. large-scale routes), try increasing the wait time (-w) or retry count (-r)";
+            failReason = "timed out waiting for orchagent to respond; try increasing the wait time (-w) or retry count (-r)";
         }
         else
         {
