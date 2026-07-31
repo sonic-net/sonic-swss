@@ -161,6 +161,43 @@ TEST_F(SaiNotificationZmqTest, PortStateChangeCallbackEnqueuesInZmqMode)
     ASSERT_FALSE(queue->hasData());
 }
 
+TEST_F(SaiNotificationZmqTest, FdbEventCallbackEnqueuesInZmqMode)
+{
+    auto queue = getSaiNotificationQueue();
+
+    sai_fdb_event_notification_data_t fdb_data;
+    memset(&fdb_data, 0, sizeof(fdb_data));
+    fdb_data.event_type = SAI_FDB_EVENT_LEARNED;
+    fdb_data.fdb_entry.switch_id = 0x21000000000000;
+    fdb_data.fdb_entry.bv_id = 0x26000000000a6c;
+    uint8_t mac[] = {0x52, 0x54, 0x00, 0x11, 0x22, 0x33};
+    memcpy(fdb_data.fdb_entry.mac_address, mac, sizeof(mac));
+    fdb_data.attr_count = 0;
+    fdb_data.attr = nullptr;
+
+    on_fdb_event(1, &fdb_data);
+
+    ASSERT_TRUE(queue->hasData());
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    queue->pops(entries);
+
+    ASSERT_EQ(entries.size(), static_cast<size_t>(1));
+    EXPECT_EQ(kfvOp(entries[0]), "fdb_event");
+
+    uint32_t count = 0;
+    sai_fdb_event_notification_data_t *deserialized = nullptr;
+    sai_deserialize_fdb_event_ntf(kfvKey(entries[0]), count, &deserialized);
+
+    ASSERT_EQ(count, static_cast<uint32_t>(1));
+    EXPECT_EQ(deserialized[0].event_type, fdb_data.event_type);
+    EXPECT_EQ(deserialized[0].fdb_entry.switch_id, fdb_data.fdb_entry.switch_id);
+    EXPECT_EQ(deserialized[0].fdb_entry.bv_id, fdb_data.fdb_entry.bv_id);
+    EXPECT_EQ(memcmp(deserialized[0].fdb_entry.mac_address, mac, sizeof(mac)), 0);
+
+    sai_deserialize_free_fdb_event_ntf(count, deserialized);
+    ASSERT_FALSE(queue->hasData());
+}
+
 TEST(SaiNotificationQueueTest, PeekFrontOp)
 {
     SaiNotificationQueue queue(100, 1);
@@ -593,6 +630,44 @@ TEST(NotificationsNonZmqTest, TamTelTypeConfigChangeNoEnqueueInRedisMode)
     drainSaiNotificationQueue();
 
     on_tam_tel_type_config_change(0x500);
+
+    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+
+    gRedisCommunicationMode = oldMode;
+}
+
+TEST(NotificationsNonZmqTest, FdbEventNoEnqueueInRedisMode)
+{
+    sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
+    gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+    drainSaiNotificationQueue();
+
+    sai_fdb_event_notification_data_t fdb_data;
+    memset(&fdb_data, 0, sizeof(fdb_data));
+    fdb_data.event_type = SAI_FDB_EVENT_LEARNED;
+    fdb_data.fdb_entry.switch_id = 0x1;
+    fdb_data.attr_count = 0;
+    fdb_data.attr = nullptr;
+
+    on_fdb_event(1, &fdb_data);
+
+    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+
+    gRedisCommunicationMode = oldMode;
+}
+
+TEST(NotificationsNonZmqTest, BfdSessionStateChangeNoEnqueueInRedisMode)
+{
+    sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
+    gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+    drainSaiNotificationQueue();
+
+    sai_bfd_session_state_notification_t bfd_session_state;
+    memset(&bfd_session_state, 0, sizeof(bfd_session_state));
+    bfd_session_state.bfd_session_id = 0x200;
+    bfd_session_state.session_state = SAI_BFD_SESSION_STATE_UP;
+
+    on_bfd_session_state_change(1, &bfd_session_state);
 
     EXPECT_FALSE(getSaiNotificationQueue()->hasData());
 
