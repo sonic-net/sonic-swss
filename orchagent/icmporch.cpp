@@ -74,8 +74,6 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
     auto icmpStateNotifier = new Notifier(m_icmpStateNotificationConsumer, this, "ICMP_STATE_NOTIFICATIONS");
     Orch::addExecutor(icmpStateNotifier);
 
-    Orch::addExecutor(icmpStateNotifier);
-
     if (gSaiNotificationOrch)
     {
         gSaiNotificationOrch->registerHandler(
