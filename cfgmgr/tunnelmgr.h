@@ -13,6 +13,7 @@ struct TunnelInfo
     std::string type;
     std::string dst_ip;
     std::string remote_ip;
+    bool kernelTunnelEnabled = true;
 };
 
 class TunnelMgr : public Orch

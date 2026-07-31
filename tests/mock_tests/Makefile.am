@@ -44,6 +44,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 consumer_ut.cpp \
                 sfloworh_ut.cpp \
                 tunneldecaporch_ut.cpp \
+                tunnelmgr_ut.cpp \
                 ut_saihelper.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
@@ -179,6 +180,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
+                $(top_srcdir)/cfgmgr/tunnelmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
                 $(top_srcdir)/orchagent/namelabelmapper.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \

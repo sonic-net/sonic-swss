@@ -17,6 +17,7 @@ using namespace swss;
 #define IPINIP "IPINIP"
 #define TUNIF "tun0"
 #define LOOPBACK_SRC "Loopback3"
+#define KERNEL_TUNNEL_ENABLED "kernel_tunnel_enabled"
 
 static int cmdIpTunnelIfCreate(const swss::TunnelInfo & info, std::string & res)
 {
@@ -243,6 +244,10 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         {
             src_ip = value;
         }
+        else if (field == KERNEL_TUNNEL_ENABLED)
+        {
+            tunInfo.kernelTunnelEnabled = value != "false";
+        }
     }
 
     if (op == SET_COMMAND)
@@ -251,13 +256,17 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         {
             tunInfo.remote_ip = m_peerIp;
 
-            if (!m_peerIp.empty() && !configIpTunnel(tunInfo))
+            if (tunInfo.kernelTunnelEnabled && !m_peerIp.empty() && !configIpTunnel(tunInfo))
             {
                 return false;
             }
-            else if (m_peerIp.empty())
+            else if (tunInfo.kernelTunnelEnabled && m_peerIp.empty())
             {
                 SWSS_LOG_NOTICE("Peer/Remote IP not configured");
+            }
+            else if (!tunInfo.kernelTunnelEnabled)
+            {
+                SWSS_LOG_NOTICE("Kernel tunnel creation is disabled for tunnel %s", tunnelName.c_str());
             }
 
             /* If the tunnel is already in hardware (i.e. present in the replay),
@@ -271,7 +280,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
                 std::copy_if(kfvFieldsValues(t).cbegin(), kfvFieldsValues(t).cend(),
                              std::back_inserter(fvs),
                              [](const FieldValueTuple & fv) {
-                                 return fvField(fv) != "dst_ip";
+                                 return fvField(fv) != "dst_ip" && fvField(fv) != KERNEL_TUNNEL_ENABLED;
                              });
                 m_appIpInIpTunnelTable.set(tunnelName, fvs);
 
