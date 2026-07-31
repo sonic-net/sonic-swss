@@ -17,6 +17,7 @@
 #include "sairedis.h"
 #include "chassisorch.h"
 #include "notificationconsumerstatsorch.h"
+#include "sainotificationorch.h"
 #include "stporch.h"
 
 using namespace std;
@@ -31,9 +32,10 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
-volatile sig_atomic_t              gOrchShutdownRequested = 0;
+extern volatile sig_atomic_t       gOrchShutdownRequested;
 
 extern void syncd_apply_view();
 /*
@@ -242,6 +244,11 @@ bool OrchDaemon::init()
         { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
+
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        gSaiNotificationOrch = new SaiNotificationOrch();
+    }
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
 
@@ -534,6 +541,10 @@ bool OrchDaemon::init()
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
     m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
+    if (gSaiNotificationOrch)
+    {
+        m_orchList.push_back(gSaiNotificationOrch);
+    }
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {

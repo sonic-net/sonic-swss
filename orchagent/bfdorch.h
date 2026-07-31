@@ -36,6 +36,8 @@ private:
     uint32_t bfd_src_port(void);
 
     void notify_session_state_down(const std::string& key);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
+    void handleBfdSessionStateChangeNotification(const std::string &data);
     bool register_bfd_state_change_notification(void);
     void update_port_number(std::vector<sai_attribute_t> &attrs);
     sai_status_t retry_create_bfd_session(sai_object_id_t &bfd_session_id, vector<sai_attribute_t> attrs);

@@ -12,6 +12,7 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
+#include "sainotificationorch.h"
 #include "icmporch.h"
 #include "switchorch.h"
 #include <algorithm>
@@ -21,6 +22,7 @@ using namespace std;
 using namespace swss;
 
 extern SwitchOrch *gSwitchOrch;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 const uint32_t IcmpOrch::m_max_sessions = 1024;
 
@@ -71,6 +73,18 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
 
     auto icmpStateNotifier = new Notifier(m_icmpStateNotificationConsumer, this, "ICMP_STATE_NOTIFICATIONS");
     Orch::addExecutor(icmpStateNotifier);
+
+    Orch::addExecutor(icmpStateNotifier);
+
+    if (gSaiNotificationOrch)
+    {
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_ICMP_ECHO_SESSION_STATE_CHANGE,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            });
+    }
 
     initializeCounters();
 }
@@ -200,47 +214,58 @@ void IcmpOrch::doTask(NotificationConsumer &consumer)
         return;
     }
 
-    if (op == "icmp_echo_session_state_change")
+    KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
+    handleNotification(entry);
+}
+
+void IcmpOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
+{
+    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_ICMP_ECHO_SESSION_STATE_CHANGE)
     {
-        uint32_t count = 0;
-        sai_icmp_echo_session_state_notification_t *icmpSessionState = nullptr;
+        handleIcmpEchoSessionStateChangeNotification(kfvKey(entry));
+    }
+}
 
-        sai_deserialize_icmp_echo_session_state_ntf(data, count, &icmpSessionState);
+void IcmpOrch::handleIcmpEchoSessionStateChangeNotification(const std::string &data)
+{
+    uint32_t count = 0;
+    sai_icmp_echo_session_state_notification_t *icmpSessionState = nullptr;
 
-        for (uint32_t i = 0; i < count; i++)
+    sai_deserialize_icmp_echo_session_state_ntf(data, count, &icmpSessionState);
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        sai_object_id_t id = icmpSessionState[i].icmp_echo_session_id;
+        sai_icmp_echo_session_state_t state = icmpSessionState[i].session_state;
+
+        SWSS_LOG_INFO("Got ICMP session state change notification id:%" PRIx64 " state: %s", id, m_session_state_lkup.at(state).c_str());
+
+        if (m_icmp_session_lookup.find(id) == m_icmp_session_lookup.end())
         {
-            sai_object_id_t id = icmpSessionState[i].icmp_echo_session_id;
-            sai_icmp_echo_session_state_t state = icmpSessionState[i].session_state;
-
-            SWSS_LOG_INFO("Got ICMP session state change notification id:%" PRIx64 " state: %s", id, m_session_state_lkup.at(state).c_str());
-
-            if (m_icmp_session_lookup.find(id) == m_icmp_session_lookup.end())
-            {
-                SWSS_LOG_NOTICE("ICMP session missing for state change notification id:%" PRIx64 " state: %s", id, m_session_state_lkup.at(state).c_str());
-                continue;
-            }
-
-            // handle state update
-            if (state != m_icmp_session_lookup[id].state || m_icmp_session_lookup[id].init_state)
-            {
-                auto key = m_icmp_session_lookup[id].db_key;
-                vector<FieldValueTuple> fvVector;
-                m_stateIcmpSessionTable.get(key, fvVector);
-
-                fvVector.push_back({IcmpSaiSessionHandler::m_state_fname, m_session_state_lkup.at(state)});
-
-                m_stateIcmpSessionTable.set(key, fvVector);
-
-                SWSS_LOG_NOTICE("ICMP session state for %s changed from %s to %s", key.c_str(),
-                            m_session_state_lkup.at(m_icmp_session_lookup[id].state).c_str(), m_session_state_lkup.at(state).c_str());
-
-                m_icmp_session_lookup[id].state = state;
-                m_icmp_session_lookup[id].init_state = false;
-            }
+            SWSS_LOG_NOTICE("ICMP session missing for state change notification id:%" PRIx64 " state: %s", id, m_session_state_lkup.at(state).c_str());
+            continue;
         }
 
-        sai_deserialize_free_icmp_echo_session_state_ntf(count, icmpSessionState);
+        // handle state update
+        if (state != m_icmp_session_lookup[id].state || m_icmp_session_lookup[id].init_state)
+        {
+            auto key = m_icmp_session_lookup[id].db_key;
+            vector<FieldValueTuple> fvVector;
+            m_stateIcmpSessionTable.get(key, fvVector);
+
+            fvVector.push_back({IcmpSaiSessionHandler::m_state_fname, m_session_state_lkup.at(state)});
+
+            m_stateIcmpSessionTable.set(key, fvVector);
+
+            SWSS_LOG_NOTICE("ICMP session state for %s changed from %s to %s", key.c_str(),
+                        m_session_state_lkup.at(m_icmp_session_lookup[id].state).c_str(), m_session_state_lkup.at(state).c_str());
+
+            m_icmp_session_lookup[id].state = state;
+            m_icmp_session_lookup[id].init_state = false;
+        }
     }
+
+    sai_deserialize_free_icmp_echo_session_state_ntf(count, icmpSessionState);
 }
 
 bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTuple>& data)
@@ -734,14 +759,12 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_update()
 
 void IcmpSaiSessionHandler::on_state_change(uint32_t count, sai_icmp_echo_session_state_notification_t *data)
 {
-    extern sai_redis_communication_mode_t gRedisCommunicationMode;
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer icmpNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_icmp_echo_session_state_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
-        icmpNotifier.send("icmp_echo_session_state_change", sdata, values);
+
+        enqueueSaiNotification("icmp_echo_session_state_change", std::move(sdata), std::move(values));
     }
 }
 

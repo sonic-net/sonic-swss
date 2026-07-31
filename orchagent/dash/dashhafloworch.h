@@ -163,6 +163,7 @@ protected:
 
     void doTask(ConsumerBase &consumer);
     void doTask(swss::NotificationConsumer &consumer);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
     void doTask(swss::SelectableTimer &timer);
     void doTaskFlowSyncSessionTable(ConsumerBase &consumer);
     void doTaskFlowDumpFilterTable(ConsumerBase &consumer);
