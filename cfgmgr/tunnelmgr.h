@@ -30,6 +30,7 @@ private:
     bool doLpbkIntfTask(const KeyOpFieldsValuesTuple & t);
 
     bool configIpTunnel(const TunnelInfo& info);
+    bool hasKernelEnabledTunnel() const;
 
     void finalizeWarmReboot();
 

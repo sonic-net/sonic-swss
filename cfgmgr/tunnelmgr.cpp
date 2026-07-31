@@ -246,7 +246,20 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         }
         else if (field == KERNEL_TUNNEL_ENABLED)
         {
-            tunInfo.kernelTunnelEnabled = value != "false";
+            if (value == "true")
+            {
+                tunInfo.kernelTunnelEnabled = true;
+            }
+            else if (value == "false")
+            {
+                tunInfo.kernelTunnelEnabled = false;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid %s value '%s' for tunnel %s; expected 'true' or 'false'",
+                               KERNEL_TUNNEL_ENABLED, value.c_str(), tunnelName.c_str());
+                return false;
+            }
         }
     }
 
@@ -345,7 +358,7 @@ bool TunnelMgr::doLpbkIntfTask(const KeyOpFieldsValuesTuple & t)
 
     m_intfCache[alias] = ipPrefix;
 
-    if (alias == LOOPBACK_SRC && !m_tunnelCache.empty())
+    if (alias == LOOPBACK_SRC && hasKernelEnabledTunnel())
     {
         int ret = 0;
         std::string res;
@@ -367,6 +380,12 @@ bool TunnelMgr::doTunnelRouteTask(const KeyOpFieldsValuesTuple & t)
 
     const std::string & prefix = kfvKey(t);;
     const std::string & op = kfvOp(t);
+
+    if (!hasKernelEnabledTunnel())
+    {
+        SWSS_LOG_INFO("Kernel tunnel route update skipped for %s, op %s", prefix.c_str(), op.c_str());
+        return true;
+    }
 
     int ret = 0;
     std::string res;
@@ -423,6 +442,12 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
     }
 
     return true;
+}
+
+bool TunnelMgr::hasKernelEnabledTunnel() const
+{
+    return std::any_of(m_tunnelCache.cbegin(), m_tunnelCache.cend(),
+                       [](const auto &tunnel) { return tunnel.second.kernelTunnelEnabled; });
 }
 
 
