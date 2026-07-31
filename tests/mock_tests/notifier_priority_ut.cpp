@@ -1,18 +1,17 @@
-/**
- * Unit tests for Notifier priority delegation and adaptive stall detection.
+/*
+ * Unit tests for Notifier priority delegation and stall detection.
  *
  * Validates:
- *  1. Notifier.getPri() delegates to the wrapped NotificationConsumer (pri=100).
+ *  1. Notifier.getPri() delegates to NotificationConsumer (pri=100).
  *  2. Table consumers keep Executor-default priority (pri=0).
  *  3. Select::cmp orders Notifier before table consumers.
- *  4. Adaptive stall detection: after STALL_THRESHOLD consecutive execute()
- *     calls with no detectable consumption, hasCachedData() returns false to
- *     prevent the Notifier from being re-inserted into Select's m_ready set.
- *     This allows lower-priority table consumers to proceed.
+ *  4. Stall detection via execute(): after STALL_THRESHOLD no-progress
+ *     execute() calls, hasCachedData() returns false.
+ *  5. Recovery: counter resets when consumption drains the queue.
  */
 
-// Pre-include standard library headers that conflict with
-// the #define private/protected public hack (they use 'private' internally).
+/* Pre-include standard library headers that conflict with
+ * the #define private/protected public hack. */
 #include <string>
 #include <fstream>
 #include <iostream>
@@ -40,17 +39,17 @@
 
 #include <gtest/gtest.h>
 
+extern redisReply *mockReply;
+
 namespace notifier_priority_test
 {
     using namespace std;
 
-    /**
-     * Minimal Orch subclass that accepts notification tasks.
-     */
-    class DummyOrch : public Orch
+    /* Minimal Orch that does NOT call pop() — simulates allPortsReady() guard. */
+    class DeferringOrch : public Orch
     {
     public:
-        DummyOrch(swss::DBConnector *db, const string &tableName)
+        DeferringOrch(swss::DBConnector *db, const string &tableName)
             : Orch(db, tableName)
         {
         }
@@ -62,13 +61,11 @@ namespace notifier_priority_test
 
         void doTask(swss::NotificationConsumer &consumer) override
         {
-            // no-op -- does NOT call pop(), simulating the allPortsReady() guard
+            /* no-op: simulates deferral */
         }
     };
 
-    /**
-     * Orch subclass that always consumes one notification.
-     */
+    /* Orch that always pops one notification (normal consumption). */
     class ConsumingOrch : public Orch
     {
     public:
@@ -108,58 +105,58 @@ namespace notifier_priority_test
         {
             ::testing_db::reset();
         }
+
+        /* Inject one notification into the consumer's internal queue. */
+        void enqueueNotification(swss::NotificationConsumer *consumer)
+        {
+            std::vector<swss::FieldValueTuple> values;
+            values.emplace_back("test_op", "test_data");
+            std::string msg = swss::JSon::buildJson(values);
+
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3;
+            mockReply->element = (redisReply **)calloc(3, sizeof(redisReply *));
+            mockReply->element[0] = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->element[1] = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+            mockReply->element[2]->str = (char *)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            consumer->readData();
+            mockReply = nullptr;
+        }
     };
 
-    /**
-     * Core test: Notifier wrapping a NotificationConsumer must report
-     * the NotificationConsumer's priority (100), not the Executor default (0).
-     */
+    /* Notifier wrapping NotificationConsumer reports pri=100, not Executor default 0. */
     TEST_F(NotifierPriorityTest, NotifierReportsNotificationConsumerPriority)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
-        // NotificationConsumer is constructed with pri=100 by default
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CHANNEL");
-
-        // Verify the raw NotificationConsumer has pri=100
         EXPECT_EQ(notifConsumer->getPri(), 100);
 
-        // Wrap it in a Notifier (which is an Executor subclass)
         Notifier notifier(notifConsumer, &orch, "TEST_NOTIFICATIONS");
-
-        // The fix: Notifier.getPri() should delegate to the wrapped consumer
         EXPECT_EQ(notifier.getPri(), 100);
     }
 
-    /**
-     * Contrast test: A regular Consumer (table consumer) wrapping a
-     * ConsumerStateTable should still report pri=0, because Executor base
-     * does NOT delegate getPri() (intentional for table consumers).
-     */
+    /* Consumer (table consumer) wrapping ConsumerStateTable reports pri=0. */
     TEST_F(NotifierPriorityTest, TableConsumerReportsDefaultPriority)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
-        // ConsumerStateTable with explicit priority (e.g., 45 for PORT_TABLE)
         auto *cst = new swss::ConsumerStateTable(m_app_db.get(), "PORT_TABLE", 1, 45);
-
-        // The raw ConsumerStateTable has pri=45
         EXPECT_EQ(cst->getPri(), 45);
 
-        // Wrap it in a Consumer (Executor subclass - no getPri override)
         Consumer consumer(cst, &orch, "PORT_TABLE");
-
-        // Executor base does NOT delegate getPri - returns default 0
         EXPECT_EQ(consumer.getPri(), 0);
     }
 
-    /**
-     * Verify that Select's comparator (which orders its m_ready set) places
-     * a Notifier before a Consumer.
-     */
+    /* Select::cmp places Notifier (pri=100) before Consumer (pri=0). */
     TEST_F(NotifierPriorityTest, SelectComparatorOrdersNotifierBeforeConsumer)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CHANNEL");
         Notifier notifier(notifConsumer, &orch, "TEST_NOTIFICATIONS");
@@ -171,19 +168,13 @@ namespace notifier_priority_test
         readySet.insert(&notifier);
         readySet.insert(&consumer);
 
-        // The first element (highest priority) must be the Notifier
-        auto first = *readySet.begin();
-        EXPECT_EQ(first, static_cast<swss::Selectable *>(&notifier))
-            << "Select should dispatch Notifier (pri=100) before Consumer (pri=0)";
+        EXPECT_EQ(*readySet.begin(), static_cast<swss::Selectable *>(&notifier));
     }
 
-    /**
-     * Verify ordering is stable: even if Consumer is inserted first, Notifier
-     * still wins due to higher priority.
-     */
+    /* Priority ordering is stable regardless of insertion order. */
     TEST_F(NotifierPriorityTest, SelectComparatorPriorityOverridesInsertionOrder)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
         auto *cst = new swss::ConsumerStateTable(m_app_db.get(), "TEST_TABLE");
         Consumer consumer(cst, &orch, "TEST_TABLE");
@@ -191,78 +182,70 @@ namespace notifier_priority_test
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CHANNEL");
         Notifier notifier(notifConsumer, &orch, "TEST_NOTIFICATIONS");
 
-        // Insert consumer first, then notifier
         std::set<swss::Selectable *, swss::Select::cmp> readySet;
         readySet.insert(&consumer);
         readySet.insert(&notifier);
 
-        // Notifier should still be first regardless of insertion order
-        auto first = *readySet.begin();
-        EXPECT_EQ(first, static_cast<swss::Selectable *>(&notifier))
-            << "Priority should override insertion order";
-
-        // Second element should be the consumer
         auto it = readySet.begin();
+        EXPECT_EQ(*it, static_cast<swss::Selectable *>(&notifier));
         ++it;
         EXPECT_EQ(*it, static_cast<swss::Selectable *>(&consumer));
     }
 
-    /**
-     * Verify stall detection: after STALL_THRESHOLD (2) consecutive execute()
-     * calls where the Orch does NOT consume, hasCachedData() returns false.
-     * This prevents the Notifier from being re-inserted into Select's m_ready
-     * set, allowing table consumers to proceed.
-     *
-     * Note: getPri() remains constant at 100 -- we must NOT mutate priority
-     * while the element may be in std::set<Selectable*, Select::cmp>, as that
-     * would violate the ordering invariant (undefined behavior).
-     */
-    TEST_F(NotifierPriorityTest, StallDetectionSuppressesCachedData)
+    /* Drive stall detection through execute(): when the Orch defers (no pop),
+     * m_noProgressCount increments and hasCachedData() suppresses after threshold. */
+    TEST_F(NotifierPriorityTest, ExecuteDrivenStallDetection)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_STALL");
         Notifier notifier(notifConsumer, &orch, "TEST_STALL");
 
-        // getPri() is ALWAYS 100 regardless of stall state
-        EXPECT_EQ(notifier.getPri(), 100);
+        enqueueNotification(notifConsumer);
+        ASSERT_TRUE(notifConsumer->hasCachedData());
 
-        // Simulate stall progression via m_noProgressCount
-        notifier.m_noProgressCount = 0;
-        EXPECT_EQ(notifier.getPri(), 100) << "Priority must be constant";
-        // hasCachedData delegates when not stalled (queue is empty so false)
+        /* First execute: Orch defers → counter=1, still below threshold */
+        notifier.execute();
+        EXPECT_EQ(notifier.m_noProgressCount, 1);
+        EXPECT_TRUE(notifier.hasCachedData());
+
+        /* Second execute: counter=2 → at threshold, hasCachedData() suppressed */
+        enqueueNotification(notifConsumer);
+        notifier.execute();
+        EXPECT_EQ(notifier.m_noProgressCount, 2);
         EXPECT_FALSE(notifier.hasCachedData());
 
-        notifier.m_noProgressCount = 1;
-        EXPECT_EQ(notifier.getPri(), 100) << "Priority must remain constant";
-
-        // At threshold: hasCachedData() returns false regardless of queue state
-        notifier.m_noProgressCount = 2;
-        EXPECT_EQ(notifier.getPri(), 100) << "Priority must remain constant at threshold";
-        EXPECT_FALSE(notifier.hasCachedData())
-            << "hasCachedData should return false at stall threshold";
-
-        notifier.m_noProgressCount = 10;
-        EXPECT_EQ(notifier.getPri(), 100) << "Priority must remain constant while stalled";
-        EXPECT_FALSE(notifier.hasCachedData())
-            << "hasCachedData should stay false while stalled";
-
-        // After Orch resumes consuming, counter resets
-        notifier.m_noProgressCount = 0;
-        EXPECT_EQ(notifier.getPri(), 100) << "Priority must remain constant after recovery";
+        /* getPri() stays constant throughout — stall yields via hasCachedData only */
+        EXPECT_EQ(notifier.getPri(), 100);
     }
 
-    /**
-     * Verify that a stalled Notifier retains its high priority in the
-     * comparator -- the stall mechanism works via hasCachedData() (preventing
-     * re-insertion), NOT via getPri() (which would corrupt the set).
-     *
-     * This is the critical invariant: getPri() must never change while the
-     * element could be in std::set<Selectable*, Select::cmp>.
-     */
+    /* Drive consumption through execute(): when the Orch pops and drains the queue,
+     * m_noProgressCount resets to 0. */
+    TEST_F(NotifierPriorityTest, ExecuteDrivenConsumptionResetsCounter)
+    {
+        ConsumingOrch orch(m_app_db.get(), "DUMMY_TABLE");
+
+        auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CONSUME");
+        Notifier notifier(notifConsumer, &orch, "TEST_CONSUME");
+
+        /* Artificially stall first */
+        notifier.m_noProgressCount = Notifier::STALL_THRESHOLD;
+        EXPECT_FALSE(notifier.hasCachedData());
+
+        /* Enqueue one notification and execute — ConsumingOrch pops it */
+        enqueueNotification(notifConsumer);
+        notifier.execute();
+
+        /* Queue drained → counter reset → hasCachedData delegates normally */
+        EXPECT_EQ(notifier.m_noProgressCount, 0);
+        EXPECT_EQ(notifier.getPri(), 100);
+    }
+
+    /* A stalled Notifier still sorts before Consumer in Select::cmp.
+     * Stall works by suppressing re-insertion (hasCachedData=false), not priority. */
     TEST_F(NotifierPriorityTest, StalledNotifierKeepsConstantPriority)
     {
-        DummyOrch orch(m_app_db.get(), "DUMMY_TABLE");
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
 
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_CHANNEL");
         Notifier notifier(notifConsumer, &orch, "TEST_NOTIFICATIONS");
@@ -270,23 +253,16 @@ namespace notifier_priority_test
         auto *cst = new swss::ConsumerStateTable(m_app_db.get(), "TEST_TABLE");
         Consumer consumer(cst, &orch, "TEST_TABLE");
 
-        // Stall the notifier
-        notifier.m_noProgressCount = 2;
+        notifier.m_noProgressCount = Notifier::STALL_THRESHOLD;
 
-        // Even when stalled, getPri() still returns 100
-        // (stall yields via hasCachedData, not priority)
         EXPECT_EQ(notifier.getPri(), 100);
         EXPECT_EQ(consumer.getPri(), 0);
 
-        // If both are in m_ready, Notifier still sorts first
         std::set<swss::Selectable *, swss::Select::cmp> readySet;
         readySet.insert(&consumer);
         readySet.insert(&notifier);
 
         EXPECT_EQ(readySet.size(), 2u);
-        auto first = *readySet.begin();
-        EXPECT_EQ(first, static_cast<swss::Selectable *>(&notifier))
-            << "Stalled Notifier must still sort before Consumer in m_ready "
-               "(stall prevents re-insertion, not ordering)";
+        EXPECT_EQ(*readySet.begin(), static_cast<swss::Selectable *>(&notifier));
     }
 }
