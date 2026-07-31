@@ -177,6 +177,14 @@ TEST_F(TunnelMgrTest, KernelTunnelRemainsEnabledByDefault)
     EXPECT_TRUE(m_tunnelMgr->doTunnelRouteTask(
         {"192.0.2.1/32", SET_COMMAND, {}}));
     EXPECT_TRUE(commandWasIssued("route replace \"192.0.2.1/32\" dev tun0"));
+
+    EXPECT_TRUE(m_tunnelMgr->doTunnelTask(
+        {"MuxTunnel0", DEL_COMMAND, {}}));
+
+    mockCallArgs.clear();
+    EXPECT_TRUE(m_tunnelMgr->doTunnelRouteTask(
+        {"192.0.2.1/32", DEL_COMMAND, {}}));
+    EXPECT_TRUE(commandWasIssued("route del \"192.0.2.1/32\" dev tun0"));
 }
 
 } // namespace tunnelmgr_ut

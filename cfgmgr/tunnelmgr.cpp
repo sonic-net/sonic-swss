@@ -381,7 +381,7 @@ bool TunnelMgr::doTunnelRouteTask(const KeyOpFieldsValuesTuple & t)
     const std::string & prefix = kfvKey(t);;
     const std::string & op = kfvOp(t);
 
-    if (!hasKernelEnabledTunnel())
+    if (op == SET_COMMAND && !hasKernelEnabledTunnel())
     {
         SWSS_LOG_INFO("Kernel tunnel route update skipped for %s, op %s", prefix.c_str(), op.c_str());
         return true;
