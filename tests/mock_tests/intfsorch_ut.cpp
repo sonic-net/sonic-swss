@@ -29,6 +29,10 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
+        if (ut_create_rif_return_status == SAI_STATUS_SUCCESS)
+        {
+            *router_interface_id = (sai_object_id_t)(0x1000 + create_rif_count);
+        }
         return ut_create_rif_return_status;
     }
 
