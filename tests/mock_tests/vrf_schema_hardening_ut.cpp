@@ -1,3 +1,5 @@
+#include "gtest/gtest.h"
+
 #define private public
 #define protected public
 #include "orch.h"
@@ -5,16 +7,21 @@
 #undef protected
 #undef private
 
-#include "gtest/gtest.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "flowcounterrouteorch.h"
 #include "directory.h"
+#include "vrf_appl_fields.h"
+#include "vrf_schema_hardening.h"
 
 extern sai_virtual_router_api_t *sai_virtual_router_api;
 
-namespace vrforch_test
+/*
+ * Local VRF schema hardening tests (UPSW-6663).
+ * Own translation unit so upstream vrforch_ut.cpp downmerges cleanly.
+ */
+namespace vrf_schema_hardening_test
 {
     using namespace std;
 
@@ -48,7 +55,7 @@ namespace vrforch_test
         return SAI_STATUS_SUCCESS;
     }
 
-    struct VRFOrchTest : public ::testing::Test
+    struct VRFSchemaHardeningTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -122,87 +129,72 @@ namespace vrforch_test
         }
     };
 
-    TEST_F(VRFOrchTest, VrfSetAttrNotSupported)
+    TEST_F(VRFSchemaHardeningTest, VrfUnknownAttrDoesNotDiscardRow)
     {
         VRFOrch vrfOrch(m_app_db.get(), APP_VRF_TABLE_NAME,
                         m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+
+        sai_object_id_t fake_vr_id = 0x3000000000102;
+        vrfOrch.vrf_table_["Vrf_tenant-5"].vrf_id = fake_vr_id;
+        vrfOrch.vrf_table_["Vrf_tenant-5"].ref_count = 0;
+
+        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_tenant-5"));
+
+        set_vr_attr_status = SAI_STATUS_SUCCESS;
+        set_vr_attr_count = 0;
 
         /*
-         * Directly insert a VRF into the internal table to simulate an
-         * already-existing VRF, bypassing the full creation path that
-         * requires many global dependencies.
+         * 'rd' is BGP metadata that used to be copied onto the APPL_DB row.
+         * Under strict parsing it threw before addOperation() ran and the whole
+         * row was discarded, so ttl_action was silently never applied.
          */
-        sai_object_id_t fake_vr_id = 0x3000000000099;
-        vrfOrch.vrf_table_["Vrf_test"].vrf_id = fake_vr_id;
-        vrfOrch.vrf_table_["Vrf_test"].ref_count = 0;
-
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test"));
-
-        /* Configure mock to return NOT_SUPPORTED */
-        set_vr_attr_status = SAI_STATUS_ATTR_NOT_SUPPORTED_0;
-        set_vr_attr_count = 0;
-
-        /* Update VRF with an attribute that will be "not supported" */
         auto consumer = dynamic_cast<Consumer *>(vrfOrch.getExecutor(APP_VRF_TABLE_NAME));
-        swss::KeyOpFieldsValuesTuple kco_update("Vrf_test", "SET",
-            { { "ttl_action", "forward" } });
+        swss::KeyOpFieldsValuesTuple kco_update("Vrf_tenant-5", "SET",
+            { { "rd", "20005:1" }, { "ttl_action", "forward" } });
         consumer->addToSync({ kco_update });
         static_cast<Orch *>(&vrfOrch)->doTask(*consumer);
 
-        /* Verify the set was attempted but orchagent didn't crash */
         ASSERT_EQ(set_vr_attr_count, 1);
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test"));
+        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_tenant-5"));
     }
 
-    TEST_F(VRFOrchTest, VrfSetAttrNotImplemented)
+    TEST(VRFApplSchema, VrfApplForwardFieldsMatchOrchSchema)
     {
-        VRFOrch vrfOrch(m_app_db.get(), APP_VRF_TABLE_NAME,
-                        m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+        std::set<std::string> orch_attrs;
+        for (const auto& attr : request_description.attr_item_types)
+        {
+            orch_attrs.insert(attr.first);
+        }
 
-        sai_object_id_t fake_vr_id = 0x3000000000100;
-        vrfOrch.vrf_table_["Vrf_test2"].vrf_id = fake_vr_id;
-        vrfOrch.vrf_table_["Vrf_test2"].ref_count = 0;
-
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test2"));
-
-        /* Return ATTR_NOT_IMPLEMENTED */
-        set_vr_attr_status = SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
-        set_vr_attr_count = 0;
-
-        auto consumer = dynamic_cast<Consumer *>(vrfOrch.getExecutor(APP_VRF_TABLE_NAME));
-        swss::KeyOpFieldsValuesTuple kco_update("Vrf_test2", "SET",
-            { { "ip_opt_action", "drop" } });
-        consumer->addToSync({ kco_update });
-        static_cast<Orch *>(&vrfOrch)->doTask(*consumer);
-
-        ASSERT_EQ(set_vr_attr_count, 1);
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test2"));
+        EXPECT_EQ(swss::vrfApplForwardFields(), orch_attrs)
+            << "cfgmgr/vrf_appl_fields.h drifted from orchagent/vrforch.h; "
+               "a VRF field accepted by one and not the other is dropped silently";
     }
 
-    TEST_F(VRFOrchTest, VrfSetAttrRealFailureStillFails)
+    TEST(VRFApplSchema, MetadataOnlyUpdateSkipsPublish)
     {
-        VRFOrch vrfOrch(m_app_db.get(), APP_VRF_TABLE_NAME,
-                        m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> filtered;
 
-        sai_object_id_t fake_vr_id = 0x3000000000101;
-        vrfOrch.vrf_table_["Vrf_test3"].vrf_id = fake_vr_id;
-        vrfOrch.vrf_table_["Vrf_test3"].ref_count = 0;
+        /* Existing VRF + only BGP metadata -> do not publish (avoids vni=0 clear). */
+        EXPECT_FALSE(swss::filterVrfApplFields(
+            { { "rd", "20005:1" }, { "redistribute_connected", "true" } },
+            filtered,
+            /*publish_placeholder_if_empty=*/false));
+        EXPECT_TRUE(filtered.empty());
 
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test3"));
+        /* First create with only metadata -> placeholder so the row materializes. */
+        EXPECT_TRUE(swss::filterVrfApplFields(
+            { { "rd", "20005:1" } },
+            filtered,
+            /*publish_placeholder_if_empty=*/true));
+        ASSERT_EQ(filtered.size(), 1u);
+        EXPECT_EQ(fvField(filtered[0]), "NULL");
 
-        /* Return a real failure - should NOT be silently skipped */
-        set_vr_attr_status = SAI_STATUS_FAILURE;
-        set_vr_attr_count = 0;
-
-        auto consumer = dynamic_cast<Consumer *>(vrfOrch.getExecutor(APP_VRF_TABLE_NAME));
-        swss::KeyOpFieldsValuesTuple kco_update("Vrf_test3", "SET",
-            { { "ttl_action", "drop" } });
-        consumer->addToSync({ kco_update });
-        static_cast<Orch *>(&vrfOrch)->doTask(*consumer);
-
-        /* The set was attempted */
-        ASSERT_EQ(set_vr_attr_count, 1);
-        /* VRF still exists (handleSaiSetStatus doesn't abort for VR set) */
-        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test3"));
+        /* Orchagent fields are forwarded. */
+        EXPECT_TRUE(swss::filterVrfApplFields(
+            { { "rd", "20005:1" }, { "vni", "10010" }, { "ttl_action", "forward" } },
+            filtered,
+            /*publish_placeholder_if_empty=*/false));
+        ASSERT_EQ(filtered.size(), 2u);
     }
 }

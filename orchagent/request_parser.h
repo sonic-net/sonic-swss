@@ -180,8 +180,8 @@ protected:
         : request_description_(request_description),
           key_separator_(key_separator),
           is_parsed_(false),
-          number_of_key_items_(request_description.key_item_types.size()),
-          relaxed_attr_parsing_(relaxed_attr_parsing)
+          relaxed_attr_parsing_(relaxed_attr_parsing),
+          number_of_key_items_(request_description.key_item_types.size())
     {
     }
 

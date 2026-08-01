@@ -2,6 +2,7 @@
 #define __VRFORCH_H
 
 #include "request_parser.h"
+#include "vrf_schema_hardening.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -42,13 +43,7 @@ const request_description_t request_description = {
 class VRFRequest : public Request
 {
 public:
-    /*
-     * Parse in relaxed mode: an unrecognized field is skipped instead of
-     * aborting the request. Strict parsing throws before addOperation() runs,
-     * which discards the whole row - so one stray field left the VRF with no
-     * virtual router and no L3 VNI binding at all.
-     */
-    VRFRequest() : Request(request_description, ':', true) { }
+    VRFRequest() : Request(request_description, ':') { }
 };
 
 
@@ -183,7 +178,7 @@ private:
 
     VRFTable vrf_table_;
     VRFIdNameTable vrf_id_table_;
-    VRFRequest request_;
+    VRFRequestRelaxed request_{request_description};
     VRFNameVNIMapTable vrf_vni_map_table_;
     swss::Table m_stateVrfObjectTable;
     L3VNITable l3vni_table_;

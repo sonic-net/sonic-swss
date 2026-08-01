@@ -3,6 +3,9 @@
 
 #include <set>
 #include <string>
+#include <vector>
+
+#include "table.h"
 
 namespace swss {
 
@@ -17,24 +20,26 @@ namespace swss {
  *
  * This set must match request_description in orchagent/vrforch.h exactly;
  * VRFApplSchema.VrfApplForwardFieldsMatchOrchSchema enforces that.
+ *
+ * Kept in its own translation unit so upstream downmerges of vrfmgr.cpp /
+ * vrforch.h stay free of this local hardening.
  */
-inline const std::set<std::string>& vrfApplForwardFields()
-{
-    static const std::set<std::string> fields = {
-        "v4",
-        "v6",
-        "src_mac",
-        "ttl_action",
-        "ip_opt_action",
-        "l3_mc_action",
-        "fallback",
-        "vni",
-        "mgmtVrfEnabled",
-        "in_band_mgmt_enabled",
-    };
+const std::set<std::string>& vrfApplForwardFields();
 
-    return fields;
-}
+/*
+ * Filter CONFIG_DB VRF fields down to the orchagent allowlist.
+ *
+ * Returns true when the caller should publish to APPL_DB VRF_TABLE.
+ * Returns false when the SET carried only non-orchagent metadata: publishing
+ * that as an empty/NULL row would make VRFOrch treat missing `vni` as 0 and
+ * tear down an existing L3 VNI map on the update path.
+ *
+ * On first create (publish_placeholder_if_empty=true) an empty orchagent field
+ * set still publishes a NULL/NULL placeholder so the VRF row materializes.
+ */
+bool filterVrfApplFields(const std::vector<FieldValueTuple>& values,
+                         std::vector<FieldValueTuple>& filtered,
+                         bool publish_placeholder_if_empty);
 
 }
 

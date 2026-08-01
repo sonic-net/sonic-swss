@@ -18,38 +18,6 @@
 
 using namespace swss;
 
-/*
- * Keep only the fields VRFOrch can act on. BGP metadata that shares the
- * CONFIG_DB VRF row (rd, rt_import, rt_export, redistribute_*) is consumed by
- * frrcfgd and is meaningless to orchagent; forwarding it made VRFOrch reject
- * the entire row, so the VRF was never programmed into the ASIC.
- */
-static vector<FieldValueTuple> filterVrfApplFields(const vector<FieldValueTuple>& values)
-{
-    const auto& allowed = vrfApplForwardFields();
-    vector<FieldValueTuple> filtered;
-
-    for (const auto& fv : values)
-    {
-        if (allowed.count(fvField(fv)))
-        {
-            filtered.push_back(fv);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Not forwarding VRF field '%s' to APPL_DB", fvField(fv).c_str());
-        }
-    }
-
-    /* ProducerStateTable needs at least one field for the row to materialize. */
-    if (filtered.empty())
-    {
-        filtered.emplace_back("NULL", "NULL");
-    }
-
-    return filtered;
-}
-
 VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_appVrfTableProducer(appDb, APP_VRF_TABLE_NAME),
@@ -311,6 +279,11 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
+                /* Capture before setLink so metadata-only updates of an existing
+                 * VRF can skip the APPL_DB publish (see filterVrfApplFields). */
+                const bool vrf_already_present =
+                    (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end());
+
                 if (!setLink(vrfName))
                 {
                     SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
@@ -333,7 +306,17 @@ void VrfMgr::doTask(Consumer &consumer)
                         continue;
                     }
 
-                    m_appVrfTableProducer.set(vrfName, filterVrfApplFields(kfvFieldsValues(t)));
+                    vector<FieldValueTuple> filtered;
+                    if (filterVrfApplFields(kfvFieldsValues(t), filtered,
+                                           !vrf_already_present))
+                    {
+                        m_appVrfTableProducer.set(vrfName, filtered);
+                    }
+                    else
+                    {
+                        SWSS_LOG_INFO("Skipping APPL_DB update for VRF %s: no orchagent fields",
+                                      vrfName.c_str());
+                    }
 
                 }
                 else
