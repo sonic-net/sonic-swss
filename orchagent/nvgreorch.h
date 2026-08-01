@@ -5,6 +5,7 @@
 #include "sai.h"
 #include "orch.h"
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "portsorch.h"
 
 typedef enum {
@@ -109,8 +110,7 @@ typedef std::map<std::string, std::unique_ptr<NvgreTunnel>> NvgreTunnelTable;
 class NvgreTunnelRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    NvgreTunnelRequest() : Request(nvgre_tunnel_request_description, '|', true) { }
+    NvgreTunnelRequest() : Request(nvgre_tunnel_request_description, '|') { }
 };
 
 class NvgreTunnelOrch : public Orch2
@@ -134,7 +134,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    NvgreTunnelRequest request_;
+    ConfigFacingRequestRelaxed request_{nvgre_tunnel_request_description, '|'};
     NvgreTunnelTable nvgre_tunnel_table_;
 };
 
@@ -150,8 +150,7 @@ const request_description_t nvgre_tunnel_map_request_description = {
 class NvgreTunnelMapRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    NvgreTunnelMapRequest() : Request(nvgre_tunnel_map_request_description, '|', true) { }
+    NvgreTunnelMapRequest() : Request(nvgre_tunnel_map_request_description, '|') { }
 };
 
 class NvgreTunnelMapOrch : public Orch2
@@ -165,5 +164,5 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    NvgreTunnelMapRequest request_;
+    ConfigFacingRequestRelaxed request_{nvgre_tunnel_map_request_description, '|'};
 };

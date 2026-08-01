@@ -5,6 +5,7 @@
 #include <set>
 #include <memory>
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "portsorch.h"
 #include "vrforch.h"
 #include "timer.h"
@@ -257,8 +258,7 @@ const request_description_t vxlan_tunnel_request_description = {
 class VxlanTunnelRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':', true) { }
+    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':') { }
 };
 
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
@@ -378,7 +378,7 @@ private:
     void doTask(swss::SelectableTimer&);
 
     VxlanTunnelTable vxlan_tunnel_table_;
-    VxlanTunnelRequest request_;
+    ConfigFacingRequestRelaxed request_{vxlan_tunnel_request_description, ':'};
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
@@ -409,8 +409,7 @@ typedef std::map<std::string, tunnel_map_entry_t> VxlanTunnelMapTable;
 class VxlanTunnelMapRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':', true) { }
+    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':') { }
 };
 
 class VxlanTunnelMapOrch : public Orch2
@@ -431,7 +430,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     VxlanTunnelMapTable vxlan_tunnel_map_table_;
-    VxlanTunnelMapRequest request_;
+    ConfigFacingRequestRelaxed request_{vxlan_tunnel_map_request_description, ':'};
 };
 
 const request_description_t vxlan_vrf_request_description = {
@@ -537,8 +536,7 @@ const request_description_t evpn_nvo_request_description = {
 class EvpnNvoRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    EvpnNvoRequest() : Request(evpn_nvo_request_description, ':', true) { }
+    EvpnNvoRequest() : Request(evpn_nvo_request_description, ':') { }
 };
 
 class EvpnNvoOrch : public Orch2
@@ -555,6 +553,6 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    EvpnNvoRequest request_;
+    ConfigFacingRequestRelaxed request_{evpn_nvo_request_description, ':'};
     VxlanTunnel* source_vtep_ptr=NULL;
 };

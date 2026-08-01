@@ -2,6 +2,7 @@
 
 #include "orch.h"
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "vnetorch.h"
 #include "vxlanorch.h"
 #include "muxorch.h"
@@ -17,8 +18,9 @@
  * field. One stray field therefore leaves the object completely unprogrammed
  * with nothing but a parse error in the log (UPSW-6663).
  *
- * Every Request below must skip unknown fields instead of throwing, while still
- * rejecting rows that are genuinely invalid.
+ * Coverage lives here (own translation unit) so upstream mock_tests downmerges
+ * stay free of this local hardening. The policy itself is
+ * orchagent/config_request_relaxed.h.
  */
 namespace config_request_relaxed_test
 {
@@ -28,7 +30,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, VNetSkipsUnknownField)
     {
-        VNetRequest request;
+        ConfigFacingRequestRelaxed request(vnet_request_description, ':');
         KeyOpFieldsValuesTuple row("Vnet_1", SET_COMMAND,
             { { "vxlan_tunnel", "tunnel_1" },
               { "vni", "1000" },
@@ -40,7 +42,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, VxlanTunnelSkipsUnknownField)
     {
-        VxlanTunnelRequest request;
+        ConfigFacingRequestRelaxed request(vxlan_tunnel_request_description, ':');
         KeyOpFieldsValuesTuple row("tunnel_1", SET_COMMAND,
             { { "src_ip", "10.1.1.1" },
               { UNKNOWN_FIELD, "whatever" } });
@@ -51,7 +53,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, VxlanTunnelMapSkipsUnknownField)
     {
-        VxlanTunnelMapRequest request;
+        ConfigFacingRequestRelaxed request(vxlan_tunnel_map_request_description, ':');
         KeyOpFieldsValuesTuple row("tunnel_1:map_1", SET_COMMAND,
             { { "vni", "1000" },
               { "vlan", "Vlan100" },
@@ -63,7 +65,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, EvpnNvoSkipsUnknownField)
     {
-        EvpnNvoRequest request;
+        ConfigFacingRequestRelaxed request(evpn_nvo_request_description, ':');
         KeyOpFieldsValuesTuple row("nvo_1", SET_COMMAND,
             { { "source_vtep", "tunnel_1" },
               { UNKNOWN_FIELD, "whatever" } });
@@ -74,7 +76,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, MuxCfgSkipsUnknownField)
     {
-        MuxCfgRequest request;
+        ConfigFacingRequestRelaxed request(mux_cfg_request_description, '|');
         KeyOpFieldsValuesTuple row("Ethernet0", SET_COMMAND,
             { { "server_ipv4", "10.1.1.1/32" },
               { UNKNOWN_FIELD, "whatever" } });
@@ -85,7 +87,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, NvgreTunnelSkipsUnknownField)
     {
-        NvgreTunnelRequest request;
+        ConfigFacingRequestRelaxed request(nvgre_tunnel_request_description, '|');
         KeyOpFieldsValuesTuple row("tunnel_1", SET_COMMAND,
             { { "src_ip", "10.1.1.1" },
               { UNKNOWN_FIELD, "whatever" } });
@@ -96,7 +98,7 @@ namespace config_request_relaxed_test
 
     TEST(ConfigFacingRequest, NvgreTunnelMapSkipsUnknownField)
     {
-        NvgreTunnelMapRequest request;
+        ConfigFacingRequestRelaxed request(nvgre_tunnel_map_request_description, '|');
         KeyOpFieldsValuesTuple row("tunnel_1|map_1", SET_COMMAND,
             { { "vsid", "1000" },
               { "vlan_id", "Vlan100" },
@@ -113,7 +115,7 @@ namespace config_request_relaxed_test
      */
     TEST(ConfigFacingRequest, RelaxedParsingStillEnforcesMandatoryAttrs)
     {
-        VxlanTunnelRequest request;
+        ConfigFacingRequestRelaxed request(vxlan_tunnel_request_description, ':');
         KeyOpFieldsValuesTuple row("tunnel_1", SET_COMMAND,
             { { UNKNOWN_FIELD, "whatever" } });
 
@@ -123,10 +125,32 @@ namespace config_request_relaxed_test
     /* An unparsable value for a field the orch does know about is still an error. */
     TEST(ConfigFacingRequest, RelaxedParsingStillRejectsBadKnownValue)
     {
-        NvgreTunnelRequest request;
+        ConfigFacingRequestRelaxed request(nvgre_tunnel_request_description, '|');
         KeyOpFieldsValuesTuple row("tunnel_1", SET_COMMAND,
             { { "src_ip", "not_an_ip_address" } });
 
         EXPECT_THROW(request.parse(row), std::invalid_argument);
+    }
+
+    /*
+     * Request::clear() previously left attr_item_ip_prefix_ (and several other
+     * maps) uncleared. Combined with MuxCfgRequest having no mandatory attrs,
+     * a partial SET after a prior parse could make getAttrIpPrefix return a
+     * stale address. Guard that clear() drops IP-prefix state.
+     */
+    TEST(ConfigFacingRequest, ClearDropsStaleIpPrefixAttrs)
+    {
+        ConfigFacingRequestRelaxed request(mux_cfg_request_description, '|');
+        KeyOpFieldsValuesTuple first("Ethernet0", SET_COMMAND,
+            { { "server_ipv4", "10.1.1.1/32" } });
+        ASSERT_NO_THROW(request.parse(first));
+        EXPECT_EQ(request.getAttrIpPrefix("server_ipv4").to_string(), "10.1.1.1/32");
+
+        request.clear();
+
+        KeyOpFieldsValuesTuple second("Ethernet0", SET_COMMAND,
+            { { UNKNOWN_FIELD, "whatever" } });
+        ASSERT_NO_THROW(request.parse(second));
+        EXPECT_THROW(request.getAttrIpPrefix("server_ipv4"), std::out_of_range);
     }
 }

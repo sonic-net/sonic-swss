@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "neighorch.h"
 #include "nexthopgroupkey.h"
 #include "bulker.h"
@@ -204,8 +205,7 @@ typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 class MuxCfgRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    MuxCfgRequest() : Request(mux_cfg_request_description, '|', true) { }
+    MuxCfgRequest() : Request(mux_cfg_request_description, '|') { }
 };
 
 
@@ -305,7 +305,7 @@ private:
     NeighOrch *neigh_orch_;
     FdbOrch *fdb_orch_;
 
-    MuxCfgRequest request_;
+    ConfigFacingRequestRelaxed request_{mux_cfg_request_description, '|'};
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::set<IpAddress> skip_neighbors_;
 

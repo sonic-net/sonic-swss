@@ -9,6 +9,7 @@
 #include <tuple>
 
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
@@ -85,8 +86,7 @@ extern std::vector<VR_TYPE> vr_cntxt;
 class VNetRequest : public Request
 {
 public:
-    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
-    VNetRequest() : Request(vnet_request_description, ':', true) { }
+    VNetRequest() : Request(vnet_request_description, ':') { }
 };
 
 struct NextHopGroupInfo
@@ -298,7 +298,7 @@ private:
     std::unique_ptr<T> createObject(const string&, const VNetInfo&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
-    VNetRequest request_;
+    ConfigFacingRequestRelaxed request_{vnet_request_description, ':'};
     VNET_EXEC vnet_exec_;
 
 };
