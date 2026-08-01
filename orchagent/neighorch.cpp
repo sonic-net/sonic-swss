@@ -261,14 +261,22 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsIdForNewDependency(nexthop.alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to get rif_id for %s", nexthop.alias.c_str());
+        return false;
+    }
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -346,7 +354,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -405,6 +413,18 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     }
 
     NextHopKey nexthop(nh);
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
+    {
+        Port inbp;
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nh.to_string().c_str());
+            return false;
+        }
+
+        nexthop.alias = inbp.m_alias;
+    }
+
     if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
     {
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
@@ -438,7 +458,7 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -655,8 +675,11 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
-        gPortsOrch->getInbandPort(inbp);
-        assert(inbp.m_alias.length());
+        if (!gPortsOrch->getInbandPort(inbp))
+        {
+            SWSS_LOG_INFO("Inband port is not available for remote next hop %s", nexthop.to_string().c_str());
+            return false;
+        }
 
         nexthop.alias = inbp.m_alias;
     }
@@ -673,7 +696,7 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     }
 
     m_syncdNextHops.erase(nexthop);
-    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+    m_intfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
     return true;
 }
 
@@ -1201,7 +1224,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     bool bulk_op = ctx.bulk_op;
 
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsIdForNewDependency(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_INFO("Failed to get rif_id for %s", alias.c_str());
@@ -1323,10 +1346,14 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         // prefix-route neighbors do not use bulk_op
         if (bulk_op)
         {
+            if (!addNextHop(ctx))
+            {
+                return false;
+            }
+
             SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
             object_statuses.emplace_back();
             gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            addNextHop(ctx);
             return true;
         }
 
@@ -1902,6 +1929,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!addNeighbor(*ctx))
         {
             SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
     }
