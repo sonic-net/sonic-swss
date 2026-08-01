@@ -11,6 +11,7 @@
 #include "mock_table.h"
 #include "flowcounterrouteorch.h"
 #include "directory.h"
+#include "vrf_appl_fields.h"
 
 extern sai_virtual_router_api_t *sai_virtual_router_api;
 
@@ -204,5 +205,47 @@ namespace vrforch_test
         ASSERT_EQ(set_vr_attr_count, 1);
         /* VRF still exists (handleSaiSetStatus doesn't abort for VR set) */
         ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_test3"));
+    }
+
+    TEST_F(VRFOrchTest, VrfUnknownAttrDoesNotDiscardRow)
+    {
+        VRFOrch vrfOrch(m_app_db.get(), APP_VRF_TABLE_NAME,
+                        m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+
+        sai_object_id_t fake_vr_id = 0x3000000000102;
+        vrfOrch.vrf_table_["Vrf_tenant-5"].vrf_id = fake_vr_id;
+        vrfOrch.vrf_table_["Vrf_tenant-5"].ref_count = 0;
+
+        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_tenant-5"));
+
+        set_vr_attr_status = SAI_STATUS_SUCCESS;
+        set_vr_attr_count = 0;
+
+        /*
+         * 'rd' is BGP metadata that used to be copied onto the APPL_DB row.
+         * Under strict parsing it threw before addOperation() ran and the whole
+         * row was discarded, so ttl_action was silently never applied.
+         */
+        auto consumer = dynamic_cast<Consumer *>(vrfOrch.getExecutor(APP_VRF_TABLE_NAME));
+        swss::KeyOpFieldsValuesTuple kco_update("Vrf_tenant-5", "SET",
+            { { "rd", "20005:1" }, { "ttl_action", "forward" } });
+        consumer->addToSync({ kco_update });
+        static_cast<Orch *>(&vrfOrch)->doTask(*consumer);
+
+        ASSERT_EQ(set_vr_attr_count, 1);
+        ASSERT_TRUE(vrfOrch.isVRFexists("Vrf_tenant-5"));
+    }
+
+    TEST(VRFApplSchema, VrfApplForwardFieldsMatchOrchSchema)
+    {
+        std::set<std::string> orch_attrs;
+        for (const auto& attr : request_description.attr_item_types)
+        {
+            orch_attrs.insert(attr.first);
+        }
+
+        EXPECT_EQ(swss::vrfApplForwardFields(), orch_attrs)
+            << "cfgmgr/vrf_appl_fields.h drifted from orchagent/vrforch.h; "
+               "a VRF field accepted by one and not the other is dropped silently";
     }
 }

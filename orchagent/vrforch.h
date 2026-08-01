@@ -42,7 +42,13 @@ const request_description_t request_description = {
 class VRFRequest : public Request
 {
 public:
-    VRFRequest() : Request(request_description, ':') { }
+    /*
+     * Parse in relaxed mode: an unrecognized field is skipped instead of
+     * aborting the request. Strict parsing throws before addOperation() runs,
+     * which discards the whole row - so one stray field left the VRF with no
+     * virtual router and no L3 VNI binding at all.
+     */
+    VRFRequest() : Request(request_description, ':', true) { }
 };
 
 
