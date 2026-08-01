@@ -622,6 +622,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                             s_status.c_str(), s_api.c_str());
             return task_failed;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
+        case SAI_STATUS_INVALID_PORT_NUMBER:
             SWSS_LOG_NOTICE("Returning success for create operation, SAI API: %s, status: %s",
                                 s_api.c_str(), s_status.c_str());
             return task_success;
@@ -665,6 +666,7 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
+        case SAI_STATUS_INVALID_PORT_NUMBER:
             /* There are specific cases especially with dual-TORs where tunnel
              * routes and non-tunnel routes could be create for the same prefix
              * which can potentially lead to conditions where ITEM_NOT_FOUND can
@@ -717,6 +719,7 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
             return task_success;
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
+        case SAI_STATUS_INVALID_PORT_NUMBER:
             SWSS_LOG_NOTICE("Returning success for remove operation, SAI API: %s, status: %s",
                                 s_api.c_str(), s_status.c_str());
             return task_success;

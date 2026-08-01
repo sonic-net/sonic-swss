@@ -19,6 +19,9 @@ namespace intfsorch_test
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
+    sai_status_t ut_create_rif_return_status = SAI_STATUS_SUCCESS;
+    sai_status_t ut_remove_rif_return_status = SAI_STATUS_SUCCESS;
+
     sai_status_t _ut_create_router_interface(
             _Out_ sai_object_id_t *router_interface_id,
             _In_ sai_object_id_t switch_id,
@@ -26,14 +29,14 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return ut_create_rif_return_status;
     }
 
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
         ++remove_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return ut_remove_rif_return_status;
     }
 
     struct IntfsOrchTest : public ::testing::Test
@@ -55,6 +58,8 @@ namespace intfsorch_test
             };
 
             ut_helper::initSaiApi(profile);
+            ut_create_rif_return_status = SAI_STATUS_SUCCESS;
+            ut_remove_rif_return_status = SAI_STATUS_SUCCESS;
             pold_sai_rif_api = sai_router_intfs_api;
             ut_sai_rif_api = *sai_router_intfs_api;
             sai_router_intfs_api = &ut_sai_rif_api;
@@ -392,6 +397,58 @@ namespace intfsorch_test
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
-        ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
+        ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchCreateRifInvalidPortNumber)
+    {
+        auto rif_count_before = gIntfsOrch->getRifCount();
+        auto create_count_before = create_rif_count;
+
+        ut_create_rif_return_status = SAI_STATUS_INVALID_PORT_NUMBER;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"}}});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(create_rif_count, create_count_before + 1);
+        ASSERT_EQ(gIntfsOrch->getRifCount(), rif_count_before);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_rif_id, 0);
+
+        ut_create_rif_return_status = SAI_STATUS_SUCCESS;
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchRemoveRifInvalidPortNumber)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"}}});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto rif_count_after_create = gIntfsOrch->getRifCount();
+        auto remove_count_before = remove_rif_count;
+
+        ut_remove_rif_return_status = SAI_STATUS_INVALID_PORT_NUMBER;
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(remove_rif_count, remove_count_before + 1);
+        ASSERT_EQ(gIntfsOrch->getRifCount(), rif_count_after_create);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_rif_id, 0);
+
+        ut_remove_rif_return_status = SAI_STATUS_SUCCESS;
     }
 }

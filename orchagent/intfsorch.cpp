@@ -1552,10 +1552,13 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
-        if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
+        if(handle_status !=task_success)
         {
-            throw runtime_error("Failed to create router interface.");
+            return parseHandleSaiStatusFailure(handle_status);
         }
+        return true;
     }
 
     port.m_vr_id = vrf_id;
@@ -1620,10 +1623,12 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
-        if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status);
+        if(handle_status !=task_success)
         {
-            throw runtime_error("Failed to remove router interface.");
+            return parseHandleSaiStatusFailure(handle_status);
         }
+        return true;
     }
 
     port.m_rif_id = 0;
