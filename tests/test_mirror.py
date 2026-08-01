@@ -618,7 +618,7 @@ class TestMirror(object):
         self.remove_vlan("9")
 
         # remove route; remove neighbor; remove ip; bring down port
-        self.remove_route(dvs, vlan_intf_addr)
+        self.remove_route(dvs, port_ip_prefix)
         self.remove_neighbor("Ethernet32", port_nhop_ip)
         self.remove_ip_address("Ethernet32", port_intf_addr)
         self.set_interface_status(dvs, "Ethernet32", "down")
