@@ -171,30 +171,35 @@ namespace vrf_schema_hardening_test
                "a VRF field accepted by one and not the other is dropped silently";
     }
 
-    TEST(VRFApplSchema, MetadataOnlyUpdateSkipsPublish)
+    TEST(VRFApplSchema, MetadataOnlyRowPublishesPlaceholder)
     {
         std::vector<swss::FieldValueTuple> filtered;
 
-        /* Existing VRF + only BGP metadata -> do not publish (avoids vni=0 clear). */
-        EXPECT_FALSE(swss::filterVrfApplFields(
+        swss::filterVrfApplFields(
             { { "rd", "20005:1" }, { "redistribute_connected", "true" } },
-            filtered,
-            /*publish_placeholder_if_empty=*/false));
-        EXPECT_TRUE(filtered.empty());
+            filtered);
 
-        /* First create with only metadata -> placeholder so the row materializes. */
-        EXPECT_TRUE(swss::filterVrfApplFields(
-            { { "rd", "20005:1" } },
-            filtered,
-            /*publish_placeholder_if_empty=*/true));
         ASSERT_EQ(filtered.size(), 1u);
         EXPECT_EQ(fvField(filtered[0]), "NULL");
+    }
 
-        /* Orchagent fields are forwarded. */
-        EXPECT_TRUE(swss::filterVrfApplFields(
-            { { "rd", "20005:1" }, { "vni", "10010" }, { "ttl_action", "forward" } },
-            filtered,
-            /*publish_placeholder_if_empty=*/false));
+    TEST(VRFApplSchema, OrchagentFieldsSurviveFiltering)
+    {
+        std::vector<swss::FieldValueTuple> filtered;
+
+        /* SubscriberStateTable hands vrfmgrd the whole CONFIG_DB row, so a vni
+         * configured on the VRF is always present here and always forwarded;
+         * filtering can never turn a configured VNI into an implicit vni=0. */
+        swss::filterVrfApplFields(
+            { { "rd", "20005:1" },
+              { "vni", "10010" },
+              { "ttl_action", "forward" },
+              { "redistribute_connected", "true" } },
+            filtered);
+
         ASSERT_EQ(filtered.size(), 2u);
+        EXPECT_EQ(fvField(filtered[0]), "vni");
+        EXPECT_EQ(fvValue(filtered[0]), "10010");
+        EXPECT_EQ(fvField(filtered[1]), "ttl_action");
     }
 }

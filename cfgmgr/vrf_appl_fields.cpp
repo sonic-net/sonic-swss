@@ -22,9 +22,8 @@ const std::set<std::string>& vrfApplForwardFields()
     return fields;
 }
 
-bool filterVrfApplFields(const std::vector<FieldValueTuple>& values,
-                         std::vector<FieldValueTuple>& filtered,
-                         bool publish_placeholder_if_empty)
+void filterVrfApplFields(const std::vector<FieldValueTuple>& values,
+                         std::vector<FieldValueTuple>& filtered)
 {
     const auto& allowed = vrfApplForwardFields();
     filtered.clear();
@@ -41,23 +40,12 @@ bool filterVrfApplFields(const std::vector<FieldValueTuple>& values,
         }
     }
 
-    if (!filtered.empty())
-    {
-        return true;
-    }
-
-    /*
-     * Metadata-only SET (rd / rt_* / redistribute_*). Publishing NULL:NULL on
-     * an existing VRF makes VRFOrch's update path see vni=0 and delete the L3
-     * VNI map. Only emit a placeholder when the VRF row must be created.
-     */
-    if (publish_placeholder_if_empty)
+    /* Metadata-only row (rd / rt_* / redistribute_*): keep the APPL_DB entry
+     * present so VRFOrch still creates the virtual router. */
+    if (filtered.empty())
     {
         filtered.emplace_back("NULL", "NULL");
-        return true;
     }
-
-    return false;
 }
 
 }

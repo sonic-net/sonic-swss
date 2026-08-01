@@ -29,17 +29,17 @@ const std::set<std::string>& vrfApplForwardFields();
 /*
  * Filter CONFIG_DB VRF fields down to the orchagent allowlist.
  *
- * Returns true when the caller should publish to APPL_DB VRF_TABLE.
- * Returns false when the SET carried only non-orchagent metadata: publishing
- * that as an empty/NULL row would make VRFOrch treat missing `vni` as 0 and
- * tear down an existing L3 VNI map on the update path.
+ * CONFIG_DB rows reach vrfmgrd through SubscriberStateTable, which re-reads the
+ * whole hash on every keyspace event, so `values` is always the complete VRF
+ * row and a dropped field means the operator really removed it. The caller
+ * therefore publishes unconditionally, exactly as it did before this filter
+ * existed; only non-orchagent fields are withheld.
  *
- * On first create (publish_placeholder_if_empty=true) an empty orchagent field
- * set still publishes a NULL/NULL placeholder so the VRF row materializes.
+ * `filtered` always ends up non-empty: a row carrying nothing but metadata
+ * yields a NULL/NULL placeholder so the APPL_DB row still materializes.
  */
-bool filterVrfApplFields(const std::vector<FieldValueTuple>& values,
-                         std::vector<FieldValueTuple>& filtered,
-                         bool publish_placeholder_if_empty);
+void filterVrfApplFields(const std::vector<FieldValueTuple>& values,
+                         std::vector<FieldValueTuple>& filtered);
 
 }
 

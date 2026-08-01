@@ -279,11 +279,6 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
-                /* Capture before setLink so metadata-only updates of an existing
-                 * VRF can skip the APPL_DB publish (see filterVrfApplFields). */
-                const bool vrf_already_present =
-                    (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end());
-
                 if (!setLink(vrfName))
                 {
                     SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
@@ -307,16 +302,8 @@ void VrfMgr::doTask(Consumer &consumer)
                     }
 
                     vector<FieldValueTuple> filtered;
-                    if (filterVrfApplFields(kfvFieldsValues(t), filtered,
-                                           !vrf_already_present))
-                    {
-                        m_appVrfTableProducer.set(vrfName, filtered);
-                    }
-                    else
-                    {
-                        SWSS_LOG_INFO("Skipping APPL_DB update for VRF %s: no orchagent fields",
-                                      vrfName.c_str());
-                    }
+                    filterVrfApplFields(kfvFieldsValues(t), filtered);
+                    m_appVrfTableProducer.set(vrfName, filtered);
 
                 }
                 else
