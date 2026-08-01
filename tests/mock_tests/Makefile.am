@@ -74,6 +74,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
                 vrforch_ut.cpp \
+                config_request_relaxed_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \

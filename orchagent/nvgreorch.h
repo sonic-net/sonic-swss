@@ -109,7 +109,8 @@ typedef std::map<std::string, std::unique_ptr<NvgreTunnel>> NvgreTunnelTable;
 class NvgreTunnelRequest : public Request
 {
 public:
-    NvgreTunnelRequest() : Request(nvgre_tunnel_request_description, '|') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    NvgreTunnelRequest() : Request(nvgre_tunnel_request_description, '|', true) { }
 };
 
 class NvgreTunnelOrch : public Orch2
@@ -149,7 +150,8 @@ const request_description_t nvgre_tunnel_map_request_description = {
 class NvgreTunnelMapRequest : public Request
 {
 public:
-    NvgreTunnelMapRequest() : Request(nvgre_tunnel_map_request_description, '|') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    NvgreTunnelMapRequest() : Request(nvgre_tunnel_map_request_description, '|', true) { }
 };
 
 class NvgreTunnelMapOrch : public Orch2

@@ -257,7 +257,8 @@ const request_description_t vxlan_tunnel_request_description = {
 class VxlanTunnelRequest : public Request
 {
 public:
-    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':', true) { }
 };
 
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
@@ -408,7 +409,8 @@ typedef std::map<std::string, tunnel_map_entry_t> VxlanTunnelMapTable;
 class VxlanTunnelMapRequest : public Request
 {
 public:
-    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':', true) { }
 };
 
 class VxlanTunnelMapOrch : public Orch2
@@ -535,7 +537,8 @@ const request_description_t evpn_nvo_request_description = {
 class EvpnNvoRequest : public Request
 {
 public:
-    EvpnNvoRequest() : Request(evpn_nvo_request_description, ':') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    EvpnNvoRequest() : Request(evpn_nvo_request_description, ':', true) { }
 };
 
 class EvpnNvoOrch : public Orch2

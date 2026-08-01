@@ -204,7 +204,8 @@ typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 class MuxCfgRequest : public Request
 {
 public:
-    MuxCfgRequest() : Request(mux_cfg_request_description, '|') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    MuxCfgRequest() : Request(mux_cfg_request_description, '|', true) { }
 };
 
 

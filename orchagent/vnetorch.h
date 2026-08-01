@@ -85,7 +85,8 @@ extern std::vector<VR_TYPE> vr_cntxt;
 class VNetRequest : public Request
 {
 public:
-    VNetRequest() : Request(vnet_request_description, ':') { }
+    /* Relaxed: row originates in CONFIG_DB; an unknown field must not discard it. */
+    VNetRequest() : Request(vnet_request_description, ':', true) { }
 };
 
 struct NextHopGroupInfo
