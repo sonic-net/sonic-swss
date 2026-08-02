@@ -18,6 +18,7 @@ namespace intfsorch_test
     int remove_rif_count = 0;
     bool saw_loopback_action = false;
     bool fail_next_rif_set = false;
+    int loopback_action_set_count = 0;
     sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
@@ -29,14 +30,15 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->create_router_interface(
+            router_interface_id, switch_id, attr_count, attr_list);
     }
 
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
         ++remove_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->remove_router_interface(router_interface_id);
     }
 
     sai_status_t _ut_set_router_interface_attribute(
@@ -45,13 +47,14 @@ namespace intfsorch_test
     {
         if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
         {
+            ++loopback_action_set_count;
+            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
             if (fail_next_rif_set)
             {
                 fail_next_rif_set = false;
                 return SAI_STATUS_INSUFFICIENT_RESOURCES;
             }
             saw_loopback_action = true;
-            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
             return SAI_STATUS_SUCCESS;
         }
         return pold_sai_rif_api->set_router_interface_attribute(
@@ -86,6 +89,7 @@ namespace intfsorch_test
             sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
             saw_loopback_action = false;
             fail_next_rif_set = false;
+            loopback_action_set_count = 0;
             last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -534,11 +538,13 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_EQ(loopback_action_set_count, 1);
         ASSERT_FALSE(saw_loopback_action);
 
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(loopback_action_set_count, 2);
         ASSERT_TRUE(saw_loopback_action);
         ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
     }
@@ -563,6 +569,7 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
         ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(loopback_action_set_count, 0);
         ASSERT_FALSE(saw_loopback_action);
 
         Port port;
