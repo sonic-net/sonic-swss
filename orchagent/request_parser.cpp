@@ -37,10 +37,22 @@ void Request::clear()
     attr_names_.clear();
     key_item_strings_.clear();
     key_item_mac_addresses_.clear();
+    key_item_ip_addresses_.clear();
+    key_item_ip_prefix_.clear();
+    key_item_uint_.clear();
     attr_item_strings_.clear();
     attr_item_bools_.clear();
+    attr_item_bool_list_.clear();
     attr_item_mac_addresses_.clear();
     attr_item_packet_actions_.clear();
+    attr_item_vlan_.clear();
+    attr_item_ip_.clear();
+    attr_item_ip_prefix_.clear();
+    attr_item_uint_.clear();
+    attr_item_set_.clear();
+    attr_item_ip_list_.clear();
+    attr_item_mac_addresses_list_.clear();
+    attr_item_uint_list_.clear();
 
     is_parsed_ = false;
 }

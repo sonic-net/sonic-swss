@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "neighorch.h"
 #include "nexthopgroupkey.h"
 #include "bulker.h"
@@ -304,7 +305,7 @@ private:
     NeighOrch *neigh_orch_;
     FdbOrch *fdb_orch_;
 
-    MuxCfgRequest request_;
+    ConfigFacingRequestRelaxed request_{mux_cfg_request_description, '|'};
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::set<IpAddress> skip_neighbors_;
 
