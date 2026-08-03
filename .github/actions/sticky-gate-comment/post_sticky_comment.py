@@ -9,6 +9,10 @@ import sys
 import urllib.error
 import urllib.request
 
+ACTION_COMMENT_AUTHOR = "github-actions[bot]"
+COMMENTS_PER_PAGE = 100
+REQUEST_TIMEOUT_SECONDS = 30
+
 
 def api_request(method: str, url: str, token: str, payload: dict | None = None) -> dict | list:
     data = None
@@ -21,7 +25,7 @@ def api_request(method: str, url: str, token: str, payload: dict | None = None) 
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
         raw = resp.read().decode("utf-8")
         return json.loads(raw) if raw else {}
 
@@ -92,6 +96,24 @@ def pr_number_from_event() -> int:
     return int(number)
 
 
+def find_existing_comment(base: str, pr_number: int, token: str, markers: tuple[str, ...]) -> int | None:
+    page = 1
+    while True:
+        comments = api_request(
+            "GET",
+            f"{base}/issues/{pr_number}/comments?per_page={COMMENTS_PER_PAGE}&page={page}",
+            token,
+        )
+        for comment in comments:
+            author = (comment.get("user") or {}).get("login")
+            text = comment.get("body") or ""
+            if author == ACTION_COMMENT_AUTHOR and any(text.startswith(candidate) for candidate in markers):
+                return int(comment["id"])
+        if len(comments) < COMMENTS_PER_PAGE:
+            return None
+        page += 1
+
+
 def main() -> None:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY")
@@ -117,16 +139,11 @@ def main() -> None:
     content = load_body(path, message)
     banner = coverage_banner(coverage_current, coverage_required, diff_cover_log)
     marker = f"<!-- sticky-gate-comment:{header} -->"
+    legacy_marker = f"<!-- Sticky Pull Request Comment{header} -->"
     body = f"{marker}\n{banner}{content.lstrip()}".rstrip() + "\n"
 
     base = f"https://api.github.com/repos/{owner}/{name}"
-    comments = api_request("GET", f"{base}/issues/{pr_number}/comments?per_page=100", token)
-    existing_id = None
-    for comment in comments:
-        text = comment.get("body") or ""
-        if marker in text or text.startswith(marker):
-            existing_id = comment["id"]
-            break
+    existing_id = find_existing_comment(base, pr_number, token, (marker, legacy_marker))
 
     if existing_id is not None:
         api_request("PATCH", f"{base}/issues/comments/{existing_id}", token, {"body": body})
@@ -143,4 +160,10 @@ if __name__ == "__main__":
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         print(f"::error::GitHub API request failed ({exc.code}): {detail}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as exc:
+        print(f"::error::GitHub API request failed: {exc.reason}", file=sys.stderr)
+        sys.exit(1)
+    except TimeoutError as exc:
+        print(f"::error::GitHub API request timed out: {exc}", file=sys.stderr)
         sys.exit(1)
