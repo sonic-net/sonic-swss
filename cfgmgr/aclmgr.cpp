@@ -15,7 +15,7 @@ using namespace swss;
 /* TC command paths */
 #define TC_CMD "/sbin/tc"
 
-AclMgr::AclMgr(DBConnector *cfgDb, DBConnector *stateDb,
+AclMgr::AclMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
                const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
     /* CONFIG_DB tables for reading saved state */
