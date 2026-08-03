@@ -219,7 +219,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             return task_process_status::task_failed;
         }
 
-        sai_object_id_t policer_id;
+        sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
         // Create a new policer
         if (!update)
         {
@@ -233,6 +233,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                 {
                     return task_process_status::task_need_retry;
                 }
+                return task_process_status::task_failed;
             }
 
             SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
@@ -243,6 +244,15 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         else
         {
             policer_id = m_syncdPolicers[storm_policer_name];
+            if (policer_id == SAI_NULL_OBJECT_ID ||
+                    sai_object_type_query(policer_id) != SAI_OBJECT_TYPE_POLICER)
+            {
+                SWSS_LOG_ERROR("Storm-control policer %s has invalid SAI object id 0x%" PRIx64 ", will recreate",
+                        storm_policer_name.c_str(), policer_id);
+                m_syncdPolicers.erase(storm_policer_name);
+                m_policerRefCounts.erase(storm_policer_name);
+                return task_process_status::task_need_retry;
+            }
 
             // The update operation has limitations that it could only update
             // the rate and the size accordingly.
@@ -492,20 +502,25 @@ void PolicerOrch::doTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to create policer %s,\
                             missing mandatory fields", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
                 }
 
-                sai_object_id_t policer_id;
+                sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
                 sai_status_t status = sai_policer_api->create_policer(
                     &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
                             key.c_str(), status);
-                    if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, status);
+                    if (handle_status == task_need_retry)
                     {
                         it++;
                         continue;
                     }
+                    it = consumer.m_toSync.erase(it);
+                    continue;
                 }
 
                 SWSS_LOG_NOTICE("Created policer %s", key.c_str());
@@ -516,6 +531,16 @@ void PolicerOrch::doTask(Consumer &consumer)
             else
             {
                 auto policer_id = m_syncdPolicers[key];
+                if (policer_id == SAI_NULL_OBJECT_ID ||
+                        sai_object_type_query(policer_id) != SAI_OBJECT_TYPE_POLICER)
+                {
+                    SWSS_LOG_ERROR("Policer %s has invalid SAI object id 0x%" PRIx64 ", removing stale cache entry",
+                            key.c_str(), policer_id);
+                    m_syncdPolicers.erase(key);
+                    m_policerRefCounts.erase(key);
+                    it++;
+                    continue;
+                }
 
                 // The update operation has limitations that it could only update
                 // the rate and the size accordingly.

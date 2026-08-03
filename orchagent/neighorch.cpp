@@ -15,6 +15,7 @@
 #include "muxorch.h"
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
+#include "arsorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -29,6 +30,7 @@ extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
+extern ArsOrch *gArsOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
 
@@ -968,6 +970,15 @@ void NeighOrch::doTask(Consumer &consumer)
                 {
                     it = consumer.m_toSync.erase(it);
                 }
+                else if (ctx.ars_rejected)
+                {
+                    // Erase to stop infinite retries.  If ARS is later
+                    // disabled on this port, the neighbor won't auto-
+                    // replay — operator must re-set the entry or restart
+                    // orchagent.  A full fix needs an ArsOrch→NeighOrch
+                    // notification on ARS disable (future work).
+                    it = consumer.m_toSync.erase(it);
+                }
                 else
                 {
                     it++;
@@ -1081,6 +1092,32 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
             neighbor_attr.value.booldata = 1;
             neighbor_attrs.push_back(neighbor_attr);
+        }
+    }
+
+    // UPSW-7471: Mellanox SDK adaptive-routing RIF supports only 1
+    // destination MAC per port.  If ARS is already enabled on this port
+    // and another neighbor is already hw_configured, reject before any
+    // side effects (e.g. VLAN cleanup).  Only check hw_configured
+    // entries — soft-only (disabled/standby) neighbors aren't in the
+    // ASIC and must not block programming of the first real neighbor.
+    if (gArsOrch && gArsOrch->isPortArsEnabled(alias))
+    {
+        for (const auto &e : m_syncdNeighbors)
+        {
+            if (e.first.alias == alias &&
+                e.first.ip_address != ip_address &&
+                e.second.hw_configured)
+            {
+                SWSS_LOG_ERROR("Neighbor: REJECTING neighbor %s on "
+                               "ARS-enabled port %s — adaptive-routing "
+                               "RIF supports only 1 neighbor per port "
+                               "(UPSW-7471)",
+                               ip_address.to_string().c_str(),
+                               alias.c_str());
+                ctx.ars_rejected = true;
+                return false;
+            }
         }
     }
 
@@ -2012,6 +2049,10 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     fvVector.push_back(mac);
                     m_stateSystemNeighTable->set(state_key, fvVector);
 
+                    it = consumer.m_toSync.erase(it);
+                }
+                else if (ctx.ars_rejected)
+                {
                     it = consumer.m_toSync.erase(it);
                 }
                 else
