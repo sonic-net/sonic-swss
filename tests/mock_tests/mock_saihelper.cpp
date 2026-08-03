@@ -368,11 +368,6 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
         ASSERT_EQ(status, task_failed);
 
-        status = handleSaiCreateStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
-
         _unhook_sai_apis();
     }
 
@@ -413,11 +408,6 @@ namespace saihelper_test
         ASSERT_EQ(status, task_failed);
 
         status = handleSaiSetStatus(SAI_API_PORT, SAI_STATUS_ATTR_NOT_SUPPORTED_0);
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
-        ASSERT_EQ(status, task_failed);
-
-        status = handleSaiSetStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
         ASSERT_EQ(status, task_failed);
@@ -486,6 +476,18 @@ namespace saihelper_test
         ASSERT_EQ(status, task_success);
 
         status = handleSaiRemoveStatus(SAI_API_PORT, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiCreateStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiSetStatus(SAI_API_LAG, SAI_STATUS_INVALID_PORT_NUMBER);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus(SAI_API_PORT, SAI_STATUS_INVALID_PORT_NUMBER);
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
