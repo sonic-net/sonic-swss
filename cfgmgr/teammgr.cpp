@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <signal.h>
+#include <unistd.h>
 
 
 using namespace std;
@@ -255,8 +256,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
 
             for (auto i : kfvFieldsValues(t))
             {
-                // min_links and fallback attributes cannot be changed
-                // after the LAG is created.
                 if (fvField(i) == "min_links")
                 {
                     min_links = stoi(fvValue(i));
@@ -302,13 +301,39 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
-                    // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
                     removeLag(alias);
                     it++;
                     continue;
                 }
 
                 m_lagList.insert(alias);
+                m_lagRunnerConfig[alias] = {min_links, fallback, fast_rate};
+            }
+            else
+            {
+                auto& cur = m_lagRunnerConfig[alias];
+                if (cur.min_links != min_links ||
+                    cur.fallback != fallback ||
+                    cur.fast_rate != fast_rate)
+                {
+                    SWSS_LOG_NOTICE(
+                        "Runner config changed for %s "
+                        "(min_links %d->%d, fallback %d->%d, fast_rate %d->%d), "
+                        "restarting teamd",
+                        alias.c_str(),
+                        cur.min_links, min_links,
+                        cur.fallback, fallback,
+                        cur.fast_rate, fast_rate);
+
+                    if (!restartLag(alias, min_links, fallback, fast_rate))
+                    {
+                        SWSS_LOG_ERROR("Failed to restart %s with new runner config",
+                                       alias.c_str());
+                        it++;
+                        continue;
+                    }
+                    cur = {min_links, fallback, fast_rate};
+                }
             }
 
             setLagAdminStatus(alias, admin_status);
@@ -330,6 +355,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 removeLag(alias);
                 m_lagList.erase(alias);
+                m_lagRunnerConfig.erase(alias);
             }
         }
 
@@ -677,6 +703,81 @@ bool TeamMgr::removeLag(const string &alias)
 
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
 
+    return true;
+}
+
+bool TeamMgr::restartLag(const string &alias, int min_links, bool fallback, bool fast_rate)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> memberKeys;
+    m_cfgLagMemberTable.getKeys(memberKeys);
+
+    vector<string> members;
+    for (const auto &key : memberKeys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        if (tokens.size() >= 2 && tokens[0] == alias)
+        {
+            members.push_back(tokens[1]);
+        }
+    }
+
+    for (const auto &member : members)
+    {
+        removeLagMember(alias, member);
+    }
+
+    if (!removeLag(alias))
+    {
+        SWSS_LOG_ERROR("Failed to stop teamd for %s during restart", alias.c_str());
+        return false;
+    }
+
+    int retries = 20;
+    while (retries-- > 0)
+    {
+        usleep(250000);
+        struct stat st;
+        string pidfile = "/var/run/teamd/" + alias + ".pid";
+        if (stat(pidfile.c_str(), &st) != 0)
+            break;
+    }
+
+    if (addLag(alias, min_links, fallback, fast_rate) != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to restart teamd for %s with new config", alias.c_str());
+        removeLag(alias);
+        return false;
+    }
+
+    retries = 20;
+    while (retries-- > 0)
+    {
+        if (isLagStateOk(alias))
+            break;
+        usleep(250000);
+    }
+
+    for (const auto &member : members)
+    {
+        task_process_status status = task_need_retry;
+        for (int attempt = 0; attempt < 5 && status == task_need_retry; attempt++)
+        {
+            if (attempt > 0)
+                usleep(500000);
+            status = addLagMember(alias, member);
+        }
+        if (status != task_success && status != task_ignore)
+        {
+            SWSS_LOG_ERROR("Failed to re-add %s to %s after restart",
+                           member.c_str(), alias.c_str());
+        }
+    }
+
+    SWSS_LOG_NOTICE("Restarted port channel %s with new runner config "
+                    "(min_links=%d, fallback=%d, fast_rate=%d)",
+                    alias.c_str(), min_links, fallback, fast_rate);
     return true;
 }
 

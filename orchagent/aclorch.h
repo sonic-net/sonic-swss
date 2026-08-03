@@ -1,6 +1,10 @@
 #ifndef SWSS_ACLORCH_H
 #define SWSS_ACLORCH_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -82,12 +86,14 @@ class PolicerOrch;
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
+#ifdef INCLUDE_DTEL
 #define ACTION_DTEL_FLOW_OP                 "FLOW_OP"
 #define ACTION_DTEL_INT_SESSION             "INT_SESSION"
 #define ACTION_DTEL_DROP_REPORT_ENABLE      "DROP_REPORT_ENABLE"
 #define ACTION_DTEL_TAIL_DROP_REPORT_ENABLE "TAIL_DROP_REPORT_ENABLE"
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
+#endif
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
@@ -105,6 +111,7 @@ class PolicerOrch;
 #define PACKET_ACTION_TRAP         "TRAP"
 #define PACKET_ACTION_LOG          "LOG"
 
+#ifdef INCLUDE_DTEL
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
 #define DTEL_FLOW_OP_INT        "INT"
@@ -112,6 +119,7 @@ class PolicerOrch;
 
 #define DTEL_ENABLED             "TRUE"
 #define DTEL_DISABLED            "FALSE"
+#endif
 
 #define IP_TYPE_ANY             "ANY"
 #define IP_TYPE_IP              "IP"
@@ -164,7 +172,9 @@ typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_range_type_t> acl_range_type_lookup_t;
 typedef map<string, sai_acl_bind_point_type_t> acl_bind_point_type_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
+#ifdef INCLUDE_DTEL
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
+#endif
 typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
@@ -469,6 +479,7 @@ protected:
     MirrorOrch *m_pMirrorOrch {nullptr};
 };
 
+#ifdef INCLUDE_DTEL
 class AclRuleDTelWatchListEntry: public AclRule
 {
 public:
@@ -489,6 +500,7 @@ protected:
     bool INT_enabled;
     bool INT_session_valid;
 };
+#endif
 
 class AclRuleUnderlaySetDscp: public AclRule
 {
@@ -510,8 +522,8 @@ protected:
 class AclTable
 {
 public:
-    AclTable(AclOrch *pAclOrch, string id) noexcept;
-    AclTable(AclOrch *pAclOrch) noexcept;
+    AclTable(AclOrch *pAclOrch, string id);
+    AclTable(AclOrch *pAclOrch);
 
     AclTable() = default;
     ~AclTable() = default;
@@ -711,8 +723,10 @@ private:
                            AclTable    &curT,
                            set<string> &addSet,
                            set<string> &delSet);
+#ifdef INCLUDE_DTEL
     void createDTelWatchListTables();
     void deleteDTelWatchListTables();
+#endif
 
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
@@ -728,6 +742,7 @@ private:
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
+    set<string> m_arsClassifierTables;
     map<string, AclTableType> m_AclTableTypes;
 
     static DBConnector m_countersDb;

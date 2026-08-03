@@ -13,12 +13,18 @@
 #include "converter.h"
 #include "directory.h"
 #include "swssnet.h"
+#include "warm_restart.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
+#include <unordered_set>
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 
 using namespace std;
 using namespace swss;
@@ -160,8 +166,19 @@ void ArsOrch::update(SubjectType type, void *cntx)
         }
         else
         {
-            SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s still failed "
-                          "— leaving queued", portName.c_str());
+            if (portHasMultipleHwNeighbors(portName))
+            {
+                SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s "
+                              "still blocked — multiple hw_configured "
+                              "neighbors (UPSW-7471). Keeping queued "
+                              "so enable retries when neighbor count "
+                              "drops to 1.", portName.c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s still "
+                              "failed — leaving queued", portName.c_str());
+            }
         }
     }
 
@@ -184,6 +201,53 @@ void ArsOrch::update(SubjectType type, void *cntx)
     SWSS_LOG_NOTICE("ARS: port %s came up (speed=%u), re-applying auto scaling factor",
                     portName.c_str(), stateUpdate->port.m_speed);
     applyPortProfileToInterface(portName, entry.portProfile);
+}
+
+/*
+ * Override Orch::doTask() to enforce ARS_PROFILE-before-ARS_INTERFACES
+ * ordering during warm restart replay.
+ *
+ * The base Orch::doTask() iterates m_consumerMap alphabetically, which
+ * processes ARS_INTERFACES before ARS_PROFILE. During normal operation
+ * the retry queue (m_arsInterfacesPendingEnable) handles this, but
+ * during warm restart the TEMP view recorded in syncd must have the
+ * profile created before port ARS enables so that the APPLY_VIEW
+ * comparison generates operations in a safe order.
+ *
+ * Outside of warm restart, fall through to the default alphabetical
+ * iteration.
+ */
+void ArsOrch::doTask()
+{
+    if (!WarmStart::isWarmStart())
+    {
+        Orch::doTask();
+        return;
+    }
+
+    static const vector<string> priorityTables = {
+        CFG_ARS_TABLE_NAME,
+        CFG_ARS_PROFILE_TABLE_NAME,
+    };
+
+    for (const auto &name : priorityTables)
+    {
+        auto it = m_consumerMap.find(name);
+        if (it != m_consumerMap.end())
+            it->second->drain();
+    }
+
+    for (auto &it : m_consumerMap)
+    {
+        const auto &name = it.first;
+        bool already = false;
+        for (const auto &p : priorityTables)
+        {
+            if (name == p) { already = true; break; }
+        }
+        if (!already)
+            it.second->drain();
+    }
 }
 
 void ArsOrch::doTask(Consumer &consumer)
@@ -713,9 +777,19 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_WARN("ARS: deferred enable on %s still failed "
-                              "after profile creation — leaving queued",
-                              portName.c_str());
+                if (portHasMultipleHwNeighbors(portName))
+                {
+                    SWSS_LOG_WARN("ARS: deferred enable on %s still "
+                                  "blocked — multiple hw_configured "
+                                  "neighbors (UPSW-7471). Keeping "
+                                  "queued.", portName.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ARS: deferred enable on %s still failed "
+                                  "after profile creation — leaving queued",
+                                  portName.c_str());
+                }
             }
         }
     }
@@ -1202,18 +1276,23 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 }
                 else
                 {
-                    // SAI rejected the enable. Most common causes: PortsOrch
-                    // hasn't published the port's OID yet (cold boot /
-                    // config-reload race), or the port is carrying a RIF
-                    // that must be removed first. Queue for retry on the
-                    // next PORT_OPER_STATE_CHANGE=UP so we don't leave the
-                    // port permanently misbound when the transient clears.
-                    SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s — "
-                                   "keeping entry.enabled=false so NHG resolver "
-                                   "does not bind ARS on this port; queued "
-                                   "for retry on next port-up event",
-                                   portName.c_str());
                     entry.enabled = false;
+                    if (portHasMultipleHwNeighbors(portName))
+                    {
+                        SWSS_LOG_ERROR("ARS: rejecting ARS on port %s — "
+                                       "multiple hw_configured neighbors "
+                                       "(UPSW-7471). Queued for retry so "
+                                       "enable resumes when neighbor count "
+                                       "drops to 1.",
+                                       portName.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("ARS: failed to enable ARS on port "
+                                       "%s — queued for retry on next "
+                                       "port-up event",
+                                       portName.c_str());
+                    }
                     m_arsInterfacesPendingEnable.insert(portName);
                 }
             }
@@ -1303,6 +1382,18 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
     // binding immutability).
     if (resolverInputsChanged && gRouteOrch && m_arsEnabled)
         gRouteOrch->bindArsToExistingNhgs();
+
+    // Retry deferred members that couldn't be processed earlier (e.g.
+    // because admin_state arrived before ars_object in a prior batch).
+    // Now that arsObject fields may have been updated in this batch,
+    // processDeferredNhgMembers may succeed where it previously failed.
+    if (!m_deferredNhgMembers.empty())
+    {
+        SWSS_LOG_NOTICE("ARS-BATCH: retrying %zu deferred NHG member(s) after "
+                        "resolver inputs changed",
+                        m_deferredNhgMembers.size());
+        processDeferredNhgMembers();
+    }
 }
 
 /* ── Deferred NHG member processing (batch migration) ───────────────── */
@@ -1386,8 +1477,10 @@ void ArsOrch::processDeferredNhgMembers()
             {
                 SWSS_LOG_NOTICE("ARS-BATCH: resolveArsForNhg returned NULL for "
                                 "NHG %s — trying direct lookup from deferred "
-                                "members' port config",
+                                "members' port config and NHG key ports",
                                 nhgKey.to_string().c_str());
+
+                // Strategy 1: check deferred members' port config
                 for (auto &dm : members)
                 {
                     auto ifIt = m_arsInterfaces.find(dm.nhKey.alias);
@@ -1400,11 +1493,57 @@ void ArsOrch::processDeferredNhgMembers()
                         {
                             arsOid = objIt->second.arsOid;
                             SWSS_LOG_NOTICE("ARS-BATCH: resolved ARS oid=0x%" PRIx64
-                                            " from port %s -> object '%s'",
+                                            " from deferred member port %s -> object '%s'",
                                             arsOid, dm.nhKey.alias.c_str(),
                                             ifIt->second.arsObject.c_str());
                             break;
                         }
+                    }
+                }
+
+                // Strategy 2: check ALL ports in the NHG key (covers case
+                // where admin_state and ars_object arrive in separate batches
+                // and deferred members' ports haven't had arsObject set yet)
+                if (arsOid == SAI_NULL_OBJECT_ID)
+                {
+                    for (const auto &nh : nhgKey.getNextHops())
+                    {
+                        auto ifIt = m_arsInterfaces.find(nh.alias);
+                        if (ifIt != m_arsInterfaces.end() &&
+                            !ifIt->second.arsObject.empty())
+                        {
+                            auto objIt = m_arsObjects.find(ifIt->second.arsObject);
+                            if (objIt != m_arsObjects.end() &&
+                                objIt->second.arsOid != SAI_NULL_OBJECT_ID)
+                            {
+                                arsOid = objIt->second.arsOid;
+                                SWSS_LOG_NOTICE("ARS-BATCH: resolved ARS oid=0x%" PRIx64
+                                                " from NHG key port %s -> object '%s'",
+                                                arsOid, nh.alias.c_str(),
+                                                ifIt->second.arsObject.c_str());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Strategy 3: if only one ARS object exists (common on
+                // Mellanox which supports a single ARS object), use it
+                // directly. This handles the case where no port in the
+                // NHG has its arsObject field set yet but the ARS object
+                // was already created.
+                if (arsOid == SAI_NULL_OBJECT_ID && m_arsObjects.size() == 1)
+                {
+                    auto &soleObj = m_arsObjects.begin()->second;
+                    if (soleObj.arsOid != SAI_NULL_OBJECT_ID)
+                    {
+                        arsOid = soleObj.arsOid;
+                        SWSS_LOG_NOTICE("ARS-BATCH: resolved ARS oid=0x%" PRIx64
+                                        " from sole ARS object '%s' (no port had "
+                                        "arsObject set yet — admin_state/ars_object "
+                                        "split-notification race)",
+                                        arsOid,
+                                        m_arsObjects.begin()->first.c_str());
                     }
                 }
             }
@@ -2102,9 +2241,9 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     // thresholds avoids this and works in both runtime and apply-view paths.
     //
     // When all three bands are zero, auto-fill with conservative defaults
-    // (1/2/4 Gbps) so flowlet works out of the box. Non-zero quant-band
-    // values at CREATE tell Mellanox SAI to call
-    // sx_api_ar_congestion_threshold_set (non-hardened mode).
+    // so flowlet works out of the box. Non-zero quant-band values at CREATE
+    // tell Mellanox SAI to call sx_api_ar_congestion_threshold_set (non-hardened
+    // mode). Unit is bytes since SAI v2511.36.0.0 (was cells previously).
     uint32_t qb0 = entry.quantBand0MinThreshold;
     uint32_t qb1 = entry.quantBand1MinThreshold;
     uint32_t qb2 = entry.quantBand2MinThreshold;
@@ -2114,9 +2253,10 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         // rejects them during SET with SAI_STATUS_INVALID_PARAMETER. The
         // deferred-OID reuse path calls updateArsProfileAttr (SET), so
         // defaults must be within the SET-safe range (matching ucli defaults).
-        qb0 = 10;
-        qb1 = 20;
-        qb2 = 50;
+        // On Spectrum-4 (192-byte cells): 2560→14, 5120→27, 12800→67 cells.
+        qb0 = 2560;
+        qb1 = 5120;
+        qb2 = 12800;
         SWSS_LOG_NOTICE("ARS: profile '%s' quant-band thresholds incomplete or "
                         "non-monotonic (%u/%u/%u) — using SET-safe defaults "
                         "(%u/%u/%u); final values will be applied via SET "
@@ -2413,37 +2553,78 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
                         "ports still had ARS enabled in ASIC).",
                         arsOid, name.c_str());
 
-        // Attempt to SET the requested attributes on the reused OID.
-        // Mellanox SAI fatally rejects set_ars_attribute when NHGs still
-        // reference the object (OBJECT_IN_USE). Only attempt if no
-        // ARS-bound NHGs are tracked — this covers the common case where
-        // topology cleanup already deleted all NHGs via forceUnbindArsFromNhg.
-        if (m_nhgStateKeys.empty())
+        // SET the requested attributes on the reused OID.
+        // removeArsObject now unbinds all NHGs before deferring, so the OID
+        // should have ref_count=0 and attribute SETs should succeed.
+        if (!m_nhgStateKeys.empty())
         {
-            for (const auto &a : attrs)
+            SWSS_LOG_WARN("ARS: deferred-OID reuse for '%s' — %zu stale "
+                          "m_nhgStateKeys entries remain (should have been "
+                          "purged during removal). Proceeding with attribute "
+                          "SET anyway.",
+                          name.c_str(), m_nhgStateKeys.size());
+        }
+
+        bool modeFailed = false;
+        for (const auto &a : attrs)
+        {
+            sai_status_t setRc = sai_ars_api->set_ars_attribute(arsOid, &a);
+            if (setRc != SAI_STATUS_SUCCESS)
             {
-                sai_status_t setRc = sai_ars_api->set_ars_attribute(arsOid, &a);
-                if (setRc != SAI_STATUS_SUCCESS)
-                {
-                    const char *attrName =
-                        (a.id == SAI_ARS_ATTR_MODE) ? "MODE" :
-                        (a.id == SAI_ARS_ATTR_IDLE_TIME) ? "IDLE_TIME" :
-                        (a.id == SAI_ARS_ATTR_MAX_FLOWS) ? "MAX_FLOWS" : "UNKNOWN";
-                    SWSS_LOG_WARN("ARS: deferred-OID reuse — SET %s on 0x%" PRIx64
-                                  " failed (%s). ASIC retains previous value; "
-                                  "config reload will reconcile.",
-                                  attrName, arsOid,
-                                  sai_serialize_status(setRc).c_str());
-                }
+                const char *attrName =
+                    (a.id == SAI_ARS_ATTR_MODE) ? "MODE" :
+                    (a.id == SAI_ARS_ATTR_IDLE_TIME) ? "IDLE_TIME" :
+                    (a.id == SAI_ARS_ATTR_MAX_FLOWS) ? "MAX_FLOWS" : "UNKNOWN";
+                SWSS_LOG_WARN("ARS: deferred-OID reuse — SET %s on 0x%" PRIx64
+                              " failed (%s). ASIC retains previous value; "
+                              "config reload will reconcile.",
+                              attrName, arsOid,
+                              sai_serialize_status(setRc).c_str());
+                if (a.id == SAI_ARS_ATTR_MODE)
+                    modeFailed = true;
             }
         }
-        else
+
+        if (modeFailed)
         {
-            SWSS_LOG_WARN("ARS: deferred-OID reuse for '%s' — %zu ARS NHG "
-                          "binding(s) still tracked, skipping attribute SET to "
-                          "avoid fatal SAI error. ASIC retains previous "
-                          "attributes; config reload will reconcile.",
-                          name.c_str(), m_nhgStateKeys.size());
+            SWSS_LOG_NOTICE("ARS: deferred-OID reuse for '%s' — MODE SET "
+                            "failed (create-only attribute). Attempting to "
+                            "remove deferred OID 0x%" PRIx64 " from SAI and "
+                            "create a fresh object.",
+                            name.c_str(), arsOid);
+
+            sai_status_t removeRc = sai_ars_api->remove_ars(arsOid);
+            if (removeRc == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("ARS: deferred OID 0x%" PRIx64 " removed "
+                                "from SAI. Creating fresh ARS object for "
+                                "'%s'.", arsOid, name.c_str());
+                m_nhgStateKeys.clear();
+
+                sai_status_t status = sai_ars_api->create_ars(
+                    &arsOid, gSwitchId,
+                    (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS: fresh create_ars failed for '%s' "
+                                   "after deferred OID removal: %s",
+                                   name.c_str(),
+                                   sai_serialize_status(status).c_str());
+                    return false;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ARS: deferred-OID 0x%" PRIx64 " MODE SET "
+                               "failed AND SAI remove failed (%s) for '%s'. "
+                               "Restoring deferred OID — ports may still "
+                               "reference it.",
+                               arsOid,
+                               sai_serialize_status(removeRc).c_str(),
+                               name.c_str());
+                m_deferredArsOid = arsOid;
+                return false;
+            }
         }
     }
     else
@@ -2521,6 +2702,38 @@ bool ArsOrch::removeArsObject(const string &name)
                         "object is created before reload.",
                         name.c_str(), oid, stuckPorts.size(),
                         portList.c_str());
+
+        // Unbind NHGs from this ARS object before deferring.  Without this,
+        // NHGs remain bound to the deferred OID in SAI and their entries
+        // persist in m_nhgStateKeys.  When createArsObject later reuses the
+        // deferred OID, the non-empty m_nhgStateKeys caused the attribute
+        // SET loop (including SAI_ARS_ATTR_MODE) to be skipped entirely,
+        // leaving the ASIC with the *previous* mode — a silent mismatch.
+        //
+        // rebindArsForAllNhgs will delete-and-recreate each NHG without an
+        // ARS binding (via forceUnbindArsFromNhg), which releases the SAI
+        // ref_count on this OID and cleans up m_nhgStateKeys.  Routes keep
+        // valid ECMP NHGs (just without ARS) until the replacement object is
+        // created and bindArsToExistingNhgs re-enables ARS on them.
+        it->second.enabled = false;
+        if (gRouteOrch)
+            gRouteOrch->rebindArsForAllNhgs();
+
+        // Unbind LAGs that reference this object, mirroring the non-deferral
+        // removal path. Without this, LAG SAI_LAG_ATTR_ARS_OBJECT_ID bindings
+        // keep the deferred OID in use and can cause MODE SET failure on reuse.
+        vector<string> lagsToUnbind;
+        for (const auto &kv : m_arsLags)
+        {
+            if (kv.second.arsObject == name && m_arsEnabledLags.count(kv.first))
+                lagsToUnbind.push_back(kv.first);
+        }
+        for (const auto &lag : lagsToUnbind)
+        {
+            unbindArsFromLag(lag);
+            m_arsEnabledLags.erase(lag);
+        }
+
         m_deferredArsOid = oid;
         m_arsObjects.erase(it);
         return true;
@@ -3018,7 +3231,66 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     return arsOid;
 }
 
+bool ArsOrch::hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const
+{
+    if (!m_arsEnabled)
+        return false;
+
+    const auto &nextHops = nhgKey.getNextHops();
+    for (const auto &nh : nextHops)
+    {
+        const string &portName = nh.alias;
+
+        // UPSW-7471: multi-neighbor ports stay in the retry queue so
+        // enable retries when the neighbor count drops, but they must
+        // not block NHG creation — the SDK limitation is on the port,
+        // not on the NHG.
+        if (m_arsInterfacesPendingEnable.count(portName) > 0 &&
+            !portHasMultipleHwNeighbors(portName))
+            return true;
+
+        // Physical port: only pending if admin_state wants enabled but SAI
+        // hasn't enabled yet.  admin_state=down ports are intentionally
+        // disabled and must not block NHG creation.  Multi-neighbor ports
+        // are also excluded (UPSW-7471) — they can't enable ARS but must
+        // not stall NHGs.
+        auto ifIt = m_arsInterfaces.find(portName);
+        if (ifIt != m_arsInterfaces.end()
+            && ifIt->second.enabled
+            && m_arsEnabledPorts.count(portName) == 0
+            && !portHasMultipleHwNeighbors(portName))
+            return true;
+
+        // LAG: same logic — config wants enabled but not yet in
+        // m_arsEnabledLags.
+        auto lagIt = m_arsLags.find(portName);
+        if (lagIt != m_arsLags.end()
+            && lagIt->second.enabled
+            && m_arsEnabledLags.count(portName) == 0)
+            return true;
+    }
+    return false;
+}
+
 /* ── Per-port ARS enable via SAI_PORT_ATTR_ARS_ENABLE ─────────────────── */
+
+bool ArsOrch::isPortArsEnabled(const string &portName) const
+{
+    return m_arsEnabledPorts.count(portName) > 0;
+}
+
+bool ArsOrch::portHasMultipleHwNeighbors(const string &portName) const
+{
+    if (!gNeighOrch)
+        return false;
+    size_t count = 0;
+    for (const auto &e : gNeighOrch->getSyncdNeighbors())
+    {
+        if (e.first.alias == portName && e.second.hw_configured && ++count > 1)
+            return true;
+    }
+    return false;
+}
 
 bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 {
@@ -3028,6 +3300,20 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     if (!m_portsOrch->getPort(portName, port))
     {
         SWSS_LOG_ERROR("ARS: port %s not found", portName.c_str());
+        return false;
+    }
+
+    // UPSW-7471: Mellanox SDK adaptive-routing RIF supports only a single
+    // destination MAC per port. Guard placed before the m_rif_id branch so
+    // that even after a failed rollback (m_rif_id=0 but hw_configured
+    // entries remain in m_syncdNeighbors) we still reject.
+    if (enable && portHasMultipleHwNeighbors(portName))
+    {
+        SWSS_LOG_ERROR("ARS: REJECTING setPortArsEnable(%s, true) — "
+                       "port has multiple hw_configured neighbors. "
+                       "Mellanox SDK adaptive-routing RIF supports "
+                       "only 1 neighbor per port (UPSW-7471).",
+                       portName.c_str());
         return false;
     }
 
@@ -3051,11 +3337,11 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
         }
         else
         {
-            SWSS_LOG_ERROR("ARS: setPortArsEnable(%s, false) — port has "
-                           "RIF 0x%" PRIx64 ". Cannot disable ARS while "
-                           "RIF exists. Remove IPs first, then disable ARS.",
-                           portName.c_str(), port.m_rif_id);
-            return false;
+            SWSS_LOG_NOTICE("ARS: setPortArsEnable(%s, false) — port has "
+                            "RIF 0x%" PRIx64 ". Initiating reverse RIF "
+                            "migration to disable ARS dynamically.",
+                            portName.c_str(), port.m_rif_id);
+            return migratePortFromArs(portName);
         }
     }
 
@@ -3090,13 +3376,16 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     return true;
 }
 
-/* ── Orchestrated RIF migration for dynamic ARS enablement ──────────────
+/* ── Orchestrated RIF migration for dynamic ARS enable/disable ──────────
  *
  * Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE when the port has RIFs because
  * the SDK RIF type (SX_L2_INTERFACE_TYPE_ADAPTIVE_ROUTING vs PORT_VLAN) is
  * immutable after creation. This method performs a coordinated teardown and
- * rebuild of all objects that depend on the RIF, enabling ARS on the bare port
+ * rebuild of all objects that depend on the RIF, toggling ARS on the bare port
  * between removal and recreation.
+ *
+ * When enableArs=true  (forward): enables ARS, SAI picks AR RIF type.
+ * When enableArs=false (reverse): disables ARS, SAI picks standard RIF type.
  *
  * Sequence:
  *   1. Collect all neighbors/next-hops on this port
@@ -3105,21 +3394,31 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
  *   4. Remove next-hop SAI objects (decrements RIF ref_count)
  *   5. Remove neighbor SAI entries (decrements RIF ref_count)
  *   6. Remove the RIF (ref_count now 0)
- *   7. Enable ARS on the bare port
- *   8. Recreate the RIF (SAI picks AR type since port->ars_enable is true)
+ *   7. Set ARS enable/disable on the bare port
+ *   8. Recreate the RIF (SAI picks type based on port ARS state)
  *   9. Recreate neighbor entries with new RIF
  *  10. Recreate next-hop objects with new RIF OID
  *  11. Recreate NHG members (reusing same NHG OIDs where possible)
- *  12. Trigger make-before-break NHG recreation for ARS binding
+ *  12. (forward only) Trigger make-before-break NHG recreation for ARS binding
  *
  * Traffic impact: brief per-prefix blackhole during NHG member drain/refill
  * (sub-second with bulk ops). Significantly less disruptive than config reload.
  */
 bool ArsOrch::migratePortToArs(const string &portName)
 {
+    return migratePort(portName, true);
+}
+
+bool ArsOrch::migratePortFromArs(const string &portName)
+{
+    return migratePort(portName, false);
+}
+
+bool ArsOrch::migratePort(const string &portName, bool enableArs)
+{
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== BEGIN orchestrated RIF migration =====",
-                    portName.c_str());
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== BEGIN orchestrated RIF migration (%s) =====",
+                    portName.c_str(), enableArs ? "enable ARS" : "disable ARS");
 
     Port port;
     if (!m_portsOrch->getPort(portName, port))
@@ -3133,11 +3432,22 @@ bool ArsOrch::migratePortToArs(const string &portName)
                     portName.c_str(), port.m_port_id, port.m_rif_id,
                     port.m_vr_id, port.m_mtu, port.m_oper_status);
 
+    // UPSW-7471 defense-in-depth: reject migration to ARS on multi-neighbor
+    // ports even if the caller bypassed setPortArsEnable's guard.
+    if (enableArs && portHasMultipleHwNeighbors(portName))
+    {
+        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ABORT — port has multiple "
+                       "hw_configured neighbors but Mellanox adaptive-"
+                       "routing RIF supports only 1 (UPSW-7471).",
+                       portName.c_str());
+        return false;
+    }
+
     if (port.m_rif_id == 0)
     {
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: no RIF on port, falling through to direct enable",
-                        portName.c_str());
-        return setPortArsEnable(portName, true);
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: no RIF on port, falling through to direct %s",
+                        portName.c_str(), enableArs ? "enable" : "disable");
+        return setPortArsEnable(portName, enableArs);
     }
 
     sai_object_id_t oldRifId = port.m_rif_id;
@@ -3218,7 +3528,16 @@ bool ArsOrch::migratePortToArs(const string &portName)
     size_t nhRemoveSuccess = 0, nhRemoveFail = 0;
     size_t neighRemoveSuccess = 0;
     size_t ip2meRemoved = 0;
+    size_t routeDrainFail = 0;
+    size_t routesScanned = 0;
     sai_status_t st;
+
+    struct SavedSingleNhRoute {
+        sai_object_id_t vrfId;
+        IpPrefix prefix;
+        NextHopKey nhKey;
+    };
+    vector<SavedSingleNhRoute> savedSingleNhRoutes;
 
     // ─── Phase 2: Tear down NHG members referencing this port's NHs ──────
 
@@ -3229,6 +3548,14 @@ bool ArsOrch::migratePortToArs(const string &portName)
         uint32_t seqId;
     };
     vector<NhgMemberInfo> removedMembers;
+
+    // Track default-route-swap members removed in Phase 2 so rollback can
+    // restore them (CodeRabbit: these were previously lost on failure).
+    struct DfltSwapMemberInfo {
+        NextHopGroupKey nhgKey;
+        NextHopKey nhKey;
+    };
+    vector<DfltSwapMemberInfo> removedDfltSwapMembers;
 
     if (gRouteOrch)
     {
@@ -3282,6 +3609,42 @@ bool ArsOrch::migratePortToArs(const string &portName)
                     if (nhgData.nh_member_install_count > 0)
                         nhgData.nh_member_install_count--;
                 }
+
+                // Also remove from default_route_nhopgroup_members — the
+                // "Default Route NH Swap" mechanism can place our NHs into
+                // other NHGs (those with all-down members), creating extra SAI
+                // references that block Phase 3's remove_next_hop.
+                auto dfltIt = nhgData.default_route_nhopgroup_members.find(savedNh.key);
+                if (dfltIt != nhgData.default_route_nhopgroup_members.end())
+                {
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2 removing default-route-swap "
+                                   "NHG member: nhg_oid=0x%" PRIx64 " member_oid=0x%" PRIx64
+                                   " nh=%s nhg_key=%s",
+                                  portName.c_str(),
+                                  nhgData.next_hop_group_id,
+                                  dfltIt->second.next_hop_id,
+                                  savedNh.key.to_string().c_str(),
+                                  nhgKey.to_string().c_str());
+
+                    st = sai_next_hop_group_api->remove_next_hop_group_member(
+                        dfltIt->second.next_hop_id);
+                    if (st != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_WARN("ARS-MIGRATE[%s]: Phase2 failed to remove "
+                                      "default-route-swap member 0x%" PRIx64
+                                      " from nhg 0x%" PRIx64 " rc=%d (non-fatal, "
+                                      "Phase3 may still fail)",
+                                      portName.c_str(), dfltIt->second.next_hop_id,
+                                      nhgData.next_hop_group_id, st);
+                    }
+                    else
+                    {
+                        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                        gNeighOrch->decreaseNextHopRefCount(savedNh.key);
+                        nhgData.default_route_nhopgroup_members.erase(dfltIt);
+                        removedDfltSwapMembers.push_back({nhgKey, savedNh.key});
+                    }
+                }
             }
         }
     }
@@ -3292,6 +3655,117 @@ bool ArsOrch::migratePortToArs(const string &portName)
         SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2 COMPLETE - removed %zu NHG members "
                         "across %zu unique NHGs",
                         portName.c_str(), removedMembers.size(), uniqueNhgs.size());
+    }
+
+    // ─── Phase 2.5: Drain single-NH routes referencing this port's NHs ──
+    //
+    // Routes with a single next-hop are programmed in SAI with
+    // NEXT_HOP_ID = nh_oid (no NHG involved).  Phase 2 only drains NHG
+    // members, so these direct route→NH references survive and cause
+    // Phase 3's remove_next_hop() to fail with SAI_STATUS_OBJECT_IN_USE.
+    // Re-point them to DROP now; Phase 9.5 restores them.
+
+    // Block scope for savedNhKeySet so that earlier gotos to
+    // restore_rif_without_ars do not cross its non-trivial initialization.
+    {
+        // Build a set for O(1) NH key lookups instead of O(K) inner loop.
+        // Note: the outer loops iterate getSyncdRoutes() by reference.
+        // decreaseNextHopRefCount() below is a simple counter decrement that
+        // does not mutate the route map, so the iterators remain valid.
+        std::unordered_set<NextHopKey, boost::hash<NextHopKey>> savedNhKeySet;
+        for (auto &snh : savedNextHops)
+            savedNhKeySet.insert(snh.key);
+
+        if (gRouteOrch)
+        {
+            for (auto &vrfRoutes : gRouteOrch->getSyncdRoutes())
+            {
+                for (auto &routeEntry : vrfRoutes.second)
+                {
+                    const auto &nhgKey = routeEntry.second.nhg_key;
+                    if (nhgKey.getSize() != 1)
+                        continue;
+
+                    const NextHopKey &routeNh = *nhgKey.getNextHops().begin();
+                    if (routeNh.isIntfNextHop())
+                        continue;
+
+                    if (savedNhKeySet.find(routeNh) == savedNhKeySet.end())
+                        continue;
+
+                    routesScanned++;
+
+                    sai_route_entry_t route_entry;
+                    route_entry.switch_id = gSwitchId;
+                    route_entry.vr_id = vrfRoutes.first;
+                    copy(route_entry.destination, routeEntry.first);
+
+                    sai_attribute_t drop_attr;
+                    drop_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                    drop_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+                    sai_status_t rs = sai_route_api->set_route_entry_attribute(
+                        &route_entry, &drop_attr);
+                    if (rs != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 FAILED to set "
+                                       "DROP on route %s vrf=0x%" PRIx64 " rc=%d",
+                                       portName.c_str(),
+                                       routeEntry.first.to_string().c_str(),
+                                       vrfRoutes.first, rs);
+                        routeDrainFail++;
+                        continue;
+                    }
+
+                    sai_attribute_t nh_attr;
+                    nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                    nh_attr.value.oid = SAI_NULL_OBJECT_ID;
+                    rs = sai_route_api->set_route_entry_attribute(
+                        &route_entry, &nh_attr);
+                    if (rs != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 FAILED to "
+                                       "null NEXT_HOP_ID on route %s rc=%d "
+                                       "— restoring FORWARD",
+                                       portName.c_str(),
+                                       routeEntry.first.to_string().c_str(),
+                                       rs);
+                        sai_attribute_t fwd_attr;
+                        fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                        fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+                        sai_route_api->set_route_entry_attribute(
+                            &route_entry, &fwd_attr);
+                        routeDrainFail++;
+                        continue;
+                    }
+
+                    savedSingleNhRoutes.push_back(
+                        {vrfRoutes.first, routeEntry.first, routeNh});
+                    gNeighOrch->decreaseNextHopRefCount(routeNh);
+
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2.5 drained single-NH "
+                                   "route: %s nh=%s vrf=0x%" PRIx64,
+                                   portName.c_str(),
+                                   routeEntry.first.to_string().c_str(),
+                                   routeNh.to_string().c_str(),
+                                   vrfRoutes.first);
+                }
+            }
+        }
+    } // savedNhKeySet destroyed here
+
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase2.5 COMPLETE - drained %zu single-NH "
+                    "routes, %zu failed, %zu matched (scanned all VRFs)",
+                    portName.c_str(), savedSingleNhRoutes.size(),
+                    routeDrainFail, routesScanned);
+
+    if (routeDrainFail > 0)
+    {
+        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase2.5 had %zu drain failures — "
+                       "aborting before Phase 3 (NH removal would fail with "
+                       "OBJECT_IN_USE for undrained routes)",
+                       portName.c_str(), routeDrainFail);
+        goto restore_rif_without_ars;
     }
 
     // ─── Phase 3: Remove next-hop SAI objects ─────────────────────────────
@@ -3317,6 +3791,17 @@ bool ArsOrch::migratePortToArs(const string &portName)
                       snh.oldNhId, savedRefCount);
 
         st = sai_next_hop_api->remove_next_hop(snh.oldNhId);
+        if (st == SAI_STATUS_OBJECT_IN_USE)
+        {
+            // SAI may need a brief moment to process the NHG member removals
+            // from Phase 2 (especially on Mellanox where SDK operations can be
+            // asynchronous internally). Retry once after a short delay.
+            SWSS_LOG_WARN("ARS-MIGRATE[%s]: Phase3 remove_next_hop(0x%" PRIx64
+                          ") returned OBJECT_IN_USE — retrying once after 50ms",
+                          portName.c_str(), snh.oldNhId);
+            usleep(50000);
+            st = sai_next_hop_api->remove_next_hop(snh.oldNhId);
+        }
         if (st != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase3 FAILED - remove_next_hop"
@@ -3479,6 +3964,96 @@ bool ArsOrch::migratePortToArs(const string &portName)
     st = sai_router_intfs_api->remove_router_interface(oldRifId);
     if (st != SAI_STATUS_SUCCESS)
     {
+        // Phase 5 failed.  If savedIpPrefixes was empty, it's likely
+        // that SAI routes (IP-to-me /32, connected subnet) still reference
+        // this RIF but weren't collected in Phase 1 (IntfsOrch state gap).
+        // Try to discover IPs from the kernel and remove those routes.
+        if (st == (sai_status_t)(-17) && savedIpPrefixes.empty())
+        {
+            SWSS_LOG_WARN("ARS-MIGRATE[%s]: Phase5 rc=-17 with 0 prefixes "
+                          "collected — attempting IP route discovery from kernel",
+                          portName.c_str());
+
+            vector<IpPrefix> discoveredPrefixes;
+            struct ifaddrs *ifAddrList = nullptr;
+            if (getifaddrs(&ifAddrList) == 0)
+            {
+                for (struct ifaddrs *ifa = ifAddrList; ifa; ifa = ifa->ifa_next)
+                {
+                    if (!ifa->ifa_addr || !ifa->ifa_netmask)
+                        continue;
+                    if (string(ifa->ifa_name) != portName)
+                        continue;
+                    if (ifa->ifa_addr->sa_family == AF_INET)
+                    {
+                        char ipBuf[INET_ADDRSTRLEN];
+                        char maskBuf[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET,
+                                  &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr,
+                                  ipBuf, sizeof(ipBuf));
+                        inet_ntop(AF_INET,
+                                  &((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr,
+                                  maskBuf, sizeof(maskBuf));
+                        uint32_t mask = ntohl(
+                            ((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr.s_addr);
+                        int prefixLen = __builtin_popcount(mask);
+                        string prefixStr = string(ipBuf) + "/" +
+                                           to_string(prefixLen);
+                        try
+                        {
+                            IpPrefix pfx(prefixStr);
+                            discoveredPrefixes.push_back(pfx);
+                            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase5 discovered "
+                                            "kernel IP: %s",
+                                            portName.c_str(), prefixStr.c_str());
+                        }
+                        catch (...) {}
+                    }
+                }
+                freeifaddrs(ifAddrList);
+            }
+
+            if (!discoveredPrefixes.empty())
+            {
+                for (auto &prefix : discoveredPrefixes)
+                {
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase5 removing "
+                                    "discovered IP-to-me route: %s/32",
+                                    portName.c_str(),
+                                    prefix.getIp().to_string().c_str());
+                    try { gIntfsOrch->removeIp2MeRoute(vrfId, prefix); }
+                    catch (...) {}
+
+                    IpPrefix subnet = prefix.getSubnet();
+                    sai_route_entry_t subnet_route;
+                    subnet_route.switch_id = gSwitchId;
+                    subnet_route.vr_id = vrfId;
+                    copy(subnet_route.destination, subnet);
+
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase5 removing "
+                                    "discovered subnet route: %s",
+                                    portName.c_str(),
+                                    subnet.to_string().c_str());
+                    sai_route_api->remove_route_entry(&subnet_route);
+                }
+
+                // Retry RIF removal
+                st = sai_router_intfs_api->remove_router_interface(oldRifId);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase5 RETRY SUCCEEDED "
+                                    "after removing discovered routes",
+                                    portName.c_str());
+                    // Update savedIpPrefixes for Phase 7.5 restoration
+                    savedIpPrefixes = discoveredPrefixes;
+                    goto phase5_success;
+                }
+                SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase5 RETRY FAILED rc=%d "
+                               "even after removing discovered routes",
+                               portName.c_str(), st);
+            }
+        }
+
         SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase5 FAILED - "
                        "remove_router_interface(0x%" PRIx64 ") returned SAI rc=%d. "
                        "Possible remaining references: connected routes, FDB, ACL, "
@@ -3487,6 +4062,7 @@ bool ArsOrch::migratePortToArs(const string &portName)
                        portName.c_str(), oldRifId, st);
         goto restore_rif_without_ars;
     }
+phase5_success:
     SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase5 COMPLETE - RIF 0x%" PRIx64
                     " removed successfully (SAI rc=0)",
                     portName.c_str(), oldRifId);
@@ -3494,30 +4070,32 @@ bool ArsOrch::migratePortToArs(const string &portName)
     port.m_rif_id = 0;
     m_portsOrch->setPort(portName, port);
 
-    // ─── Phase 6: Enable ARS on the bare port ────────────────────────────
+    // ─── Phase 6: Set ARS on the bare port ─────────────────────────────
 
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 setting SAI_PORT_ATTR_ARS_ENABLE=true "
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 setting SAI_PORT_ATTR_ARS_ENABLE=%s "
                     "on port_oid=0x%" PRIx64 " (port now has rifs=0)",
-                    portName.c_str(), port.m_port_id);
+                    portName.c_str(), enableArs ? "true" : "false",
+                    port.m_port_id);
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
-    attr.value.booldata = true;
+    attr.value.booldata = enableArs;
 
     st = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (st != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase6 CRITICAL FAILURE - "
-                       "set_port_attribute(ARS_ENABLE) on port_oid=0x%" PRIx64
+                       "set_port_attribute(ARS_ENABLE=%s) on port_oid=0x%" PRIx64
                        " returned SAI rc=%d even though RIF was removed. "
                        "Possible causes: (1) another RIF exists on this port/LAG, "
                        "(2) ARS profile not created, (3) SAI internal error. "
                        "Attempting emergency RIF restoration.",
-                       portName.c_str(), port.m_port_id, st);
+                       portName.c_str(), enableArs ? "true" : "false",
+                       port.m_port_id, st);
         goto restore_rif_without_ars;
     }
-    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 COMPLETE - ARS enabled on bare port",
-                    portName.c_str());
+    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase6 COMPLETE - ARS %s on bare port",
+                    portName.c_str(), enableArs ? "enabled" : "disabled");
 
     // ─── Phase 7: Recreate the RIF (SAI now picks AR type) ───────────────
     {
@@ -3547,10 +4125,11 @@ bool ArsOrch::migratePortToArs(const string &portName)
             rif_attrs.push_back(rif_attr);
         }
 
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 creating RIF with ARS: "
-                        "vrf=0x%" PRIx64 " port_oid=0x%" PRIx64 " mtu=%u "
-                        "(SAI should pick SX_L2_INTERFACE_TYPE_ADAPTIVE_ROUTING)",
-                        portName.c_str(), vrfId, port.m_port_id, port.m_mtu);
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 creating RIF (%s): "
+                        "vrf=0x%" PRIx64 " port_oid=0x%" PRIx64 " mtu=%u",
+                        portName.c_str(),
+                        enableArs ? "AR type — ARS enabled" : "standard type — ARS disabled",
+                        vrfId, port.m_port_id, port.m_mtu);
 
         sai_object_id_t newRifId;
         st = sai_router_intfs_api->create_router_interface(
@@ -3560,17 +4139,20 @@ bool ArsOrch::migratePortToArs(const string &portName)
         {
             SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase7 CRITICAL FAILURE - "
                            "create_router_interface returned SAI rc=%d. "
-                           "ARS is enabled on port but RIF creation failed. "
-                           "Disabling ARS and attempting non-AR RIF restore.",
-                           portName.c_str(), st);
-            attr.value.booldata = false;
+                           "ARS is %s on port but RIF creation failed. "
+                           "Restoring ARS to %s and attempting RIF restore.",
+                           portName.c_str(), st,
+                           enableArs ? "enabled" : "disabled",
+                           enableArs ? "disabled" : "enabled");
+            attr.value.booldata = !enableArs;
             sai_port_api->set_port_attribute(port.m_port_id, &attr);
             goto restore_rif_without_ars;
         }
 
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 COMPLETE - AR RIF created: "
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase7 COMPLETE - %s RIF created: "
                         "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64,
-                        portName.c_str(), oldRifId, newRifId);
+                        portName.c_str(), enableArs ? "AR" : "standard",
+                        oldRifId, newRifId);
 
         port.m_rif_id = newRifId;
         port.m_vr_id = vrfId;
@@ -3747,6 +4329,90 @@ bool ArsOrch::migratePortToArs(const string &portName)
                         portName.c_str(), nhCreateSuccess,
                         savedNextHops.size(), nhCreateFail);
 
+        // ─── Phase 9.5: Restore single-NH routes drained in Phase 2.5 ───
+
+        size_t routeRestoreSuccess = 0, routeRestoreFail = 0;
+        for (auto &savedRoute : savedSingleNhRoutes)
+        {
+            auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+            auto nhIt = syncdNhs.find(savedRoute.nhKey);
+            if (nhIt == syncdNhs.end() ||
+                nhIt->second.next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("ARS-MIGRATE[%s]: Phase9.5 SKIP route %s - "
+                              "NH %s not recreated (NULL OID)",
+                              portName.c_str(),
+                              savedRoute.prefix.to_string().c_str(),
+                              savedRoute.nhKey.to_string().c_str());
+                routeRestoreFail++;
+                continue;
+            }
+
+            sai_route_entry_t route_entry;
+            route_entry.switch_id = gSwitchId;
+            route_entry.vr_id = savedRoute.vrfId;
+            copy(route_entry.destination, savedRoute.prefix);
+
+            sai_attribute_t nh_attr;
+            nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            nh_attr.value.oid = nhIt->second.next_hop_id;
+
+            sai_status_t rs = sai_route_api->set_route_entry_attribute(
+                &route_entry, &nh_attr);
+            if (rs != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase9.5 FAILED to restore "
+                               "route %s nh=%s new_nh_oid=0x%" PRIx64
+                               " rc=%d",
+                               portName.c_str(),
+                               savedRoute.prefix.to_string().c_str(),
+                               savedRoute.nhKey.to_string().c_str(),
+                               nhIt->second.next_hop_id, rs);
+                routeRestoreFail++;
+                continue;
+            }
+
+            sai_attribute_t fwd_attr;
+            fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+            sai_status_t fwd_rs = sai_route_api->set_route_entry_attribute(
+                &route_entry, &fwd_attr);
+
+            // Increment refcount unconditionally: the NH SAI binding above
+            // already succeeded, so the hardware holds a reference from this
+            // route to the NH object.  The refcount must reflect reality even
+            // if the FORWARD action set fails below (the route would remain
+            // DROP with a valid NH binding — an operator-visible error, but
+            // rolling back the NH binding here would add complexity to an
+            // already multi-phase error path with marginal benefit).
+            gNeighOrch->increaseNextHopRefCount(savedRoute.nhKey);
+
+            if (fwd_rs != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("ARS-MIGRATE[%s]: Phase9.5 route %s NH rebound "
+                               "but FORWARD failed rc=%d — route stays DROP "
+                               "with elevated NH refcount (accepted trade-off)",
+                               portName.c_str(),
+                               savedRoute.prefix.to_string().c_str(), fwd_rs);
+                routeRestoreFail++;
+                continue;
+            }
+
+            routeRestoreSuccess++;
+
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase9.5 restored route: %s "
+                            "nh=%s new_nh_oid=0x%" PRIx64,
+                            portName.c_str(),
+                            savedRoute.prefix.to_string().c_str(),
+                            savedRoute.nhKey.to_string().c_str(),
+                            nhIt->second.next_hop_id);
+        }
+
+        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase9.5 COMPLETE - restored %zu/%zu "
+                        "single-NH routes (%zu failed)",
+                        portName.c_str(), routeRestoreSuccess,
+                        savedSingleNhRoutes.size(), routeRestoreFail);
+
         // ─── Phase 10: Recreate NHG members with new NH OIDs ─────────────
         //
         // BATCH MODE: when m_batchMigrationMode is set (multiple ports being
@@ -3759,7 +4425,7 @@ bool ArsOrch::migratePortToArs(const string &portName)
         // migrations.  processDeferredNhgMembers() then binds ARS to the
         // (empty) NHG and adds all members — all using AR RIFs.
 
-        if (m_batchMigrationMode)
+        if (m_batchMigrationMode && enableArs)
         {
             size_t deferred = 0;
             for (auto &rmInfo : removedMembers)
@@ -3825,24 +4491,31 @@ bool ArsOrch::migratePortToArs(const string &portName)
                             "will happen after all ports are migrated",
                             portName.c_str());
 
-            bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0);
+            bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0 ||
+                                   routeRestoreFail > 0);
             if (partialFailure)
             {
                 SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ===== MIGRATION PARTIAL (batch) ===== "
                                "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                               " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=DEFERRED(%zu)",
+                               " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                               "NHG_members=DEFERRED(%zu)",
                                portName.c_str(), oldRifId, newRifId,
                                neighCreateSuccess, savedNeighbors.size(),
-                               nhCreateSuccess, savedNextHops.size(), deferred);
+                               nhCreateSuccess, savedNextHops.size(),
+                               routeRestoreSuccess, savedSingleNhRoutes.size(),
+                               deferred);
                 return false;
             }
 
             SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== MIGRATION COMPLETE (batch) ===== "
                             "Summary: old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                            " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=DEFERRED(%zu)",
+                            " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                            "NHG_members=DEFERRED(%zu)",
                             portName.c_str(), oldRifId, newRifId,
                             neighCreateSuccess, savedNeighbors.size(),
-                            nhCreateSuccess, savedNextHops.size(), deferred);
+                            nhCreateSuccess, savedNextHops.size(),
+                            routeRestoreSuccess, savedSingleNhRoutes.size(),
+                            deferred);
             return true;
         }
 
@@ -3887,12 +4560,12 @@ bool ArsOrch::migratePortToArs(const string &portName)
             m_attr.value.oid = nhIt->second.next_hop_id;
             member_attrs.push_back(m_attr);
 
-            if (rmInfo.seqId > 0)
-            {
-                m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-                m_attr.value.u32 = rmInfo.seqId;
-                member_attrs.push_back(m_attr);
-            }
+            // Do NOT add SEQUENCE_ID here. The target NHG may have been
+            // created as non-ordered ECMP (e.g., during ARS disable when
+            // switch hash was static). Adding SEQUENCE_ID to a non-ordered
+            // NHG causes the Memory SDK to reject the call, crashing syncd.
+            // Phase11 (recreateNhgsWithArs) will recreate this NHG as
+            // properly ordered ECMP with correct SEQUENCE_ID on all members.
 
             sai_object_id_t newMemberOid;
             st = sai_next_hop_group_api->create_next_hop_group_member(
@@ -3913,14 +4586,14 @@ bool ArsOrch::migratePortToArs(const string &portName)
 
             NextHopGroupMemberEntry memberEntry;
             memberEntry.next_hop_id = newMemberOid;
-            memberEntry.seq_id = rmInfo.seqId;
+            memberEntry.seq_id = 0;
             nhgIt->second.nhopgroup_members[rmInfo.nhKey] = memberEntry;
             nhgIt->second.nh_member_install_count++;
             memberCreateSuccess++;
 
-            SWSS_LOG_INFO("ARS-MIGRATE[%s]: Phase10 created NHG member: "
+            SWSS_LOG_INFO("ARS-MIGRATE[%s]: Phase10 created NHG member (no seq): "
                           "nhg_oid=0x%" PRIx64 " member_oid=0x%" PRIx64
-                          " nh=%s seq=%u",
+                          " nh=%s (saved_seq=%u will be set by Phase11)",
                           portName.c_str(), nhgOid, newMemberOid,
                           rmInfo.nhKey.to_string().c_str(), rmInfo.seqId);
         }
@@ -3931,17 +4604,26 @@ bool ArsOrch::migratePortToArs(const string &portName)
                         removedMembers.size(), memberCreateFail);
 
         // ─── Phase 11: Recreate NHGs with ARS (make-before-break) ────────
-        SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 triggering make-before-break "
-                        "NHG recreation for ARS binding",
-                        portName.c_str());
-
-        if (gRouteOrch)
+        if (enableArs)
         {
-            gRouteOrch->recreateNhgsWithArs(portName);
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 triggering make-before-break "
+                            "NHG recreation for ARS binding",
+                            portName.c_str());
+
+            if (gRouteOrch)
+            {
+                gRouteOrch->recreateNhgsWithArs(portName);
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: Phase11 SKIPPED — ARS disabled, "
+                            "NHGs will use standard ECMP (no ARS binding)",
+                            portName.c_str());
         }
 
         bool partialFailure = (neighCreateFail > 0 || nhCreateFail > 0 ||
-                               memberCreateFail > 0);
+                               memberCreateFail > 0 || routeRestoreFail > 0);
 
         if (partialFailure)
         {
@@ -3949,22 +4631,26 @@ bool ArsOrch::migratePortToArs(const string &portName)
                            "ARS enabled and RIF recreated, but some dependent "
                            "objects failed to restore. "
                            "old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                           " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=%zu/%zu. "
+                           " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                           "NHG_members=%zu/%zu. "
                            "Forwarding may be degraded on this port until "
                            "missing objects are resolved (e.g., neighbor re-learn).",
                            portName.c_str(), oldRifId, newRifId,
                            neighCreateSuccess, savedNeighbors.size(),
                            nhCreateSuccess, savedNextHops.size(),
+                           routeRestoreSuccess, savedSingleNhRoutes.size(),
                            memberCreateSuccess, removedMembers.size());
             return false;
         }
 
         SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ===== MIGRATION COMPLETE ===== "
                         "Summary: old_rif=0x%" PRIx64 " new_rif=0x%" PRIx64
-                        " neighbors=%zu/%zu NHs=%zu/%zu NHG_members=%zu/%zu",
+                        " neighbors=%zu/%zu NHs=%zu/%zu routes=%zu/%zu "
+                        "NHG_members=%zu/%zu",
                         portName.c_str(), oldRifId, newRifId,
                         neighCreateSuccess, savedNeighbors.size(),
                         nhCreateSuccess, savedNextHops.size(),
+                        routeRestoreSuccess, savedSingleNhRoutes.size(),
                         memberCreateSuccess, removedMembers.size());
         return true;
     }
@@ -3975,10 +4661,10 @@ restore_rif_without_ars:
                    "Port state: port_oid=0x%" PRIx64
                    " rif_id=0x%" PRIx64 " vrf=0x%" PRIx64
                    " Objects to restore: %zu neighbors, %zu NHs, "
-                   "%zu IP-to-me routes removed",
+                   "%zu IP-to-me routes, %zu single-NH routes",
                    portName.c_str(), port.m_port_id, port.m_rif_id,
                    vrfId, savedNeighbors.size(), savedNextHops.size(),
-                   ip2meRemoved);
+                   ip2meRemoved, savedSingleNhRoutes.size());
     {
         sai_object_id_t restoredRifId;
 
@@ -4057,6 +4743,23 @@ restore_rif_without_ars:
             }
             for (auto &snh : savedNextHops)
             {
+                auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+                auto nhIt = syncdNhs.find(snh.key);
+
+                // If Phase 3 failed to remove the NH, it still exists in SAI
+                // with the original OID. Do NOT create a duplicate — just
+                // verify the tracking is consistent and skip recreation.
+                if (nhIt != syncdNhs.end() &&
+                    nhIt->second.next_hop_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ROLLBACK NH %s still exists "
+                                    "(oid=0x%" PRIx64 ") — reusing (Phase3 did not "
+                                    "remove it)",
+                                    portName.c_str(), snh.key.to_string().c_str(),
+                                    nhIt->second.next_hop_id);
+                    continue;
+                }
+
                 vector<sai_attribute_t> nh_attrs;
                 sai_attribute_t na;
                 na.id = SAI_NEXT_HOP_ATTR_TYPE;
@@ -4076,8 +4779,6 @@ restore_rif_without_ars:
                         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
                     else
                         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-                    auto &syncdNhs = gNeighOrch->getSyncdNextHops();
-                    auto nhIt = syncdNhs.find(snh.key);
                     if (nhIt != syncdNhs.end())
                         nhIt->second.next_hop_id = nhId;
                     gIntfsOrch->increaseRouterIntfsRefCount(portName);
@@ -4106,12 +4807,10 @@ restore_rif_without_ars:
                 m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
                 m_attr.value.oid = nhIt->second.next_hop_id;
                 member_attrs.push_back(m_attr);
-                if (rmInfo.seqId > 0)
-                {
-                    m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-                    m_attr.value.u32 = rmInfo.seqId;
-                    member_attrs.push_back(m_attr);
-                }
+                // Do NOT add SEQUENCE_ID during rollback — the target NHG
+                // may have been created as non-ordered ECMP (e.g., recreated
+                // by forceUnbindArsFromNhg during ARS disable). Adding
+                // SEQUENCE_ID to a non-ordered NHG crashes the Mellanox SDK.
 
                 sai_object_id_t newMemberOid;
                 if (sai_next_hop_group_api->create_next_hop_group_member(
@@ -4121,9 +4820,46 @@ restore_rif_without_ars:
                     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
                     NextHopGroupMemberEntry memberEntry;
                     memberEntry.next_hop_id = newMemberOid;
-                    memberEntry.seq_id = rmInfo.seqId;
+                    memberEntry.seq_id = 0;
                     nhgIt->second.nhopgroup_members[rmInfo.nhKey] = memberEntry;
                     nhgIt->second.nh_member_install_count++;
+                }
+            }
+            // Restore default-route-swap NHG members removed in Phase 2
+            for (auto &dsm : removedDfltSwapMembers)
+            {
+                auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+                auto nhIt = syncdNhs.find(dsm.nhKey);
+                if (nhIt == syncdNhs.end() ||
+                    nhIt->second.next_hop_id == SAI_NULL_OBJECT_ID)
+                    continue;
+
+                auto &syncdNhgs = gRouteOrch->getSyncdNextHopGroups();
+                auto nhgIt = syncdNhgs.find(dsm.nhgKey);
+                if (nhgIt == syncdNhgs.end() ||
+                    nhgIt->second.next_hop_group_id == SAI_NULL_OBJECT_ID)
+                    continue;
+
+                vector<sai_attribute_t> member_attrs;
+                sai_attribute_t m_attr;
+                m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+                m_attr.value.oid = nhgIt->second.next_hop_group_id;
+                member_attrs.push_back(m_attr);
+                m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+                m_attr.value.oid = nhIt->second.next_hop_id;
+                member_attrs.push_back(m_attr);
+
+                sai_object_id_t newMemberOid;
+                if (sai_next_hop_group_api->create_next_hop_group_member(
+                    &newMemberOid, gSwitchId,
+                    (uint32_t)member_attrs.size(), member_attrs.data()) == SAI_STATUS_SUCCESS)
+                {
+                    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                    gNeighOrch->increaseNextHopRefCount(dsm.nhKey);
+                    NextHopGroupMemberEntry memberEntry;
+                    memberEntry.next_hop_id = newMemberOid;
+                    memberEntry.seq_id = 0;
+                    nhgIt->second.default_route_nhopgroup_members[dsm.nhKey] = memberEntry;
                 }
             }
             // Restore routes removed in Phase 4.5
@@ -4152,6 +4888,80 @@ restore_rif_without_ars:
                 rt_attr.value.oid = restoredRifId;
                 sai_route_api->create_route_entry(
                     &subnet_route, 1, &rt_attr);
+            }
+            // Restore single-NH routes drained in Phase 2.5
+            size_t rollbackRouteSuccess = 0, rollbackRouteFail = 0;
+            for (auto &savedRoute : savedSingleNhRoutes)
+            {
+                auto &syncdNhs = gNeighOrch->getSyncdNextHops();
+                auto nhIt = syncdNhs.find(savedRoute.nhKey);
+                if (nhIt == syncdNhs.end() ||
+                    nhIt->second.next_hop_id == SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_WARN("ARS-MIGRATE[%s]: ROLLBACK SKIP route %s - "
+                                  "NH %s not available (NULL OID) — route "
+                                  "stays DROP",
+                                  portName.c_str(),
+                                  savedRoute.prefix.to_string().c_str(),
+                                  savedRoute.nhKey.to_string().c_str());
+                    rollbackRouteFail++;
+                    continue;
+                }
+
+                sai_route_entry_t re;
+                re.switch_id = gSwitchId;
+                re.vr_id = savedRoute.vrfId;
+                copy(re.destination, savedRoute.prefix);
+
+                sai_attribute_t nh_attr;
+                nh_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                nh_attr.value.oid = nhIt->second.next_hop_id;
+                sai_status_t nh_rs = sai_route_api->set_route_entry_attribute(
+                    &re, &nh_attr);
+                if (nh_rs != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ROLLBACK failed to rebind "
+                                   "NH on route %s rc=%d",
+                                   portName.c_str(),
+                                   savedRoute.prefix.to_string().c_str(),
+                                   nh_rs);
+                    rollbackRouteFail++;
+                    continue;
+                }
+
+                gNeighOrch->increaseNextHopRefCount(savedRoute.nhKey);
+
+                sai_attribute_t fwd_attr;
+                fwd_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                fwd_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+                sai_status_t fwd_rs = sai_route_api->set_route_entry_attribute(
+                    &re, &fwd_attr);
+                if (fwd_rs != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ROLLBACK NH rebound but "
+                                   "FORWARD failed on route %s rc=%d",
+                                   portName.c_str(),
+                                   savedRoute.prefix.to_string().c_str(),
+                                   fwd_rs);
+                    rollbackRouteFail++;
+                }
+                else
+                {
+                    rollbackRouteSuccess++;
+                }
+
+                SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ROLLBACK restored single-NH "
+                                "route: %s nh=%s",
+                                portName.c_str(),
+                                savedRoute.prefix.to_string().c_str(),
+                                savedRoute.nhKey.to_string().c_str());
+            }
+            if (!savedSingleNhRoutes.empty())
+            {
+                SWSS_LOG_NOTICE("ARS-MIGRATE[%s]: ROLLBACK route restore: "
+                                "%zu/%zu succeeded, %zu failed",
+                                portName.c_str(), rollbackRouteSuccess,
+                                savedSingleNhRoutes.size(), rollbackRouteFail);
             }
         }
         return false;
@@ -4811,9 +5621,12 @@ void ArsOrch::createDefaultProfileIfNeeded()
     // SAI_STATUS_INVALID_PARAMETER. The deferred-OID reuse path uses SET,
     // so defaults must be within the SET-safe range. These values match
     // the ucli defaults (lb_adaptive_profile.py).
-    entry.quantBand0MinThreshold = 10;
-    entry.quantBand1MinThreshold = 20;
-    entry.quantBand2MinThreshold = 50;
+    // Unit is bytes since SAI v2511.36.0.0 (was cells previously).
+    // On Spectrum-4 (SN5610), cell size = 192 bytes. These map to
+    // ceil(2560/192)=14, ceil(5120/192)=27, ceil(12800/192)=67 cells.
+    entry.quantBand0MinThreshold = 2560;
+    entry.quantBand1MinThreshold = 5120;
+    entry.quantBand2MinThreshold = 12800;
     if (!createArsProfile(kDefaultName, entry))
     {
         SWSS_LOG_WARN("ARS: failed to auto-create default profile — "

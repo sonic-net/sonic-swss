@@ -159,6 +159,7 @@ public:
     bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    void createDeferredLagsAfterApplyView();
     void increasePortRefCount(const string &alias);
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
@@ -389,6 +390,7 @@ private:
     unordered_map<sai_object_id_t, string> saiOidToAlias;
     unordered_map<sai_object_id_t, uint16_t> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
+    set<string> m_warmRebootDeferredLags;
     unordered_set<string> m_pendingPortSet;
     const uint32_t max_flood_control_types = 4;
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
@@ -551,6 +553,10 @@ private:
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
     void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
+
+    bool getPortFullDuplexMode(const Port& port, bool& full_duplex) const;
+    void updateDbPortDuplex(Port &port, bool full_duplex);
+    void refreshPortDuplex(Port &port);
 
     bool getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status);
     bool getPortLinkTrainingFailure(const Port &port, sai_port_link_training_failure_status_t &failure);

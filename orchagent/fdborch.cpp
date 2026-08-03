@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <assert.h>
 #include <iostream>
 #include <vector>
@@ -12,7 +15,9 @@
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#ifdef INCLUDE_MLAG
 #include "mlagorch.h"
+#endif
 #include "vxlanorch.h"
 #include "directory.h"
 
@@ -20,7 +25,9 @@ extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern CrmOrch *        gCrmOrch;
+#ifdef INCLUDE_MLAG
 extern MlagOrch*        gMlagOrch;
+#endif
 extern Directory<Orch*> gDirectory;
 
 const int FdbOrch::fdborch_pri = 20;
@@ -450,7 +457,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
             {
-                FdbData fdbData;
+                FdbData fdbData{};
                 fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
                 fdbData.type = update.type;
                 fdbData.origin = existing_entry->second.origin;
@@ -1208,11 +1215,13 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
         swss::Port p = update.port;
-        if (gMlagOrch->isMlagInterface(p.m_alias))
+#ifdef INCLUDE_MLAG
+        if (gMlagOrch && gMlagOrch->isMlagInterface(p.m_alias))
         {
             SWSS_LOG_NOTICE("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
             return;
         }
+#endif
 
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
@@ -1664,15 +1673,16 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
 
     if (fdbData.origin != origin)
     {
+#ifdef INCLUDE_MLAG
         if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.origin == FDB_ORIGIN_LEARN) &&
-                        (port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN) && (gMlagOrch->isMlagInterface(port.m_alias)))
+                        (port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN) && (gMlagOrch && gMlagOrch->isMlagInterface(port.m_alias)))
         {
-            //check if the local MCLAG port is down, if yes then continue delete the local MAC
             origin = FDB_ORIGIN_LEARN;
             SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb del origin is MCLAG; delete local mac as port %s is down",
                 entry.mac.to_string().c_str(), port.m_alias.c_str());
         }
         else
+#endif
         {
 
             /* When mac is moved from remote to local

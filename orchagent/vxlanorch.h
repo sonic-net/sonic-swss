@@ -5,6 +5,7 @@
 #include <set>
 #include <memory>
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "portsorch.h"
 #include "vrforch.h"
 #include "timer.h"
@@ -377,7 +378,7 @@ private:
     void doTask(swss::SelectableTimer&);
 
     VxlanTunnelTable vxlan_tunnel_table_;
-    VxlanTunnelRequest request_;
+    ConfigFacingRequestRelaxed request_{vxlan_tunnel_request_description, ':'};
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
@@ -429,7 +430,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     VxlanTunnelMapTable vxlan_tunnel_map_table_;
-    VxlanTunnelMapRequest request_;
+    ConfigFacingRequestRelaxed request_{vxlan_tunnel_map_request_description, ':'};
 };
 
 const request_description_t vxlan_vrf_request_description = {
@@ -552,6 +553,6 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    EvpnNvoRequest request_;
+    ConfigFacingRequestRelaxed request_{evpn_nvo_request_description, ':'};
     VxlanTunnel* source_vtep_ptr=NULL;
 };

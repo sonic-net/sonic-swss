@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 extern "C" {
 #include "sai.h"
 #include "saistatus.h"
@@ -34,7 +37,9 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#ifdef INCLUDE_MACSEC
 #include "macsecpost.h"
+#endif
 
 using namespace std;
 using namespace swss;
@@ -399,7 +404,7 @@ int main(int argc, char **argv)
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
     // Disable SAI MACSec POST by default. Use option -M to enable it.
-    bool macsec_post_enabled = false;
+    [[maybe_unused]] bool macsec_post_enabled = false;
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:MF")) != -1)
     {
@@ -692,6 +697,7 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+#ifdef INCLUDE_MACSEC
     string macsec_post_state;
     if (gMySwitchType != "fabric" && macsec_post_enabled)
     {
@@ -714,6 +720,7 @@ int main(int argc, char **argv)
         macsec_post_state = "disabled";
     }
     setMacsecPostState(&state_db, macsec_post_state);
+#endif
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
@@ -825,6 +832,7 @@ int main(int argc, char **argv)
         gVirtualRouterId = attr.value.oid;
         SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
 
+#ifdef INCLUDE_MACSEC
         /* Query MACSec POST capability and set POST state in state DB accordingly */
         if (macsec_post_enabled)
         {
@@ -834,7 +842,6 @@ int main(int argc, char **argv)
                                                &post_capability) == SAI_STATUS_SUCCESS &&
                 post_capability.create_implemented)
             {
-                // POST is supported in switch init, and it was already enabled in switch init.
                 SWSS_LOG_NOTICE("MACSec POST enabled in switch init");
             }
             else if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MACSEC,
@@ -842,19 +849,18 @@ int main(int argc, char **argv)
                                                     &post_capability) == SAI_STATUS_SUCCESS &&
                 post_capability.create_implemented)
             {
-                // POST is only supported in MACSec init. Set POST state to notify MACSecOrch
-                // to perform POST.
                 setMacsecPostState(&state_db, "macsec-level-post-in-progress");
                 SWSS_LOG_NOTICE("MACSec POST will be enabled in MACSec init");
             }
             else
             {
-                // POST is not supported by SAI. Don't declare that SAI POST fails.
                 setMacsecPostState(&state_db, "disabled");
                 SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
             }
         }
+#endif
 
+#ifdef INCLUDE_NAT
         /* Get the NAT supported info */
         attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
 
@@ -870,6 +876,7 @@ int main(int argc, char **argv)
                 gIsNatSupported = true;
             }
         }
+#endif
 
         /* Create a loopback underlay router interface */
         vector<sai_attribute_t> underlay_intf_attrs;

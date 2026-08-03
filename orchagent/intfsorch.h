@@ -28,6 +28,7 @@ struct IntfsEntry
     int                 ref_count;
     sai_object_id_t     vrf_id;
     bool                proxy_arp;
+    sai_object_id_t     loopback_rif_id = SAI_NULL_OBJECT_ID;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -38,6 +39,8 @@ public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
+    uint32_t getRifCount() const { return m_rifCount; }
+    uint32_t getMaxSviCapacity() const { return m_maxSviCapacity; }
     void update(SubjectType, void *) override;
     bool isPrefixSubnet(const IpPrefix&, const string&);
     bool isInbandIntfInMgmtVrf(const string& alias);
@@ -82,6 +85,9 @@ private:
     SelectableTimer* m_updateMapsTimer = nullptr;
     std::vector<Port> m_rifsToAdd;
 
+    uint32_t m_rifCount = 0;
+    uint32_t m_maxSviCapacity = 0;
+
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
     map<string, string> m_vnetInfses;
@@ -94,6 +100,7 @@ private:
     unique_ptr<Table> m_rifTypeTable;
     unique_ptr<Table> m_vidToRidTable;
 
+    std::set<std::string> m_arnLoopbacks;
     std::set<std::string> m_removingIntfses;
     std::map<std::string, std::string> m_pendingLagRifs;
 

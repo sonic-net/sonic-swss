@@ -13,9 +13,12 @@
 #include "fdborch.h"
 #include "mirrororch.h"
 #include "srv6orch.h"
+#include "bfdorch.h"
+#ifdef INCLUDE_DASH
 #include "dashorch.h"
 #include "dashrouteorch.h"
 #include "dashmeterorch.h"
+#endif
 #include "bufferorch.h"
 #include "qosorch.h"
 #define protected public
@@ -39,10 +42,12 @@
 #include "stporch.h"
 #undef private 
 #include "directory.h"
+#ifdef INCLUDE_DASH
 #include "dashvnetorch.h"
 #include "dashhaorch.h"
 #include "dashtunnelorch.h"
 #include "dashportmaporch.h"
+#endif
 
 extern int gBatchSize;
 
@@ -56,7 +61,9 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+#ifdef INCLUDE_DEBUG_COUNTER
 extern DebugCounterOrch *gDebugCounterOrch;
+#endif
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
@@ -74,8 +81,12 @@ extern BfdOrch *gBfdOrch;
 extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+#ifdef INCLUDE_STP
 extern StpOrch *gStpOrch;
+#endif
+#ifdef INCLUDE_MLAG
 extern MlagOrch *gMlagOrch;
+#endif
 extern HFTelOrch *gHFTOrch;
 extern Directory<Orch*> gDirectory;
 
@@ -109,11 +120,12 @@ extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_twamp_api_t* sai_twamp_api;
 extern sai_tam_api_t* sai_tam_api;
+extern sai_stp_api_t* sai_stp_api;
+#ifdef INCLUDE_DASH
 extern sai_dash_vip_api_t* sai_dash_vip_api;
 extern sai_dash_direction_lookup_api_t* sai_dash_direction_lookup_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_dash_ha_api_t* sai_dash_ha_api;
-extern sai_stp_api_t* sai_stp_api;
 extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_dash_vnet_api_t* sai_dash_vnet_api;
@@ -124,3 +136,4 @@ extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
 extern sai_dash_outbound_port_map_api_t* sai_dash_outbound_port_map_api;
 extern sai_dash_trusted_vni_api_t* sai_dash_trusted_vni_api;
+#endif

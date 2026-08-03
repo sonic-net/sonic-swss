@@ -19,6 +19,15 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Unchecked getPort() lint (UPSW-7294)
+        run: python3 .github/scripts/lint_unchecked_getport.py
+
   swss-build-test:
     uses: ./.github/workflows/swss-tests-common.yml
     with:
@@ -35,14 +44,14 @@ jobs:
       pull-requests: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           sparse-checkout: .github/actions/sticky-gate-comment
           sparse-checkout-cone-mode: false
 
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         continue-on-error: true
         with:
           pattern: swss-coverage-*
@@ -64,7 +73,7 @@ jobs:
               "",
               "| Stage | Result |",
               "|-------|--------|",
-              f"| Build + mock tests + S3 baseline coverage gate + cargo (self-hosted) | {icon.get(result, result)} {result} |",
+              f"| Build (ai_fabric profile) + mock tests + coverage gate + cargo (self-hosted) | {icon.get(result, result)} {result} |",
               "",
           ]
 
@@ -76,7 +85,7 @@ jobs:
               lines += ["### Coverage gate", "", "```log", cov_log.read_text(errors="replace").strip(), "```", ""]
 
           lines += [
-              "_Runs on runner label `sonic-build-202511` with sonic-slave-bookworm and buildimage debs._",
+              "_Validates with `SONIC_BUILD_PROFILE=ai_fabric` flags on runner label `sonic-build-202511`._",
               "",
           ]
 

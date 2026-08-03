@@ -350,6 +350,25 @@ bool TamOrch::createSaiTamReport(const string &name,
     attr.value.s32 = type;
     attrs.push_back(attr);
 
+    /* Mellanox SAI requires REPORT_MODE and an explicit zero
+     * TEMPLATE_REPORT_INTERVAL for IPFIX reports. Without REPORT_MODE
+     * the parse step rejects with "IPFIX report type does not support
+     * given report mode [0]"; without the zero interval the apply step
+     * rejects with "Template report interval cannot be set to non-zero
+     * value". Match the proven HFT pattern (hftelprofile.cpp). */
+    if (type == SAI_TAM_REPORT_TYPE_IPFIX)
+    {
+        attr = sai_attribute_t{};
+        attr.id = SAI_TAM_REPORT_ATTR_REPORT_MODE;
+        attr.value.s32 = SAI_TAM_REPORT_MODE_BULK;
+        attrs.push_back(attr);
+
+        attr = sai_attribute_t{};
+        attr.id = SAI_TAM_REPORT_ATTR_TEMPLATE_REPORT_INTERVAL;
+        attr.value.u32 = 0;
+        attrs.push_back(attr);
+    }
+
     string s;
     if (getField(values, "ipfix_template_interval", s))
     {
@@ -387,6 +406,62 @@ bool TamOrch::createSaiTamReport(const string &name,
     return true;
 }
 
+bool TamOrch::updateSaiTamReport(const string &name,
+                                  sai_object_id_t oid,
+                                  const vector<FieldValueTuple> &values)
+{
+    bool any_updated = false;
+    string s;
+
+    if (getField(values, "ipfix_template_interval", s))
+    {
+        uint64_t v = 0;
+        if (parseUint(s, v))
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_REPORT_ATTR_TEMPLATE_REPORT_INTERVAL;
+            attr.value.u32 = static_cast<uint32_t>(v);
+            sai_status_t st = sai_tam_api->set_tam_report_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_REPORT '%s' updated template_interval=%u",
+                                name.c_str(), attr.value.u32);
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_REPORT '%s' set template_interval failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+    }
+
+    if (getField(values, "ipfix_enterprise_id", s))
+    {
+        uint64_t v = 0;
+        if (parseUint(s, v))
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_REPORT_ATTR_ENTERPRISE_NUMBER;
+            attr.value.u32 = static_cast<uint32_t>(v);
+            sai_status_t st = sai_tam_api->set_tam_report_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_REPORT '%s' updated enterprise_id=%u",
+                                name.c_str(), attr.value.u32);
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_REPORT '%s' set enterprise_id failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+    }
+
+    return any_updated;
+}
+
 task_process_status TamOrch::doTaskTamReport(const string &op,
                                              const string &name,
                                              const vector<FieldValueTuple> &values)
@@ -396,13 +471,41 @@ task_process_status TamOrch::doTaskTamReport(const string &op,
         auto it = m_reportMap.find(name);
         if (it != m_reportMap.end())
         {
-            /* TODO: support attribute updates. For v1, require delete+recreate. */
-            SWSS_LOG_WARN("TAM_REPORT '%s' already exists; updates not yet supported, "
-                          "delete and re-create to change attributes.", name.c_str());
+            updateSaiTamReport(name, it->second, values);
             return task_process_status::task_success;
         }
+
+        vector<FieldValueTuple> fullValues;
+        {
+            DBConnector cfgDb("CONFIG_DB", 0);
+            Table tbl(&cfgDb, TAM_REPORT_TABLE_NAME);
+            if (tbl.get(name, fullValues))
+            {
+                SWSS_LOG_INFO("TAM_REPORT '%s': read %zu fields from CONFIG_DB "
+                              "for initial create", name.c_str(), fullValues.size());
+            }
+            else
+            {
+                fullValues = values;
+            }
+        }
+
+        /* SAI_TAM_REPORT_ATTR_TYPE is CREATE_ONLY on Mellanox.
+         * Mellanox SAI rejects TAM_INT creation when its REPORT has
+         * TYPE=IPFIX ("TAM_REPORT type is not supported [1]").
+         * Defer creation until the type is vendor_extn so we never
+         * create a report that will be rejected later. */
+        string type_str;
+        if (getField(fullValues, "type", type_str) && type_str != "vendor_extn")
+        {
+            SWSS_LOG_INFO("TAM_REPORT '%s': type='%s' (not vendor_extn), "
+                          "deferring SAI creation",
+                          name.c_str(), type_str.c_str());
+            return task_process_status::task_need_retry;
+        }
+
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-        if (!createSaiTamReport(name, values, oid))
+        if (!createSaiTamReport(name, fullValues, oid))
         {
             return task_process_status::task_failed;
         }
@@ -681,6 +784,142 @@ bool TamOrch::createSaiTamInt(const string &name,
     return true;
 }
 
+bool TamOrch::updateSaiTamInt(const string &name,
+                              sai_object_id_t oid,
+                              const vector<FieldValueTuple> &values)
+{
+    bool any_updated = false;
+    string s;
+
+    if (getField(values, "device_id", s))
+    {
+        uint64_t v = 0;
+        if (parseUint(s, v))
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_INT_ATTR_DEVICE_ID;
+            attr.value.u32 = static_cast<uint32_t>(v);
+            sai_status_t st = sai_tam_api->set_tam_int_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_INT '%s' updated device_id=%u",
+                                name.c_str(), attr.value.u32);
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_INT '%s' set device_id failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+    }
+
+    if (getField(values, "report", s) && !s.empty())
+    {
+        auto r_it = m_reportMap.find(s);
+        if (r_it != m_reportMap.end() && r_it->second != SAI_NULL_OBJECT_ID)
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_INT_ATTR_REPORT_ID;
+            attr.value.oid = r_it->second;
+            sai_status_t st = sai_tam_api->set_tam_int_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_INT '%s' updated report='%s' OID=0x%" PRIx64,
+                                name.c_str(), s.c_str(), r_it->second);
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_INT '%s' set report_id failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+        else if (!m_reportMap.count(s))
+        {
+            SWSS_LOG_INFO("TAM_INT '%s' update: report '%s' not yet ready",
+                          name.c_str(), s.c_str());
+        }
+    }
+
+    if (getField(values, "inline", s))
+    {
+        bool b = true;
+        if (parseBool(s, b))
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_INT_ATTR_INLINE;
+            attr.value.booldata = b;
+            sai_status_t st = sai_tam_api->set_tam_int_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_INT '%s' updated inline=%s",
+                                name.c_str(), b ? "true" : "false");
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_INT '%s' set inline failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+    }
+
+    auto setOptionalU32 = [&](const char *field, sai_attr_id_t attr_id,
+                              auto converter) -> void
+    {
+        string val;
+        if (!getField(values, field, val)) return;
+        uint64_t v = 0;
+        if (!parseUint(val, v)) return;
+        sai_attribute_t attr{};
+        attr.id = attr_id;
+        converter(attr, v);
+        sai_status_t st = sai_tam_api->set_tam_int_attribute(oid, &attr);
+        if (st == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("TAM_INT '%s' updated %s=%" PRIu64,
+                            name.c_str(), field, v);
+            any_updated = true;
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM_INT '%s' set %s failed rc=%d",
+                          name.c_str(), field, st);
+        }
+    };
+
+    setOptionalU32("max_hop_count", SAI_TAM_INT_ATTR_MAX_HOP_COUNT,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u8 = static_cast<uint8_t>(v); });
+    setOptionalU32("flow_liveness_period", SAI_TAM_INT_ATTR_FLOW_LIVENESS_PERIOD,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u16 = static_cast<uint16_t>(v); });
+
+    if (getField(values, "report_all_packets", s))
+    {
+        bool b = false;
+        if (parseBool(s, b))
+        {
+            sai_attribute_t attr{};
+            attr.id = SAI_TAM_INT_ATTR_REPORT_ALL_PACKETS;
+            attr.value.booldata = b;
+            sai_status_t st = sai_tam_api->set_tam_int_attribute(oid, &attr);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("TAM_INT '%s' updated report_all_packets=%s",
+                                name.c_str(), b ? "true" : "false");
+                any_updated = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("TAM_INT '%s' set report_all_packets failed rc=%d",
+                              name.c_str(), st);
+            }
+        }
+    }
+
+    return any_updated;
+}
+
 task_process_status TamOrch::doTaskTamInt(const string &op,
                                           const string &name,
                                           const vector<FieldValueTuple> &values)
@@ -689,22 +928,81 @@ task_process_status TamOrch::doTaskTamInt(const string &op,
     {
         if (m_intMap.count(name))
         {
-            SWSS_LOG_WARN("TAM_INT '%s' already exists; updates not yet supported.",
-                          name.c_str());
+            updateSaiTamInt(name, m_intMap[name], values);
             return task_process_status::task_success;
         }
-        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-        if (!createSaiTamInt(name, values, oid))
+
+        /* Read the full CONFIG_DB row so CREATE_ONLY attributes (e.g.
+         * device_id) set by later CLI commands are included in the
+         * initial create_tam_int call. */
+        vector<FieldValueTuple> fullValues;
         {
-            string report;
-            if (getField(values, "report", report) && !report.empty()
-                && !m_reportMap.count(report))
+            DBConnector cfgDb("CONFIG_DB", 0);
+            Table tbl(&cfgDb, TAM_INT_TABLE_NAME);
+            if (tbl.get(name, fullValues))
+            {
+                SWSS_LOG_INFO("TAM_INT '%s': read %zu fields from CONFIG_DB "
+                              "for initial create", name.c_str(), fullValues.size());
+            }
+            else
+            {
+                fullValues = values;
+            }
+        }
+
+        /* Defer SAI creation until the 'report' field is present.
+         * REPORT_ID is CREATE_ONLY in Mellanox SAI and required for
+         * IFAv2 to function.  Waiting for 'report' also gives time
+         * for other CREATE_ONLY fields (device_id) to land in
+         * CONFIG_DB from subsequent CLI commands. */
+        string report;
+        if (!getField(fullValues, "report", report) || report.empty())
+        {
+            SWSS_LOG_INFO("TAM_INT '%s': 'report' not yet set, deferring "
+                          "SAI creation until all fields are present",
+                          name.c_str());
+            return task_process_status::task_need_retry;
+        }
+
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        if (!createSaiTamInt(name, fullValues, oid))
+        {
+            if (!m_reportMap.count(report))
             {
                 return task_process_status::task_need_retry;
             }
             return task_process_status::task_failed;
         }
         m_intMap[name] = oid;
+
+        /* TAM_INT is now created. If a TAM entry already references
+         * this INT (doTaskTam may have run first due to consumer
+         * ordering), create the ACL now. */
+        if (m_tamIntAclTableId == SAI_NULL_OBJECT_ID)
+        {
+            for (const auto &kv : m_tamMap)
+            {
+                DBConnector cfgDb("CONFIG_DB", 0);
+                Table tbl(&cfgDb, TAM_TABLE_NAME);
+                vector<FieldValueTuple> tamValues;
+                if (!tbl.get(kv.first, tamValues)) continue;
+                string int_objs;
+                if (!getField(tamValues, "int_objects", int_objs)) continue;
+                for (const auto &ref : parseList(int_objs))
+                {
+                    if (ref == name)
+                    {
+                        SWSS_LOG_NOTICE("TAM_INT '%s' created — triggering "
+                                        "deferred ACL creation for TAM '%s'",
+                                        name.c_str(), kv.first.c_str());
+                        createTamIntAcl(oid);
+                        break;
+                    }
+                }
+                if (m_tamIntAclTableId != SAI_NULL_OBJECT_ID) break;
+            }
+        }
+
         return task_process_status::task_success;
     }
     if (op == DEL_COMMAND)
@@ -848,6 +1146,30 @@ task_process_status TamOrch::doTaskTam(const string &op,
     {
         if (m_tamMap.count(name))
         {
+            /* On update (e.g. int_objects added after initial create),
+             * try to create the ACL if it hasn't been created yet. */
+            if (m_tamIntAclTableId == SAI_NULL_OBJECT_ID)
+            {
+                vector<FieldValueTuple> fullTamValues;
+                {
+                    DBConnector cfgDb("CONFIG_DB", 0);
+                    Table tbl(&cfgDb, TAM_TABLE_NAME);
+                    tbl.get(name, fullTamValues);
+                }
+                string int_objs;
+                if (getField(fullTamValues, "int_objects", int_objs) && !int_objs.empty())
+                {
+                    auto refs = parseList(int_objs);
+                    if (!refs.empty())
+                    {
+                        auto it = m_intMap.find(refs[0]);
+                        if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
+                        {
+                            createTamIntAcl(it->second);
+                        }
+                    }
+                }
+            }
             if (m_portBindingPending)
             {
                 retryTamIntAclPortBinding();

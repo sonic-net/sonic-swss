@@ -707,6 +707,32 @@ namespace flexcounter_test
         sai_object_id_t pool_oid;
         pool_oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME])["ingress_lossless_pool"].m_saiObjectId;
         ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, pool_oid, BUFFER_POOL_COUNTER_ID_LIST));
+
+        // UPSW-6932: Verify that a buffer pool created AFTER the initial flex
+        // counter registration is still registered for watermark polling.
+        {
+            std::deque<KeyOpFieldsValuesTuple> latePoolEntries;
+            latePoolEntries.push_back({"ingress_lossy_pool", "SET",
+                                       {{"type", "ingress"}, {"mode", "dynamic"}, {"size", "2100000"}}});
+            auto poolConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
+            poolConsumer->addToSync(latePoolEntries);
+            static_cast<Orch *>(gBufferOrch)->doTask();
+
+            auto latePoolIt = BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]->find("ingress_lossy_pool");
+            ASSERT_NE(latePoolIt, BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]->end());
+            sai_object_id_t late_pool_oid = latePoolIt->second.m_saiObjectId;
+            ASSERT_NE(late_pool_oid, SAI_NULL_OBJECT_ID);
+            ASSERT_TRUE(checkFlexCounter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                         late_pool_oid,
+                                         {
+                                             {BUFFER_POOL_COUNTER_ID_LIST,
+                                              "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,"
+                                              "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES"
+                                             }
+                                         }))
+                << "Late-created buffer pool must be registered for watermark polling (UPSW-6932)";
+        }
+
         Port firstPort;
         gPortsOrch->getPort(firstPortName, firstPort);
         auto pgOid = firstPort.m_priority_group_ids[3];
@@ -1070,6 +1096,7 @@ namespace flexcounter_test
         }
     };
 
+#ifdef INCLUDE_DASH
     TEST_F(StandaloneFCTest, TestEniStatusUpdate)
     {
         /* Add a mock ENI */
@@ -1086,6 +1113,7 @@ namespace flexcounter_test
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
     }
+#endif
 
     TEST_F(StandaloneFCTest, TestCaching)
     {
@@ -1179,6 +1207,7 @@ namespace flexcounter_test
                                      }));
     }
 
+#ifdef INCLUDE_DASH
     class MeterStatFlexCounterTest : public MockOrchTest
     {
         virtual void PostSetUp() {
@@ -1206,4 +1235,5 @@ namespace flexcounter_test
         m_DashMeterOrch->handleMeterFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
+#endif
 }

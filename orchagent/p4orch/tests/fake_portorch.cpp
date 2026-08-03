@@ -642,6 +642,20 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 {
 }
 
+bool PortsOrch::getPortFullDuplexMode(const Port &port, bool &full_duplex) const
+{
+    full_duplex = true;
+    return true;
+}
+
+void PortsOrch::updateDbPortDuplex(Port &port, bool full_duplex)
+{
+}
+
+void PortsOrch::refreshPortDuplex(Port &port)
+{
+}
+
 void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
 {
 }

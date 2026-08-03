@@ -46,6 +46,46 @@ namespace qosorch_test
         sai_uint32_t red_max_drop_probability;
     } qos_wred_max_drop_probability_t;
 
+    /*
+     * Custom Mellanox WRED attrs for relative thresholds (UT_* mirror saiwredcustom.h).
+     */
+    static const sai_attr_id_t UT_WRED_ATTR_THRESHOLD_MODE                   = 0x10000000;
+    static const sai_attr_id_t UT_WRED_ATTR_GREEN_MIN_THRESHOLD_REL          = 0x10000001;
+    static const sai_attr_id_t UT_WRED_ATTR_GREEN_MAX_THRESHOLD_REL          = 0x10000002;
+    static const sai_attr_id_t UT_WRED_ATTR_YELLOW_MIN_THRESHOLD_REL         = 0x10000003;
+    static const sai_attr_id_t UT_WRED_ATTR_YELLOW_MAX_THRESHOLD_REL         = 0x10000004;
+    static const sai_attr_id_t UT_WRED_ATTR_RED_MIN_THRESHOLD_REL            = 0x10000005;
+    static const sai_attr_id_t UT_WRED_ATTR_RED_MAX_THRESHOLD_REL            = 0x10000006;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD_REL      = 0x10000007;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD_REL      = 0x10000008;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD_REL     = 0x10000009;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD_REL     = 0x1000000a;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_RED_MIN_THRESHOLD_REL        = 0x1000000b;
+    static const sai_attr_id_t UT_WRED_ATTR_ECN_RED_MAX_THRESHOLD_REL        = 0x1000000c;
+
+    static const int32_t UT_WRED_THRESHOLD_MODE_ABSOLUTE = 0;
+    static const int32_t UT_WRED_THRESHOLD_MODE_RELATIVE = 1;
+
+    typedef struct
+    {
+        int32_t  threshold_mode;
+        uint8_t  green_min_pct;
+        uint8_t  green_max_pct;
+        uint8_t  yellow_min_pct;
+        uint8_t  yellow_max_pct;
+        uint8_t  red_min_pct;
+        uint8_t  red_max_pct;
+        uint8_t  ecn_green_min_pct;
+        uint8_t  ecn_green_max_pct;
+        uint8_t  ecn_yellow_min_pct;
+        uint8_t  ecn_yellow_max_pct;
+        uint8_t  ecn_red_min_pct;
+        uint8_t  ecn_red_max_pct;
+    } qos_wred_relative_thresholds_t;
+
+    bool testing_wred_relative;
+    qos_wred_relative_thresholds_t saiRelativeThresholds;
+
     sai_status_t _ut_stub_sai_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
     {
         auto rc = old_set_switch_attribute_fn(switch_id, attr);
@@ -110,6 +150,36 @@ namespace qosorch_test
         default:
             break;
         }
+
+        if (testing_wred_relative)
+        {
+            if (attr.id == UT_WRED_ATTR_THRESHOLD_MODE)
+                saiRelativeThresholds.threshold_mode = attr.value.s32;
+            else if (attr.id == UT_WRED_ATTR_GREEN_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.green_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_GREEN_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.green_max_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_YELLOW_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.yellow_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_YELLOW_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.yellow_max_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_RED_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.red_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_RED_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.red_max_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_green_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_green_max_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_yellow_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_yellow_max_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_RED_MIN_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_red_min_pct = attr.value.u8;
+            else if (attr.id == UT_WRED_ATTR_ECN_RED_MAX_THRESHOLD_REL)
+                saiRelativeThresholds.ecn_red_max_pct = attr.value.u8;
+        }
     }
 
     void checkWredProfileEqual(const string &name, WredMapHandler::qos_wred_thresholds_t &thresholds)
@@ -168,13 +238,50 @@ namespace qosorch_test
         ASSERT_EQ(saiMaxDropProbabilities.red_max_drop_probability, maxDropProbabilities.red_max_drop_probability);
     }
 
+    static bool _ut_is_custom_wred_attr(sai_attr_id_t id)
+    {
+        return id >= UT_WRED_ATTR_THRESHOLD_MODE && id <= UT_WRED_ATTR_ECN_RED_MAX_THRESHOLD_REL;
+    }
+
     sai_status_t _ut_stub_sai_create_wred(
         _Out_ sai_object_id_t *wred_id,
         _In_ sai_object_id_t switch_id,
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
-        auto rc = old_create_wred(wred_id, switch_id, attr_count, attr_list);
+        /*
+         * VS doesn't understand the custom 0x10000000-range attrs.
+         * Filter them out before forwarding to the real VS create, but
+         * still capture all attrs (including custom) in our checker.
+         */
+        bool has_custom = false;
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            if (_ut_is_custom_wred_attr(attr_list[i].id))
+            {
+                has_custom = true;
+                break;
+            }
+        }
+
+        sai_status_t rc;
+        if (has_custom)
+        {
+            vector<sai_attribute_t> filtered;
+            for (uint32_t i = 0; i < attr_count; i++)
+            {
+                if (!_ut_is_custom_wred_attr(attr_list[i].id))
+                    filtered.push_back(attr_list[i]);
+            }
+            rc = old_create_wred(wred_id, switch_id,
+                                 static_cast<uint32_t>(filtered.size()),
+                                 filtered.empty() ? nullptr : filtered.data());
+        }
+        else
+        {
+            rc = old_create_wred(wred_id, switch_id, attr_count, attr_list);
+        }
+
         if (rc == SAI_STATUS_SUCCESS)
         {
             for (uint32_t i = 0; i < attr_count; i++)
@@ -197,10 +304,19 @@ namespace qosorch_test
         _In_ sai_object_id_t wred_id,
         _In_ const sai_attribute_t *attr)
     {
-        auto rc = old_set_wred_attribute(wred_id, attr);
-        if (rc == SAI_STATUS_SUCCESS)
+        sai_status_t rc;
+        if (_ut_is_custom_wred_attr(attr->id) || testing_wred_relative)
         {
             _ut_stub_sai_check_wred_attributes(*attr);
+            rc = SAI_STATUS_SUCCESS;
+        }
+        else
+        {
+            rc = old_set_wred_attribute(wred_id, attr);
+            if (rc == SAI_STATUS_SUCCESS)
+            {
+                _ut_stub_sai_check_wred_attributes(*attr);
+            }
         }
         sai_set_wred_attribute_count++;
         return rc;
@@ -881,6 +997,51 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         ASSERT_EQ(++current_sai_remove_wred_profile_count, sai_remove_wred_profile_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS_1"), 0);
+    }
+
+    /*
+     * UPSW-7238: Verify that a standalone WRED profile (never bound to any
+     * QUEUE) can be created and deleted, with the SAI remove_wred call
+     * actually invoked and the type-map entry fully cleaned up.
+     */
+    TEST_F(QosOrchTest, QosOrchTestStandaloneWredProfileCreateDelete)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        auto wredProfileConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+
+        auto baseline_sai_remove = sai_remove_wred_profile_count;
+
+        // Create a standalone WRED profile — no QUEUE binding
+        entries.push_back({"STANDALONE_WRED", "SET",
+                           {
+                               {"ecn", "ecn_all"},
+                               {"green_drop_probability", "5"},
+                               {"green_max_threshold", "2097152"},
+                               {"green_min_threshold", "1048576"},
+                               {"wred_green_enable", "true"}
+                           }});
+        wredProfileConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // Verify SAI object was created
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 1);
+        auto sai_oid = (*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME])["STANDALONE_WRED"].m_saiObjectId;
+        ASSERT_NE(sai_oid, SAI_NULL_OBJECT_ID);
+        // Threshold cache must be populated after create
+        ASSERT_EQ(WredMapHandler::m_wredProfiles.count("STANDALONE_WRED"), 1);
+
+        // Delete the standalone profile
+        RemoveItem(CFG_WRED_PROFILE_TABLE_NAME, "STANDALONE_WRED");
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // SAI remove_wred must have been called
+        ASSERT_EQ(baseline_sai_remove + 1, sai_remove_wred_profile_count);
+        // Type-map entry must be gone
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("STANDALONE_WRED"), 0);
+        // Stored thresholds must be cleaned up (m_wredProfiles is private;
+        // the #define private public at the top of this file makes it accessible)
+        ASSERT_EQ(WredMapHandler::m_wredProfiles.count("STANDALONE_WRED"), 0);
     }
 
     TEST_F(QosOrchTest, QosOrchTestPortQosMapReplaceOneFieldAndRemoveObject)
@@ -1734,5 +1895,198 @@ namespace qosorch_test
 
         static_cast<Orch *>(gQosOrch)->doTask();
         // -1 is out of [0-7]; should log error and continue, not crash
+    }
+
+    /*
+     * WRED relative threshold: create a profile with threshold_mode=relative
+     * and green pct fields.  Verify orchagent maps CONFIG_DB fields to the
+     * correct custom SAI attribute IDs and values.
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredRelativeCreate)
+    {
+        testing_wred_thresholds = true;
+        testing_wred_relative = true;
+        memset(&saiRelativeThresholds, 0, sizeof(saiRelativeThresholds));
+        saiRelativeThresholds.threshold_mode = -1;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"REL_GREEN", "SET",
+                           {
+                               {"threshold_mode", "relative"},
+                               {"ecn", "ecn_all"},
+                               {"wred_green_enable", "true"},
+                               {"green_min_threshold_pct", "10"},
+                               {"green_max_threshold_pct", "80"},
+                               {"green_drop_probability", "5"},
+                               {"ecn_green_min_threshold_pct", "10"},
+                               {"ecn_green_max_threshold_pct", "80"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_EQ(saiRelativeThresholds.threshold_mode, UT_WRED_THRESHOLD_MODE_RELATIVE);
+        ASSERT_EQ(saiRelativeThresholds.green_min_pct, 10);
+        ASSERT_EQ(saiRelativeThresholds.green_max_pct, 80);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_min_pct, 10);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_max_pct, 80);
+
+        testing_wred_relative = false;
+        testing_wred_thresholds = false;
+    }
+
+    /*
+     * WRED relative threshold: all three colors with WRED + ECN pct fields.
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredRelativeAllColors)
+    {
+        testing_wred_thresholds = true;
+        testing_wred_relative = true;
+        memset(&saiRelativeThresholds, 0, sizeof(saiRelativeThresholds));
+        saiRelativeThresholds.threshold_mode = -1;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"REL_ALL", "SET",
+                           {
+                               {"threshold_mode", "relative"},
+                               {"ecn", "ecn_all"},
+                               {"wred_green_enable", "true"},
+                               {"green_min_threshold_pct", "5"},
+                               {"green_max_threshold_pct", "50"},
+                               {"green_drop_probability", "10"},
+                               {"ecn_green_min_threshold_pct", "5"},
+                               {"ecn_green_max_threshold_pct", "50"},
+                               {"wred_yellow_enable", "true"},
+                               {"yellow_min_threshold_pct", "15"},
+                               {"yellow_max_threshold_pct", "60"},
+                               {"yellow_drop_probability", "20"},
+                               {"ecn_yellow_min_threshold_pct", "15"},
+                               {"ecn_yellow_max_threshold_pct", "60"},
+                               {"wred_red_enable", "true"},
+                               {"red_min_threshold_pct", "25"},
+                               {"red_max_threshold_pct", "70"},
+                               {"red_drop_probability", "30"},
+                               {"ecn_red_min_threshold_pct", "25"},
+                               {"ecn_red_max_threshold_pct", "70"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_EQ(saiRelativeThresholds.threshold_mode, UT_WRED_THRESHOLD_MODE_RELATIVE);
+
+        ASSERT_EQ(saiRelativeThresholds.green_min_pct, 5);
+        ASSERT_EQ(saiRelativeThresholds.green_max_pct, 50);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_min_pct, 5);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_max_pct, 50);
+
+        ASSERT_EQ(saiRelativeThresholds.yellow_min_pct, 15);
+        ASSERT_EQ(saiRelativeThresholds.yellow_max_pct, 60);
+        ASSERT_EQ(saiRelativeThresholds.ecn_yellow_min_pct, 15);
+        ASSERT_EQ(saiRelativeThresholds.ecn_yellow_max_pct, 60);
+
+        ASSERT_EQ(saiRelativeThresholds.red_min_pct, 25);
+        ASSERT_EQ(saiRelativeThresholds.red_max_pct, 70);
+        ASSERT_EQ(saiRelativeThresholds.ecn_red_min_pct, 25);
+        ASSERT_EQ(saiRelativeThresholds.ecn_red_max_pct, 70);
+
+        testing_wred_relative = false;
+        testing_wred_thresholds = false;
+    }
+
+    /*
+     * WRED threshold_mode=absolute: explicit absolute mode still maps to
+     * SAI_WRED_THRESHOLD_MODE_ABSOLUTE (0).
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredAbsoluteMode)
+    {
+        testing_wred_thresholds = true;
+        testing_wred_relative = true;
+        memset(&saiRelativeThresholds, 0, sizeof(saiRelativeThresholds));
+        saiRelativeThresholds.threshold_mode = -1;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"ABS_MODE", "SET",
+                           {
+                               {"threshold_mode", "absolute"},
+                               {"ecn", "ecn_all"},
+                               {"wred_green_enable", "true"},
+                               {"green_min_threshold", "1048576"},
+                               {"green_max_threshold", "2097152"},
+                               {"green_drop_probability", "5"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_EQ(saiRelativeThresholds.threshold_mode, UT_WRED_THRESHOLD_MODE_ABSOLUTE);
+
+        testing_wred_relative = false;
+        testing_wred_thresholds = false;
+    }
+
+    /*
+     * WRED relative threshold update: create a relative profile, then SET
+     * updated pct values.  Verify the set_wred_attribute stub is called with
+     * the new values.
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredRelativeUpdate)
+    {
+        testing_wred_thresholds = true;
+        testing_wred_relative = true;
+        memset(&saiRelativeThresholds, 0, sizeof(saiRelativeThresholds));
+        saiRelativeThresholds.threshold_mode = -1;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"REL_UPD", "SET",
+                           {
+                               {"threshold_mode", "relative"},
+                               {"ecn", "ecn_all"},
+                               {"wred_green_enable", "true"},
+                               {"green_min_threshold_pct", "10"},
+                               {"green_max_threshold_pct", "50"},
+                               {"green_drop_probability", "5"},
+                               {"ecn_green_min_threshold_pct", "10"},
+                               {"ecn_green_max_threshold_pct", "50"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_EQ(saiRelativeThresholds.green_min_pct, 10);
+        ASSERT_EQ(saiRelativeThresholds.green_max_pct, 50);
+
+        auto prev_set_count = sai_set_wred_attribute_count;
+
+        entries.push_back({"REL_UPD", "SET",
+                           {
+                               {"threshold_mode", "relative"},
+                               {"ecn", "ecn_all"},
+                               {"wred_green_enable", "true"},
+                               {"green_min_threshold_pct", "20"},
+                               {"green_max_threshold_pct", "90"},
+                               {"green_drop_probability", "15"},
+                               {"ecn_green_min_threshold_pct", "20"},
+                               {"ecn_green_max_threshold_pct", "90"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_GT(sai_set_wred_attribute_count, prev_set_count);
+        ASSERT_EQ(saiRelativeThresholds.green_min_pct, 20);
+        ASSERT_EQ(saiRelativeThresholds.green_max_pct, 90);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_min_pct, 20);
+        ASSERT_EQ(saiRelativeThresholds.ecn_green_max_pct, 90);
+
+        testing_wred_relative = false;
+        testing_wred_thresholds = false;
     }
 }

@@ -107,6 +107,7 @@ private:
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
+    void doSwitchForwardingModeTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
@@ -154,11 +155,12 @@ private:
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
     swss::Table m_appSwitchTbl;
+    std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
+    swss::Table m_stateForwardingModeTable;
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
 
     // ASIC temperature sensors
-    std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
     std::shared_ptr<swss::Table> m_asicSensorsTable= nullptr;
     swss::SelectableTimer* m_sensorsPollerTimer = nullptr;
     bool m_sensorsPollerEnabled = false;

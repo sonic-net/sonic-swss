@@ -8,6 +8,7 @@
 #include "sai.h"
 #include "macaddress.h"
 #include "orch.h"
+#include "routeorch.h"
 #include "request_parser.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
@@ -22,6 +23,7 @@ extern sai_object_id_t gSwitchId;
 
 extern Directory<Orch*>      gDirectory;
 extern PortsOrch*            gPortsOrch;
+extern RouteOrch*            gRouteOrch;
 extern FlowCounterRouteOrch* gFlowCounterRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
@@ -108,6 +110,12 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
         gFlowCounterRouteOrch->onAddVR(router_id);
+
+        IpPrefix default_link_local_prefix("fe80::/10");
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu for VRF '%s'",
+                        default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
+
         if (vni != 0)
         {
             SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
@@ -131,6 +139,13 @@ bool VRFOrch::addOperation(const Request& request)
             sai_status_t status = sai_virtual_router_api->set_virtual_router_attribute(router_id, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
+                if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                {
+                    SWSS_LOG_NOTICE("Skipping unsupported virtual router attribute %d for VRF %s",
+                                    attr.id, vrf_name.c_str());
+                    continue;
+                }
                 SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
                 task_process_status handle_status = handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
                 if (handle_status != task_success)
@@ -170,6 +185,10 @@ bool VRFOrch::delOperation(const Request& request)
         return false;
 
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
+    // Delete link-local routes before removing VRF
+    IpPrefix default_link_local_prefix("fe80::/10");
+    gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
+
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {

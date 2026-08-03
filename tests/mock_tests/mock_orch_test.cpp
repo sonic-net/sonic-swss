@@ -257,6 +257,7 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gMirrorOrch);
     global_orch_list.insert((Orch **)&gMirrorOrch);
 
+#ifdef INCLUDE_DASH
     vector<string> dash_tables = {
         APP_DASH_APPLIANCE_TABLE_NAME,
         APP_DASH_ROUTING_TYPE_TABLE_NAME,
@@ -277,6 +278,7 @@ void MockOrchTest::SetUp()
     m_DashMeterOrch = new DashMeterOrch(m_app_db.get(), dash_meter_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashMeterOrch);
     ut_orch_list.push_back((Orch **)&m_DashMeterOrch);
+#endif
 
     TableConnector confDbAclTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -319,6 +321,7 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_vnetOrch);
     ut_orch_list.push_back((Orch **)&m_vnetOrch);
 
+#ifdef INCLUDE_DASH
     vector<string> dash_vnet_tables = {
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
@@ -352,6 +355,7 @@ void MockOrchTest::SetUp()
     m_dashPortMapOrch = new DashPortMapOrch(m_app_db.get(), dash_port_map_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_dashPortMapOrch);
     ut_orch_list.push_back((Orch **)&m_dashPortMapOrch);
+#endif
 
     ApplyInitialConfigs();
     PostSetUp();

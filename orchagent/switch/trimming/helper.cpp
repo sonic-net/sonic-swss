@@ -80,6 +80,18 @@ bool SwitchTrimmingHelper::parseTrimSize(SwitchTrimming &cfg, const std::string 
         return false;
     }
 
+    if (cfg.size.value < 256)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): trim size must be at least 256 bytes (got %u)", field.c_str(), cfg.size.value);
+        return false;
+    }
+
+    if (cfg.size.value % 4 != 0)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): trim size must be 4-byte aligned (got %u)", field.c_str(), cfg.size.value);
+        return false;
+    }
+
     return true;
 }
 

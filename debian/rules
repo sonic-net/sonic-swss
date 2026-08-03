@@ -36,8 +36,25 @@ ifeq ($(ENABLE_GCOV), y)
 	configure_opts += --enable-gcov --enable-code-coverage CFLAGS="-g -O0" CXXFLAGS="-g -O0"
 endif
 
+ifeq ($(SONIC_BUILD_PROFILE), ai_fabric)
+	configure_opts += --disable-p4rt --disable-dash --disable-nat --disable-macsec
+	configure_opts += --disable-dtel --disable-stp
+	configure_opts += --disable-mlag --disable-gearsyncd --disable-chassis
+	configure_opts += --disable-pbh --disable-nvgre --disable-twamp --disable-icmp-offload
+	configure_opts += --disable-cbf --disable-mpls
+	configure_opts += --disable-debug-counter --disable-multi-asic-vendor
+	configure_opts += --disable-tests
+endif
+
 override_dh_auto_configure:
 	dh_auto_configure -- $(configure_opts)
+
+override_dh_auto_test:
+ifeq ($(SONIC_BUILD_PROFILE), ai_fabric)
+	@echo "Skipping tests for ai_fabric profile"
+else
+	dh_auto_test
+endif
 
 override_dh_auto_build:
 	dh_auto_build -- V=0

@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <unordered_map>
 
 #include <select.h>
@@ -10,19 +13,29 @@
 
 #include "bufferorch.h"
 #include "copporch.h"
+#ifdef INCLUDE_MACSEC
 #include "macsecorch.h"
+#endif
 #include "portsorch.h"
 #include "intfsorch.h"
 #include "pfcwdorch.h"
 #include "routeorch.h"
+#ifdef INCLUDE_SRV6
 #include "srv6orch.h"
+#endif
 #include "switchorch.h"
+#ifdef INCLUDE_DEBUG_COUNTER
 #include "debugcounterorch.h"
+#endif
+#ifdef INCLUDE_CHASSIS
 #include "fabricportsorch.h"
+#endif
 #include "vxlanorch.h"
 
+#ifdef INCLUDE_DASH
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
+#endif
 #include "flex_counter/flowcounterrouteorch.h"
 
 #include "flexcounterorch.h"
@@ -31,13 +44,17 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+#ifdef INCLUDE_CHASSIS
 extern FabricPortsOrch *gFabricPortsOrch;
+#endif
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+#ifdef INCLUDE_SRV6
 extern Srv6Orch *gSrv6Orch;
+#endif
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 extern string gMySwitchType;
@@ -71,7 +88,9 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_PHY_SERDES_ATTR", PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_DEBUG_COUNTER
     {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
+#endif
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
@@ -81,19 +100,27 @@ unordered_map<string, string> flexCounterGroupMap =
     {BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_DEBUG_COUNTER
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+#endif
     {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_MACSEC
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
+#endif
+#ifdef INCLUDE_DASH
     {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"DASH_METER", METER_STAT_COUNTER_FLEX_COUNTER_GROUP},
+#endif
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+#ifdef INCLUDE_SRV6
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
+#endif
     {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
@@ -158,17 +185,21 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     }
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+#ifdef INCLUDE_DASH
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
     DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+#endif
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
     }
 
+#ifdef INCLUDE_CHASSIS
     if (gFabricPortsOrch && !gFabricPortsOrch->allPortsReady())
     {
         return;
     }
+#endif
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -287,14 +318,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
                     }
+#ifdef INCLUDE_CHASSIS
                     if (gFabricPortsOrch)
                     {
                         gFabricPortsOrch->generateQueueStats();
                     }
+#endif
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();
                     }
+#ifdef INCLUDE_DASH
                     if (dash_orch && (key == ENI_KEY))
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
@@ -303,6 +337,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
+#endif
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
                         if (value == "enable")
@@ -329,10 +364,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_route_flow_counter_enabled = false;
                         }
                     }
+#ifdef INCLUDE_SRV6
                     if (gSrv6Orch && (key == SRV6_KEY))
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
+#endif
                     if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
                     {
                         if(value == "enable")
@@ -586,8 +623,8 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
                 }
 
                 Port port;
-                gPortsOrch->getPort(configPortName, port);
-                if (port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
+                if (gPortsOrch->getPort(configPortName, port) &&
+                    port.m_host_tx_queue_configured && port.m_host_tx_queue <= maxQueueIndex)
                 {
                     queuesStateVector.at(configPortName).enableQueueCounter(port.m_host_tx_queue);
                 }

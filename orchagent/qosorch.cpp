@@ -1,8 +1,12 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include "tokenize.h"
 #include "qosorch.h"
 #include "logger.h"
 #include "crmorch.h"
 #include "sai_serialize.h"
+#include "saiwredcustom.h"
 #include "cbf/nhgmaporch.h"
 
 #include <inttypes.h>
@@ -43,6 +47,11 @@ map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_yellow_red", SAI_ECN_MARK_MODE_YELLOW_RED},
     {"ecn_all", SAI_ECN_MARK_MODE_ALL}
 };
+
+/*
+ * Relative WRED attrs (SAI_WRED_ATTR_THRESHOLD_MODE, *_RELATIVE) are defined in
+ * saiwredcustom.h, installed via libsaimetadata-dev with saimetadata.h.
+ */
 
 enum {
     GREEN_DROP_PROBABILITY_SET  = (1U << 0),
@@ -779,6 +788,87 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attr.value.s32 = ecn_it->second;
             attribs.push_back(attr);
         }
+        else if (fvField(*i) == threshold_mode_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_THRESHOLD_MODE);
+            if (fvValue(*i) == threshold_mode_relative)
+                attr.value.s32 = SAI_WRED_THRESHOLD_MODE_RELATIVE;
+            else
+                attr.value.s32 = SAI_WRED_THRESHOLD_MODE_ABSOLUTE;
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == green_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_GREEN_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == green_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_GREEN_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == yellow_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == yellow_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == red_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_RED_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == red_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_RED_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_green_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_green_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_yellow_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_yellow_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_red_min_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == ecn_red_max_threshold_pct_field_name)
+        {
+            attr.id = static_cast<sai_attr_id_t>(SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD_RELATIVE);
+            attr.value.u8 = static_cast<uint8_t>(stoi(fvValue(*i)));
+            attribs.push_back(attr);
+        }
         else {
             SWSS_LOG_ERROR("Unknown wred profile field:%s", fvField(*i).c_str());
             return false;
@@ -812,6 +902,11 @@ bool WredMapHandler::modifyQosItem(sai_object_id_t sai_object, vector<sai_attrib
     sai_status_t sai_status;
     for (auto attr : attribs)
     {
+        if (attr.id == static_cast<sai_attr_id_t>(SAI_WRED_ATTR_THRESHOLD_MODE))
+        {
+            SWSS_LOG_NOTICE("Skipping SAI_WRED_ATTR_THRESHOLD_MODE on update; attribute is immutable after creation");
+            continue;
+        }
         sai_status = sai_wred_api->set_wred_attribute(sai_object, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -909,17 +1004,30 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     sai_status = sai_wred_api->remove_wred(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove scheduler profile, status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to remove WRED profile, status:%d", sai_status);
         return false;
     }
     return true;
+}
+
+void WredMapHandler::clearStoredProfile(const string &key)
+{
+    m_wredProfiles.erase(key);
 }
 
 task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     WredMapHandler wred_handler;
-    return wred_handler.processWorkItem(consumer, tuple);
+    string op = kfvOp(tuple);
+    auto result = wred_handler.processWorkItem(consumer, tuple);
+
+    if (op == DEL_COMMAND && result == task_process_status::task_success)
+    {
+        WredMapHandler::clearStoredProfile(kfvKey(tuple));
+    }
+
+    return result;
 }
 
 bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -1108,7 +1216,11 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
 {
     SWSS_LOG_ENTER();
 
+#ifdef INCLUDE_CBF
     sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
+#else
+    sai_uint8_t max_num_fcs = UINT8_MAX;
+#endif
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -1202,7 +1314,11 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
 {
     SWSS_LOG_ENTER();
 
+#ifdef INCLUDE_CBF
     sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
+#else
+    sai_uint8_t max_num_fcs = UINT8_MAX;
+#endif
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;

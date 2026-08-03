@@ -46,7 +46,15 @@ class VxlanEvpnHelper(object):
     def get_created_entries(self, db, table, existed_entries, count):
         tbl =  swsscommon.Table(db, table)
         entries = set(tbl.getKeys())
-        new_entries = list(entries - existed_entries)
+        baseline = set(existed_entries)
+        if db.getDbId() == swsscommon.ASIC_DB and table == "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY":
+            for k in entries:
+                try:
+                    if json.loads(k).get("dest") == "fe80::/10":
+                        baseline.add(k)
+                except (ValueError, TypeError):
+                    continue
+        new_entries = list(entries - baseline)
         assert len(new_entries) == count, "Wrong number of created entries."
         new_entries.sort()
         return new_entries

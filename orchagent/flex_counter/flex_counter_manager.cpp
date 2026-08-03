@@ -6,7 +6,9 @@
 #include "rediscommand.h"
 #include "logger.h"
 
+#ifdef INCLUDE_MACSEC
 #include <macsecorch.h>
+#endif
 
 using std::shared_ptr;
 using std::string;
@@ -44,9 +46,11 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::QUEUE,               QUEUE_COUNTER_ID_LIST },
     { CounterType::QUEUE_ATTR,          QUEUE_ATTR_ID_LIST },
     { CounterType::PRIORITY_GROUP,      PG_COUNTER_ID_LIST },
+#ifdef INCLUDE_MACSEC
     { CounterType::MACSEC_SA_ATTR,      MACSEC_SA_ATTR_ID_LIST },
     { CounterType::MACSEC_SA,           MACSEC_SA_COUNTER_ID_LIST },
     { CounterType::MACSEC_FLOW,         MACSEC_FLOW_COUNTER_ID_LIST },
+#endif
     { CounterType::ACL_COUNTER,         ACL_COUNTER_ATTR_ID_LIST },
     { CounterType::TUNNEL,              TUNNEL_COUNTER_ID_LIST },
     { CounterType::HOSTIF_TRAP,         FLOW_COUNTER_ID_LIST },

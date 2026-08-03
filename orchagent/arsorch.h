@@ -35,8 +35,8 @@ struct ArsProfileEntry
     uint32_t        quantizationType  = 0;
     uint32_t        profileLinkUtilThreshold = 0;
     uint32_t        profileIdleTime   = 0;
-    // Per-band congestion thresholds (in Mbps) that feed
-    // SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD.
+    // Per-band congestion thresholds (in bytes, since SAI v2511.36.0.0) that
+    // feed SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD.
     // Required for Mellanox SAI to program the SDK congestion threshold via
     // sx_api_ar_congestion_threshold_set — the gating check in
     // are_ars_profile_thresholds_configured() only returns true when at least
@@ -107,6 +107,7 @@ public:
             PortsOrch  *portsOrch);
 
     bool isArsEnabled() const { return m_arsEnabled; }
+    bool hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const;
     sai_object_id_t getArsProfileOid(const std::string &name) const;
     sai_object_id_t getArsObjectOid(const std::string &name) const;
     bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);
@@ -122,7 +123,13 @@ public:
 
     void update(SubjectType type, void *cntx) override;
 
+    bool portHasMultipleHwNeighbors(const std::string &portName) const;
+    bool isPortArsEnabled(const std::string &portName) const;
+
 private:
+    bool migratePort(const std::string &portName, bool enableArs);
+
+    void doTask() override;
     void doTask(Consumer &consumer) override;
 
     void doArsGlobalTask(Consumer &consumer);
@@ -148,11 +155,14 @@ private:
     bool setPortArsEnable(const std::string &portName, bool enable);
 
     // Orchestrated RIF migration: when setPortArsEnable fails because the
-    // port already has a RIF, this method tears down neighbors/NHs/RIF via
-    // proper orch coordination, enables ARS on the bare port, then rebuilds
+    // port already has a RIF, these methods tear down neighbors/NHs/RIF via
+    // proper orch coordination, set ARS on the bare port, then rebuild
     // the RIF and all dependent objects. Uses make-before-break for NHGs
     // to minimize forwarding disruption.
+    // migratePortToArs: enable ARS on a port with an existing (non-AR) RIF.
+    // migratePortFromArs: disable ARS on a port with an existing (AR) RIF.
     bool migratePortToArs(const std::string &portName);
+    bool migratePortFromArs(const std::string &portName);
 
     // Wholesale enable/disable of the ARS data-plane state. Called from the
     // global ARS|GLOBAL admin_state transitions so that a toggle to "down"

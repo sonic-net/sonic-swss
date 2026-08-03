@@ -54,6 +54,7 @@ namespace mock_orch_test
         FlexCounterOrch *m_FlexCounterOrch;
         VxlanTunnelOrch *m_VxlanTunnelOrch;
         VNetOrch *m_vnetOrch;
+#ifdef INCLUDE_DASH
         DashOrch *m_DashOrch;
         DashVnetOrch *m_dashVnetOrch;
         DashHaOrch *m_dashHaOrch;
@@ -61,6 +62,7 @@ namespace mock_orch_test
         DashTunnelOrch *m_DashTunnelOrch;
         DashPortMapOrch *m_dashPortMapOrch;
         DashMeterOrch *m_DashMeterOrch;
+#endif
 
         void PrepareSai();
         void SetUp();

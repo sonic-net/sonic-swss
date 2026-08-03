@@ -94,6 +94,7 @@ struct Portal
         }
     };
 
+#ifdef INCLUDE_SFLOW
     struct SflowOrchInternal
     {
         static bool getSflowStatusEnable(SflowOrch &obj)
@@ -111,6 +112,7 @@ struct Portal
             return obj.m_sflowPortInfoMap;
         }
     };
+#endif
 
     struct TwampOrchInternal
     {

@@ -1717,8 +1717,14 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         Port tunnelPort;
         auto port_tunnel_name = getTunnelPortName(remote_vtep);
         gPortsOrch->addTunnel(port_tunnel_name,dip_tunnel->getTunnelId(), false);
-        gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-        gPortsOrch->addBridgePort(tunnelPort);
+        if (gPortsOrch->getPort(port_tunnel_name,tunnelPort))
+        {
+            gPortsOrch->addBridgePort(tunnelPort);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get tunnel port %s after creation", port_tunnel_name.c_str());
+        }
     }
 
     return true;
@@ -1747,10 +1753,17 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     if (!isDipTunnelsSupported())
     {
         port_tunnel_name = getTunnelPortName(vtep_ptr->getSrcIP().to_string(), true);
-        gPortsOrch->getPort(port_tunnel_name,tunnelPort);
+        bool port_found = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
         vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
         if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
         {
+            if (!port_found)
+            {
+                // Same outcome as the removeBridgePort failure path below.
+                SWSS_LOG_WARN("Tunnel port %s not found, skipping bridge port removal",
+                        port_tunnel_name.c_str());
+                return true;
+            }
             ret = gPortsOrch->removeBridgePort(tunnelPort);
             if (!ret)
             {
@@ -1765,8 +1778,12 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     }
 
     port_tunnel_name = getTunnelPortName(remote_vtep);
-    gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-    if ((vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
+    if (!gPortsOrch->getPort(port_tunnel_name, tunnelPort))
+    {
+        SWSS_LOG_WARN("Tunnel port %s not found, skipping bridge port removal",
+                port_tunnel_name.c_str());
+    }
+    else if ((vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
        tunnelPort.m_fdb_count == 0)
     {
         ret = gPortsOrch->removeBridgePort(tunnelPort);
@@ -2080,8 +2097,14 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
             {
                 auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
                 gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
-                gPortsOrch->getPort(port_tunnel_name,tunPort);
-                gPortsOrch->addBridgePort(tunPort);
+                if (gPortsOrch->getPort(port_tunnel_name,tunPort))
+                {
+                    gPortsOrch->addBridgePort(tunPort);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to get tunnel port %s after creation", port_tunnel_name.c_str());
+                }
             }
         }
     }
@@ -2220,9 +2243,16 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
           }
           else
           {
-              gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
-                            gPortsOrch->getBridgePortReferenceCount(tunnelPort));
+              if (gPortsOrch->getPort(port_tunnel_name, tunnelPort))
+              {
+                  SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
+                                gPortsOrch->getBridgePortReferenceCount(tunnelPort));
+              }
+              else
+              {
+                  SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion, tunnel port %s not found",
+                                port_tunnel_name.c_str());
+              }
           }
       }
     }
@@ -2303,8 +2333,14 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
                 {
                     auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
                     gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
-                    gPortsOrch->getPort(port_tunnel_name,tunPort);
-                    gPortsOrch->addBridgePort(tunPort);
+                    if (gPortsOrch->getPort(port_tunnel_name,tunPort))
+                    {
+                        gPortsOrch->addBridgePort(tunPort);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to get tunnel port %s after creation", port_tunnel_name.c_str());
+                    }
                 }
             }
         }
@@ -2317,7 +2353,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
 
     const auto tunnel_map_entry_name = request.getKeyString(1);
-    vrf_map_entry_t entry;
+    vrf_map_entry_t entry{};
     try
     {
         entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
