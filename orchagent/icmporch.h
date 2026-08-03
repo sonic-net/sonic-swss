@@ -169,6 +169,8 @@ private:
      *        true for all other cases where session entry is consumed
      */
     bool update_icmp_session(const string& key, const vector<FieldValueTuple>& data);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
+    void handleIcmpEchoSessionStateChangeNotification(const std::string &data);
 
     /**
      *@method initializeCounters

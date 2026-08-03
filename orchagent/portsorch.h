@@ -435,7 +435,9 @@ private:
     void doTransceiverPresenceCheck(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
-    void handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry);
+    void handleNotification(KeyOpFieldsValuesTuple& entry);
+    void handlePortStateChangeNotification(const std::string &data);
+    void handlePortHostTxReadyNotification(const std::string &data);
     void doTask(swss::SelectableTimer &timer);
 
     void removePortFromLanesMap(string alias);
