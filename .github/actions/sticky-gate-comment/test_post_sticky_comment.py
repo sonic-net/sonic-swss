@@ -40,7 +40,7 @@ class StickyCommentTest(unittest.TestCase):
         legacy_comment = {
             "id": 1234,
             "user": {"login": sticky.ACTION_COMMENT_AUTHOR},
-            "body": f"{legacy_marker}\nold report",
+            "body": f"## gate report\n\nAll stages passed.\n\n{legacy_marker}\n",
         }
         api_request.side_effect = [first_page, [legacy_comment]]
 
@@ -48,7 +48,8 @@ class StickyCommentTest(unittest.TestCase):
             "https://api.github.com/repos/example/repo",
             9,
             "token",
-            (marker, legacy_marker),
+            marker,
+            legacy_marker,
         )
 
         self.assertEqual(comment_id, 1234)
@@ -58,9 +59,15 @@ class StickyCommentTest(unittest.TestCase):
     @mock.patch.object(sticky, "api_request")
     def test_lookup_ignores_embedded_or_non_action_markers(self, api_request):
         marker = "<!-- sticky-gate-comment:gate -->"
+        legacy_marker = "<!-- Sticky Pull Request Commentgate -->"
         api_request.return_value = [
             {"id": 1, "user": {"login": sticky.ACTION_COMMENT_AUTHOR}, "body": f"quoted {marker}"},
             {"id": 2, "user": {"login": "someone"}, "body": marker},
+            {
+                "id": 3,
+                "user": {"login": sticky.ACTION_COMMENT_AUTHOR},
+                "body": f"{legacy_marker}\nnot actually trailing",
+            },
         ]
 
         self.assertIsNone(
@@ -68,7 +75,8 @@ class StickyCommentTest(unittest.TestCase):
                 "https://api.github.com/repos/example/repo",
                 9,
                 "token",
-                (marker,),
+                marker,
+                legacy_marker,
             )
         )
 

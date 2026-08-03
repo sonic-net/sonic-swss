@@ -96,7 +96,7 @@ def pr_number_from_event() -> int:
     return int(number)
 
 
-def find_existing_comment(base: str, pr_number: int, token: str, markers: tuple[str, ...]) -> int | None:
+def find_existing_comment(base: str, pr_number: int, token: str, marker: str, legacy_marker: str) -> int | None:
     page = 1
     while True:
         comments = api_request(
@@ -107,7 +107,9 @@ def find_existing_comment(base: str, pr_number: int, token: str, markers: tuple[
         for comment in comments:
             author = (comment.get("user") or {}).get("login")
             text = comment.get("body") or ""
-            if author == ACTION_COMMENT_AUTHOR and any(text.startswith(candidate) for candidate in markers):
+            marker_matches = text.startswith(marker)
+            legacy_marker_matches = text.rstrip().endswith(legacy_marker)
+            if author == ACTION_COMMENT_AUTHOR and (marker_matches or legacy_marker_matches):
                 return int(comment["id"])
         if len(comments) < COMMENTS_PER_PAGE:
             return None
@@ -143,7 +145,7 @@ def main() -> None:
     body = f"{marker}\n{banner}{content.lstrip()}".rstrip() + "\n"
 
     base = f"https://api.github.com/repos/{owner}/{name}"
-    existing_id = find_existing_comment(base, pr_number, token, (marker, legacy_marker))
+    existing_id = find_existing_comment(base, pr_number, token, marker, legacy_marker)
 
     if existing_id is not None:
         api_request("PATCH", f"{base}/issues/comments/{existing_id}", token, {"body": body})
