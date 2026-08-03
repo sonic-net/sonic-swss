@@ -59,6 +59,7 @@ struct NeighborContext
     std::deque<sai_status_t>            object_statuses;            // entity bulk statuses for neighbors
     MacAddress                          mac;                        // neighbor mac
     bool                                bulk_op = false;            // use bulker (only for mux use for now)
+    bool                                ars_rejected = false;       // UPSW-7471: permanent ARS conflict
     sai_object_id_t                     next_hop_id;                // next hop id
     sai_status_t                        nexthop_status;             // next hop status
 

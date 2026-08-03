@@ -166,8 +166,19 @@ void ArsOrch::update(SubjectType type, void *cntx)
         }
         else
         {
-            SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s still failed "
-                          "— leaving queued", portName.c_str());
+            if (portHasMultipleHwNeighbors(portName))
+            {
+                SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s "
+                              "still blocked — multiple hw_configured "
+                              "neighbors (UPSW-7471). Keeping queued "
+                              "so enable retries when neighbor count "
+                              "drops to 1.", portName.c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s still "
+                              "failed — leaving queued", portName.c_str());
+            }
         }
     }
 
@@ -766,9 +777,19 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_WARN("ARS: deferred enable on %s still failed "
-                              "after profile creation — leaving queued",
-                              portName.c_str());
+                if (portHasMultipleHwNeighbors(portName))
+                {
+                    SWSS_LOG_WARN("ARS: deferred enable on %s still "
+                                  "blocked — multiple hw_configured "
+                                  "neighbors (UPSW-7471). Keeping "
+                                  "queued.", portName.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ARS: deferred enable on %s still failed "
+                                  "after profile creation — leaving queued",
+                                  portName.c_str());
+                }
             }
         }
     }
@@ -1255,18 +1276,23 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 }
                 else
                 {
-                    // SAI rejected the enable. Most common causes: PortsOrch
-                    // hasn't published the port's OID yet (cold boot /
-                    // config-reload race), or the port is carrying a RIF
-                    // that must be removed first. Queue for retry on the
-                    // next PORT_OPER_STATE_CHANGE=UP so we don't leave the
-                    // port permanently misbound when the transient clears.
-                    SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s — "
-                                   "keeping entry.enabled=false so NHG resolver "
-                                   "does not bind ARS on this port; queued "
-                                   "for retry on next port-up event",
-                                   portName.c_str());
                     entry.enabled = false;
+                    if (portHasMultipleHwNeighbors(portName))
+                    {
+                        SWSS_LOG_ERROR("ARS: rejecting ARS on port %s — "
+                                       "multiple hw_configured neighbors "
+                                       "(UPSW-7471). Queued for retry so "
+                                       "enable resumes when neighbor count "
+                                       "drops to 1.",
+                                       portName.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("ARS: failed to enable ARS on port "
+                                       "%s — queued for retry on next "
+                                       "port-up event",
+                                       portName.c_str());
+                    }
                     m_arsInterfacesPendingEnable.insert(portName);
                 }
             }
@@ -3215,16 +3241,24 @@ bool ArsOrch::hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const
     {
         const string &portName = nh.alias;
 
-        if (m_arsInterfacesPendingEnable.count(portName) > 0)
+        // UPSW-7471: multi-neighbor ports stay in the retry queue so
+        // enable retries when the neighbor count drops, but they must
+        // not block NHG creation — the SDK limitation is on the port,
+        // not on the NHG.
+        if (m_arsInterfacesPendingEnable.count(portName) > 0 &&
+            !portHasMultipleHwNeighbors(portName))
             return true;
 
         // Physical port: only pending if admin_state wants enabled but SAI
         // hasn't enabled yet.  admin_state=down ports are intentionally
-        // disabled and must not block NHG creation.
+        // disabled and must not block NHG creation.  Multi-neighbor ports
+        // are also excluded (UPSW-7471) — they can't enable ARS but must
+        // not stall NHGs.
         auto ifIt = m_arsInterfaces.find(portName);
         if (ifIt != m_arsInterfaces.end()
             && ifIt->second.enabled
-            && m_arsEnabledPorts.count(portName) == 0)
+            && m_arsEnabledPorts.count(portName) == 0
+            && !portHasMultipleHwNeighbors(portName))
             return true;
 
         // LAG: same logic — config wants enabled but not yet in
@@ -3240,6 +3274,24 @@ bool ArsOrch::hasPortsPendingArsSetup(const NextHopGroupKey &nhgKey) const
 
 /* ── Per-port ARS enable via SAI_PORT_ATTR_ARS_ENABLE ─────────────────── */
 
+bool ArsOrch::isPortArsEnabled(const string &portName) const
+{
+    return m_arsEnabledPorts.count(portName) > 0;
+}
+
+bool ArsOrch::portHasMultipleHwNeighbors(const string &portName) const
+{
+    if (!gNeighOrch)
+        return false;
+    size_t count = 0;
+    for (const auto &e : gNeighOrch->getSyncdNeighbors())
+    {
+        if (e.first.alias == portName && e.second.hw_configured && ++count > 1)
+            return true;
+    }
+    return false;
+}
+
 bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 {
     SWSS_LOG_ENTER();
@@ -3248,6 +3300,20 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     if (!m_portsOrch->getPort(portName, port))
     {
         SWSS_LOG_ERROR("ARS: port %s not found", portName.c_str());
+        return false;
+    }
+
+    // UPSW-7471: Mellanox SDK adaptive-routing RIF supports only a single
+    // destination MAC per port. Guard placed before the m_rif_id branch so
+    // that even after a failed rollback (m_rif_id=0 but hw_configured
+    // entries remain in m_syncdNeighbors) we still reject.
+    if (enable && portHasMultipleHwNeighbors(portName))
+    {
+        SWSS_LOG_ERROR("ARS: REJECTING setPortArsEnable(%s, true) — "
+                       "port has multiple hw_configured neighbors. "
+                       "Mellanox SDK adaptive-routing RIF supports "
+                       "only 1 neighbor per port (UPSW-7471).",
+                       portName.c_str());
         return false;
     }
 
@@ -3365,6 +3431,17 @@ bool ArsOrch::migratePort(const string &portName, bool enableArs)
                     " vrf_oid=0x%" PRIx64 " mtu=%u oper_status=%d",
                     portName.c_str(), port.m_port_id, port.m_rif_id,
                     port.m_vr_id, port.m_mtu, port.m_oper_status);
+
+    // UPSW-7471 defense-in-depth: reject migration to ARS on multi-neighbor
+    // ports even if the caller bypassed setPortArsEnable's guard.
+    if (enableArs && portHasMultipleHwNeighbors(portName))
+    {
+        SWSS_LOG_ERROR("ARS-MIGRATE[%s]: ABORT — port has multiple "
+                       "hw_configured neighbors but Mellanox adaptive-"
+                       "routing RIF supports only 1 (UPSW-7471).",
+                       portName.c_str());
+        return false;
+    }
 
     if (port.m_rif_id == 0)
     {

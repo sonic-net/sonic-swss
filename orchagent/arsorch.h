@@ -123,6 +123,9 @@ public:
 
     void update(SubjectType type, void *cntx) override;
 
+    bool portHasMultipleHwNeighbors(const std::string &portName) const;
+    bool isPortArsEnabled(const std::string &portName) const;
+
 private:
     bool migratePort(const std::string &portName, bool enableArs);
 
