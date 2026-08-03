@@ -9,6 +9,7 @@
 #include <tuple>
 
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
@@ -297,7 +298,7 @@ private:
     std::unique_ptr<T> createObject(const string&, const VNetInfo&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
-    VNetRequest request_;
+    ConfigFacingRequestRelaxed request_{vnet_request_description, ':'};
     VNET_EXEC vnet_exec_;
 
 };

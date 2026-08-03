@@ -74,6 +74,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
                 vrforch_ut.cpp \
+                config_request_relaxed_ut.cpp \
+                vrf_schema_hardening_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
@@ -99,6 +101,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
+                $(top_srcdir)/cfgmgr/vrf_appl_fields.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp
 

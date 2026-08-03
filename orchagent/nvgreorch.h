@@ -5,6 +5,7 @@
 #include "sai.h"
 #include "orch.h"
 #include "request_parser.h"
+#include "config_request_relaxed.h"
 #include "portsorch.h"
 
 typedef enum {
@@ -133,7 +134,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    NvgreTunnelRequest request_;
+    ConfigFacingRequestRelaxed request_{nvgre_tunnel_request_description, '|'};
     NvgreTunnelTable nvgre_tunnel_table_;
 };
 
@@ -163,5 +164,5 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    NvgreTunnelMapRequest request_;
+    ConfigFacingRequestRelaxed request_{nvgre_tunnel_map_request_description, '|'};
 };

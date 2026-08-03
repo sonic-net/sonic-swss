@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "ipprefix.h"
 #include "vrfmgr.h"
+#include "vrf_appl_fields.h"
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
@@ -300,7 +301,9 @@ void VrfMgr::doTask(Consumer &consumer)
                         continue;
                     }
 
-                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
+                    vector<FieldValueTuple> filtered;
+                    filterVrfApplFields(kfvFieldsValues(t), filtered);
+                    m_appVrfTableProducer.set(vrfName, filtered);
 
                 }
                 else

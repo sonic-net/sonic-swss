@@ -627,8 +627,15 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
             (dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get()))->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
         }
 
-        // Create internal entry
-        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
+        auto it = m_entryMap.find(queueId);
+        if (it != m_entryMap.end())
+        {
+            it->second.action = action;
+        }
+        else
+        {
+            m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
+        }
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
