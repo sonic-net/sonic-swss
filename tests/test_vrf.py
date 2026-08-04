@@ -254,7 +254,7 @@ class TestVrf(object):
         self.setup_db(dvs)
 
         num_vrfs = 100
-        vrf_group = 0x534F4E02  # matches VRF_MGR_NETLINK_GROUP
+        vrf_group = 0x534F4E02  # matches NETLINK_GROUP_VRF_MGR in lib/netlink_groups.h
 
         tbl = swsscommon.Table(self.cdb, "VRF")
         fvs = swsscommon.FieldValuePairs([('empty', 'empty')])

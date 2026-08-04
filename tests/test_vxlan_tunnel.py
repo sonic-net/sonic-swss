@@ -416,7 +416,7 @@ def test_vxlanmgr_destructor_bulk_delete(dvs, env_setup):
     """~VxlanMgr() bulk-deletes vxlan/bridge netdevs via IFLA_GROUP on SIGTERM"""
 
     num_vnets = 50
-    vxlan_group = 0x534F4E01  # matches VXLAN_MGR_NETLINK_GROUP
+    vxlan_group = 0x534F4E01  # matches NETLINK_GROUP_VXLAN_MGR in lib/netlink_groups.h
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     vnet_names = [f"Vnet_{i}" for i in range(num_vnets)]
