@@ -1190,6 +1190,7 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
         struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
         len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
         bool first_nh = true;
+        bool has_ifname = false;
 
         for (;;)
         {
@@ -1256,6 +1257,7 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
                     src_addr += nh_src_addr;
                     nexthops += nh_nexthop;
                     ifnames += nh_ifname;
+                    has_ifname |= !nh_ifname.empty();
 
                     first_nh = false;
                 }
@@ -1268,6 +1270,11 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
 
             len -= NLMSG_ALIGN(rtnh->rtnh_len);
             rtnh = RTNH_NEXT(rtnh);
+        }
+
+        if (!has_ifname)
+        {
+            ifnames.clear();
         }
     }
 
