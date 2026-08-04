@@ -5015,12 +5015,88 @@ void ArsOrch::disableArsDataPlane()
             ++it;
         }
     }
+
+    // Only unbind the switch-level ARS profile and prune STATE_DB after all
+    // per-port and per-LAG unbinds succeeded. If any remain active, SAI may
+    // reject the profile unbind or leave hardware in an undefined state.
+    if (m_arsEnabledLags.empty() && m_arsEnabledPorts.empty())
+    {
+        if (m_activeSwitchProfileOid != SAI_NULL_OBJECT_ID)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_SWITCH_ATTR_ARS_PROFILE;
+            attr.value.oid = SAI_NULL_OBJECT_ID;
+
+            sai_status_t status = sai_switch_api->set_switch_attribute(
+                gSwitchId, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("ARS: unbound profile OID 0x%" PRIx64
+                                " from switch", m_activeSwitchProfileOid);
+                m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+            }
+            else
+            {
+                SWSS_LOG_WARN("ARS: failed to unbind profile from switch: %s",
+                              sai_serialize_status(status).c_str());
+            }
+        }
+
+        for (auto &kv : m_nhgStateKeys)
+        {
+            m_stateArsNhgTable.del(kv.second);
+        }
+        if (!m_nhgStateKeys.empty())
+        {
+            SWSS_LOG_NOTICE("ARS: pruned %zu ARS_NHG_TABLE entries",
+                            m_nhgStateKeys.size());
+            m_nhgStateKeys.clear();
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("ARS: %zu LAG(s) and %zu port(s) failed to unbind — "
+                      "skipping profile unbind and keeping ARS_NHG_TABLE entries",
+                      m_arsEnabledLags.size(), m_arsEnabledPorts.size());
+    }
 }
 
 void ArsOrch::enableArsDataPlane()
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("ARS: re-applying data plane from cached CONFIG_DB state");
+
+    // Rebind the ARS profile to the switch if it was unbound during disable.
+    // The profile OID is still valid (the profile itself is never deleted
+    // during disable/enable cycles) — only the switch binding was cleared.
+    // Abort if binding fails: enabling ports/LAGs/NHGs without a switch-level
+    // profile would leave the data plane in an inconsistent state.
+    if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID && !m_globalProfileName.empty())
+    {
+        auto profIt = m_arsProfiles.find(m_globalProfileName);
+        if (profIt == m_arsProfiles.end() ||
+            profIt->second.profileOid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("ARS: cannot re-enable — profile '%s' not found or "
+                           "has no SAI OID; aborting data-plane restoration",
+                           m_globalProfileName.c_str());
+            m_arsEnabled = false;
+            return;
+        }
+
+        if (!bindArsProfileToSwitch(profIt->second.profileOid))
+        {
+            SWSS_LOG_ERROR("ARS: failed to rebind profile '%s' on re-enable; "
+                           "aborting data-plane restoration to avoid "
+                           "inconsistent state", m_globalProfileName.c_str());
+            m_arsEnabled = false;
+            return;
+        }
+        SWSS_LOG_NOTICE("ARS: rebound profile '%s' (OID 0x%" PRIx64 ") "
+                        "to switch on re-enable",
+                        m_globalProfileName.c_str(),
+                        profIt->second.profileOid);
+    }
 
     // Re-enable any ARS objects left over from a previous cleanup failure
     // (e.g. remove_ars returned OBJECT_IN_USE due to a leaked NHG from
