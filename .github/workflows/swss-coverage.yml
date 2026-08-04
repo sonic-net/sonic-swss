@@ -445,7 +445,7 @@ jobs:
       
       - name: Generate coverage badge
         id: badge
-        uses: upscale-ai-network/pm/gh_actions/generate-badge@c9e7323ce64569420922bb9ce1118e4458247b71
+        uses: upscale-ai-network/pm/gh_actions/generate-badge@49ee8b51e7238fa89716b61e53f97550d62bc1f4
         with:
           percentage: ${{ steps.pct.outputs.percentage }}
           label: coverage
