@@ -67,8 +67,7 @@ jobs:
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         continue-on-error: true
         with:
-          pattern: swss-coverage-*
-          merge-multiple: true
+          name: swss-coverage-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build PR comment
         env:
