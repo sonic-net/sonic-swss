@@ -422,15 +422,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-      - name: Generate coverage badge
+      - name: Extract coverage percentage
+        id: pct
         run: |
+          set -euo pipefail
           scp ec2:/tmp/swss-coverage/coverage.xml /tmp/coverage.xml
-          pip install genbadge[coverage] -q
-          mkdir -p badge-tmp
-          genbadge coverage -i /tmp/coverage.xml -o badge-tmp/coverage-badge.svg
-          echo "Badge generated:"
-          ls -la badge-tmp/coverage-badge.svg
-
+          python3 <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          root = ET.parse("/tmp/coverage.xml").getroot()
+          rate = root.attrib.get("line-rate")
+          if rate is None:
+              raise SystemExit("coverage.xml missing line-rate")
+          value = float(rate)
+          if not 0.0 <= value <= 1.0:
+              raise SystemExit(f"line-rate out of range: {value}")
+          pct = int(round(value * 100))
+          print(f"coverage={pct}%")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"percentage={pct}\n")
+          PY
+      
+      - name: Generate coverage badge
+        id: badge
+        uses: upscale-ai-network/pm/gh_actions/generate-badge@c9e7323ce64569420922bb9ce1118e4458247b71
+        with:
+          percentage: ${{ steps.pct.outputs.percentage }}
+          label: coverage
+          output: coverage-badge.svg
       - name: Push coverage badge to repo
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -439,7 +458,7 @@ jobs:
           BRANCH="badges"
           FILE_PATH="coverage-badge.svg"
 
-          CONTENT=$(base64 -w 0 badge-tmp/coverage-badge.svg)
+          CONTENT=$(base64 -w 0 coverage-badge.svg)
           EXISTING_SHA=$(gh api "repos/${REPO}/contents/${FILE_PATH}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || echo "")
 
           if [ -n "$EXISTING_SHA" ]; then

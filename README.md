@@ -1,5 +1,8 @@
+# upscaleai:start
+![Coverage](https://github.com/upscale-ai-network/sonic-swss/raw/badges/coverage-badge.svg)
+# upscaleai:end
+
 *coverage:*
-![Coverage](https://github.com/upscale-ai-network/sonic-swss/blob/badges/coverage-badge.svg?raw=true)
 
 # SONiC - SWitch State Service - SWSS
 
