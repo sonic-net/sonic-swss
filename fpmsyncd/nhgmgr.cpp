@@ -251,6 +251,13 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
      * Not support update of NHG fields:
      * - nh_flags
      * - nh_srv6
+     *
+     * Assumption: zebra always allocates a NEW NHG id (instead of updating in
+     * place) when an NHG transitions between single nexthop and multiple
+     * nexthops, or between non-SRv6 (non-shared) and SRv6 (shared). So those
+     * ownership transitions never reach this update path; they arrive as a
+     * new-NHG create plus a delete of the old id. Do not regress this without
+     * revisiting the release logic below.
      */
 
     RIBNHGEntry *entry;
@@ -310,7 +317,7 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
         if (ret != 0) {
             m_rib_nhg_table->delEntry(nhg.id);
             // This sonic nhg id is reused or new allocated, so free it
-            m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicId.id);
+            m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicId);
             SWSS_LOG_ERROR("Failed to write to DB for %d", nhg.id);
             return ret;
         }
@@ -328,7 +335,12 @@ int NHGMgr::updateExistingNHGFull(const NextHopGroupFull& nhg, uint8_t af) {
         SWSS_LOG_NOTICE("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId.id);
     } else if(previousKey != entry->getSonicNHGObjectKey()){
 
-        // For the shared NHG, maybe changed to another existing shared NHG, sub the previous ref
+        /*
+         * Shared NHG changed to another already-existing shared key:
+         * checkNeedCreateSonicNHGObj() (called inside updateEntry) has already
+         * picked up the existing sonic id and added a reference on the new key,
+         * so here we only need to drop the reference on the previous key.
+         */
         if (entry->isSharedSonicNHG()){
             m_rib_nhg_table->subSonicNHGObjectRef(previousKey);
         }
@@ -725,10 +737,12 @@ void RIBNHGTable::subSonicNHGObjectRef(SonicNHGObjectKey key) {
         return ;
     }
     if (m_created_shared_nhg_map[key].refCount == 0) {
-        this->removeFromDB(m_created_shared_nhg_map[key].sonicID.id);
-        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].sonicID.id);
-        m_created_shared_nhg_map.erase(key);
-        SWSS_LOG_ERROR("Reference count underflow for shared NHG object");
+        /*
+         * Underflow indicates a reference accounting bug. Keep the entry and
+         * the sonic object as-is to avoid masking the bug, and fail loudly.
+         */
+        SWSS_LOG_ERROR("Reference count underflow for shared NHG object, sonic id %d",
+                       m_created_shared_nhg_map[key].sonicID.id);
         return;
     }
     (m_created_shared_nhg_map[key].refCount)--;
@@ -737,8 +751,8 @@ void RIBNHGTable::subSonicNHGObjectRef(SonicNHGObjectKey key) {
      * if refCount is 0, then remove the sonic nhg object
      */
     if(m_created_shared_nhg_map[key].refCount == 0){
-        this->removeFromDB(m_created_shared_nhg_map[key].sonicID.id);
-        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].sonicID.id);
+        this->removeFromDB(m_created_shared_nhg_map[key].sonicID);
+        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].sonicID);
         m_created_shared_nhg_map.erase(key);
     }
 }
