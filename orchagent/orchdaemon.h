@@ -103,7 +103,7 @@ public:
      * and populate this ring's pointer to the producers [Orch, Consumer], to make sure that
      * they are connected to the same ring.
      */
-    void enableRingBuffer();
+    void enableRingBuffer(int size = RING_SIZE);
     void disableRingBuffer();
     /**
      * This method describes how the ring consumer consumes this ring.

@@ -182,6 +182,13 @@ OrchDaemon::~OrchDaemon()
         // notify the ring_thread to exit
         gRingBuffer->thread_exited = true;
         gRingBuffer->notify();
+        // WS4: also wake any waiters blocked on cv_drained (e.g. a
+        // non-served executor in waitUntilEmptyAndIdle, or the warm-restart
+        // drain barrier) so they unblock and see thread_exited.
+        {
+            std::lock_guard<std::mutex> g(gRingBuffer->mtx);
+            gRingBuffer->cv_drained.notify_all();
+        }
         // wait for the ring_thread to exit
         ring_thread.join();
         disableRingBuffer();
@@ -234,11 +241,11 @@ void OrchDaemon::popRingBuffer()
 /**
  * This function initializes gRingBuffer, otherwise it's nullptr.
  */
-void OrchDaemon::enableRingBuffer() {
-    gRingBuffer = std::make_shared<RingBuffer>();
+void OrchDaemon::enableRingBuffer(int size) {
+    gRingBuffer = std::make_shared<RingBuffer>(size);
     Executor::gRingBuffer = gRingBuffer;
     Orch::gRingBuffer = gRingBuffer;
-    SWSS_LOG_NOTICE("RingBuffer created at %p!", (void *)gRingBuffer.get());
+    SWSS_LOG_NOTICE("Ring thread mode enabled, ring size %d (capacity %d)", size, size - 1);
 }
 
 void OrchDaemon::disableRingBuffer() {
@@ -1243,13 +1250,10 @@ void OrchDaemon::start(long heartBeatInterval)
             {
                 // Orchagent is ready to perform warm restart, stop processing any new db data.
                 // but should finish data that already in the ring
+                // WS4: cv-wait replaces 500ms sleep-poll for ring drain
                 if (gRingBuffer)
                 {
-                    while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
-                    {
-                        gRingBuffer->notify();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
-                    }
+                    gRingBuffer->waitUntilEmptyAndIdle();
                 }
 
                 // Should sleep here or continue handling timers and etc.??

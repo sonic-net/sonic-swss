@@ -66,6 +66,7 @@ extern size_t gMaxBulkSize;
 extern int gBatchSize;
 
 bool gRingMode = false;
+int gRingSize = RING_SIZE;
 bool gSyncMode = false;
 bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
@@ -406,7 +407,10 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     [[maybe_unused]] bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:MF")) != -1)
+    // WS4: R: → R (fix: -R is a boolean flag, not an argument-taking option;
+    // the old R: consumed the next CLI arg as optarg, causing crash-loops).
+    // Added Q: for ring buffer size.
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MF")) != -1)
     {
         switch (opt)
         {
@@ -523,6 +527,21 @@ int main(int argc, char **argv)
             break;
         case 'R':
             gRingMode = true;
+            break;
+        case 'Q':
+            {
+                int ringSize = atoi(optarg);
+                if (ringSize > 1 && ringSize <= 100000)
+                {
+                    gRingSize = ringSize;
+                    SWSS_LOG_NOTICE("Setting ring buffer size to %d", gRingSize);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid ring buffer size %d (must be >1 and <=100000), using default %d",
+                                  ringSize, RING_SIZE);
+                }
+            }
             break;
          case 'M':
             macsec_post_enabled = true;
@@ -941,7 +960,7 @@ int main(int argc, char **argv)
 
     if (gRingMode) {
         /* Initialize the ring before OrchDaemon initializing Orchs */
-        orchDaemon->enableRingBuffer();
+        orchDaemon->enableRingBuffer(gRingSize);
     }
 
     if (!orchDaemon->init())

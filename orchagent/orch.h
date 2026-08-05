@@ -188,13 +188,24 @@ class RingBuffer
 {
 private:
     std::vector<AnyTask> buffer;
-    int head = 0;
-    int tail = 0;
+
+    // WS4: head/tail/idle_status are read/written cross-thread (main thread
+    // pushes, ring_thread pops). SPSC invariant (single producer, single
+    // consumer) keeps lock-free head/tail correct — do not add a second
+    // pusher or popper without redesigning the synchronization.
+    std::atomic<int> head{0};
+    std::atomic<int> tail{0};
     std::set<std::string> m_consumerSet;
 
-    std::condition_variable cv;
+public:
+    // WS4: mtx and cv_drained are public so OrchDaemon destructor can notify
+    // blocked waiters during shutdown. cv is used by ring thread internally.
     std::mutex mtx;
-    bool idle_status = true;
+    std::condition_variable cv_drained;
+
+private:
+    std::condition_variable cv;
+    std::atomic<bool> idle_status{true};
 
 public:
     RingBuffer(int size=RING_SIZE);
@@ -212,6 +223,10 @@ public:
 
     bool push(AnyTask entry);
     bool pop(AnyTask& entry);
+
+    // WS4: cv-based waits replacing 500ms sleep-polls
+    void waitUntilEmptyAndIdle();
+    void waitUntilNotFull();
 
     void addExecutor(Executor* executor);
     bool serves(const std::string& tableName);

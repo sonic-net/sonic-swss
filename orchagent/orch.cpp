@@ -44,30 +44,36 @@ void RingBuffer::notify()
 
 void RingBuffer::setIdle(bool idle)
 {
-    idle_status = idle;
+    idle_status.store(idle);
+    // WS4: notify waiters when transitioning to idle (ring fully drained)
+    if (idle) {
+        std::lock_guard<std::mutex> g(mtx);
+        cv_drained.notify_all();
+    }
 }
 
 bool RingBuffer::IsIdle() const
 {
-    return idle_status;
+    return idle_status.load();
 }
 
 bool RingBuffer::IsFull() const
 {
-    return (tail + 1) % static_cast<int>(buffer.size()) == head;
+    return (tail.load() + 1) % static_cast<int>(buffer.size()) == head.load();
 }
 
 bool RingBuffer::IsEmpty() const
 {
-    return tail == head;
+    return tail.load() == head.load();
 }
 
 bool RingBuffer::push(AnyTask ringEntry)
 {
     if (IsFull())
         return false;
-    buffer[tail] = std::move(ringEntry);
-    tail = (tail + 1) % static_cast<int>(buffer.size());
+    int t = tail.load();
+    buffer[t] = std::move(ringEntry);
+    tail.store((t + 1) % static_cast<int>(buffer.size()));
     return true;
 }
 
@@ -75,9 +81,32 @@ bool RingBuffer::pop(AnyTask& ringEntry)
 {
     if (IsEmpty())
         return false;
-    ringEntry = std::move(buffer[head]);
-    head = (head + 1) % static_cast<int>(buffer.size());
+    int h = head.load();
+    ringEntry = std::move(buffer[h]);
+    head.store((h + 1) % static_cast<int>(buffer.size()));
+
+    // WS4: notify waiters that space was freed — a producer blocked on
+    // waitUntilNotFull() can proceed. Placed inside the per-task pop loop
+    // so the producer unblocks after one freed slot, not after total drain.
+    {
+        std::lock_guard<std::mutex> g(mtx);
+        cv_drained.notify_all();
+    }
+
     return true;
+}
+
+void RingBuffer::waitUntilEmptyAndIdle()
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.notify_all();  // wake ring thread to drain
+    cv_drained.wait(lock, [&]{ return (IsEmpty() && IsIdle()) || thread_exited.load(); });
+}
+
+void RingBuffer::waitUntilNotFull()
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    cv_drained.wait(lock, [&]{ return !IsFull() || thread_exited.load(); });
 }
 
 void RingBuffer::addExecutor(Executor* executor)
@@ -359,23 +388,19 @@ void Executor::processAnyTask(AnyTask&& task)
     // if this executor isn't served by ring buffer
     else if (!gRingBuffer->serves(getName()))
     {
-        // this executor should execute the input task in the main thread
-        // but to avoid thread issue, it should wait when the ring buffer is actively working
-        while (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()) {
-            gRingBuffer->notify();
-            std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
-        }
-        // execute task()
+        // WS4: cv-wait replaces 500ms sleep-poll. Non-route tables wait for
+        // the ring to drain before executing in the main thread.
+        gRingBuffer->waitUntilEmptyAndIdle();
         task();
     }
     else
     {
-        // if this executor is served by ring buffer, 
+        // if this executor is served by ring buffer,
         // push the task to gRingBuffer
         // this task would be executed in the ring thread, not here
         while (!gRingBuffer->push(task)) {
-            gRingBuffer->notify();
-            SWSS_LOG_WARN("ring is full...push again");
+            // WS4: cv-wait replaces busy-spin with WARN per iteration
+            gRingBuffer->waitUntilNotFull();
         }
         gRingBuffer->notify();
     }
