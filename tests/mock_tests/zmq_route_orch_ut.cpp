@@ -76,6 +76,7 @@ public:
         for (const auto &kv : consumer.m_toSync)
         {
             seenKeys.insert(kv.first);
+            lastFields[kv.first] = kfvFieldsValues(kv.second);
             ++totalEntries;
         }
         // Drain the consumer's m_toSync so subsequent drain() calls observe it
@@ -85,6 +86,9 @@ public:
 
     std::atomic<int> doTaskCount{0};
     std::set<std::string> seenKeys;
+    // Fields of the most recent delivery per key, captured before the clear
+    // below. Main-thread only, like seenKeys.
+    std::map<std::string, std::vector<swss::FieldValueTuple>> lastFields;
     // Total entries handed to doTask across all invocations. Compared against
     // seenKeys.size() it distinguishes "delivered once" from "delivered twice".
     std::atomic<int> totalEntries{0};
@@ -308,6 +312,9 @@ TEST(ZmqRouteConsumerTest, IngressCallbackDeliversToDoTask)
         return orch->doTaskCount.load() >= 1;
     }));
     EXPECT_EQ(orch->seenKeys.count("route_x"), 1u);
+    // The staging map must drain fully into m_toSync; a leak here would be
+    // invisible to the m_toSync-side asserts.
+    EXPECT_TRUE(zrc->m_ingress.empty());
 }
 
 // When the ingress callback stages past gMaxBulkSize entries, it must fire
@@ -402,4 +409,105 @@ TEST(ZmqRouteConsumerTest, IngressCallbackConcurrentWithDrain)
     EXPECT_EQ(orch->seenKeys.size(), static_cast<size_t>(kRoutes));
     EXPECT_EQ(orch->totalEntries.load(), kRoutes);
     EXPECT_TRUE(zrc->m_toSync.empty());
+    EXPECT_TRUE(zrc->m_ingress.empty());
+
+    // Leak trap: if execute() ever left entries behind in m_ingress, this
+    // extra pass would resurface them and grow the delivery count.
+    zrc->execute();
+    EXPECT_EQ(orch->totalEntries.load(), kRoutes);
+}
+
+// Two updates to the SAME key inside one ZMQ message exercise the
+// m_ingress[key] = *kco overwrite: staging is last-writer-wins, wholesale.
+// That is deliberately different from ConsumerBase::addToSync()'s field-union
+// merge -- the route producer sends full replaces, so the last update must
+// win with exactly its own fields, never a union with the superseded one.
+TEST(ZmqRouteConsumerTest, SameKeyBurstCoalescesInIngress)
+{
+    const string tableName = "ZMQ_ROUTE_UT_COALESCE";
+    const string pushEndpoint = "tcp://localhost:1271";
+    const string pullEndpoint = "tcp://*:1271";
+
+    vector<table_name_with_pri_t> tables = { { tableName, 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server(pullEndpoint, "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    server.bind();
+
+    ZmqClient client(pushEndpoint, 0);
+    ZmqProducerStateTable p(app_db.get(), tableName, client, /*dbPersistence=*/false);
+
+    // One batched set() -> one ZMQ message -> one handleReceivedData() -> one
+    // ingress-callback invocation, so both tuples deterministically meet in
+    // m_ingress with no execute() possible in between.
+    std::vector<KeyOpFieldsValuesTuple> burst = {
+        {"route_c", SET_COMMAND, {{"nh", "1.1.1.1"}}},
+        {"route_c", SET_COMMAND, {{"ifname", "Ethernet0"}}},
+    };
+    p.set(burst);
+
+    ASSERT_TRUE(waitFor(2000, [&] {
+        zrc->execute();
+        return orch->doTaskCount.load() >= 1;
+    }));
+
+    // Exactly one delivery for the key -- the burst coalesced in staging.
+    EXPECT_EQ(orch->seenKeys.count("route_c"), 1u);
+    EXPECT_EQ(orch->totalEntries.load(), 1);
+
+    // And it carries only the second update's fields: no {nh} survivor.
+    const auto &fields = orch->lastFields["route_c"];
+    ASSERT_EQ(fields.size(), 1u);
+    EXPECT_EQ(fvField(fields[0]), "ifname");
+    EXPECT_EQ(fvValue(fields[0]), "Ethernet0");
+
+    EXPECT_TRUE(zrc->m_ingress.empty());
+}
+
+// A single staged tuple below gMaxBulkSize must still wake the Select loop:
+// mqPollThread fires notifyPending() once the burst quiesces (BURST_QUIESCE_MS
+// in swss-common's ZmqRouteServer). At the default bulk size this quiesce
+// notify is the common wake path; the mid-burst threshold branch is covered
+// by IngressCallbackFiresNotifyAtMaxBulkSize above.
+TEST(ZmqRouteConsumerTest, SelectWakesAfterBurstQuiesce)
+{
+    const string tableName = "ZMQ_ROUTE_UT_QUIESCE";
+    const string pushEndpoint = "tcp://localhost:1272";
+    const string pullEndpoint = "tcp://*:1272";
+
+    vector<table_name_with_pri_t> tables = { { tableName, 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server(pullEndpoint, "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    server.bind();
+
+    // Make the mid-burst threshold branch unreachable: one staged entry is
+    // far below 1000, so any wake below must come from the quiesce notify.
+    ScopedMaxBulkSize maxBulkGuard(1000);
+
+    Select sel;
+    sel.addSelectable(zrc);
+
+    ZmqClient client(pushEndpoint, 0);
+    ZmqProducerStateTable p(app_db.get(), tableName, client, /*dbPersistence=*/false);
+    p.set("route_q", vector<FieldValueTuple>{{"nh", "3.3.3.3"}});
+
+    Selectable *out = nullptr;
+    EXPECT_EQ(sel.select(&out, 2000), Select::OBJECT);
+    EXPECT_EQ(out, zrc);
+
+    // Drain and confirm the tuple made it through end to end.
+    ASSERT_TRUE(waitFor(2000, [&] {
+        zrc->execute();
+        return orch->seenKeys.count("route_q") == 1;
+    }));
+    EXPECT_TRUE(zrc->m_ingress.empty());
 }

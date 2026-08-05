@@ -23,7 +23,10 @@ public:
     void execute() override;
     void drain() override;
 
-private:
+/* protected rather than private so the unit tests (which compile with
+ * protected mapped to public) can assert staging invariants such as
+ * m_ingress.empty() after a drain. */
+protected:
     // Staging buffer for tuples delivered by the ZmqRouteServer mqPollThread
     // ingress callback. The callback writes here (rather than merging into
     // m_toSync directly); execute() drains it into m_toSync.
