@@ -2587,7 +2587,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 // Routeorch internal cache has an entry, but it has already been removed in sai.
                 // This can happen in dualtor when a tunnel route is removed that matches a learned route
                 // remove the entry from the cache and retry route creation
-                m_syncdRoutes.at(vrf_id).erase(ipPrefix);
+                auto& routeTable = m_syncdRoutes.at(vrf_id);
+                routeTable.erase(ipPrefix);
+                if (routeTable.empty())
+                {
+                    m_pendingEmptyVrfCleanup.push_back(vrf_id);
+                }
                 return false;
             }
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
@@ -2987,6 +2992,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     else
     {
         it_route_table->second.erase(ipPrefix);
+        if (it_route_table->second.empty())
+        {
+            m_pendingEmptyVrfCleanup.push_back(vrf_id);
+        }
 
         /* Notify about the route next hop removal */
         notifyNextHopChangeObservers(vrf_id, ipPrefix, NextHopGroupKey(), false);
@@ -3001,19 +3010,17 @@ void RouteOrch::cleanupEmptyVrfTables()
 {
     SWSS_LOG_ENTER();
 
-    for (auto it_vrf = m_syncdRoutes.begin(); it_vrf != m_syncdRoutes.end();)
+    for (auto vrf_id : m_pendingEmptyVrfCleanup)
     {
-        if (it_vrf->second.empty())
+        auto it_vrf = m_syncdRoutes.find(vrf_id);
+        if (it_vrf != m_syncdRoutes.end() && it_vrf->second.empty())
         {
-            SWSS_LOG_INFO("Cleaning up empty VRF table for vrf_id 0x%" PRIx64, it_vrf->first);
-            m_vrfOrch->decreaseVrfRefCount(it_vrf->first);
-            it_vrf = m_syncdRoutes.erase(it_vrf);
-        }
-        else
-        {
-            ++it_vrf;
+            SWSS_LOG_INFO("Cleaning up empty VRF table for vrf_id 0x%" PRIx64, vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+            m_syncdRoutes.erase(it_vrf);
         }
     }
+    m_pendingEmptyVrfCleanup.clear();
 }
 
 void RouteOrch::cleanupVrfTable(sai_object_id_t vrf_id)
