@@ -129,16 +129,20 @@ std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(DBConne
     return std::shared_ptr<swss::ProducerStateTable>(tablePtr);
 }
 
-std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(RedisPipeline *pipeline, const std::string& tableName, bool buffered, std::shared_ptr<swss::ZmqClient> zmqClient)
+std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(RedisPipeline *pipeline, const std::string& tableName, bool buffered, std::shared_ptr<swss::ZmqClient> zmqClient, bool flushPub)
 {
     swss::ProducerStateTable *tablePtr = nullptr;
     if (zmqClient != nullptr) {
+        // ZmqProducerStateTable does not use flushPub — it has its own batching
         SWSS_LOG_NOTICE("Create ZmqProducerStateTable : %s", tableName.c_str());
         tablePtr = new swss::ZmqProducerStateTable(pipeline, tableName, *zmqClient);
     }
     else {
-        SWSS_LOG_NOTICE("Create ProducerStateTable : %s", tableName.c_str());
-        tablePtr = new swss::ProducerStateTable(pipeline, tableName, buffered);
+        // WS3: pass flushPub through to the 4-arg ProducerStateTable ctor.
+        // When buffered && flushPub, PUBLISH is emitted once per pipeline flush
+        // instead of per Lua script call — reducing Redis-thread ops per route.
+        SWSS_LOG_NOTICE("Create ProducerStateTable : %s (flushPub=%s)", tableName.c_str(), flushPub ? "true" : "false");
+        tablePtr = new swss::ProducerStateTable(pipeline, tableName, buffered, flushPub);
     }
 
     return std::shared_ptr<swss::ProducerStateTable>(tablePtr);
