@@ -45,6 +45,17 @@ struct NeighborUpdate
     bool add;
 };
 
+/* IPinIP tunnel next hop add/remove result */
+enum class TunnelNhOpStatus
+{
+    CREATED,                  // SAI object newly created
+    REUSED,                   // existing SAI object reused
+    REMOVED,                  // SAI object removed
+    STILL_REFERENCED,         // still in use, retry later
+    OTHER_REGISTRANTS_REMAIN, // deregistered, SAI object kept
+    SAI_FAILED                // SAI call failed, safe to retry
+};
+
 /*
  * Keeps track of neighbor entry information primarily for bulk operations
  */
@@ -104,8 +115,9 @@ public:
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
 
-    bool addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id);
-    bool removeIpinipTunnelNextHop(const NextHopKey& nh);
+    TunnelNhOpStatus addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t tunnel_id,
+                                             sai_object_id_t& next_hop_id);
+    TunnelNhOpStatus removeIpinipTunnelNextHop(const NextHopKey& nh);
 
     bool ifChangeInformNextHop(const string &, bool);
     
@@ -138,12 +150,7 @@ private:
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
 
-    /*
-     * Number of producers (e.g. MuxOrch, TunnelDecapOrch) that have registered
-     * a given IPinIP tunnel NextHopKey. Multiple producers may register the same
-     * {ip, tunnel_name} key, so the synced entry must survive until the last
-     * producer unregisters it.
-     */
+    /* Registrant count per IPinIP tunnel NextHopKey (e.g. MuxOrch, TunnelDecapOrch) */
     std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
 
     std::set<NextHopKey> m_neighborToResolve;

@@ -2208,38 +2208,62 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     return true;
 }
 
-bool NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id)
+TunnelNhOpStatus NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t tunnel_id,
+                                                    sai_object_id_t& next_hop_id)
 {
     SWSS_LOG_ENTER();
 
     if (!nh.isTunnelNextHop())
     {
         SWSS_LOG_ERROR("NextHopKey is not a tunnel NH: %s", nh.to_string().c_str());
-        return false;
+        return TunnelNhOpStatus::SAI_FAILED;
     }
 
-    if (nh_id == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("Invalid SAI OID for tunnel NH %s", nh.to_string().c_str());
-        return false;
-    }
-
+    /* Already registered: reuse it, no SAI call needed. */
     auto it = m_syncdNextHops.find(nh);
     if (it != m_syncdNextHops.end())
     {
-        /* Multiple producers may register the same key; flag OID
-         * conflicts and track registrants. */
-        if (it->second.next_hop_id != nh_id)
-        {
-            SWSS_LOG_ERROR("IPinIP tunnel NH %s already registered with OID 0x%" PRIx64
-                           ", ignoring conflicting OID 0x%" PRIx64,
-                           nh.to_string().c_str(), it->second.next_hop_id, nh_id);
-        }
-
+        next_hop_id = it->second.next_hop_id;
         uint32_t reg_refs = ++m_ipinipTunnelNextHopRegRefs[nh];
-        SWSS_LOG_INFO("IPinIP tunnel NH already registered: %s (registrants=%u)",
+        SWSS_LOG_INFO("IPinIP tunnel NH reused: %s (registrants=%u)",
                       nh.to_string().c_str(), reg_refs);
-        return true;
+        return TunnelNhOpStatus::REUSED;
+    }
+
+    /* First registrant: create the SAI object. */
+    vector<sai_attribute_t> next_hop_attrs;
+    sai_attribute_t next_hop_attr;
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+    copy(next_hop_attr.value.ipaddr, nh.ip_address);
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_id;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_next_hop_api->create_next_hop(&nh_id, gSwitchId,
+                                                             (uint32_t)next_hop_attrs.size(),
+                                                             next_hop_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create IPinIP tunnel NH %s, rv:%d", nh.to_string().c_str(), status);
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        return TunnelNhOpStatus::SAI_FAILED;
+    }
+
+    if (nh.ip_address.isV4())
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
     }
 
     NextHopEntry next_hop_entry;
@@ -2249,44 +2273,87 @@ bool NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_
     m_syncdNextHops[nh] = next_hop_entry;
     m_ipinipTunnelNextHopRegRefs[nh] = 1;
 
-    SWSS_LOG_NOTICE("Registered IPinIP tunnel NH %s (OID 0x%" PRIx64 ")",
-                    nh.to_string().c_str(), nh_id);
-    return true;
+    next_hop_id = nh_id;
+    SWSS_LOG_NOTICE("Created IPinIP tunnel NH %s (OID 0x%" PRIx64 ")", nh.to_string().c_str(), nh_id);
+    return TunnelNhOpStatus::CREATED;
 }
 
-bool NeighOrch::removeIpinipTunnelNextHop(const NextHopKey& nh)
+TunnelNhOpStatus NeighOrch::removeIpinipTunnelNextHop(const NextHopKey& nh)
 {
     SWSS_LOG_ENTER();
 
     auto it = m_syncdNextHops.find(nh);
     if (it == m_syncdNextHops.end())
     {
-        SWSS_LOG_ERROR("IPinIP tunnel NH not found: %s", nh.to_string().c_str());
-        return false;
+        SWSS_LOG_NOTICE("IPinIP tunnel NH not found, treating as already removed: %s",
+                        nh.to_string().c_str());
+        return TunnelNhOpStatus::REMOVED;
     }
 
     if (it->second.ref_count > 0)
     {
-        SWSS_LOG_ERROR("Cannot remove still-referenced IPinIP tunnel NH %s (ref_count=%d)",
-                       nh.to_string().c_str(), it->second.ref_count);
-        return false;
+        SWSS_LOG_INFO("IPinIP tunnel NH %s still referenced (ref_count=%d), deferring removal",
+                      nh.to_string().c_str(), it->second.ref_count);
+        return TunnelNhOpStatus::STILL_REFERENCED;
     }
 
-    /* Erase only when the last producer unregisters. */
+    /* Other registrants remain: keep the SAI object. */
     auto reg_it = m_ipinipTunnelNextHopRegRefs.find(nh);
     if (reg_it != m_ipinipTunnelNextHopRegRefs.end() && reg_it->second > 1)
     {
         uint32_t reg_refs = --reg_it->second;
-        SWSS_LOG_INFO("IPinIP tunnel NH %s still has %u registrant(s), deferring removal",
+        SWSS_LOG_INFO("IPinIP tunnel NH %s still has %u registrant(s), deferring SAI removal",
                       nh.to_string().c_str(), reg_refs);
-        return true;
+        return TunnelNhOpStatus::OTHER_REGISTRANTS_REMAIN;
+    }
+
+    /* Last registrant: delete the SAI object. */
+    sai_status_t status = sai_next_hop_api->remove_next_hop(it->second.next_hop_id);
+    bool item_not_found = false;
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            /* SAI object is already gone; tolerate and treat as removed,
+             * same as the pre-registration muxorch/tunneldecaporch logic. */
+            SWSS_LOG_NOTICE("IPinIP tunnel NH %s already removed (rv:%d)",
+                            nh.to_string().c_str(), status);
+            item_not_found = true;
+        }
+        else if (status == SAI_STATUS_OBJECT_IN_USE)
+        {
+            /* Not a hard failure; leave bookkeeping intact and defer. */
+            SWSS_LOG_NOTICE("IPinIP tunnel NH %s remove returned rv:%d, deferring",
+                            nh.to_string().c_str(), status);
+            return TunnelNhOpStatus::SAI_FAILED;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove IPinIP tunnel NH %s, rv:%d", nh.to_string().c_str(), status);
+            handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+            return TunnelNhOpStatus::SAI_FAILED;
+        }
+    }
+
+    /* Only decrement the CRM counter when we actually deleted the SAI
+     * object; skip it when SAI reported it was already gone (ITEM_NOT_FOUND). */
+    if (!item_not_found)
+    {
+        if (nh.ip_address.isV4())
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
     }
 
     m_ipinipTunnelNextHopRegRefs.erase(nh);
     m_syncdNextHops.erase(it);
 
-    SWSS_LOG_NOTICE("Unregistered IPinIP tunnel NH %s", nh.to_string().c_str());
-    return true;
+    SWSS_LOG_NOTICE("Removed IPinIP tunnel NH %s", nh.to_string().c_str());
+    return TunnelNhOpStatus::REMOVED;
 }
 
 void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)

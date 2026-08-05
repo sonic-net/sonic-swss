@@ -34,6 +34,7 @@ namespace mux_rollback_test
     using ::testing::Return;
     using ::testing::Throw;
     using ::testing::DoAll;
+    using ::testing::SetArgPointee;
     using ::testing::SetArrayArgument;
     using ::testing::AtLeast;
 
@@ -541,50 +542,49 @@ namespace mux_rollback_test
         EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
     }
 
-    // MuxOrch no longer keeps its own tunnel-NH refcount; NeighOrch is the
-    // single source of truth. removeNextHopTunnel must defer (leaving the SAI
-    // object and local state intact) while NeighOrch still references the
-    // tunnel next hop, otherwise NeighOrch would be left holding a next_hop_id
-    // that has already been deleted in SAI.
+    // removeNextHopTunnel must defer while NeighOrch still references the NH.
     TEST_F(MuxRollbackTest, RemoveNextHopTunnelDeferredWhileReferenced)
     {
         IpAddress tunnel_dst("3.3.3.3");
         const sai_object_id_t fake_nh_id = 0x6000000000001ULL;
 
-        // Seed MuxOrch's OID cache and NeighOrch's tunnel-NH tracking.
-        m_MuxOrch->mux_tunnel_nh_[tunnel_dst] = fake_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
         NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
-        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nhKey, fake_nh_id));
 
         // Simulate a consumer (route/NHG) still referencing the tunnel NH.
         gNeighOrch->m_syncdNextHops[nhKey].ref_count = 1;
 
-        // The SAI next hop must NOT be deleted while it is still referenced.
         EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
 
         EXPECT_FALSE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
 
-        // Local OID cache and NeighOrch registration must remain intact.
         EXPECT_NE(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
         EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
 
         // Cleanup injected state.
         gNeighOrch->m_syncdNextHops[nhKey].ref_count = 0;
-        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
-        m_MuxOrch->mux_tunnel_nh_.erase(tunnel_dst);
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
     }
 
-    // Once NeighOrch no longer references the tunnel NH, removeNextHopTunnel
-    // deletes the SAI object and drops both the NeighOrch registration and the
-    // local OID cache entry.
+    // Unreferenced: removeNextHopTunnel deletes the SAI object and local state.
     TEST_F(MuxRollbackTest, RemoveNextHopTunnelSucceedsWhenUnreferenced)
     {
         IpAddress tunnel_dst("3.3.3.4");
         const sai_object_id_t fake_nh_id = 0x6000000000002ULL;
 
-        m_MuxOrch->mux_tunnel_nh_[tunnel_dst] = fake_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
         NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
-        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nhKey, fake_nh_id));
         ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
 
         EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
@@ -593,22 +593,22 @@ namespace mux_rollback_test
 
         EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
 
-        // SAI object gone; local cache and NeighOrch tracking cleared.
         EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
         EXPECT_FALSE(gNeighOrch->hasNextHop(nhKey));
     }
 
-    // ITEM_NOT_FOUND is tolerated during delete because the NH is already
-    // absent in SAI. Cleanup should still proceed to clear local and
-    // NeighOrch state.
+    // ITEM_NOT_FOUND on delete is tolerated as already-removed.
     TEST_F(MuxRollbackTest, RemoveNextHopTunnelToleratesItemNotFound)
     {
         IpAddress tunnel_dst("3.3.3.9");
         const sai_object_id_t fake_nh_id = 0x6000000000004ULL;
 
-        m_MuxOrch->mux_tunnel_nh_[tunnel_dst] = fake_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
         NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
-        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nhKey, fake_nh_id));
         ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
 
         EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
@@ -617,22 +617,22 @@ namespace mux_rollback_test
 
         EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
 
-        // ITEM_NOT_FOUND is treated as already-removed in SAI, so local and
-        // NeighOrch state must be cleaned up.
         EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
         EXPECT_FALSE(gNeighOrch->hasNextHop(nhKey));
     }
 
-    // On SAI delete failure the removal is deferred: the local cache and the
-    // NeighOrch registration are preserved so the operation can be retried.
+    // On SAI delete failure the removal is deferred so it can be retried.
     TEST_F(MuxRollbackTest, RemoveNextHopTunnelKeepsStateOnSaiFailure)
     {
         IpAddress tunnel_dst("3.3.3.5");
         const sai_object_id_t fake_nh_id = 0x6000000000003ULL;
 
-        m_MuxOrch->mux_tunnel_nh_[tunnel_dst] = fake_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
         NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
-        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nhKey, fake_nh_id));
 
         EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
             .Times(1)
@@ -640,11 +640,85 @@ namespace mux_rollback_test
 
         EXPECT_FALSE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
 
-        // Nothing torn down on failure.
         EXPECT_NE(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
         EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
 
         // Cleanup injected state.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+    }
+
+    // A shared tunnel NH key can have another registrant (e.g. TunnelDecapOrch);
+    // removeNextHopTunnel() must not delete the SAI object while it remains.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelDeferredWhileOtherRegistrantExists)
+    {
+        IpAddress tunnel_dst("3.3.3.6");
+        const sai_object_id_t fake_nh_id = 0x6000000000005ULL;
+        const sai_object_id_t other_tunnel_id = 0x7000;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        // Simulate a second registrant reusing the existing SAI object.
+        sai_object_id_t reused_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+        ASSERT_EQ(gNeighOrch->addIpinipTunnelNextHop(nhKey, other_tunnel_id, reused_nh_id),
+                  TunnelNhOpStatus::REUSED);
+        ASSERT_EQ(2u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+        ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        // NeighOrch entry survives for the other registrant.
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
+        EXPECT_EQ(1u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+
+        // Cleanup: drop the remaining registrant.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+    }
+
+    // createNextHopTunnel() must reuse an existing NeighOrch registration
+    // instead of creating a second SAI object for the same key.
+    TEST_F(MuxRollbackTest, CreateNextHopTunnelReusesExistingNeighOrchRegistration)
+    {
+        IpAddress tunnel_dst("3.3.3.7");
+        const sai_object_id_t existing_nh_id = 0x6000000000006ULL;
+        const sai_object_id_t other_tunnel_id = 0x7000;
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        // Simulate a prior registration by another producer.
+        sai_object_id_t created_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(existing_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(gNeighOrch->addIpinipTunnelNextHop(nhKey, other_tunnel_id, created_nh_id),
+                  TunnelNhOpStatus::CREATED);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+
+        EXPECT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), existing_nh_id);
+
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_[tunnel_dst], existing_nh_id);
+        EXPECT_EQ(2u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+
+        // Cleanup injected state.
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
         gNeighOrch->removeIpinipTunnelNextHop(nhKey);
         m_MuxOrch->mux_tunnel_nh_.erase(tunnel_dst);
     }
