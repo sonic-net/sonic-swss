@@ -5774,7 +5774,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     && pCfg.serdes_settings_sync_status.type == PORT_SI_SETTINGS_NOTIFIED
                     && p.m_admin_state_up)
                 {
-                    setPortAdminStatus(p, false);
+                    if (!setPortAdminStatus(p, false))
+                    {
+                        SWSS_LOG_ERROR("Port %s: failed to bring MAC down to apply updated SI settings; will retry",
+                                       p.m_alias.c_str());
+                        it++;
+                        continue;
+                    }
                     p.m_admin_state_up = false;
                     m_portList[p.m_alias] = p;
                     if (!pCfg.admin_status.is_set)

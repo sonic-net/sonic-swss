@@ -2182,6 +2182,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // gate on: exercise the reapply-on-up MAC-down path
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
@@ -2274,6 +2275,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // gate on: exercise the reapply-on-up MAC-down path
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
