@@ -1805,7 +1805,8 @@ getRibNhgTable()->subSonicNHGObjectRef(key);
 
 /*
  * Test: RIBNHGTable::subSonicNHGObjectRef with refCount already at 0 (underflow protection).
- * When refCount is already 0, the entry should be cleaned up and removed from the map.
+ * Underflow indicates a reference accounting bug: the entry and the sonic
+ * object are kept as-is (only an error is logged) so the bug is not masked.
  */
 TEST_F(FpmSyncdNhgMgr, SubSonicNHGObjectRefUnderflow)
 {
@@ -1818,12 +1819,13 @@ key.ifName = "eth0";
 getCreatedSharedNhgMap().insert(
         std::make_pair(key, SonicNHGObjectInfo(1, 0)));
 
-// Should clean up the entry and log error
+// Should log error and keep the entry untouched
 getRibNhgTable()->subSonicNHGObjectRef(key);
 
-// Entry should be removed after underflow cleanup
-ASSERT_EQ(getCreatedSharedNhgMap().find(key),
-        getCreatedSharedNhgMap().end());
+// Entry should still exist with refCount unchanged after underflow
+auto it = getCreatedSharedNhgMap().find(key);
+ASSERT_NE(it, getCreatedSharedNhgMap().end());
+ASSERT_EQ(it->second.refCount, 0u);
 }
 
 /*
