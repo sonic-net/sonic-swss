@@ -20,6 +20,8 @@
 #include "zmqserver.h"
 #include <unordered_map>
 
+extern bool gRouteStateAsyncPublish;
+
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 /* Length of the Interface Id value in EUI64 format */
@@ -279,6 +281,8 @@ public:
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
 
+    void flushResponses() override;
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -313,6 +317,10 @@ private:
     EntityBulker<sai_route_api_t>           gRouteBulker;
     EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+
+    // Dedicated APPL_STATE_DB publisher for route state (publishAsync path).
+    // Keep this distinct from Orch::m_publisher to avoid shadowing confusion.
+    ResponsePublisher m_routeStatePublisher{"APPL_STATE_DB", /*buffered=*/false, gRouteStateAsyncPublish};
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 

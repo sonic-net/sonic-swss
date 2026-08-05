@@ -103,6 +103,13 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
             throw std::runtime_error("Failed to create VR object");
         }
         gFlowCounterRouteOrch->onAddVR(router_id);
+
+        /* Install IPv6 link-local trap routes (fe80::/10) to trap control packet so CPU. RouteOrch's
+         * constructor only installs these for the default VR */
+        IpPrefix default_link_local_prefix("fe80::/10");
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_INFO("Created link local ipv6 route %s for vnet %s to cpu", default_link_local_prefix.to_string().c_str(), vnet_name_.c_str());
+
         return true;
     };
 
@@ -199,13 +206,13 @@ string VNetVrfObject::getProfile(IpPrefix& ipPrefix)
 void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
 {
     /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
+    if (nh.ips.empty())
     {
         return;
     }
-    else if (nh.ips.getSize() == 1)
+    else if (nh.ips.size() == 1)
     {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        NextHopKey nexthop(nh.ips.front().to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
         {
             gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
@@ -223,13 +230,13 @@ void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
 void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
 {
     /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
+    if (nh.ips.empty())
     {
         return;
     }
-    else if (nh.ips.getSize() == 1)
+    else if (nh.ips.size() == 1)
     {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        NextHopKey nexthop(nh.ips.front().to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
         {
             gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
@@ -349,6 +356,11 @@ VNetVrfObject::~VNetVrfObject()
     {
         if (it != gVirtualRouterId)
         {
+            /* Remove the IPv6 link-local trap routes installed at VR creation */
+            IpPrefix default_link_local_prefix("fe80::/10");
+            gRouteOrch->delLinkLocalRouteToMe(it, default_link_local_prefix);
+            SWSS_LOG_INFO("Deleted link local ipv6 route %s for vnet %s to cpu", default_link_local_prefix.to_string().c_str(), vnet_name_.c_str());
+
             sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1723,7 +1735,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         return true;
     }
 
-    bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
+    bool is_subnet = (nh.ips.empty() ||
+                      std::any_of(nh.ips.begin(), nh.ips.end(),
+                                  [](const IpAddress& a) { return a.isZero(); }))
+                     ? true : false;
 
     Port port;
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
@@ -1781,17 +1796,20 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     }
     else
     {
-        // Populate next hop group string
         auto ifnames = tokenize(nh.ifname, ',');
-        int idx = 0;
-        for (auto it : nh.ips.getIpAddresses())
+        size_t idx = 0;
+        for (const auto& ip : nh.ips)
         {
+            if (idx >= ifnames.size())
+            {
+                SWSS_LOG_ERROR("Nexthop ip/ifname count mismatch for VNET %s route %s", vnet.c_str(), ipPrefix.to_string().c_str());
+                break;
+            }
             if (!nhg_str.empty())
             {
                 nhg_str += ",";
             }
-
-            nhg_str += it.to_string() + "@" + ifnames[idx];
+            nhg_str += ip.to_string() + "@" + ifnames[idx];
             idx++;
         }
     }
@@ -1842,7 +1860,7 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    IpAddresses ip_addresses;
+    std::vector<IpAddress> ip_addresses;
     string ifname = "";
 
     for (const auto& name: request.getAttrFieldNames())
@@ -1854,7 +1872,18 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
         else if (name == "nexthop")
         {
             auto ipstr = request.getAttrString(name);
-            ip_addresses = IpAddresses(ipstr);
+
+            if (!ipstr.empty())
+            {
+                for (const auto& tok : tokenize(ipstr, ','))
+                {
+                    if (tok.empty())
+                    {
+                        continue;
+                    }
+                    ip_addresses.emplace_back(tok);
+                }
+            }
         }
         else
         {

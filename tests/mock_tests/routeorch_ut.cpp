@@ -12,6 +12,7 @@
 #include "bulker.h"
 
 extern string gMySwitchType;
+extern bool gEnableFibSuppress;
 
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
@@ -411,6 +412,8 @@ namespace routeorch_test
 
         void TearDown() override
         {
+            gEnableFibSuppress = false;
+
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(route);
             DEINIT_SAI_API_MOCK(next_hop_group);
@@ -876,6 +879,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchTestSetDelResponse)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -912,6 +916,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchSetFullMaskSubnetPrefix)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -930,6 +935,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchLoopbackRoute)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -1717,5 +1723,20 @@ namespace routeorch_test
         
         // desired_nhg_key is empty: route now directly points to NHG (no longer a temp route)
         ASSERT_EQ(it->second.desired_nhg_key.getSize(), 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrch_RemoveRoutePrefixRunsAsyncPublisherFlush)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"7.7.7.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
     }
 }

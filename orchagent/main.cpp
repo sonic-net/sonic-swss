@@ -59,6 +59,7 @@ extern int gBatchSize;
 
 bool gRingMode = false;
 bool gSyncMode = false;
+bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -80,6 +81,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = false;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
@@ -90,7 +92,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M] [-F]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -103,7 +105,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -A: enable async swss.rec recording path" << endl;
+    cout << "    -A: enable async swss.rec recording and async route state publish path" << endl;
     cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
@@ -116,6 +118,7 @@ void usage()
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
+    cout << "    -F enable BGP FIB suppression" << endl;
 }
 
 void sighup_handler(int signo)
@@ -467,7 +470,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:R:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RMF")) != -1)
     {
         switch (opt)
         {
@@ -502,7 +505,8 @@ int main(int argc, char **argv)
             break;
         case 'A':
             Recorder::Instance().swss.setAsync(true);
-            SWSS_LOG_NOTICE("Async swss recorder enabled");
+            gRouteStateAsyncPublish = true;
+            SWSS_LOG_NOTICE("Async swss recorder and async route state publish enabled");
             break;
         case 'd':
             record_location = optarg;
@@ -592,6 +596,9 @@ int main(int argc, char **argv)
          case 'M':
             macsec_post_enabled = true;
             break;
+        case 'F': // LCOV_EXCL_LINE
+            gEnableFibSuppress = true; // LCOV_EXCL_LINE
+            break; // LCOV_EXCL_LINE
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -1040,6 +1047,22 @@ int main(int argc, char **argv)
     }
 
     orchDaemon->start(heartBeatInterval);
+
+    /*
+     * On SIGTERM/SIGINT the signal handler sets gOrchShutdownRequested and
+     * start() returns. Do not fall through to `return 0;`: running ~OrchDaemon
+     * and its member destructors is unsafe here. FlexCounterManager destruction
+     * issues SAI calls (stopFlexCounterPolling -> set_switch_attribute) that
+     * round-trip through sairedis's ZMQ channel and park the main thread in
+     * zmq_poll while libzmq I/O threads are still alive; orchs torn down earlier
+     * in the reverse-order loop have already freed buffers those threads still
+     * reference, corrupting the heap.
+     *
+     * Instead, drain the async swss recorder so pending records flush, then
+     * _exit() to let the kernel reclaim the rest of the process without the
+     * destructor chain.
+     */
+    exit_if_graceful_shutdown_requested();
 
     return 0;
 }

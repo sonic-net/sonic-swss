@@ -333,13 +333,13 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     deployCounterSubscriptions(sai_object_type);
 }
 
-void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id)
+bool HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id)
 {
     SWSS_LOG_ENTER();
 
     if (!isObjectTypeInProfile(object_type, object_name))
     {
-        return;
+        return false;
     }
 
     auto &objs = m_name_sai_map[object_type];
@@ -348,7 +348,7 @@ void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *obj
     {
         if (itr->second == object_id)
         {
-            return;
+            return false;
         }
     }
     objs[object_name] = object_id;
@@ -360,22 +360,30 @@ void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *obj
 
     // Update the counter subscription
     deployCounterSubscriptions(object_type, object_id, m_groups.at(object_type).getObjects().at(object_name));
+
+    return true;
 }
 
-void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *object_name)
+bool HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *object_name)
 {
     SWSS_LOG_ENTER();
 
     if (!isObjectTypeInProfile(object_type, object_name))
     {
-        return;
+        return false;
     }
 
-    auto &objs = m_name_sai_map[object_type];
+    auto objs_itr = m_name_sai_map.find(object_type);
+    if (objs_itr == m_name_sai_map.end())
+    {
+        return false;
+    }
+
+    auto &objs = objs_itr->second;
     auto itr = objs.find(object_name);
     if (itr == objs.end())
     {
-        return;
+        return false;
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before removing the object
@@ -398,6 +406,8 @@ void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *obj
         m_name_sai_map.erase(object_type);
         SWSS_LOG_DEBUG("Delete object %s from the name sai map", object_name);
     }
+
+    return true;
 }
 
 bool HFTelProfile::canBeUpdated() const

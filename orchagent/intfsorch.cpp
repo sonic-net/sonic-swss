@@ -194,6 +194,11 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
+bool IntfsOrch::isIntfChangeInProgress(const string &alias)
+{
+    return m_removingIntfses.find(alias) != m_removingIntfses.end();
+}
+
 bool IntfsOrch::setRouterIntfsMpls(const Port &port)
 {
     SWSS_LOG_ENTER();
@@ -903,7 +908,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                            SWSS_LOG_NOTICE("Interface '%s' still has %zu IP address(es); deferring VRF '%s' bind until pending IP removals are processed.",
+                                          alias.c_str(), m_syncdIntfses[alias].ip_addresses.size(), vrf_name.c_str());
+                            it++;
+                            continue;
                         }
                     }
                 }
