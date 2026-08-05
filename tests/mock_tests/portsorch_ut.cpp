@@ -1840,6 +1840,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // exercise the gearbox serdes path with the SI gate enabled
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
@@ -1870,7 +1871,7 @@ namespace portsorch_test
         p.m_switch_id = 0x2100000000000000;      // PHY switch ID
         p.m_line_side_id = 0x2100000000000001;   // Line-side port ID
         p.m_system_side_id = 0x2100000000000002; // System-side port ID
-        p.m_admin_state_up = true;
+        p.m_admin_state_up = false;   // SI gate holds the MAC down; serdes is applied on the down port
 
         // Update port in PortsOrch (using private access)
         gPortsOrch->m_portList["Ethernet0"] = p;
@@ -1957,6 +1958,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // exercise the gearbox serdes path with the SI gate enabled
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
@@ -1987,7 +1989,7 @@ namespace portsorch_test
         p.m_switch_id = 0x2100000000000000;
         p.m_line_side_id = 0x2100000000000001;
         p.m_system_side_id = 0x2100000000000002;
-        p.m_admin_state_up = true;
+        p.m_admin_state_up = false;   // SI gate holds the MAC down; serdes is applied on the down port
 
         gPortsOrch->m_portList["Ethernet0"] = p;
 
@@ -2035,6 +2037,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // exercise the gearbox serdes path with the SI gate enabled
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
@@ -2065,7 +2068,7 @@ namespace portsorch_test
         p.m_switch_id = 0x2100000000000000;
         p.m_line_side_id = 0x2100000000000001;
         p.m_system_side_id = 0x2100000000000002;
-        p.m_admin_state_up = true;
+        p.m_admin_state_up = false;   // SI gate holds the MAC down; serdes is applied on the down port
 
         gPortsOrch->m_portList["Ethernet0"] = p;
 
@@ -2115,6 +2118,7 @@ namespace portsorch_test
     {
         _reset_serdes_test_state();
         _hook_sai_port_api();
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // exercise the gearbox serdes path with the SI gate enabled
 
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 

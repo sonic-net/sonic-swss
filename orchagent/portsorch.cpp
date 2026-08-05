@@ -7032,6 +7032,12 @@ void PortsOrch::initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports)
 
     for (auto& port : ports)
     {
+        // Preserve retained si_settings_ack for a warmboot / warm restart
+        std::string existing;
+        if (m_portStateTable.hget(port.m_alias, "si_settings_ack", existing) && !existing.empty())
+        {
+            continue;
+        }
         setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":0");
         SWSS_LOG_NOTICE("Initialize si_settings_ack as %s:0 for port %s",
                         PORT_SI_SETTINGS_DEFAULT, port.m_alias.c_str());
