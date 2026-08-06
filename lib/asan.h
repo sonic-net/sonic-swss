@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Testable ASAN helpers. Production daemons enable them via the constructor in
- * asan_ctor.cpp; unit tests call swss_asan_init_impl() with injected
- * dependencies and leave asan_ctor.cpp out of the link.
+ * asan_ctor.cpp; unit tests call swss_asan_init_impl() /
+ * swss_asan_sigterm_handler_impl() with injected dependencies and leave
+ * asan_ctor.cpp out of the link.
  */
 
 #pragma once
@@ -25,10 +26,24 @@ using SwssAccessFn = int (*)(const char *, int);
 using SwssMallocFn = void *(*)(size_t);
 // __lsan_do_leak_check() from sanitizer/lsan_interface.h
 using SwssLsanLeakCheckFn = void (*)(void);
+// _exit() from unistd.h
+using SwssExitFn = void (*)(int);
+// raise() from signal.h
+using SwssRaiseFn = int (*)(int);
 
-// SIGTERM handler installed by swss_asan_init_impl(). Exposed so tests can
-// verify the handler pointer that was passed to sigaction.
+// SIGTERM handler installed by swss_asan_init_impl(). Thin wrapper around
+// swss_asan_sigterm_handler_impl() that passes g_lsan_leak_check and the real
+// libc entry points. Exposed so tests can verify the handler pointer that was
+// passed to sigaction.
 void swss_asan_sigterm_handler(int signo);
+
+// Testable SIGTERM-handler body. Production wrapper passes g_lsan_leak_check,
+// ::sigaction, ::_exit, and ::raise; unit tests inject doubles.
+void swss_asan_sigterm_handler_impl(int signo,
+                                    SwssLsanLeakCheckFn leak_check_fn,
+                                    SwssSigactionFn sigaction_fn,
+                                    SwssExitFn exit_fn,
+                                    SwssRaiseFn raise_fn);
 
 // Allocate (and never free) the intentional test leak via malloc_fn.
 void swss_asan_inject_test_leak(SwssMallocFn malloc_fn);

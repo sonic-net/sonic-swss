@@ -6,7 +6,8 @@
  *
  * ENABLE_ASAN=y daemon builds also link asan_ctor.cpp, whose constructor calls
  * swss_asan_init_impl() before main(). Unit tests leave asan_ctor.cpp out and
- * call swss_asan_init_impl() with test-double functions for the dependencies.
+ * call swss_asan_init_impl() / swss_asan_sigterm_handler_impl() with test-
+ * double functions for the dependencies.
  */
 
 #include "asan.h"
@@ -67,20 +68,25 @@ void swss_asan_inject_test_leak(SwssMallocFn malloc_fn)
     asm volatile("" : : "r"(probe) : "memory");
 }
 
-void swss_asan_sigterm_handler(int signo)
+void swss_asan_sigterm_handler_impl(int signo,
+                                    SwssLsanLeakCheckFn leak_check_fn,
+                                    SwssSigactionFn sigaction_fn,
+                                    SwssExitFn exit_fn,
+                                    SwssRaiseFn raise_fn)
 {
     SWSS_LOG_ENTER();
 
-    if (g_lsan_leak_check)
+    if (leak_check_fn)
     {
-        g_lsan_leak_check();
+        leak_check_fn();
     }
 
     struct sigaction sigact;
-    if (sigaction(SIGTERM, NULL, &sigact))
+    if (sigaction_fn(SIGTERM, NULL, &sigact))
     {
         SWSS_LOG_ERROR("failed to get current SIGTERM action handler");
-        _exit(EXIT_FAILURE);
+        exit_fn(EXIT_FAILURE);
+        return;
     }
 
     // Check the currently set signal handler.
@@ -92,14 +98,20 @@ void swss_asan_sigterm_handler(int signo)
         sigemptyset(&sigact.sa_mask);
         sigact.sa_flags = 0;
         sigact.sa_handler = SIG_DFL;
-        if (sigaction(SIGTERM, &sigact, NULL))
+        if (sigaction_fn(SIGTERM, &sigact, NULL))
         {
             SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
-            _exit(EXIT_FAILURE);
+            exit_fn(EXIT_FAILURE);
+            return;
         }
 
-        raise(signo);
+        raise_fn(signo);
     }
+}
+
+void swss_asan_sigterm_handler(int signo)
+{
+    swss_asan_sigterm_handler_impl(signo, g_lsan_leak_check, ::sigaction, ::_exit, ::raise);
 }
 
 bool swss_asan_init_impl(SwssSigactionFn sigaction_fn,
