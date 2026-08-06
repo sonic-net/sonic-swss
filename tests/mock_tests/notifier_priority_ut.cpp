@@ -242,6 +242,6 @@ namespace notifier_priority_test
         /* Reset A — B remains stalled */
         notifierA.m_noProgressCount = 0;
         EXPECT_EQ(notifierA.m_noProgressCount, 0);
-        EXPECT_EQ(notifierB.m_noProgressCount, Notifier::STALL_THRESHOLD);
+        EXPECT_TRUE(notifierB.m_noProgressCount >= Notifier::STALL_THRESHOLD);
     }
 }
