@@ -421,11 +421,6 @@ void BfdLink::handleBfdDpMessage(size_t start)
         struct in_addr v4;
         sprintf(src_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.src));
         sprintf(dst_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.dst));
-        /* check link local ip address 169.254.0.0/16 0xa9fe0000 */
-        if ((inet_pton(AF_INET, dst_addr, &v4) == 1) && ((ntohl(v4.s_addr) >> 16) == 0xA9FE)) {
-            is_linklocal = true;
-            SWSS_LOG_INFO("dst_addr %s is a link local ip address", dst_addr);
-        }
     }
 
     bfdkey = string("default:default:")+string(dst_addr);
@@ -434,59 +429,6 @@ void BfdLink::handleBfdDpMessage(size_t start)
     ifindex = ntohl(bm.data.session.ifindex);
     memcpy(ifname, bm.data.session.ifname, IFNAME_LEN);
     ifname[IFNAME_LEN - 1] = '\0';
-
-    /* for link-local address only */
-    if (ifindex != 0) {
-        bfdkey = string("default:")+string(ifname)+string(":")+string(dst_addr);
-        bfdkey_map = string("default|")+string(ifname)+string("|")+string(dst_addr);
-    }
-
-    /* mac address is not needed for deletion, neighbor entry might be deleted already */
-    if ((ifindex != 0) && (bm.header.type == DP_ADD_SESSION)) {
-        /* get src mac address */
-        src_mac = get_intf_mac(ifname);
-
-        if (flags & SESSION_IPV6)
-        {
-            /* update ndp table */
-            cmd = string("ping6 -c 3 ") + string(dst_addr) + string(" -I ") + string(ifname);
-            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
-            exec(cmd.c_str());
-
-            /* get dst mac address */
-            cmd = string("ip -6 neighbor get ") + string(dst_addr) + string(" dev ") + string(ifname) + string(" | grep -o -E ..:..:..:..:..:..");
-            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
-            dst_str = exec(cmd.c_str());
-            if (dst_str.length() < 17) {
-                SWSS_LOG_ERROR("mac address length is not correct: dst_mac %s ", dst_str.c_str());
-                return;
-            }
-            dst_mac = dst_str.substr(0,17);
-        }
-        else
-        {
-            /* update arp table */
-            if (is_linklocal) {
-                SWSS_LOG_ERROR("IPv4 link-local is not supported!");
-                return;
-            } else {
-                cmd = string("ping -c 3 ") + string(dst_addr) + string(" -I ") + string(ifname);
-            }
-            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
-            exec(cmd.c_str());
-
-            /* get dst mac address */
-            cmd = string("arp ") + string(dst_addr) + string(" | grep -o -E ..:..:..:..:..:..");
-            SWSS_LOG_INFO("CMD: %s", cmd.c_str());
-            dst_str = exec(cmd.c_str());
-            if (dst_str.length() < 17) {
-                SWSS_LOG_ERROR("mac address length is not correct: ip_address %s, dst_mac %s", dst_addr, dst_str.c_str());
-                return;
-            }
-            dst_mac = dst_str.substr(0,17);
-        }
-        SWSS_LOG_INFO("dst_mac %s ,  src_mac %s", dst_mac.c_str(), src_mac.c_str());
-    }
 
     if (bm.header.type == DP_ADD_SESSION) {
         std::map<std::string, bfddp_message>::iterator it;
@@ -541,14 +483,6 @@ void BfdLink::handleBfdDpMessage(size_t start)
 
     FieldValueTuple la("local_addr", src_addr);
     fvVector.push_back(la);
-
-    /* Specify both dst_mac and src_mac for inject-down */
-    if (ifindex != 0) {
-        FieldValueTuple d_mac("dst_mac", dst_mac.c_str());
-        fvVector.push_back(d_mac);
-        FieldValueTuple s_mac("src_mac", src_mac.c_str());
-        fvVector.push_back(s_mac);
-    }
 
     /* let bfdorch use default value if the following parameters are not provided */
     if (rx_int != 0) 
