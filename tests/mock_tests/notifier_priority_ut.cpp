@@ -209,4 +209,39 @@ namespace notifier_priority_test
         EXPECT_EQ(readySet.size(), 2u);
         EXPECT_EQ(*readySet.begin(), static_cast<swss::Selectable *>(&notifier));
     }
+
+    /* Multiple Notifiers have independent stall counters — one stalling
+     * does not affect another (relevant during startup with FDB + port
+     * notifications arriving simultaneously). */
+    TEST_F(NotifierPriorityTest, MultipleNotifiersHaveIndependentStallState)
+    {
+        DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
+
+        auto *nc1 = new swss::NotificationConsumer(m_app_db.get(), "CHANNEL_A");
+        Notifier notifierA(nc1, &orch, "NOTIF_A");
+
+        auto *nc2 = new swss::NotificationConsumer(m_app_db.get(), "CHANNEL_B");
+        Notifier notifierB(nc2, &orch, "NOTIF_B");
+
+        /* Stall A only */
+        notifierA.m_noProgressCount = Notifier::STALL_THRESHOLD;
+        notifierB.m_noProgressCount = 0;
+
+        EXPECT_FALSE(notifierA.hasCachedData());
+        /* B still delegates normally (queue empty → false, but not due to stall) */
+        EXPECT_EQ(notifierB.m_noProgressCount, 0);
+
+        /* Both keep constant priority regardless of stall state */
+        EXPECT_EQ(notifierA.getPri(), 100);
+        EXPECT_EQ(notifierB.getPri(), 100);
+
+        /* Stall B independently */
+        notifierB.m_noProgressCount = Notifier::STALL_THRESHOLD;
+        EXPECT_FALSE(notifierB.hasCachedData());
+
+        /* Reset A — B remains stalled */
+        notifierA.m_noProgressCount = 0;
+        EXPECT_EQ(notifierA.m_noProgressCount, 0);
+        EXPECT_EQ(notifierB.m_noProgressCount, Notifier::STALL_THRESHOLD);
+    }
 }
