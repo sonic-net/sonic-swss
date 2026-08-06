@@ -23,7 +23,6 @@ use opentelemetry_proto::tonic::{
         KeyValue as ProtoKeyValue,
     },
     metrics::v1::{
-        Gauge as ProtoGauge,
         Metric,
         ResourceMetrics,
         ScopeMetrics,
@@ -31,8 +30,8 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    otel::OtelMetrics,
-    saistats::SAIStatsMessage,
+    otel::{sai_stats_to_proto_metrics, DisplaySaiStats},
+    saistats::{SAIStats, SAIStatsMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
@@ -89,8 +88,9 @@ pub struct OtelActor {
     resource: ProtoResource,
     instrumentation_scope: InstrumentationScope,
 
-    // Batching
-    buffer: Vec<OtelMetrics>,
+    // Batching — buffers the raw SAI messages; each is converted straight to
+    // its final protobuf form at flush time
+    buffer: Vec<SAIStatsMessage>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
 
@@ -227,15 +227,14 @@ impl OtelActor {
 
         let was_empty = self.buffer.is_empty();
 
-        // Convert to OTel format using message types and buffer
-        let otel_metrics = OtelMetrics::from_sai_stats(&stats);
         let counters_in_message = stats.stats.len();
 
+        // The export path converts the buffered SAI message directly
         if log::log_enabled!(log::Level::Debug) {
-            self.print_otel_metrics(&otel_metrics).await;
+            self.print_stats_report(&stats);
         }
 
-        self.buffer.push(otel_metrics);
+        self.buffer.push(stats);
         self.buffered_counters += counters_in_message;
 
         // Start timeout when buffer transitions from empty to non-empty
@@ -252,41 +251,20 @@ impl OtelActor {
         Ok(())
     }
 
-    async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
+    fn print_stats_report(&mut self, stats: &SAIStats) {
         self.console_reports += 1;
 
         debug!(
-            "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
+            "[OTel Report #{}] Service: countersyncd, Scope: countersyncd v1.0, Counters: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
-            otel_metrics.service_name,
-            otel_metrics.scope_name,
-            otel_metrics.scope_version,
-            otel_metrics.len(),
+            stats.stats.len(),
             self.messages_received,
             self.exports_performed,
             self.export_failures
         );
 
-        if !otel_metrics.is_empty() {
-            debug!("Gauge Metrics:");
-            for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
-                let data_point = &gauge.data_points[0];
-
-                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                debug!("Value: {}", data_point.value);
-                debug!("Unit: {}", gauge.unit);
-                debug!("Time: {}ns", data_point.time_unix_nano);
-                debug!("Description: {}", gauge.description);
-
-                if !data_point.attributes.is_empty() {
-                    debug!("Attributes:");
-                    for attr in &data_point.attributes {
-                        debug!("  - {}={}", attr.key, attr.value);
-                    }
-                }
-
-                debug!("Raw Gauge: {:#?}", gauge);
-            }
+        if !stats.stats.is_empty() {
+            debug!("SAI counters:\n{}", DisplaySaiStats(stats));
         }
     }
 
@@ -359,24 +337,8 @@ impl OtelActor {
     fn build_export_request(&self) -> Option<ExportMetricsServiceRequest> {
         let mut proto_metrics: Vec<Metric> = Vec::new();
 
-        for otel_metrics in &self.buffer {
-            for gauge in &otel_metrics.gauges {
-                let proto_data_points = gauge.data_points.iter()
-                    .map(|dp| dp.to_proto())
-                    .collect();
-
-                let proto_gauge = ProtoGauge {
-                    data_points: proto_data_points,
-                };
-
-                proto_metrics.push(Metric {
-                    name: gauge.name.to_string(),
-                    description: gauge.description.to_string(),
-                    metadata: vec![],
-                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
-                    ..Default::default()
-                });
-            }
+        for stats in &self.buffer {
+            proto_metrics.extend(sai_stats_to_proto_metrics(stats));
         }
 
         if proto_metrics.is_empty() {
