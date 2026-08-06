@@ -57,11 +57,13 @@ tests_SOURCES = aclorch_ut.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
+                policerorch_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                chassisorch_ut.cpp \
                 evpnmhorch_ut.cpp \
                 vxlanorch_ut.cpp \
                 mux_rollback_ut.cpp \
@@ -96,6 +98,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                macsecorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \

@@ -331,6 +331,7 @@ bool OrchDaemon::init()
 
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
+    gNeighOrch->attach(gBfdOrch);
 
     const int fgnhgorch_pri = 15;
 
