@@ -359,6 +359,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string hostif_name = "";
             vector<FieldValueTuple> fvVector;
             string members;
+            string learn_disable = "";
 
             /*
              * If state is already set for this vlan, but it doesn't exist in m_vlans set,
@@ -417,6 +418,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 {
                     hostif_name = fvValue(i);
                 }
+                else if (fvField(i) == "learn_disable")
+                {
+                    learn_disable = fvValue(i);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -433,6 +438,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple hostif_name_fvt("host_ifname", hostif_name);
             fvVector.push_back(hostif_name_fvt);
+            if (!learn_disable.empty())
+            {
+                FieldValueTuple ld("learn_disable", learn_disable);
+                fvVector.push_back(ld);
+                SWSS_LOG_NOTICE("Forwarding learn_disable=%s for %s to APPL_DB",
+                        learn_disable.c_str(), key.c_str());
+            }
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);
