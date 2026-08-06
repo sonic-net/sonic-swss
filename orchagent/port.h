@@ -218,10 +218,12 @@ public:
      * refresh of APP_LAG_MEMBER_TABLE does not silently re-enable the member
      * while MACsec is down.
      *
-     * Known limitation: this intent is in-memory only and defaults true. If
-     * orchagent/swss restarts (e.g. warm reboot) while MACsec is down, the
-     * member comes back enabled before its SAs are re-established. It is not
-     * reconciled from STATE_DB MACsec SA presence on init. */
+     * Known limitation: this intent is in-memory only and defaults true. Any
+     * orchagent/swss restart loses the prior value, so until macsecorch
+     * rebuilds MACsec state (createMACsecPort -> setMACsecEnabledState(true)
+     * -> setLagMemberMacsecSaActive(false)), a teamsyncd status=enabled
+     * refresh is not suppressed. It is not reconciled from STATE_DB MACsec SA
+     * presence on init. */
     bool                m_macsec_sa_active = true;
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_nexthop_group_id = 0;

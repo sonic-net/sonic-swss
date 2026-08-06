@@ -2390,7 +2390,7 @@ task_process_status MACsecOrch::createMACsecSA(
         Port port;
         if (m_port_orch->getPort(port_name, port))
         {
-            m_port_orch->setLagMemberState(port, true);
+            m_port_orch->setLagMemberMacsecSaActive(port, true);
         }
     }
 
@@ -2451,7 +2451,7 @@ task_process_status MACsecOrch::deleteMACsecSA(
             Port port;
             if (m_port_orch->getPort(port_name, port))
             {
-                m_port_orch->setLagMemberState(port, false);
+                m_port_orch->setLagMemberMacsecSaActive(port, false);
             }
         }
     }

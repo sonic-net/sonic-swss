@@ -4890,11 +4890,11 @@ namespace portsorch_test
 
     /*
     * Verify the MACsec / LAG-member data-plane interaction:
-    *  - setLagMemberState(false) disables collection + distribution on the
+    *  - setLagMemberMacsecSaActive(false) disables collection + distribution on the
     *    member via SAI and records the MACsec-down intent.
     *  - A subsequent teamsyncd "enabled" refresh on APP_LAG_MEMBER_TABLE does
     *    NOT re-enable the member while MACsec is down.
-    *  - setLagMemberState(true) clears the suppression flag and teamsyncd drives
+    *  - setLagMemberMacsecSaActive(true) clears the suppression flag and teamsyncd drives
     *    the SAI re-enable (no direct SAI enable on recovery).
     */
     TEST_F(PortsOrchTest, MacsecDownDisablesLagMemberAndSuppressesTeamdReEnable)
@@ -4949,7 +4949,7 @@ namespace portsorch_test
         );
 
         // --- MACsec session down: disable the member directly ---
-        gPortsOrch->setLagMemberState(member, false);
+        gPortsOrch->setLagMemberMacsecSaActive(member, false);
         ASSERT_TRUE(egressDisable);
         ASSERT_TRUE(ingressDisable);
 
@@ -4959,7 +4959,7 @@ namespace portsorch_test
 
         // --- redundant disable (both SCs empty) must be a no-op ---
         setAttrCalls = 0;
-        gPortsOrch->setLagMemberState(afterDown, false);
+        gPortsOrch->setLagMemberMacsecSaActive(afterDown, false);
         ASSERT_EQ(setAttrCalls, 0);
 
         // --- teamsyncd refresh: a status=enabled write must be suppressed ---
@@ -4980,7 +4980,7 @@ namespace portsorch_test
 
         // --- MACsec session restored: clear suppression, teamsyncd re-enables ---
         setAttrCalls = 0;
-        gPortsOrch->setLagMemberState(afterDown, true);
+        gPortsOrch->setLagMemberMacsecSaActive(afterDown, true);
         ASSERT_EQ(setAttrCalls, 0) << "Recovery must not SAI-enable directly";
 
         Port afterFlagSet;
@@ -4999,7 +4999,7 @@ namespace portsorch_test
     }
 
     /*
-    * setLagMemberState(false) on a non-LAG port must only persist
+    * setLagMemberMacsecSaActive(false) on a non-LAG port must only persist
     * m_macsec_sa_active and must not flap the host interface or touch SAI LAG
     * member attributes.
     */
@@ -5053,7 +5053,7 @@ namespace portsorch_test
             }
         );
 
-        gPortsOrch->setLagMemberState(port, false);
+        gPortsOrch->setLagMemberMacsecSaActive(port, false);
 
         Port afterDown;
         ASSERT_TRUE(gPortsOrch->getPort(portAlias, afterDown));
@@ -5130,7 +5130,7 @@ namespace portsorch_test
             // MACsec session down: SAI-disable member and suppress teamsyncd enable.
             egressDisable = ingressDisable = false;
             setAttrCalls = 0;
-            gPortsOrch->setLagMemberState(cur, false);
+            gPortsOrch->setLagMemberMacsecSaActive(cur, false);
             ASSERT_TRUE(egressDisable) << "cycle " << i;
             ASSERT_TRUE(ingressDisable) << "cycle " << i;
 
@@ -5153,7 +5153,7 @@ namespace portsorch_test
 
             // MACsec session up: clear flag only; teamsyncd drives SAI re-enable.
             setAttrCalls = 0;
-            gPortsOrch->setLagMemberState(afterDown, true);
+            gPortsOrch->setLagMemberMacsecSaActive(afterDown, true);
             ASSERT_EQ(setAttrCalls, 0) << "recovery must not SAI-enable directly, cycle " << i;
 
             Port afterUp;
@@ -5173,17 +5173,17 @@ namespace portsorch_test
         ASSERT_TRUE(gPortsOrch->getPort(memberAlias, rapid));
         for (int i = 0; i < 10; i++)
         {
-            gPortsOrch->setLagMemberState(rapid, false);
+            gPortsOrch->setLagMemberMacsecSaActive(rapid, false);
             ASSERT_TRUE(gPortsOrch->getPort(memberAlias, rapid));
             ASSERT_FALSE(rapid.m_macsec_sa_active) << "rapid down " << i;
 
-            gPortsOrch->setLagMemberState(rapid, true);
+            gPortsOrch->setLagMemberMacsecSaActive(rapid, true);
             ASSERT_TRUE(gPortsOrch->getPort(memberAlias, rapid));
             ASSERT_TRUE(rapid.m_macsec_sa_active) << "rapid up " << i;
         }
 
         // Stale enable after a final down must still be suppressed.
-        gPortsOrch->setLagMemberState(rapid, false);
+        gPortsOrch->setLagMemberMacsecSaActive(rapid, false);
         ASSERT_TRUE(gPortsOrch->getPort(memberAlias, rapid));
         ASSERT_FALSE(rapid.m_macsec_sa_active);
         setAttrCalls = 0;
