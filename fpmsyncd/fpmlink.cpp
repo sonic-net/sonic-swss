@@ -66,6 +66,21 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
             return true;
         }
 
+        /*
+         * Bridge FDB entries share RTM_NEWNEIGH/RTM_DELNEIGH with IP neighbours,
+         * so the address family is what selects the MAC path.
+         */
+        if (h->nlmsg_type == RTM_NEWNEIGH || h->nlmsg_type == RTM_DELNEIGH)
+        {
+            if (h->nlmsg_len < NLMSG_LENGTH(sizeof(struct ndmsg)))
+            {
+                return false;
+            }
+
+            struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(h);
+            return ndm->ndm_family == AF_BRIDGE;
+        }
+
         return false;
     }
 
