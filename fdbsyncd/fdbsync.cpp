@@ -35,15 +35,86 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_cfgFdbSyncTable(config_db, CFG_FDB_SYNC_TABLE_NAME),
+    m_cfgFdbSyncTableRead(config_db, CFG_FDB_SYNC_TABLE_NAME)
 {
+    readCfgFdbSyncMode();
+
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
-        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        /*
+         * Only the producer of a table may drive its warm-restart
+         * reconciliation: reconcile() deletes every entry left STALE. In FPM
+         * mode fpmsyncd produces APP_VXLAN_FDB_TABLE, so registering it here
+         * would delete all remote MACs across a warm reboot.
+         */
+        if (!m_fpmMacSync)
+        {
+            m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        }
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
-    m_isFdbProtoSupported = checkFdbProtoSupport();
+    m_isFdbProtoSupported = m_fpmMacSync ? false : checkFdbProtoSupport();
+}
+
+void FdbSync::readCfgFdbSyncMode()
+{
+    string mode;
+
+    if (m_cfgFdbSyncTableRead.hget("global", "mac_sync_mode", mode))
+    {
+        setMacSyncMode(mode);
+    }
+}
+
+void FdbSync::setMacSyncMode(const string& mode)
+{
+    bool fpmMacSync = (mode == "fpm");
+
+    if (fpmMacSync == m_fpmMacSync)
+    {
+        return;
+    }
+
+    m_fpmMacSync = fpmMacSync;
+    SWSS_LOG_NOTICE("FdbSync: mac_sync_mode is now %s", m_fpmMacSync ? "fpm" : "kernel");
+
+    if (!m_fpmMacSync)
+    {
+        m_isFdbProtoSupported = checkFdbProtoSupport();
+        updateAllLocalMac();
+    }
+}
+
+void FdbSync::processCfgFdbSync()
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+
+    m_cfgFdbSyncTable.pops(entries);
+
+    for (auto& entry : entries)
+    {
+        if (kfvKey(entry) != "global")
+        {
+            continue;
+        }
+
+        if (kfvOp(entry) != SET_COMMAND)
+        {
+            setMacSyncMode("");
+            continue;
+        }
+
+        for (auto& fv : kfvFieldsValues(entry))
+        {
+            if (fvField(fv) == "mac_sync_mode")
+            {
+                setMacSyncMode(fvValue(fv));
+            }
+        }
+    }
 }
 
 FdbSync::~FdbSync()
@@ -406,6 +477,13 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         return;
     }
 
+    if (m_fpmMacSync)
+    {
+        /* fpmsyncd carries local MACs to zebra over FPM in this mode. */
+        SWSS_LOG_INFO("Ignore kernel update, MAC sync runs over FPM, MAC %s", key.c_str());
+        return;
+    }
+
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
         type = "dynamic extern_learn";
@@ -453,6 +531,11 @@ void FdbSync::addLocalMac(string key, string op)
     string vlan = "";
     size_t str_loc = string::npos;
     std::string proto_string = "";
+
+    if (m_fpmMacSync)
+    {
+        return;
+    }
 
     str_loc = key.find(":");
     if (str_loc == string::npos)
@@ -1083,6 +1166,17 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     key += vlan_id;
     key += ":";
     key += macStr;
+
+    /*
+     * Only unicast MACs move to the FPM channel. IMET/remote-VNI handling
+     * above still comes from the kernel, so the gate cannot sit on the whole
+     * neighbour path.
+     */
+    if (m_fpmMacSync)
+    {
+        SWSS_LOG_INFO("Ignore kernel remote MAC, MAC sync runs over FPM, key %s", key.c_str());
+        return;
+    }
 
     if (!delete_key)
     {

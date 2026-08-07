@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
@@ -2417,6 +2418,8 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
+        && (h->nlmsg_type != RTM_NEWNEIGH)
+        && (h->nlmsg_type != RTM_DELNEIGH)
         && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
     {
         return;
@@ -2494,6 +2497,13 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         onEvpnEsBackupNhgMsg(h, len);
+        return;
+    case RTM_NEWNEIGH:
+    case RTM_DELNEIGH:
+        if (m_macsync)
+        {
+            m_macsync->onMacMsg(h, len);
+        }
         return;
     default:
         break;

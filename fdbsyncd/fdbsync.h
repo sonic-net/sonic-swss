@@ -8,6 +8,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
@@ -78,11 +79,24 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
+    SubscriberStateTable *getCfgFdbSyncTable()
+    {
+        return &m_cfgFdbSyncTable;
+    }
+
     void processStateFdb();
 
     void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
+
+    void processCfgFdbSync();
+
+    /* True when fpmsyncd owns MAC synchronization over the FPM channel. */
+    bool isFpmMacSync() const
+    {
+        return m_fpmMacSync;
+    }
 
     bool m_reconcileDone = false;
 
@@ -91,6 +105,10 @@ public:
 private:
     bool m_isFdbProtoSupported = false;
     bool checkFdbProtoSupport();
+    void readCfgFdbSyncMode();
+    void setMacSyncMode(const std::string& mode);
+
+    bool m_fpmMacSync = false;
 
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
@@ -99,6 +117,8 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    SubscriberStateTable m_cfgFdbSyncTable;
+    Table m_cfgFdbSyncTableRead;
 
     struct m_local_fdb_info
     {
