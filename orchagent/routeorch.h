@@ -224,7 +224,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public ZmqRouteOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, ZmqRouteServer *zmqServer = nullptr);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);

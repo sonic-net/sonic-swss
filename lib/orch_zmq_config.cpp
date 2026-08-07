@@ -87,7 +87,7 @@ std::shared_ptr<swss::ZmqRouteServer> swss::create_zmq_route_server(std::string 
         zmq_address = zmq_address + ":" + std::to_string(zmq_port);
     }
 
-    SWSS_LOG_NOTICE("Create ZMQ server with address: %s", zmq_address.c_str());
+    SWSS_LOG_NOTICE("Create ZMQ route server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
 
     // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
     // use lazy binding and call bind() only after the handler has been registered.

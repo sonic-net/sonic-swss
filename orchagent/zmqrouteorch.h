@@ -12,12 +12,12 @@
 
 class ZmqRouteConsumer : public ConsumerBase {
 public:
-    ZmqRouteConsumer(ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name);
+    ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name);
 
     swss::TableBase *getConsumerTable() const override
     {
         // ZmqRouteConsumerStateTable is a subclass of TableBase
-        return static_cast<ZmqRouteConsumerStateTable *>(getSelectable());
+        return static_cast<swss::ZmqRouteConsumerStateTable *>(getSelectable());
     }
 
     void execute() override;
@@ -44,12 +44,12 @@ protected:
 class ZmqRouteOrch : public Orch
 {
 public:
-    ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, ZmqRouteServer *zmqServer);
-    ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, ZmqRouteServer *zmqServer);
+    ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqRouteServer *zmqServer);
+    ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqRouteServer *zmqServer);
 
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
 
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, ZmqRouteServer *zmqServer);
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqRouteServer *zmqServer);
 };

@@ -6,7 +6,7 @@ using namespace std;
 extern int gBatchSize;
 extern size_t gMaxBulkSize;
 
-ZmqRouteConsumer::ZmqRouteConsumer(ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name)
+ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name)
     : ConsumerBase(select, orch, name)
 {
     // mqPollThread delivers bursts of tuples through this callback. Stage them
@@ -71,7 +71,7 @@ void ZmqRouteConsumer::drain()
 }
 
 
-ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, ZmqRouteServer *zmqServer)
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, swss::ZmqRouteServer *zmqServer)
 : Orch()
 {
     for (const auto& it : tableNames)
@@ -81,7 +81,7 @@ ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, Zm
 }
 
 
-ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqRouteServer *zmqServer)
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqRouteServer *zmqServer)
 {
     for (const auto& it : tableNames_with_pri)
     {
@@ -89,7 +89,7 @@ ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> 
     }
 }
 
-void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqRouteServer *zmqServer)
+void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, swss::ZmqRouteServer *zmqServer)
 {
     if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
@@ -98,7 +98,7 @@ void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqRo
             SWSS_LOG_DEBUG("ZmqRouteConsumer initialize for: %s", tableName.c_str());
             addExecutor(
                 new ZmqRouteConsumer(
-                  new ZmqRouteConsumerStateTable(
+                  new swss::ZmqRouteConsumerStateTable(
                     db, tableName, *zmqServer, pri, /* dbPersistence= */false),
                 this, tableName));
         }
