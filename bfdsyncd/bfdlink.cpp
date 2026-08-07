@@ -411,7 +411,6 @@ void BfdLink::handleBfdDpMessage(size_t start)
     }
     else
     {
-        struct in_addr v4;
         sprintf(src_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.src));
         sprintf(dst_addr, "%s", inet_ntoa(*(struct in_addr *)&bmp->data.session.dst));
     }
