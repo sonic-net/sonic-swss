@@ -78,7 +78,6 @@ static bool parseStateDbKey(const std::string &k, std::string &vrf, std::string 
 }
 
 } // namespace
-
 static const char *bfd_dplane_messagetype2str(enum bfddp_message_type bmt)
 {
 	switch (bmt) {
@@ -334,20 +333,14 @@ void BfdLink::handleBfdDpMessage(size_t start)
     size_t msg_len;
     uint32_t flags;
     uint32_t lid;
-    uint32_t ifindex;
     uint32_t rx_int;
     uint32_t tx_int;
     string  bfdkey = "";
     string  bfdkey_map = "";
     bool add = true;
     bool multihop = true;
-    bool is_linklocal = false;
     char dst_addr[INET6_ADDRSTRLEN];
     char src_addr[INET6_ADDRSTRLEN];
-    char ifname[IFNAME_LEN];
-    string dst_mac;
-    string src_mac;
-    string cmd, dst_str;
 
     bmp = reinterpret_cast<bfddp_message *>(static_cast<void *>(m_messageBuffer+start));
 
@@ -425,10 +418,6 @@ void BfdLink::handleBfdDpMessage(size_t start)
 
     bfdkey = string("default:default:")+string(dst_addr);
     bfdkey_map = string("default|default|")+string(dst_addr);
-
-    ifindex = ntohl(bm.data.session.ifindex);
-    memcpy(ifname, bm.data.session.ifname, IFNAME_LEN);
-    ifname[IFNAME_LEN - 1] = '\0';
 
     if (bm.header.type == DP_ADD_SESSION) {
         std::map<std::string, bfddp_message>::iterator it;
@@ -523,8 +512,8 @@ void BfdLink::handleBfdDpMessage(size_t start)
         SWSS_LOG_INFO("delete key %s from appl DB", bfdkey.c_str());
     }
 
-    SWSS_LOG_NOTICE("BfdTable op %s key: %s local_addr:%s multihop:%s rx_interval:%d tx_interval:%d ifindex:%d ifname:%s ",
-                   add?"add":"del", bfdkey.c_str(), src_addr, multihop?"true":"false", rx_int, tx_int, ifindex, ifname);
+    SWSS_LOG_NOTICE("BfdTable op %s key: %s local_addr:%s multihop:%s rx_interval:%d tx_interval:%d",
+                   add?"add":"del", bfdkey.c_str(), src_addr, multihop?"true":"false", rx_int, tx_int);
     if (m_debug) 
     {
         this->bfdDebugMessage(&bm);
