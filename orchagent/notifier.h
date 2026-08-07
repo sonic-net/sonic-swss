@@ -51,7 +51,7 @@ public:
              */
             if (!notificationConsumer->hasCachedData())
                 m_noProgressCount = 0;
-            else
+            else if (m_noProgressCount < STALL_THRESHOLD)
                 m_noProgressCount++;
         }
         else
@@ -65,6 +65,7 @@ public:
         this->execute();
     }
 
+private:
     /* execute() is called twice per main-loop iteration (Select dispatch +
      * OrchDaemon sweep), so 2 gives the Orch one full iteration to consume. */
     static constexpr int STALL_THRESHOLD = 2;

@@ -57,7 +57,7 @@ namespace notifier_priority_test
             consumer.m_toSync.clear();
         }
 
-        void doTask(swss::NotificationConsumer &consumer) override
+        void doTask(swss::NotificationConsumer &/*consumer*/) override
         {
             /* no-op: simulates deferral */
         }
@@ -146,14 +146,9 @@ namespace notifier_priority_test
         EXPECT_EQ(*it, static_cast<swss::Selectable *>(&consumer));
     }
 
-    /* Stall detection: after STALL_THRESHOLD consecutive no-progress cycles,
-     * hasCachedData() returns false to yield m_ready to table consumers.
-     * getPri() stays constant — stall works via hasCachedData, not priority.
-     *
-     * Note: execute() cannot be safely called in mock_tests because hasData()
-     * triggers readData() on the mock subscriber with a null mockReply.
-     * The stall logic is verified via direct m_noProgressCount manipulation;
-     * the execute() path is covered by VS integration tests. */
+    /* Stall detection: with data in the queue, hasCachedData() returns true
+     * below threshold but false at/above threshold — proving the override
+     * suppresses re-insertion, not just that the queue is empty. */
     TEST_F(NotifierPriorityTest, StallDetectionSuppressesCachedData)
     {
         DeferringOrch orch(m_app_db.get(), "DUMMY_TABLE");
@@ -161,27 +156,28 @@ namespace notifier_priority_test
         auto *notifConsumer = new swss::NotificationConsumer(m_app_db.get(), "TEST_STALL");
         Notifier notifier(notifConsumer, &orch, "TEST_STALL");
 
-        EXPECT_EQ(notifier.getPri(), 100);
+        /* Push 2 messages so underlying hasCachedData() (size > 1) is true */
+        notifConsumer->m_queue->push("[\"test_op\",\"test_data\"]");
+        notifConsumer->m_queue->push("[\"test_op\",\"test_data\"]");
+        ASSERT_TRUE(notifConsumer->hasCachedData());
 
-        /* Below threshold: hasCachedData delegates to wrapped consumer */
+        /* Below threshold: Notifier delegates — returns true */
         notifier.m_noProgressCount = 0;
+        EXPECT_TRUE(notifier.hasCachedData());
         EXPECT_EQ(notifier.getPri(), 100);
 
         notifier.m_noProgressCount = Notifier::STALL_THRESHOLD - 1;
+        EXPECT_TRUE(notifier.hasCachedData());
         EXPECT_EQ(notifier.getPri(), 100);
 
-        /* At threshold: hasCachedData() returns false regardless of queue */
+        /* At threshold: override returns false despite queue having data */
         notifier.m_noProgressCount = Notifier::STALL_THRESHOLD;
-        EXPECT_EQ(notifier.getPri(), 100);
         EXPECT_FALSE(notifier.hasCachedData());
-
-        /* Well past threshold: still suppressed, priority still constant */
-        notifier.m_noProgressCount = 10;
         EXPECT_EQ(notifier.getPri(), 100);
-        EXPECT_FALSE(notifier.hasCachedData());
 
         /* Recovery: counter reset restores delegation */
         notifier.m_noProgressCount = 0;
+        EXPECT_TRUE(notifier.hasCachedData());
         EXPECT_EQ(notifier.getPri(), 100);
     }
 
