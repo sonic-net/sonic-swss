@@ -20,6 +20,8 @@
 #include "zmqserver.h"
 #include <unordered_map>
 
+extern bool gRouteStateAsyncPublish;
+
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 /* Length of the Interface Id value in EUI64 format */
@@ -82,6 +84,13 @@ struct RouteNhg
     std::string nhg_index;
 
     std::string context_index;
+
+    /*
+     * When a route is using a temporary single next hop (because the desired
+     * NHG could not be created), this records the original desired NHG key.
+     * Used to detect NHG membership changes and allow re-randomization.
+     */
+    NextHopGroupKey desired_nhg_key;
 
     RouteNhg() = default;
     RouteNhg(const NextHopGroupKey& key, const std::string& index, const std::string &context_index = "") :
@@ -214,7 +223,7 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public ZmqOrch, public Subject
+class RouteOrch : public ZmqRouteOrch, public Subject
 {
 public:
     RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
@@ -264,6 +273,7 @@ public:
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     std::string getLinkLocalEui64Addr(void);
+    std::string getLinkLocalEui64Addr(const MacAddress &mac);
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
@@ -276,6 +286,7 @@ public:
     EntityBulker<sai_route_api_t>           gRouteBulker;
     EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+    void flushResponses() override;
 
 private:
     SwitchOrch *m_switchOrch;
@@ -307,6 +318,10 @@ private:
     std::vector<NextHopGroupKey> m_bulkSrv6NhgReducedVec;
 
     NextHopObserverTable m_nextHopObservers;
+
+    // Dedicated APPL_STATE_DB publisher for route state (publishAsync path).
+    // Keep this distinct from Orch::m_publisher to avoid shadowing confusion.
+    ResponsePublisher m_routeStatePublisher{"APPL_STATE_DB", /*buffered=*/false, gRouteStateAsyncPublish};
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 

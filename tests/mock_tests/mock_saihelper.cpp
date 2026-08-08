@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "dash/dashresulthelper.h"
 #include "saihelper.h"
 #include <sys/mman.h>
 
@@ -483,6 +484,14 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
         _unhook_sai_apis();
     }
 
@@ -582,6 +591,20 @@ namespace saihelper_test
 
         _unhook_sai_apis();
         syncd_dump_failure = false;
+    }
+
+    TEST(FlushToDBTest, NullTable) {
+        std::unique_ptr<swss::Table> nullTable;
+        // Should not crash when table is null
+        flushResultsToDB(nullTable);
+    }
+
+    TEST(FlushToDBTest, FlushValidTable) {
+        auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
+        std::unique_ptr<swss::Table> table = std::make_unique<swss::Table>(db.get(), "TEST_TABLE");
+
+        // Should not crash or throw with a valid table
+        flushResultsToDB(table);
     }
 }
 

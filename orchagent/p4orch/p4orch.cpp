@@ -1,4 +1,5 @@
 #include "p4orch.h"
+#include "../notificationconsumerstatsorch.h"
 
 #include <map>
 #include <memory>
@@ -7,6 +8,7 @@
 
 #include "copporch.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orch.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
@@ -27,21 +29,23 @@
 #include "sai_serialize.h"
 #include "timer.h"
 #include "timestamp.h"
-
+extern NameLabelMapper *gLabelMapper;
 extern PortsOrch *gPortsOrch;
+
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"
 #define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
 
 P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
                ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch)
-    : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
-              /*dbPersistence=*/false),
+    : ZmqOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
       m_zmqServer(zmqServer),
       m_publisher("APPL_DB", /*bool buffered=*/true,
                   /*db_write_thread=*/true, zmqServer)
 {
     SWSS_LOG_ENTER();
+
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/true);
 
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
@@ -58,8 +62,8 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
     m_wcmpManager = std::make_unique<p4orch::WcmpManager>(&m_p4OidMapper, &m_publisher);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);
-    m_tunnelDecapGroupManager = std::make_unique<TunnelDecapGroupManager>(
-        &m_p4OidMapper, vrfOrch, &m_publisher);
+    m_tunnelDecapGroupManager =
+        std::make_unique<TunnelDecapGroupManager>(&m_p4OidMapper, &m_publisher);
     m_extTablesManager = std::make_unique<ExtTablesManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
 
     m_p4TableToManagerMap[APP_P4RT_TABLES_DEFINITION_TABLE_NAME] = m_tablesDefnManager.get();
@@ -116,9 +120,13 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add port state change notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
+    // Add port state change notification handling support.
+    m_notificationsDb = std::make_shared<swss::DBConnector>("ASIC_DB", 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
+    m_portStatusNotificationConsumer->setStatsLabel("P4Orch:port_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("P4Orch:port_state_change", m_portStatusNotificationConsumer);
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }
@@ -161,7 +169,7 @@ void P4Orch::doTask(ConsumerBase &consumer)
     ObjectManagerInterface* prev_manager = nullptr;
     std::string p4rt_table_name;
     ReturnCode status;
-    for (const auto& kco : zmq_consumer->m_queue) {
+    for (const auto& kco : zmq_consumer->m_toSyncQueue) {
         std::string op = kfvOp(kco);
 
     ObjectManagerInterface* manager = findManager(kfvKey(kco), p4rt_table_name);
@@ -186,28 +194,28 @@ void P4Orch::doTask(ConsumerBase &consumer)
       prev_manager = manager;
     }
 
-        // Call drain after grouping the same type of requests together.
+    // Call drain after grouping the same type of requests together.
     if (op != prev_op || prev_manager != manager) {
       status = prev_manager->drain();
             prev_op = op; 
       prev_manager = manager;
-        }
-
-        if (status.ok()) {
-      prev_manager->enqueue(p4rt_table_name, kco);
-        } else {
-           m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(kco),
-                               kfvFieldsValues(kco),
-                               ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
-                               /*replace=*/true);
-      prev_manager = nullptr;
-        }
     }
-  if (prev_manager != nullptr) {
-    prev_manager->drain();
-    }   
+
+    if (status.ok()) {
+      prev_manager->enqueue(p4rt_table_name, kco);
+    } else {
+      m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(kco),
+                          kfvFieldsValues(kco),
+                          ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                          /*replace=*/true);
+      prev_manager = nullptr;
+      }
+    }
+    if (prev_manager != nullptr) {
+      prev_manager->drain();
+    }
     m_publisher.flush();
-    zmq_consumer->m_queue.clear();
+    zmq_consumer->m_toSyncQueue.clear();
 }
 
 void P4Orch::doTask(swss::SelectableTimer &timer)
@@ -386,4 +394,43 @@ void P4Orch::refreshPortStatus() {
 
 void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
     m_routerIntfManager->setRouterIntfsMtu(port, mtu);
+}
+
+bool P4Orch::bake()
+{
+    /*
+     * bake is called during warmreboot reconciling procedure.
+     */
+
+    SWSS_LOG_ENTER();
+
+    // Set orderedQueue to false during bake.
+    // Warm boot requests will be stored in m_toSync.
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/false);
+    Orch::bake();
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/true);
+
+    for (auto &it : m_consumerMap)
+    {
+        auto consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        if (consumer == NULL || consumer->getTableName() != APP_P4RT_TABLE_NAME)
+        {
+            continue;
+        }
+        for (auto entry_it: consumer->m_toSync)
+        {
+            const std::string& key = kfvKey(entry_it.second);
+            std::string table_name;
+            std::string key_content;
+            parseP4RTKey(key, &table_name, &key_content);
+            if (table_name == APP_P4RT_ACL_TABLE_DEFINITION_NAME)
+            {
+                // Add the table_name to m_aclRuleManager mapping during warm reboot,
+                // since the acl tables have not been created yet.
+                addAclTableToManagerMapping(key_content);
+            }
+        }
+    }
+
+    return true;
 }

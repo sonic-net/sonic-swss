@@ -169,7 +169,7 @@ private:
 
 struct nextHop
 {
-    IpAddresses ips;
+    std::vector<IpAddress> ips;
     string ifname;
 };
 

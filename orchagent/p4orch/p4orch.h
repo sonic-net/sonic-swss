@@ -59,6 +59,7 @@ class P4Orch : public ZmqOrch
     TunnelDecapGroupManager* getTunnelDecapGroupManager();
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
+    bool bake() override;
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
@@ -95,6 +96,9 @@ class P4Orch : public ZmqOrch
     std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
     std::unique_ptr<TunnelDecapGroupManager> m_tunnelDecapGroupManager;
     std::unique_ptr<ExtTablesManager> m_extTablesManager;
+
+    // DBConnector backing the port-state notification consumer.
+    std::shared_ptr<swss::DBConnector> m_notificationsDb;
 
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;

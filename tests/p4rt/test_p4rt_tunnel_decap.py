@@ -3,7 +3,6 @@ from swsscommon import swsscommon
 
 import util
 import json
-import test_vrf
 
 class P4RtTunnelDecapWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT tunnel decap group object."""
@@ -12,7 +11,7 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
     APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     TBL_NAME = swsscommon.APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME
     ACTION = "action"
-    VRF_ID = "vrf_id"
+    PRIORITY = "priority"
 
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE"
@@ -21,41 +20,30 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK"
-    SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID"
+    SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY"
 
-    def generate_app_db_key(self, src_ipv6, dst_ipv6):
-        d = {}
-        d[util.prepend_match_field("src_ipv6")] = src_ipv6
-        d[util.prepend_match_field("dst_ipv6")] = dst_ipv6
+    def generate_app_db_key(self, src_ipv6, dst_ipv6, priority):
+         d = {}
+         d[util.prepend_match_field("src_ipv6")] = src_ipv6
+         d[util.prepend_match_field("dst_ipv6")] = dst_ipv6
+         d[self.PRIORITY] = priority
 
-        key = json.dumps(d, separators=(",", ":"))
-        return self.TBL_NAME + ":" + key
+         key = json.dumps(d, separators=(",", ":"))
+         return self.TBL_NAME + ":" + key
 
 class TestP4RTunnelDecap(object):
     def _set_up(self, dvs):
         self._p4rt_tunnel_decap_wrapper = P4RtTunnelDecapWrapper()
-        self._vrf_obj = test_vrf.TestVrf()
 
         self._p4rt_tunnel_decap_wrapper.set_up_databases(dvs)
 
     def _cleanup(self):
         self._p4rt_tunnel_decap_wrapper.clean_up()
 
-    def _set_vrf(self, dvs):
-        # Create VRF.
-        self._vrf_obj.setup_db(dvs)
-        self.vrf_id = "b4-traffic"
-        self.vrf_state = self._vrf_obj.vrf_create(dvs, self.vrf_id, [], {})
-
-    def _clean_vrf(self, dvs):
-        # Remove VRF.
-        self._vrf_obj.vrf_remove(dvs, self.vrf_id, self.vrf_state)
-
-    def test_TunnelDecapGroupAddModifyAndDelete(self, dvs, testlog):
+    def test_TunnelDecapGroupAddAndDelete(self, dvs, testlog):
         # Initialize database connectors
         self._set_up(dvs)
-        self._set_vrf(dvs)
 
         # Maintain list of original Application and ASIC DB entries before adding
         # new tunnel decap group
@@ -68,13 +56,12 @@ class TestP4RTunnelDecap(object):
         # 1. Create tunnel decap group
         src_ipv6 = "4001:db8:3c4d:17::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
-        action = "mark_for_tunnel_decap_and_set_vrf"
-        vrf_id = "b4-traffic"
+        action = "tunnel_decap"
+        priority = 2030
 
-        attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action),
-                               (util.prepend_param_field(
-                                   self._p4rt_tunnel_decap_wrapper.VRF_ID), vrf_id)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
+        attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action)]
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
+
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
         self._p4rt_tunnel_decap_wrapper.verify_response(
@@ -104,8 +91,8 @@ class TestP4RTunnelDecap(object):
         for key in asic_tunnel_decap_group_entries:
             # Get newly created entry
             if key not in original_asic_tunnel_decap_group_entries:
-                asic_db_key = key
-                break
+               asic_db_key = key
+               break
         assert asic_db_key is not None
         (status, fvs) = util.get_key(self._p4rt_tunnel_decap_wrapper.asic_db,
                                      self._p4rt_tunnel_decap_wrapper.ASIC_DB_TBL_NAME,
@@ -123,8 +110,10 @@ class TestP4RTunnelDecap(object):
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK, "ffff:ffff:ffff:ffff::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP, "2001:db8:3c4d:15::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK, "ffff:ffff:ffff:ffff::"),
-            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID, self.vrf_state['entry_id']),
-            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID, dummy_tunnel_oid)
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY,
+             str(priority)),
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID,
+             dummy_tunnel_oid),
         ]
         util.verify_attr(fvs, expected_attr_list_in_asic_db)
 
@@ -157,7 +146,10 @@ class TestP4RTunnelDecap(object):
                                      asic_db_key)
         assert status == False
 
-        self._cleanup()
+        ####################################
+        # Cleanup
+        ####################################
+        dvs.restart()
 
     def test_TunnelDecapGroupModifyNotImplemented(self, dvs, testlog):
         # Initialize database connectors
@@ -166,13 +158,11 @@ class TestP4RTunnelDecap(object):
         # Create tunnel decap group
         src_ipv6 = "5001:db8:3c4d:7::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
-        action = "mark_for_tunnel_decap_and_set_vrf"
-        vrf_id = "b4-traffic"
+        action = "tunnel_decap"
+        priority = 2030
 
-        attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action),
-                               (util.prepend_param_field(
-                                   self._p4rt_tunnel_decap_wrapper.VRF_ID), vrf_id)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
+        attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action)]
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
         self._p4rt_tunnel_decap_wrapper.verify_response(
@@ -193,14 +183,20 @@ class TestP4RTunnelDecap(object):
 
         self._cleanup()
 
+        ####################################
+        # Cleanup
+        ####################################
+        dvs.restart()
+
     def test_TunnelDecapGroupDeleteBeforeAddFails(self, dvs, testlog):
         # Initialize database connectors
         self._set_up(dvs)
 
         src_ipv6 = "3001:db8:3c4d:11::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(
-            src_ipv6, dst_ipv6)
+        priority = 2030
+
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
 
         # Remove tunnel decap group fails
         self._p4rt_tunnel_decap_wrapper.remove_app_db_entry(
