@@ -1,10 +1,12 @@
 #include <arpa/inet.h>
+#include <assert.h>
 #include <net/if.h>
 #include <string.h>
 
 #include "logger.h"
 #include "macaddress.h"
 #include "schema.h"
+#include "fpm/fpm.h"
 #include "fpmsyncd/macsync.h"
 
 using namespace std;
@@ -134,7 +136,9 @@ void MacSync::processCfgFdbSync()
 void MacSync::onFpmConnected(FpmInterface& fpm)
 {
     m_fpmInterface = &fpm;
+    ++m_generation;
     replayLocalMacs();
+    sendReplayEnd();
 }
 
 void MacSync::onFpmDisconnected()
@@ -159,6 +163,31 @@ void MacSync::replayLocalMacs()
         sendLocalMac(it.first.substr(0, delimiter), it.first.substr(delimiter + 1),
                      it.second.port, it.second.isStatic, true);
     }
+}
+
+void MacSync::sendReplayEnd()
+{
+    if (!m_fpmMode || !m_fpmInterface)
+    {
+        return;
+    }
+
+    struct nlmsghdr n{};
+
+    n.nlmsg_len = NLMSG_LENGTH(0);
+    n.nlmsg_flags = NLM_F_REQUEST;
+    n.nlmsg_type = RTM_FPM_MAC_REPLAY_END;
+    n.nlmsg_seq = m_generation;
+
+    if (!m_fpmInterface->send(&n))
+    {
+        SWSS_LOG_ERROR("MacSync: failed to send end-of-replay for generation %u",
+                       m_generation);
+        return;
+    }
+
+    SWSS_LOG_NOTICE("MacSync: replayed %zu local MACs, generation %u",
+                    m_localMacs.size(), m_generation);
 }
 
 void MacSync::processStateFdb()
@@ -275,6 +304,7 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, const stri
     req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ndmsg));
     req.n.nlmsg_flags = NLM_F_REQUEST | (add ? (NLM_F_CREATE | NLM_F_REPLACE) : 0);
     req.n.nlmsg_type = add ? RTM_NEWNEIGH : RTM_DELNEIGH;
+    req.n.nlmsg_seq = m_generation;
     req.ndm.ndm_family = AF_BRIDGE;
     req.ndm.ndm_ifindex = (int)ifindex;
     req.ndm.ndm_state = isStatic ? NUD_NOARP : NUD_REACHABLE;

@@ -14,6 +14,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <vector>
+
 #include <linux/if_ether.h>
 #include <linux/neighbour.h>
 #include <netinet/in.h>
@@ -350,4 +353,81 @@ TEST_F(MacSyncTest, RemoteMacWithdrawalReachesMacSyncThroughOnMsgRaw)
     feedRaw(del);
 
     EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/* Captures what MacSync sends so the replay sequence can be inspected. */
+class RecordingFpm : public FpmInterface
+{
+public:
+    bool send(nlmsghdr *hdr) override
+    {
+        size_t len = hdr->nlmsg_len ? hdr->nlmsg_len : NLMSG_LENGTH(0);
+        std::vector<uint8_t> copy(len);
+        memcpy(copy.data(), hdr, len);
+        m_sent.push_back(std::move(copy));
+        return true;
+    }
+
+    int getFd() override { return -1; }
+    uint64_t readData() override { return 0; }
+
+    size_t count() const { return m_sent.size(); }
+
+    const nlmsghdr *at(size_t i) const
+    {
+        return reinterpret_cast<const nlmsghdr *>(m_sent.at(i).data());
+    }
+
+private:
+    std::vector<std::vector<uint8_t>> m_sent;
+};
+
+/*
+ * Without the trailing marker zebra never learns the replay finished and keeps
+ * MACs from the previous session, so assert on the whole sequence rather than
+ * just that something was sent.
+ */
+TEST_F(MacSyncTest, ReplayStampsGenerationAndEndsWithMarker)
+{
+    /* "lo" is used because sendLocalMac resolves the port via if_nametoindex. */
+    m_macSync->m_localMacs["Vlan100:00:11:22:33:44:55"] = {"lo", false};
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    ASSERT_EQ(fpm.count(), 2u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
+    EXPECT_EQ(fpm.at(0)->nlmsg_seq, 1u);
+    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_EQ(fpm.at(1)->nlmsg_seq, 1u);
+}
+
+/* A generation that does not advance makes the sweep a no-op. */
+TEST_F(MacSyncTest, GenerationAdvancesOnEveryConnect)
+{
+    m_macSync->m_localMacs["Vlan100:00:11:22:33:44:55"] = {"lo", false};
+
+    RecordingFpm first;
+    m_macSync->onFpmConnected(first);
+    ASSERT_EQ(first.count(), 2u);
+    EXPECT_EQ(first.at(1)->nlmsg_seq, 1u);
+
+    m_macSync->onFpmDisconnected();
+
+    RecordingFpm second;
+    m_macSync->onFpmConnected(second);
+    ASSERT_EQ(second.count(), 2u);
+    EXPECT_EQ(second.at(0)->nlmsg_seq, 2u);
+    EXPECT_EQ(second.at(1)->nlmsg_seq, 2u);
+}
+
+/* The marker must still close a replay that carried no MACs. */
+TEST_F(MacSyncTest, ReplayWithNoLocalMacsStillSendsMarker)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_EQ(fpm.at(0)->nlmsg_seq, 1u);
 }
