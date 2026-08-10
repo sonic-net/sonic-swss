@@ -60,6 +60,7 @@ private:
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
                       const std::string& port, bool isStatic, bool add);
     void replayLocalMacs();
+    void sendReplayEnd();
 
     ProducerStateTable m_vxlanFdbTable;
     SubscriberStateTable m_stateFdbTable;
@@ -68,6 +69,10 @@ private:
 
     FpmInterface *m_fpmInterface {nullptr};
     bool m_fpmMode {false};
+
+    /* Bumped on every FPM connect and carried in nlmsg_seq, so zebra can drop
+     * MACs left over from a previous session once the replay ends. */
+    uint32_t m_generation {0};
 
     std::map<std::string, LocalMac> m_localMacs;
     std::set<std::string> m_remoteMacs;
