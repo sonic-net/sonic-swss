@@ -19,9 +19,10 @@ public:
     }
 
     /*
-     * Yield the Select ready-set when the Orch stalls (defers doTask without
-     * popping).  After STALL_THRESHOLD consecutive no-progress execute() calls,
-     * report no cached data so lower-priority table consumers get dispatched.
+     * Yield the Select ready-set when the queue is not fully drained.
+     * After STALL_THRESHOLD consecutive execute() calls where
+     * hasCachedData() remains true, report no cached data so
+     * lower-priority table consumers get dispatched.
      */
     bool hasCachedData() override
     {
@@ -43,11 +44,9 @@ public:
             m_orch->doTask(*notificationConsumer);
 
             /*
-             * If queue drained, the Orch consumed — reset the counter.
-             * If the Orch deferred (e.g. allPortsReady() guard), the queue
-             * is unchanged and we increment toward the stall threshold.
-             * Partial pops from a large backlog also increment, providing
-             * natural fairness by eventually yielding to table consumers.
+             * Reset when the queue drains to ≤1 entry (hasCachedData = size > 1).
+             * Increment when the queue still has >1 entries — whether the Orch
+             * deferred entirely or popped only part of a large backlog.
              */
             if (!notificationConsumer->hasCachedData())
                 m_noProgressCount = 0;
