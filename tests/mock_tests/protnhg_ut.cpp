@@ -15,11 +15,15 @@
 #include "neighorch.h"
 #undef private
 
+/* Must precede mock_orchagent_main.h, which includes nhgorch.h unguarded;
+ * #pragma once would otherwise discard this override. */
+#define private public
+#include "nhgorch.h"
+#undef private
 
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
-#include "nhgorch.h"
 #include "protnhg.h"
 #include "portal.h"
 
@@ -139,6 +143,14 @@ namespace protnhg_test
                         }
                         return SAI_STATUS_SUCCESS;
                     });
+
+            /* Force protection-capability support by default so tests don't
+             * depend on the real SAI metadata capability query, which isn't
+             * meaningful against a mock switch. Tests exercising the probe
+             * or the unsupported-type path override this explicitly. */
+            gNhgOrch->m_protCapChecked = true;
+            gNhgOrch->m_hwProtectionSupported = true;
+            gNhgOrch->m_swProtectionSupported = true;
         }
 
         void PreTearDown() override
@@ -229,9 +241,9 @@ namespace protnhg_test
         ASSERT_NE(standby, nullptr);
         EXPECT_EQ(standby->getRole(), ProtNhgRole::STANDBY);
 
-        auto primary_out = nhg.getPrimaryMembers();
-        ASSERT_EQ(primary_out.size(), 1u);
-        EXPECT_EQ(primary_out[0]->getRole(), ProtNhgRole::PRIMARY);
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        EXPECT_EQ(primary->getRole(), ProtNhgRole::PRIMARY);
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -387,6 +399,25 @@ namespace protnhg_test
         unregisterNextHop(standby_nh);
     }
 
+    TEST_F(ProtNhgTest, SyncFailsWhenPrimaryAndStandbyAreIdentical)
+    {
+        NextHopKey nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        registerNextHop(nh);
+
+        /*
+         * Primary and standby resolve to the same NextHopKey, so the
+         * constructor's second m_members.emplace() is a no-op (map keys
+         * must be unique) and the group ends up with a single member.
+         * sync() must reject this rather than silently creating a
+         * degenerate 1-member "protection" group.
+         */
+        ProtNhg nhg("prot_nhg_dup_nh", nh, nh);
+        EXPECT_FALSE(nhg.sync());
+        EXPECT_FALSE(nhg.isSynced());
+
+        unregisterNextHop(nh);
+    }
+
     TEST_F(ProtNhgTest, SyncMembersFailure)
     {
         EXPECT_CALL(*mock_sai_next_hop_group_api,
@@ -410,9 +441,94 @@ namespace protnhg_test
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+        /*
+         * The group's SAI object was created successfully, only the members
+         * failed to sync. createProtNhg() still reports success since the
+         * group is registered; it isn't stuck forever, as a later
+         * validateNextHop() call can complete it.
+         */
+        EXPECT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+        EXPECT_NE(gNhgOrch->getProtNhgId(key), SAI_NULL_OBJECT_ID);
 
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, UnresolvedMemberSyncedLaterViaValidateNextHop)
+    {
+        string key = "prot_nhg_unresolved";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+
+        /* Only the primary's next hop is resolved; the standby's next hop
+         * hasn't been learned by NeighOrch yet (e.g. ARP still pending). */
+        registerNextHop(primary_nh);
+
+        EXPECT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(key));
+
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_NE(nhg.getId(), SAI_NULL_OBJECT_ID);
+
+        /* Both members must still be tracked -- the unresolved standby must
+         * not have been dropped from the group (Tamer's "zero members"
+         * concern from the original review). */
+        EXPECT_EQ(nhg.getSize(), 2u);
+
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        EXPECT_TRUE(primary->isSynced());
+
+        const ProtNhgMember *standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_FALSE(standby->isSynced());
+
+        /* The standby's next hop resolves; NeighOrch::addNextHop() would
+         * call gNhgOrch->validateNextHop() at this point. */
+        registerNextHop(standby_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(standby_nh));
+
+        standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_TRUE(standby->isSynced());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, ValidateNextHopNoOpWhenMemberNotFound)
+    {
+        NextHopKey unrelated_nh(IpAddress("10.0.0.200"), string("Ethernet8"));
+        EXPECT_TRUE(gNhgOrch->validateNextHop(unrelated_nh));
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(unrelated_nh));
+    }
+
+    TEST_F(ProtNhgTest, InvalidateNextHopRemovesMemberAndValidateRestoresIt)
+    {
+        string key = "prot_nhg_invalidate";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        ASSERT_NE(nhg.getStandbyMember(), nullptr);
+        ASSERT_TRUE(nhg.getStandbyMember()->isSynced());
+
+        /* e.g. the standby's interface goes down. */
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(standby_nh));
+        EXPECT_FALSE(nhg.getStandbyMember()->isSynced());
+
+        /* e.g. the standby's interface comes back up. */
+        EXPECT_TRUE(gNhgOrch->validateNextHop(standby_nh));
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
@@ -671,9 +787,9 @@ namespace protnhg_test
         EXPECT_FALSE(sstr.empty());
         EXPECT_NE(sstr.find("standby"), string::npos);
 
-        auto primary_out = nhg.getPrimaryMembers();
-        ASSERT_GE(primary_out.size(), 1u);
-        string pstr = primary_out[0]->to_string();
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        string pstr = primary->to_string();
         EXPECT_NE(pstr.find("primary"), string::npos);
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
@@ -813,6 +929,33 @@ namespace protnhg_test
         EXPECT_FALSE(gNhgOrch->createProtNhg("prot_empty_standby",
                                               primary_nhg_key,
                                               empty_standby));
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysFailsWhenRepresentativesCollide)
+    {
+        /*
+         * The ProtNhg(NextHopGroupKey, NextHopGroupKey) constructor keys each
+         * member on *nhg_key.getNextHops().begin(), not the full group key.
+         * Here the primary and standby groups both contain 10.0.0.1@Ethernet0,
+         * which sorts first in both, so the second m_members.emplace() is a
+         * no-op and the group would collapse to a single member if sync()
+         * didn't reject it (see SyncFailsWhenPrimaryAndStandbyAreIdentical for
+         * the equivalent direct-NextHopKey-overload case).
+         */
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.1@Ethernet0,10.0.0.100@Ethernet4");
+
+        addEcmpNhg(primary_nhg_key);
+        addEcmpNhg(standby_nhg_key);
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+
+        string key = "prot_nhg_keys_rep_collision";
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+
+        removeEcmpNhg(primary_nhg_key.to_string());
+        removeEcmpNhg(standby_nhg_key.to_string());
     }
 
     TEST_F(ProtNhgTest, CreateNonHwProtectionNhg)
@@ -1030,10 +1173,10 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
-        auto primaries = nhg.getPrimaryMembers();
-        ASSERT_EQ(primaries.size(), 1u);
-        EXPECT_TRUE(primaries[0]->isRecursive());
-        EXPECT_NE(primaries[0]->getNhId(), SAI_NULL_OBJECT_ID);
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        EXPECT_TRUE(primary->isRecursive());
+        EXPECT_NE(primary->getNhId(), SAI_NULL_OBJECT_ID);
 
         const ProtNhgMember *standby = nhg.getStandbyMember();
         ASSERT_NE(standby, nullptr);
@@ -1049,6 +1192,11 @@ namespace protnhg_test
 
     TEST_F(ProtNhgTest, ProtectionCapabilitiesPublishedToStateDb)
     {
+        /* Undo PostSetUp()'s forced capability state so this test exercises
+         * the real probe; it only cares about publish behavior, not the
+         * specific values a mock switch reports. */
+        gNhgOrch->m_protCapChecked = false;
+
         /* Probing either capability must publish both SW and HW protection
          * capability fields to the standard switch capability row,
          * regardless of whether the platform supports them. */
@@ -1066,6 +1214,47 @@ namespace protnhg_test
             SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE, sw_val);
         EXPECT_FALSE(sw_val.empty());
         EXPECT_EQ(sw_val, sw_supported ? "true" : "false");
+    }
+
+    TEST_F(ProtNhgTest, CreateFailsWhenHwProtectionUnsupported)
+    {
+        /* Simulate an ASIC that doesn't support SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION. */
+        gNhgOrch->m_hwProtectionSupported = false;
+
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        /* createProtNhg() must reject the request before ever touching SAI. */
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+
+        string key = "prot_nhg_hw_unsupported";
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh, /*hw_protection=*/true));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, CreateFailsWhenSwProtectionUnsupported)
+    {
+        /* Simulate an ASIC that doesn't support SAI_NEXT_HOP_GROUP_TYPE_PROTECTION. */
+        gNhgOrch->m_swProtectionSupported = false;
+
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+
+        string key = "prot_nhg_sw_unsupported";
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh, /*hw_protection=*/false));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
     }
 
     /* --- CRM resource accounting --- */

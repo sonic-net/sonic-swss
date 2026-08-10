@@ -208,10 +208,30 @@ bool ProtNhg::sync()
         return true;
     }
 
-    if (m_members.size() < 2)
+    /* Count by role: a primary/standby NextHopKey collision would silently
+     * collapse m_members to a single entry (emplace() no-ops on duplicate
+     * keys), which size() alone wouldn't catch. */
+    size_t primary_count = 0;
+    size_t standby_count = 0;
+
+    for (const auto &mbr : m_members)
     {
-        SWSS_LOG_ERROR("Protection NHG %s must have at least 2 members, has %zu",
-                       m_key.c_str(), m_members.size());
+        if (mbr.second.getRole() == ProtNhgRole::PRIMARY)
+        {
+            ++primary_count;
+        }
+        else
+        {
+            ++standby_count;
+        }
+    }
+
+    if (primary_count != 1 || standby_count != 1)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s must have exactly one primary and one "
+                       "standby member, has %zu primary and %zu standby "
+                       "(primary and standby next hop may be identical)",
+                       m_key.c_str(), primary_count, standby_count);
         return false;
     }
 
@@ -265,6 +285,32 @@ bool ProtNhg::remove()
     }
 
     return NhgCommon::remove();
+}
+
+/* Sync the member for nh_key once its next hop is resolved. */
+bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isSynced())
+    {
+        return true;
+    }
+
+    return syncMembers({nh_key});
+}
+
+/* Remove the member for nh_key once its next hop is no longer valid. */
+bool ProtNhg::invalidateNextHop(const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isSynced())
+    {
+        return true;
+    }
+
+    return removeMembers({nh_key});
 }
 
 bool ProtNhg::setAdminRole(sai_int32_t admin_role)
@@ -361,20 +407,19 @@ bool ProtNhg::updateMemberMonitoredObject(const NextHopKey &nh_key,
     return it->second.updateMonitoredObject(monitored_oid);
 }
 
-vector<const ProtNhgMember*> ProtNhg::getPrimaryMembers() const
+const ProtNhgMember* ProtNhg::getPrimaryMember() const
 {
     SWSS_LOG_ENTER();
 
-    vector<const ProtNhgMember*> primaries;
     for (const auto &mbr : m_members)
     {
         if (mbr.second.getRole() == ProtNhgRole::PRIMARY)
         {
-            primaries.push_back(&mbr.second);
+            return &mbr.second;
         }
     }
 
-    return primaries;
+    return nullptr;
 }
 
 const ProtNhgMember* ProtNhg::getStandbyMember() const
@@ -449,6 +494,10 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
                                                    gMaxBulkSize);
     map<NextHopKey, sai_object_id_t> syncing;
 
+    /* Unresolved members are skipped but still fail this call, so the
+     * caller knows to retry them later via validateNextHop(). */
+    bool success = true;
+
     for (const auto &nh_key : member_keys)
     {
         ProtNhgMember &nhgm = m_members.at(nh_key);
@@ -462,6 +511,7 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
         {
             SWSS_LOG_WARN("Next hop %s not resolved for protection NHG %s",
                           nh_key.to_string().c_str(), m_key.c_str());
+            success = false;
             continue;
         }
 
@@ -479,7 +529,6 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
      * ref count (via NhgMember::sync()). The matching decrement happens in
      * NhgMember::remove() through ProtNhg::remove() -> NhgCommon::removeMembers().
      */
-    bool success = true;
     for (const auto &entry : syncing)
     {
         if (entry.second == SAI_NULL_OBJECT_ID)

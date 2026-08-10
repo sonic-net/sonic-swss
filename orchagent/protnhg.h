@@ -62,6 +62,7 @@ private:
  *   - SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION (hardware protection).
  * It is a strict pair: exactly one primary next hop and exactly one standby
  * next hop, matching the SAI protection-group model (a primary-backup pair).
+ * Enforced in sync(), not just by convention.
  * For HW protection, the hardware toggles traffic between the primary and the
  * standby based on the monitored object state, with software override via
  * SAI_NEXT_HOP_GROUP_ATTR_ADMIN_ROLE. For SW protection, the switchover is
@@ -96,6 +97,12 @@ public:
     bool sync() override;
     bool remove() override;
 
+    /* Sync a member once its next hop becomes valid. */
+    bool validateNextHop(const NextHopKey &nh_key);
+
+    /* Remove a member once its next hop becomes invalid. */
+    bool invalidateNextHop(const NextHopKey &nh_key);
+
     inline bool isTemp() const override { return false; }
     inline NextHopGroupKey getNhgKey() const override { return {}; }
 
@@ -107,7 +114,7 @@ public:
     bool updateMemberMonitoredObject(const NextHopKey &nh_key,
                                      sai_object_id_t monitored_oid);
 
-    vector<const ProtNhgMember*> getPrimaryMembers() const;
+    const ProtNhgMember* getPrimaryMember() const;
     const ProtNhgMember* getStandbyMember() const;
 
     /* Query a specific member's observed role from SAI. */

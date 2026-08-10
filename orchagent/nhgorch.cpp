@@ -487,6 +487,23 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
         }
     }
 
+    /* Also validate the next hop in any protection groups containing it. */
+    for (auto& it : m_protNhgs)
+    {
+        auto& nhg = it.second.nhg;
+
+        if (nhg->hasMember(nh_key))
+        {
+            if (!nhg->validateNextHop(nh_key))
+            {
+                SWSS_LOG_ERROR("Failed to validate next hop %s in protection group %s",
+                                nh_key.to_string().c_str(),
+                                it.first.c_str());
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -517,6 +534,23 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
             if (!nhg->invalidateNextHop(nh_key))
             {
                 SWSS_LOG_WARN("Failed to invalidate next hop %s from group %s",
+                                nh_key.to_string().c_str(),
+                                it.first.c_str());
+                return false;
+            }
+        }
+    }
+
+    /* Also invalidate the next hop in any protection groups containing it. */
+    for (auto& it : m_protNhgs)
+    {
+        auto& nhg = it.second.nhg;
+
+        if (nhg->hasMember(nh_key))
+        {
+            if (!nhg->invalidateNextHop(nh_key))
+            {
+                SWSS_LOG_WARN("Failed to invalidate next hop %s from protection group %s",
                                 nh_key.to_string().c_str(),
                                 it.first.c_str());
                 return false;
@@ -1258,6 +1292,14 @@ bool NhgOrch::createProtNhg(const string &key,
         return true;
     }
 
+    if (!(hw_protection ? isHwProtectionSupported() : isSwProtectionSupported()))
+    {
+        SWSS_LOG_ERROR("%s NHG protection not supported by ASIC, cannot create "
+                       "protection NHG %s",
+                       hw_protection ? "Hardware" : "Software", key.c_str());
+        return false;
+    }
+
     if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
         gRouteOrch->getMaxNhgCount())
     {
@@ -1268,10 +1310,22 @@ bool NhgOrch::createProtNhg(const string &key,
 
     auto nhg = make_unique<ProtNhg>(key, primary_nh, standby_nh, hw_protection);
 
-    if (!nhg->sync())
+    bool synced = nhg->sync();
+
+    /* The SAI group itself is what makes the NHG usable/registerable; a
+     * member left unresolved doesn't fail creation, it self-heals later
+     * via validateNextHop(). */
+    if (!nhg->isSynced())
     {
         SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
         return false;
+    }
+
+    if (!synced)
+    {
+        SWSS_LOG_WARN("Protection NHG %s created with unresolved member(s); "
+                      "will complete once the next hop(s) are validated",
+                      key.c_str());
     }
 
     m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
@@ -1344,6 +1398,14 @@ bool NhgOrch::createProtNhg(const string &key,
         return true;
     }
 
+    if (!(hw_protection ? isHwProtectionSupported() : isSwProtectionSupported()))
+    {
+        SWSS_LOG_ERROR("%s NHG protection not supported by ASIC, cannot create "
+                       "protection NHG %s",
+                       hw_protection ? "Hardware" : "Software", key.c_str());
+        return false;
+    }
+
     string primary_key_str = primary_nhg_key.to_string();
     string standby_key_str = standby_nhg_key.to_string();
 
@@ -1372,10 +1434,20 @@ bool NhgOrch::createProtNhg(const string &key,
     auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, standby_nhg_key,
                                     hw_protection);
 
-    if (!nhg->sync())
+    bool synced = nhg->sync();
+
+    /* See the individual-NH overload above. */
+    if (!nhg->isSynced())
     {
         SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
         return false;
+    }
+
+    if (!synced)
+    {
+        SWSS_LOG_WARN("Protection NHG %s created with unresolved member(s); "
+                      "will complete once the next hop(s) are validated",
+                      key.c_str());
     }
 
     m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));

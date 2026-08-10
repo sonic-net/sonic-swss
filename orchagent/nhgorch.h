@@ -147,6 +147,15 @@ public:
      * existing canonical key is a no-op that returns true. Membership
      * is immutable once created -- callers wishing to change membership
      * must removeProtNhg() first.
+     *
+     * Return value reflects registration, not full member sync: a group
+     * with an unresolved next hop still returns true and self-heals via
+     * validateNextHop(); query member state directly (e.g. getProtNhg())
+     * if that distinction matters to the caller.
+     *
+     * Each overload rejects creation up front if the ASIC doesn't support
+     * the requested hw_protection type (see isHwProtectionSupported() /
+     * isSwProtectionSupported()).
      */
 
     /* Create a protection NHG as a strict pair: one primary and one standby
