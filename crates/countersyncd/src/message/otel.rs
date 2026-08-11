@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::message::saistats::SAIStats;
+use crate::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
@@ -56,56 +56,68 @@ fn proto_string_attr(key: &'static str, value: String) -> ProtoKeyValue {
     }
 }
 
-/// Converts a SAI statistics collection directly into OTLP protobuf `Metric`s,
-/// grouping stats that share the same `(type_id, stat_id)` into a single gauge
-/// with one data point per object.
-pub fn sai_stats_to_proto_metrics(sai_stats: &SAIStats) -> Vec<Metric> {
-    let observation_time_nano = sai_stats.observation_time;
+/// Appends a single SAI stat as one OTLP data point, grouped under the gauge
+/// for its `(type_id, stat_id)` key.
+fn push_stat_as_data_point(
+    index: &mut HashMap<(u32, u32), usize>,
+    metrics: &mut Vec<Metric>,
+    stat: &SAIStat,
+    observation_time_nano: u64,
+) {
+    let key = (stat.type_id, stat.stat_id);
 
+    let data_point = NumberDataPoint {
+        time_unix_nano: observation_time_nano,
+        value: Some(number_data_point::Value::AsInt(stat.counter as i64)),
+        attributes: vec![
+            proto_string_attr("object_name", stat.object_name.clone()),
+            proto_string_attr("sai_type_name", sai_type_name(stat.type_id).into_owned()),
+            proto_string_attr(
+                "sai_stat_name",
+                sai_stat_name(stat.type_id, stat.stat_id).into_owned(),
+            ),
+        ],
+        ..Default::default()
+    };
+
+    let metric_index = match index.get(&key).copied() {
+        Some(i) => i,
+        None => {
+            let i = metrics.len();
+            index.insert(key, i);
+
+            let type_name = sai_type_name(stat.type_id);
+            let stat_name = sai_stat_name(stat.type_id, stat.stat_id);
+            metrics.push(Metric {
+                name: stat_name.clone().into_owned(),
+                description: format!("{} / {}", type_name, stat_name),
+                metadata: vec![],
+                data: Some(metric::Data::Gauge(ProtoGauge {
+                    data_points: Vec::new(),
+                })),
+                ..Default::default()
+            });
+
+            i
+        }
+    };
+
+    if let Some(metric::Data::Gauge(gauge)) = metrics[metric_index].data.as_mut() {
+        gauge.data_points.push(data_point);
+    }
+}
+
+/// Converts an entire buffer of SAI statistics messages into OTLP protobuf
+/// Metrics, grouping stats that share the same (type_id, stat_id) into a
+/// single gauge across all messages in the buffer (cross-message merge).
+pub fn sai_stats_buffer_to_proto_metrics(buffer: &[SAIStatsMessage]) -> Vec<Metric> {
     let mut index: HashMap<(u32, u32), usize> = HashMap::new();
     let mut metrics: Vec<Metric> = Vec::new();
 
-    for stat in &sai_stats.stats {
-        let key = (stat.type_id, stat.stat_id);
-
-        let data_point = NumberDataPoint {
-            time_unix_nano: observation_time_nano,
-            value: Some(number_data_point::Value::AsInt(stat.counter as i64)),
-            attributes: vec![
-                proto_string_attr("object_name", stat.object_name.clone()),
-                proto_string_attr("sai_type_name", sai_type_name(stat.type_id).into_owned()),
-                proto_string_attr(
-                    "sai_stat_name",
-                    sai_stat_name(stat.type_id, stat.stat_id).into_owned(),
-                ),
-            ],
-            ..Default::default()
-        };
-
-        let metric_index = match index.get(&key).copied() {
-            Some(i) => i,
-            None => {
-                let i = metrics.len();
-                index.insert(key, i);
-
-                let type_name = sai_type_name(stat.type_id);
-                let stat_name = sai_stat_name(stat.type_id, stat.stat_id);
-                metrics.push(Metric {
-                    name: stat_name.clone().into_owned(),
-                    description: format!("{} / {}", type_name, stat_name),
-                    metadata: vec![],
-                    data: Some(metric::Data::Gauge(ProtoGauge {
-                        data_points: Vec::new(),
-                    })),
-                    ..Default::default()
-                });
-
-                i
-            }
-        };
-
-        if let Some(metric::Data::Gauge(gauge)) = metrics[metric_index].data.as_mut() {
-            gauge.data_points.push(data_point);
+    for stats in buffer {
+        let observation_time_nano = stats.observation_time;
+        for stat in &stats.stats {
+            push_stat_as_data_point(&mut index, &mut metrics, stat, observation_time_nano);
         }
     }
 
@@ -143,6 +155,10 @@ mod tests {
     use super::*;
     use crate::message::saistats::SAIStat;
 
+    fn metrics_of(sai_stats: SAIStats) -> Vec<Metric> {
+        sai_stats_buffer_to_proto_metrics(&[std::sync::Arc::new(sai_stats)])
+    }
+
     /// Returns the `Gauge` data points of a proto `Metric`
     fn gauge_points(metric: &Metric) -> &Vec<NumberDataPoint> {
         match metric.data.as_ref() {
@@ -175,7 +191,7 @@ mod tests {
     #[test]
     fn test_sai_stats_to_proto_metrics_empty() {
         let sai_stats = SAIStats::new(0, vec![]);
-        assert!(sai_stats_to_proto_metrics(&sai_stats).is_empty());
+        assert!(metrics_of(sai_stats).is_empty());
     }
 
     #[test]
@@ -191,7 +207,7 @@ mod tests {
             }],
         );
 
-        let metrics = sai_stats_to_proto_metrics(&sai_stats);
+        let metrics = metrics_of(sai_stats);
         assert_eq!(metrics.len(), 1, "one (type_id, stat_id) key -> one gauge");
 
         let metric = &metrics[0];
@@ -244,7 +260,7 @@ mod tests {
             ],
         );
 
-        let metrics = sai_stats_to_proto_metrics(&sai_stats);
+        let metrics = metrics_of(sai_stats);
         assert_eq!(
             metrics.len(),
             2,
@@ -342,7 +358,7 @@ mod tests {
             .collect();
         let sai_stats = SAIStats::new(observation_time, stats);
 
-        let metrics = sai_stats_to_proto_metrics(&sai_stats);
+        let metrics = metrics_of(sai_stats);
         assert_eq!(
             metrics.len(),
             cases.len(),
@@ -392,7 +408,7 @@ mod tests {
             ],
         );
 
-        let metrics = sai_stats_to_proto_metrics(&sai_stats);
+        let metrics = metrics_of(sai_stats);
         assert_eq!(metrics.len(), 2);
 
         let unknown_type = &metrics[0];
@@ -485,5 +501,125 @@ mod tests {
         assert!(rendered.contains(
             "Mystery0 SAI_OBJECT_TYPE_UNKNOWN_99999 / SAI_STAT_UNKNOWN_TYPE_99999_STAT_5 = 7"
         ));
+    }
+
+    /// Builds a `SAIStatsMessage` (an `Arc<SAIStats>`) for buffer tests.
+    fn msg(observation_time: u64, stats: Vec<SAIStat>) -> SAIStatsMessage {
+        std::sync::Arc::new(SAIStats::new(observation_time, stats))
+    }
+
+    #[test]
+    fn test_sai_stats_buffer_empty() {
+        // No messages, and messages that carry no stats, both yield nothing.
+        assert!(sai_stats_buffer_to_proto_metrics(&[]).is_empty());
+        let buffer = vec![msg(1, vec![]), msg(2, vec![])];
+        assert!(sai_stats_buffer_to_proto_metrics(&buffer).is_empty());
+    }
+
+    #[test]
+    fn test_sai_stats_buffer_merges_same_key_across_messages() {
+        // Two messages report the same (type_id, stat_id) for the same two
+        // objects at different times. Cross-message merge must collapse them
+        // into ONE gauge carrying all four data points, each keeping its own
+        // message's observation_time.
+        let buffer = vec![
+            msg(
+                1000,
+                vec![
+                    SAIStat {
+                        object_name: "Ethernet0".to_string(),
+                        type_id: 1,
+                        stat_id: 1,
+                        counter: 100,
+                    },
+                    SAIStat {
+                        object_name: "Ethernet1".to_string(),
+                        type_id: 1,
+                        stat_id: 1,
+                        counter: 200,
+                    },
+                ],
+            ),
+            msg(
+                2000,
+                vec![
+                    SAIStat {
+                        object_name: "Ethernet0".to_string(),
+                        type_id: 1,
+                        stat_id: 1,
+                        counter: 150,
+                    },
+                    SAIStat {
+                        object_name: "Ethernet1".to_string(),
+                        type_id: 1,
+                        stat_id: 1,
+                        counter: 250,
+                    },
+                ],
+            ),
+        ];
+
+        let metrics = sai_stats_buffer_to_proto_metrics(&buffer);
+        assert_eq!(metrics.len(), 1, "one shared key -> a single merged gauge");
+        assert_eq!(metrics[0].name, "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
+
+        let points = gauge_points(&metrics[0]);
+        assert_eq!(points.len(), 4, "all four objects merged into one gauge");
+
+        // Order is buffer order, then within-message order: A0, A1, B0, B1.
+        let expected: [(&str, u64, i64); 4] = [
+            ("Ethernet0", 1000, 100),
+            ("Ethernet1", 1000, 200),
+            ("Ethernet0", 2000, 150),
+            ("Ethernet1", 2000, 250),
+        ];
+        for (i, (name, time, value)) in expected.iter().enumerate() {
+            let dp = &points[i];
+            assert_eq!(attr(dp, "object_name"), *name, "object_name at point {i}");
+            assert_eq!(dp.time_unix_nano, *time, "time at point {i}");
+            assert_eq!(as_int(dp), *value, "value at point {i}");
+            // Attributes are unchanged from the per-message conversion.
+            assert_eq!(dp.attributes.len(), 3);
+            assert_eq!(attr(dp, "sai_type_name"), "SAI_OBJECT_TYPE_PORT");
+            assert_eq!(attr(dp, "sai_stat_name"), "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
+        }
+    }
+
+    #[test]
+    fn test_sai_stats_buffer_single_message_matches_direct() {
+        // A one-message buffer produces the same gauge/data-point structure as
+        // building the expected metrics by hand: one gauge per (type_id,
+        // stat_id), one data point per stat, each keeping the message time.
+        let stats = vec![
+            SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 1,
+                stat_id: 1,
+                counter: 11,
+            },
+            SAIStat {
+                object_name: "Ethernet0:Queue0".to_string(),
+                type_id: 21,
+                stat_id: 0,
+                counter: 22,
+            },
+        ];
+
+        let metrics = sai_stats_buffer_to_proto_metrics(&[msg(777, stats)]);
+        assert_eq!(metrics.len(), 2, "two distinct keys -> two gauges");
+
+        assert_eq!(metrics[0].name, "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
+        let g0 = gauge_points(&metrics[0]);
+        assert_eq!(g0.len(), 1);
+        assert_eq!(attr(&g0[0], "object_name"), "Ethernet0");
+        assert_eq!(as_int(&g0[0]), 11);
+        assert_eq!(g0[0].time_unix_nano, 777);
+
+        assert_eq!(metrics[1].name, "SAI_QUEUE_STAT_PACKETS");
+        let g1 = gauge_points(&metrics[1]);
+        assert_eq!(g1.len(), 1);
+        assert_eq!(attr(&g1[0], "object_name"), "Ethernet0:Queue0");
+        assert_eq!(as_int(&g1[0]), 22);
+        assert_eq!(g1[0].time_unix_nano, 777);
     }
 }

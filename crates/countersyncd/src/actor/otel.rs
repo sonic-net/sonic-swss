@@ -23,14 +23,13 @@ use opentelemetry_proto::tonic::{
         KeyValue as ProtoKeyValue,
     },
     metrics::v1::{
-        Metric,
         ResourceMetrics,
         ScopeMetrics,
     },
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    otel::{sai_stats_to_proto_metrics, DisplaySaiStats},
+    otel::{sai_stats_buffer_to_proto_metrics, DisplaySaiStats},
     saistats::{SAIStats, SAIStatsMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
@@ -335,11 +334,9 @@ impl OtelActor {
     /// Returns `None` when there is nothing to export (empty metrics).
     /// The buffer is left intact so it can be rebuilt on retry.
     fn build_export_request(&self) -> Option<ExportMetricsServiceRequest> {
-        let mut proto_metrics: Vec<Metric> = Vec::new();
-
-        for stats in &self.buffer {
-            proto_metrics.extend(sai_stats_to_proto_metrics(stats));
-        }
+        // Merge stats that share the same (type_id, stat_id) across ALL buffered
+        // messages into a single gauge
+        let proto_metrics = sai_stats_buffer_to_proto_metrics(&self.buffer);
 
         if proto_metrics.is_empty() {
             return None;
