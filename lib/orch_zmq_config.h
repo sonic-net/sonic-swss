@@ -25,6 +25,13 @@
  */
 #define ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED "orch_northbond_route_zmq_enabled"
 
+/*
+ * WS8: Feature flag for the conflated-hash route channel.
+ * When enabled, route tables use ConflatedProducerStateTable/ConflatedConsumerTable
+ * instead of ProducerStateTable/ConsumerStateTable.
+ */
+#define ROUTE_CONFLATED_CHANNEL_ENABLED "route_conflated_channel_enabled"
+
 namespace swss {
 
 std::set<std::string> load_zmq_tables();

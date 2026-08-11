@@ -11,7 +11,11 @@
 #include "consumerstatetable.h"
 #include "zmqserver.h"
 #include "zmqconsumerstatetable.h"
+#include "conflatedconsumertable.h"
 #include "sai_serialize.h"
+
+/* WS8: defined in main.cpp; weak default for test binaries that don't link main.cpp */
+bool __attribute__((weak)) gEnableConflatedChannel = false;
 
 using namespace swss;
 
@@ -938,6 +942,13 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+    }
+    else if (gEnableConflatedChannel &&
+             (tableName == APP_ROUTE_TABLE_NAME || tableName == APP_LABEL_ROUTE_TABLE_NAME))
+    {
+        // WS8: conflated-hash route channel for ROUTE and LABEL_ROUTE tables.
+        SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s", tableName.c_str());
+        addExecutor(new Consumer(new ConflatedConsumerTable(db, tableName, gBatchSize, pri), this, tableName));
     }
     else
     {

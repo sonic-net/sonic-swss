@@ -5,6 +5,7 @@
 #include "dbconnector.h"
 #include "logger.h"
 #include "orch_zmq_config.h"
+#include "conflatedproducerstatetable.h"
 #include <stdio.h>
 
 #define ZMQ_TABLE_CONFIGFILE       "/etc/swss/orch_zmq_tables.conf"
@@ -137,10 +138,14 @@ std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(RedisPi
         SWSS_LOG_NOTICE("Create ZmqProducerStateTable : %s", tableName.c_str());
         tablePtr = new swss::ZmqProducerStateTable(pipeline, tableName, *zmqClient);
     }
+    else if (get_feature_status(ROUTE_CONFLATED_CHANNEL_ENABLED, false) ||
+             (std::getenv("ROUTE_CONFLATED_CHANNEL_CLI") && std::string(std::getenv("ROUTE_CONFLATED_CHANNEL_CLI")) == "true")) {
+        // WS8: conflated-hash route channel — one hash per channel, ~1 redis call/route.
+        SWSS_LOG_NOTICE("Create ConflatedProducerStateTable : %s", tableName.c_str());
+        tablePtr = new swss::ConflatedProducerStateTable(pipeline, tableName, buffered);
+    }
     else {
         // WS3: pass flushPub through to the 4-arg ProducerStateTable ctor.
-        // When buffered && flushPub, PUBLISH is emitted once per pipeline flush
-        // instead of per Lua script call — reducing Redis-thread ops per route.
         SWSS_LOG_NOTICE("Create ProducerStateTable : %s (flushPub=%s)", tableName.c_str(), flushPub ? "true" : "false");
         tablePtr = new swss::ProducerStateTable(pipeline, tableName, buffered, flushPub);
     }

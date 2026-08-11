@@ -1,5 +1,7 @@
 #include <iostream>
 #include <inttypes.h>
+#include <unistd.h>
+#include <cstdlib>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -80,6 +82,27 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
+
+    // Parse command-line options
+    int opt;
+    while ((opt = getopt(argc, argv, "ep")) != -1)
+    {
+        switch (opt)
+        {
+        case 'e':
+            // WS8: enable conflated-hash route channel (producer side).
+            // Sets env var checked by createProducerStateTable factory.
+            setenv("ROUTE_CONFLATED_CHANNEL_CLI", "true", 1);
+            SWSS_LOG_NOTICE("Conflated-hash route channel enabled (-e)");
+            break;
+        case 'p':
+            // WS2: enable msgpack on ASIC_DB (fpmsyncd doesn't use ASIC_DB,
+            // but accept the flag for consistency — no-op here).
+            break;
+        default:
+            break;
+        }
+    }
 
     const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
 

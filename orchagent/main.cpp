@@ -69,6 +69,7 @@ bool gRingMode = false;
 int gRingSize = RING_SIZE;
 bool gSyncMode = false;
 bool gEnableFibSuppress = false;
+bool gEnableConflatedChannel = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -409,8 +410,8 @@ int main(int argc, char **argv)
 
     // WS4: R: → R (fix: -R is a boolean flag, not an argument-taking option;
     // the old R: consumed the next CLI arg as optarg, causing crash-loops).
-    // Added Q: for ring buffer size. Added p: for msgpack on ASIC_DB.
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MFp")) != -1)
+    // Added Q: for ring buffer size, p: for msgpack, e: for conflated channel.
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MFpe")) != -1)
     {
         switch (opt)
         {
@@ -551,9 +552,13 @@ int main(int argc, char **argv)
             break;
         case 'p':
             // WS2: enable msgpack encoding on the ASIC_DB channel.
-            // Sets env var so sairedis RedisChannel picks it up at construction.
             setenv("ASIC_DB_MSGPACK_ENABLED", "true", 1);
             SWSS_LOG_NOTICE("ASIC_DB msgpack encoding enabled (-p)");
+            break;
+        case 'e':
+            // WS8: enable conflated-hash route channel.
+            gEnableConflatedChannel = true;
+            SWSS_LOG_NOTICE("Conflated-hash route channel enabled (-e)");
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
