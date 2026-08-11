@@ -146,6 +146,35 @@ int main(int argc, char **argv)
         }
     }
 
+    /* WS6: fpmsyncd_batch_size — accumulate routes and flush as one batch.
+     * 0 = disabled (old per-route path). Default: 512. Cap: 4096. */
+    std::string batchSizeStr;
+    deviceMetadataTable.hget("localhost", "fpmsyncd_batch_size", batchSizeStr);
+    if (!batchSizeStr.empty() && batchSizeStr != "None")
+    {
+        try
+        {
+            int val = std::stoi(batchSizeStr);
+            if (val == 0)
+            {
+                SWSS_LOG_NOTICE("fpmsyncd_batch_size=0: batching disabled (per-route path)");
+            }
+            else if (val >= 2 && val <= 4096)
+            {
+                sync.setBatchSize(val);
+                SWSS_LOG_NOTICE("fpmsyncd_batch_size set to %d from CONFIG_DB", val);
+            }
+            else
+            {
+                SWSS_LOG_WARN("fpmsyncd_batch_size out of range [2,4096]: %d, using default (disabled)", val);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_WARN("Invalid fpmsyncd_batch_size value: %s", batchSizeStr.c_str());
+        }
+    }
+
     /* Auto-resume default: tool -t > CONFIG_DB > compile-time. */
     int gDrainAutoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
     {
@@ -266,6 +295,8 @@ int main(int argc, char **argv)
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
                     }
 
+                    // WS6: flush pending batches before reconciliation
+                    sync.flushPendingRoutes();
                     sync.onWarmStartEnd(applStateDb);
 
                     // remove the one-shot timer.
@@ -380,6 +411,8 @@ int main(int argc, char **argv)
                     using TimerAction = fpmsyncd_warmreboot::RestartCheckOutcome::TimerAction;
                     if (out.drainFlag == DrainFlag::Set)
                     {
+                        // WS6: flush pending batches before setting drain flag
+                        sync.flushPendingRoutes();
                         sync.setDrainingForWarmRestart(true);
                         SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
                     }
@@ -440,6 +473,9 @@ int main(int argc, char **argv)
                 }
                 else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
                 {
+                    // WS6: flush pending route batches before the pipeline flush.
+                    // Batched EVALSHAs land in the pipeline → pipeline flush ships them.
+                    sync.flushPendingRoutes();
                     flushPipeline(pipeline);
                 }
             }

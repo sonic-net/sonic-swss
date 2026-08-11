@@ -256,6 +256,12 @@ public:
     bool isDrainingForWarmRestart() const { return m_drainingForWarmRestart; }
     void setDrainingForWarmRestart(bool v) { m_drainingForWarmRestart = v; }
 
+    /* WS6: batched produce — accumulate routes and flush as one EVALSHA batch.
+     * Reduces per-route fixed Lua overhead (~65µs) to per-batch. */
+    void setBatchSize(int size) { m_batchSize = size; }
+    int  getBatchSize() const   { return m_batchSize; }
+    void flushPendingRoutes();
+
     /* True if either route table is a ZmqProducerStateTable. Set once in ctor. */
     bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
 
@@ -264,6 +270,17 @@ public:
     size_t totalDbUpdaterQueueSize() const;
 
 private:
+    /* WS6: pending route batch. Keyed by route key; latest op wins (same
+     * coalescing semantics as ProducerStateTable's temp-hash: set-then-del
+     * in one window nets to DEL; del-then-set nets to SET). */
+    struct PendingEntry {
+        bool isDel;
+        std::vector<KeyOpFieldsValuesTuple> kfvs; // empty for del
+    };
+    std::unordered_map<std::string, PendingEntry> m_pendingRoutes;
+    std::unordered_map<std::string, PendingEntry> m_pendingLabelRoutes;
+    int m_batchSize = 0; // 0 = disabled (old direct-call path)
+
     /* Drain-barrier state for warm-reboot preparation (see accessors). */
     bool m_drainingForWarmRestart = false;
     bool m_hasZmqProducerTables = false;

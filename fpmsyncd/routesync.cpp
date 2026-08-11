@@ -205,7 +205,23 @@ void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
 
     if (!warmRestartInProgress)
     {
-        table.set(fvw.KeyOpFieldsValuesTupleVector());
+        /* WS6: when batching is enabled, insert into the pending map instead
+         * of calling table.set() immediately. The map coalesces same-key ops
+         * (last-op-wins). flushPendingRoutes() drains the map as one batch. */
+        if (m_batchSize > 0)
+        {
+            auto& pending = (&table == m_routeTable.get()) ? m_pendingRoutes : m_pendingLabelRoutes;
+            pending[fvw.key] = PendingEntry{false, fvw.KeyOpFieldsValuesTupleVector()};
+
+            if (static_cast<int>(pending.size()) >= m_batchSize)
+            {
+                flushPendingRoutes();
+            }
+        }
+        else
+        {
+            table.set(fvw.KeyOpFieldsValuesTupleVector());
+        }
     }
     else
     {
@@ -235,10 +251,75 @@ void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
 
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
     if (!warmRestartInProgress) {
-        table.del(fvw.key);
+        /* WS6: batch DELs the same way as SETs. */
+        if (m_batchSize > 0)
+        {
+            auto& pending = (&table == m_routeTable.get()) ? m_pendingRoutes : m_pendingLabelRoutes;
+            pending[fvw.key] = PendingEntry{true, {}};
+
+            if (static_cast<int>(pending.size()) >= m_batchSize)
+            {
+                flushPendingRoutes();
+            }
+        }
+        else
+        {
+            table.del(fvw.key);
+        }
     } else {
         m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
     }
+}
+
+void RouteSync::flushPendingRoutes()
+{
+    /* WS6: drain both pending maps into batched table.set() / table.del()
+     * calls. Cross-key ordering between the set-batch and del-batch is
+     * irrelevant for state-table semantics (per-key net state is what
+     * consumers see); per-key ordering is handled by the map's last-op-wins.
+     *
+     * Each SET entry's kfvs vector contains 1-2 KeyOpFieldsValuesTuples
+     * (DEL+SET for non-ZMQ, SET-only for ZMQ) — flatten all into one big
+     * vector for a single EVALSHA call. */
+
+    auto flushMap = [](std::unordered_map<std::string, PendingEntry>& pending,
+                       ProducerStateTable& table)
+    {
+        if (pending.empty())
+            return;
+
+        std::vector<KeyOpFieldsValuesTuple> setBatch;
+        std::vector<std::string> delBatch;
+
+        for (auto& it : pending)
+        {
+            if (it.second.isDel)
+            {
+                delBatch.push_back(it.first);
+            }
+            else
+            {
+                for (auto& kfv : it.second.kfvs)
+                {
+                    setBatch.push_back(std::move(kfv));
+                }
+            }
+        }
+
+        if (!setBatch.empty())
+        {
+            table.set(setBatch);
+        }
+        if (!delBatch.empty())
+        {
+            table.del(delBatch);
+        }
+
+        pending.clear();
+    };
+
+    flushMap(m_pendingRoutes, *m_routeTable);
+    flushMap(m_pendingLabelRoutes, *m_label_routeTable);
 }
 
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)

@@ -409,8 +409,8 @@ int main(int argc, char **argv)
 
     // WS4: R: → R (fix: -R is a boolean flag, not an argument-taking option;
     // the old R: consumed the next CLI arg as optarg, causing crash-loops).
-    // Added Q: for ring buffer size.
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MF")) != -1)
+    // Added Q: for ring buffer size. Added p: for msgpack on ASIC_DB.
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MFp")) != -1)
     {
         switch (opt)
         {
@@ -548,6 +548,12 @@ int main(int argc, char **argv)
             break;
         case 'F':
             gEnableFibSuppress = true;
+            break;
+        case 'p':
+            // WS2: enable msgpack encoding on the ASIC_DB channel.
+            // Sets env var so sairedis RedisChannel picks it up at construction.
+            setenv("ASIC_DB_MSGPACK_ENABLED", "true", 1);
+            SWSS_LOG_NOTICE("ASIC_DB msgpack encoding enabled (-p)");
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
