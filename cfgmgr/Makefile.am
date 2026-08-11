@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd vrrpmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -102,10 +102,16 @@ macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(
 macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 
+vrrpmgrd_SOURCES = vrrpmgrd.cpp vrrpmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h $(top_srcdir)/lib/vrrpintf.cpp
+vrrpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+vrrpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+vrrpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+
 stpmgrd_SOURCES = stpmgrd.cpp stpmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+
 
 if GCOV_ENABLED
 vlanmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
@@ -122,6 +128,7 @@ natmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 tunnelmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 macsecmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+vrrpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 stpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
@@ -140,6 +147,7 @@ coppmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 tunnelmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 macsecmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 fabricmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+vrrpmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 stpmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
 
