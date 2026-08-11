@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <net/if.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "logger.h"
@@ -23,6 +24,7 @@ using namespace swss;
 #define MAC_SYNC_MODE_FIELD "mac_sync_mode"
 #define MAC_SYNC_MODE_FPM   "fpm"
 #define FDB_SYNC_GLOBAL_KEY "global"
+#define FDB_SYNC_GENERATION_FIELD "generation"
 
 /* Same buffer shape zebra uses for AF_BRIDGE FDB messages. */
 struct MacNlRequest
@@ -71,7 +73,9 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
-    m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME)
+    m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
+    m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME)
 {
     readCfgFdbSyncMode();
 }
@@ -136,7 +140,9 @@ void MacSync::processCfgFdbSync()
 void MacSync::onFpmConnected(FpmInterface& fpm)
 {
     m_fpmInterface = &fpm;
-    ++m_generation;
+    m_generation = nextGeneration();
+
+    loadLocalMacs();
     replayLocalMacs();
     sendReplayEnd();
 }
@@ -144,6 +150,79 @@ void MacSync::onFpmConnected(FpmInterface& fpm)
 void MacSync::onFpmDisconnected()
 {
     m_fpmInterface = nullptr;
+}
+
+/*
+ * Rebuild the local MAC set straight from STATE_DB. The subscriber delivers the
+ * existing entries through the select loop, which has not necessarily run by the
+ * time zebra connects; replaying from an unpopulated map would tell zebra that
+ * no MAC is local and have it withdraw every one of them.
+ */
+/*
+ * Zebra keeps the MACs a previous fpmsyncd gave it, so reusing that process's
+ * generation would make them look current and survive the sweep. The counter is
+ * stored before it is sent, so a crash mid-replay cannot hand out the same value
+ * twice.
+ */
+uint32_t MacSync::nextGeneration()
+{
+    std::string value;
+    uint32_t generation = 0;
+
+    if (m_stateFdbSyncTable.hget(FDB_SYNC_GLOBAL_KEY, FDB_SYNC_GENERATION_FIELD, value))
+    {
+        generation = (uint32_t)strtoul(value.c_str(), nullptr, 10);
+    }
+
+    ++generation;
+    m_stateFdbSyncTable.hset(FDB_SYNC_GLOBAL_KEY, FDB_SYNC_GENERATION_FIELD,
+                             std::to_string(generation));
+
+    return generation;
+}
+
+void MacSync::loadLocalMacs()
+{
+    if (!m_fpmMode)
+    {
+        return;
+    }
+
+    std::vector<std::string> keys;
+    m_stateFdbTableRead.getKeys(keys);
+
+    m_localMacs.clear();
+
+    for (const auto& key : keys)
+    {
+        std::vector<FieldValueTuple> values;
+        if (!m_stateFdbTableRead.get(key, values))
+        {
+            continue;
+        }
+
+        string port;
+        bool isStatic = false;
+
+        for (const auto& fv : values)
+        {
+            if (fvField(fv) == "port")
+            {
+                port = fvValue(fv);
+            }
+            else if (fvField(fv) == "type")
+            {
+                isStatic = (fvValue(fv) == "static");
+            }
+        }
+
+        if (port.empty())
+        {
+            continue;
+        }
+
+        m_localMacs[key] = {port, isStatic};
+    }
 }
 
 void MacSync::replayLocalMacs()

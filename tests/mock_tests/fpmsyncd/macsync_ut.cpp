@@ -129,6 +129,18 @@ public:
         return table.get(key, values);
     }
 
+    /* Writes where fdborch would, so the replay path is exercised as it runs in
+     * fpmsyncd rather than by priming the in-memory map. */
+    void seedStateFdb(const std::string& key, const std::string& port, bool isStatic)
+    {
+        Table table(m_stateDb.get(), STATE_FDB_TABLE_NAME);
+        std::vector<FieldValueTuple> values = {
+            {"port", port},
+            {"type", isStatic ? "static" : "dynamic"},
+        };
+        table.set(key, values);
+    }
+
     std::string fieldValue(const std::vector<FieldValueTuple>& values,
                            const std::string& field)
     {
@@ -383,42 +395,76 @@ private:
 };
 
 /*
- * Without the trailing marker zebra never learns the replay finished and keeps
- * MACs from the previous session, so assert on the whole sequence rather than
- * just that something was sent.
+ * The replay must come from STATE_DB, not from whatever the subscriber happens
+ * to have delivered: zebra can connect before the select loop has run, and a
+ * replay of nothing tells zebra to withdraw every local MAC.
  */
-TEST_F(MacSyncTest, ReplayStampsGenerationAndEndsWithMarker)
+TEST_F(MacSyncTest, ReplayLoadsLocalMacsFromStateDb)
 {
-    /* "lo" is used because sendLocalMac resolves the port via if_nametoindex. */
-    m_macSync->m_localMacs["Vlan100:00:11:22:33:44:55"] = {"lo", false};
+    /* Deliberately not touching m_localMacs - only STATE_DB. "lo" is used
+     * because sendLocalMac resolves the port via if_nametoindex. */
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
 
     RecordingFpm fpm;
     m_macSync->onFpmConnected(fpm);
 
     ASSERT_EQ(fpm.count(), 2u);
     EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
-    EXPECT_EQ(fpm.at(0)->nlmsg_seq, 1u);
     EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
-    EXPECT_EQ(fpm.at(1)->nlmsg_seq, 1u);
+
+    /* Both must carry the same generation or the marker sweeps what it replayed. */
+    EXPECT_EQ(fpm.at(0)->nlmsg_seq, fpm.at(1)->nlmsg_seq);
+    EXPECT_NE(fpm.at(0)->nlmsg_seq, 0u);
 }
 
-/* A generation that does not advance makes the sweep a no-op. */
+/*
+ * A generation that repeats across an fpmsyncd restart leaves previously
+ * stamped MACs looking current, so the sweep never removes anything.
+ */
 TEST_F(MacSyncTest, GenerationAdvancesOnEveryConnect)
 {
-    m_macSync->m_localMacs["Vlan100:00:11:22:33:44:55"] = {"lo", false};
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
 
     RecordingFpm first;
     m_macSync->onFpmConnected(first);
     ASSERT_EQ(first.count(), 2u);
-    EXPECT_EQ(first.at(1)->nlmsg_seq, 1u);
+    uint32_t g1 = first.at(1)->nlmsg_seq;
 
     m_macSync->onFpmDisconnected();
 
     RecordingFpm second;
     m_macSync->onFpmConnected(second);
     ASSERT_EQ(second.count(), 2u);
-    EXPECT_EQ(second.at(0)->nlmsg_seq, 2u);
-    EXPECT_EQ(second.at(1)->nlmsg_seq, 2u);
+    uint32_t g2 = second.at(1)->nlmsg_seq;
+
+    EXPECT_GT(g2, g1);
+    EXPECT_EQ(second.at(0)->nlmsg_seq, g2);
+}
+
+/*
+ * A restarted fpmsyncd must not reissue a generation zebra has already seen,
+ * or the MACs stamped by the previous process look current and are never swept.
+ * A second instance stands in for the restarted process: its members start from
+ * their initializers, so only what reached STATE_DB carries over.
+ */
+TEST_F(MacSyncTest, GenerationDoesNotRepeatAcrossRestart)
+{
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
+
+    RecordingFpm first;
+    m_macSync->onFpmConnected(first);
+    ASSERT_EQ(first.count(), 2u);
+    uint32_t before = first.at(1)->nlmsg_seq;
+
+    MacSync restarted(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    restarted.m_fpmMode = true;
+
+    RecordingFpm second;
+    restarted.onFpmConnected(second);
+    ASSERT_EQ(second.count(), 2u);
+
+    EXPECT_NE(second.at(1)->nlmsg_seq, before);
+    EXPECT_EQ(second.at(0)->nlmsg_seq, second.at(1)->nlmsg_seq);
 }
 
 /* The marker must still close a replay that carried no MACs. */
@@ -429,5 +475,5 @@ TEST_F(MacSyncTest, ReplayWithNoLocalMacsStillSendsMarker)
 
     ASSERT_EQ(fpm.count(), 1u);
     EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
-    EXPECT_EQ(fpm.at(0)->nlmsg_seq, 1u);
+    EXPECT_NE(fpm.at(0)->nlmsg_seq, 0u);
 }
