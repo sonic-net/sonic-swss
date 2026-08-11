@@ -59,6 +59,8 @@ private:
     void setMacSyncMode(const std::string& mode);
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
                       const std::string& port, bool isStatic, bool add);
+    void loadLocalMacs();
+    uint32_t nextGeneration();
     void replayLocalMacs();
     void sendReplayEnd();
 
@@ -66,12 +68,15 @@ private:
     SubscriberStateTable m_stateFdbTable;
     SubscriberStateTable m_cfgFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
+    Table m_stateFdbTableRead;
+    Table m_stateFdbSyncTable;
 
     FpmInterface *m_fpmInterface {nullptr};
     bool m_fpmMode {false};
 
-    /* Bumped on every FPM connect and carried in nlmsg_seq, so zebra can drop
-     * MACs left over from a previous session once the replay ends. */
+    /* Carried in nlmsg_seq so zebra can drop MACs left over from a previous
+     * session once the replay ends. Kept in STATE_DB because it has to differ
+     * from the one the previous fpmsyncd process sent. */
     uint32_t m_generation {0};
 
     std::map<std::string, LocalMac> m_localMacs;
