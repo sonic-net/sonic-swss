@@ -26,7 +26,7 @@ extern "C" {
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
 #define PFC_STAT_HISTORY                "pfc_stat_history"
 
-// Timer limits in milliseconds
+// Default timer limits in milliseconds, overridable via getTimerRange()
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
 #define PFC_WD_DETECTION_TIME_MIN       100
 #define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
@@ -38,6 +38,15 @@ enum class PfcWdAction
     PFC_WD_ACTION_FORWARD,
     PFC_WD_ACTION_DROP,
     PFC_WD_ACTION_ALERT,
+};
+
+// Detection and restoration timer limits, in milliseconds.
+struct PfcWdTimerRange
+{
+    uint32_t detectionMin;
+    uint32_t detectionMax;
+    uint32_t restorationMin;
+    uint32_t restorationMax;
 };
 
 class PfcWdBaseOrch: public Orch
@@ -71,6 +80,9 @@ public:
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
+
+    // Supported timer limits. False defers the entry for retry.
+    virtual bool getTimerRange(PfcWdTimerRange& range) const;
 
     // ========================================================================
     // Helper functions used in both SW and HW watchdog implementations
