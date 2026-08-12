@@ -502,8 +502,28 @@ namespace protnhg_test
     TEST_F(ProtNhgTest, ValidateNextHopNoOpWhenMemberNotFound)
     {
         NextHopKey unrelated_nh(IpAddress("10.0.0.200"), string("Ethernet8"));
+
+        /* No group exists yet, so this doesn't exercise ProtNhg's own guard. */
         EXPECT_TRUE(gNhgOrch->validateNextHop(unrelated_nh));
         EXPECT_TRUE(gNhgOrch->invalidateNextHop(unrelated_nh));
+
+        /* Call directly, bypassing NhgOrch's guard, to test ProtNhg's own. */
+        string key = "prot_nhg_unrelated_member";
+        NextHopKey primary_nh(IpAddress("10.0.1.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.1.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        ProtNhg &nhg = *gNhgOrch->m_protNhgs.at(key).nhg;
+
+        ASSERT_FALSE(nhg.hasMember(unrelated_nh));
+        EXPECT_TRUE(nhg.validateNextHop(unrelated_nh));
+        EXPECT_TRUE(nhg.invalidateNextHop(unrelated_nh));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
     }
 
     TEST_F(ProtNhgTest, InvalidateNextHopRemovesMemberAndValidateRestoresIt)

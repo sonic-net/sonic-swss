@@ -297,6 +297,12 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
         return true;
     }
 
+    /* syncMembers() assumes nh_key is already in m_members. */
+    if (!hasMember(nh_key))
+    {
+        return true;
+    }
+
     return syncMembers({nh_key});
 }
 
@@ -306,6 +312,12 @@ bool ProtNhg::invalidateNextHop(const NextHopKey &nh_key)
     SWSS_LOG_ENTER();
 
     if (!isSynced())
+    {
+        return true;
+    }
+
+    /* removeMembers() (NhgCommon) assumes nh_key is already in m_members. */
+    if (!hasMember(nh_key))
     {
         return true;
     }
