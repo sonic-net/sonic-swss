@@ -224,7 +224,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     set<uint8_t> losslessTc;
     if (!getLosslessTcsForPort(port, losslessTc))
     {
-        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
         return false;
     }
 

@@ -47,6 +47,18 @@ PfcWdBaseOrch::~PfcWdBaseOrch(void)
     SWSS_LOG_ENTER();
 }
 
+bool PfcWdBaseOrch::getTimerRange(PfcWdTimerRange& range) const
+{
+    SWSS_LOG_ENTER();
+
+    range.detectionMin = PFC_WD_DETECTION_TIME_MIN;
+    range.detectionMax = PFC_WD_DETECTION_TIME_MAX;
+    range.restorationMin = PFC_WD_RESTORATION_TIME_MIN;
+    range.restorationMax = PFC_WD_RESTORATION_TIME_MAX;
+
+    return true;
+}
+
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
@@ -71,6 +83,7 @@ bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& lossle
 
     if (losslessTc.empty())
     {
+        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
         return false;
     }
 
@@ -200,6 +213,13 @@ task_process_status PfcWdBaseOrch::createEntry(const string& key,
         return task_process_status::task_invalid_entry;
     }
 
+    PfcWdTimerRange timerRange;
+    if (!getTimerRange(timerRange))
+    {
+        SWSS_LOG_WARN("PFC Watchdog timer range is not available yet for port %s, retry it", key.c_str());
+        return task_process_status::task_need_retry;
+    }
+
     for (auto i : data)
     {
         const auto &field = fvField(i);
@@ -211,14 +231,14 @@ task_process_status PfcWdBaseOrch::createEntry(const string& key,
             {
                 detectionTime = to_uint<uint32_t>(
                         value,
-                        PFC_WD_DETECTION_TIME_MIN,
-                        PFC_WD_DETECTION_TIME_MAX);
+                        timerRange.detectionMin,
+                        timerRange.detectionMax);
             }
             else if (field == PFC_WD_RESTORATION_TIME)
             {
                 restorationTime = to_uint<uint32_t>(value,
-                        PFC_WD_RESTORATION_TIME_MIN,
-                        PFC_WD_RESTORATION_TIME_MAX);
+                        timerRange.restorationMin,
+                        timerRange.restorationMax);
             }
             else if (field == PFC_WD_ACTION)
             {
