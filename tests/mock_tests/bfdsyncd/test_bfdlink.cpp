@@ -460,3 +460,131 @@ TEST_F(BfdSyncdTest, StateUpdateInvalidRemoteMinRx)
     ASSERT_FALSE(m_bfd.handleBfdStateUpdate(key, fieldValues));
 }
 
+/* Fixture for readData() tests: sets up a real connected loopback socket pair. */
+class BfdSyncdReadDataTest : public BfdSyncdTest
+{
+public:
+    void SetUp() override
+    {
+        BfdSyncdTest::SetUp();
+
+        unsigned short port = m_bfd.getServerPort();
+        ASSERT_NE(port, 0u);
+
+        m_client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        ASSERT_GE(m_client_fd, 0);
+
+        struct sockaddr_in addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        ASSERT_EQ(connect(m_client_fd, (struct sockaddr *)&addr, sizeof(addr)), 0);
+
+        m_bfd.accept();
+    }
+
+    void TearDown() override
+    {
+        if (m_client_fd >= 0)
+        {
+            close(m_client_fd);
+            m_client_fd = -1;
+        }
+        BfdSyncdTest::TearDown();
+    }
+
+    int m_client_fd = -1;
+};
+
+TEST_F(BfdSyncdReadDataTest, ReadDataSingleCompleteMessage)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    ASSERT_EQ(write(m_client_fd, buf, BFD_WIRE_MSG_LEN), (ssize_t)BFD_WIRE_MSG_LEN);
+
+    m_bfd.readData();
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 1u);
+    ASSERT_EQ(keys[0], "default:default:2000::2");
+}
+
+TEST_F(BfdSyncdReadDataTest, ReadDataPartialHeaderBuffered)
+{
+    /* Write fewer bytes than a header — message must be buffered, not dispatched. */
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    ASSERT_EQ(write(m_client_fd, buf, BFD_MSG_HDR_LEN - 1), (ssize_t)(BFD_MSG_HDR_LEN - 1));
+
+    m_bfd.readData();
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 0u);
+}
+
+TEST_F(BfdSyncdReadDataTest, ReadDataPartialBodyBuffered)
+{
+    /* Write a complete header but no body — body must be buffered, not dispatched. */
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    ASSERT_EQ(write(m_client_fd, buf, BFD_MSG_HDR_LEN), (ssize_t)BFD_MSG_HDR_LEN);
+
+    m_bfd.readData();
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 0u);
+}
+
+TEST_F(BfdSyncdReadDataTest, ReadDataMultipleMessagesInOneRead)
+{
+    unsigned char combined[BFD_WIRE_MSG_LEN * 2];
+    buildIpv6SessionWire(combined, BFD_WIRE_MSG_LEN,
+                         DP_ADD_SESSION, "2001::1", "2001::2", 0, nullptr, 300000, 300000, 3);
+    buildIpv6SessionWire(combined + BFD_WIRE_MSG_LEN, BFD_WIRE_MSG_LEN,
+                         DP_ADD_SESSION, "2002::1", "2002::2", 0, nullptr, 300000, 300000, 3);
+    ASSERT_EQ(write(m_client_fd, combined, sizeof(combined)), (ssize_t)sizeof(combined));
+
+    m_bfd.readData();
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 2u);
+}
+
+TEST_F(BfdSyncdReadDataTest, ReadDataConnectionClosed)
+{
+    close(m_client_fd);
+    m_client_fd = -1;
+
+    ASSERT_THROW(m_bfd.readData(), BfdLink::BfdConnectionClosedException);
+}
+
+TEST_F(BfdSyncdReadDataTest, ReadDataInvalidHeaderDropped)
+{
+    /* ECHO_REQUEST fails bfd_msg_ok(); the buffer should be cleared. */
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = ECHO_REQUEST;
+    ASSERT_EQ(write(m_client_fd, buf, BFD_WIRE_MSG_LEN), (ssize_t)BFD_WIRE_MSG_LEN);
+
+    m_bfd.readData();
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 0u);
+}
+

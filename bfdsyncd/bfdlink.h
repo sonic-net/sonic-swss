@@ -75,6 +75,8 @@ public:
     /* Wait for connection (blocking) */
     void accept();
 
+    unsigned short getServerPort() const;
+
     int getFd() override;
     uint64_t readData() override;
     void bfdDebugMessage(struct bfddp_message *bm);

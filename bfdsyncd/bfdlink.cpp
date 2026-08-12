@@ -226,6 +226,15 @@ int BfdLink::getFd()
     return m_connection_socket;
 }
 
+unsigned short BfdLink::getServerPort() const
+{
+    struct sockaddr_in addr = {};
+    socklen_t len = sizeof(addr);
+    if (getsockname(m_server_socket, (struct sockaddr *)&addr, &len) < 0)
+        return 0;
+    return ntohs(addr.sin_port);
+}
+
 void BfdLink::hexdump(void *ptr, int buflen)
 {
     char str[100];
