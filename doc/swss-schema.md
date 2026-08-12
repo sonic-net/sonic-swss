@@ -1,5 +1,15 @@
 Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.
 
+## Task 4.2 profile
+
+Chi tiết mô hình dữ liệu và hợp đồng DB cho orchestration được mô tả tại:
+
+- `doc/db-data-model-contract.md`
+
+Tài liệu này (swss-schema.md) tiếp tục đóng vai trò mô tả schema ABNF chi tiết
+cho từng bảng, trong khi profile 4.2 bổ sung contract liên bảng, required/optional
+fields, reference/dependency và nguyên tắc compatibility.
+
 ## Definitions of common tokens
     name                    = 1*DIGIT/1*ALPHA
     ref_hash_key_reference  = "[" hash_key "]" ;The token is a refernce to another valid DB key.
