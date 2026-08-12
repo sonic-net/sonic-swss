@@ -1632,4 +1632,38 @@ namespace qosorch_test
         static_cast<Orch *>(tunnel_decap_orch)->doTask();
         entries.clear();
     }
+
+    TEST_F(QosOrchTest, QosOrchTestOutOfRangeDscpToFcMap)
+    {
+        // Push an entry with an overflow value to trigger out_of_range in stoi
+        Table dscpToFcMapTable = Table(m_config_db.get(), CFG_DSCP_TO_FC_MAP_TABLE_NAME);
+        dscpToFcMapTable.set("OVERFLOW_MAP",
+                             {
+                                 {"99999999999", "0"}
+                             });
+        gQosOrch->addExistingData(&dscpToFcMapTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestOutOfRangeExpToFcMap)
+    {
+        Table expToFcMapTable = Table(m_config_db.get(), CFG_EXP_TO_FC_MAP_TABLE_NAME);
+        expToFcMapTable.set("OVERFLOW_MAP",
+                            {
+                                {"99999999999", "0"}
+                            });
+        gQosOrch->addExistingData(&expToFcMapTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestOutOfRangeTcToDscpMap)
+    {
+        Table tcToDscpMapTable = Table(m_config_db.get(), CFG_TC_TO_DSCP_MAP_TABLE_NAME);
+        tcToDscpMapTable.set("OVERFLOW_MAP",
+                             {
+                                 {"0", "99999999999"}
+                             });
+        gQosOrch->addExistingData(&tcToDscpMapTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
 }
