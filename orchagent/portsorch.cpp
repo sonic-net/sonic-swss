@@ -5901,6 +5901,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             uint32_t mtu = 0;
             MacAddress mac;
             string hostif_name = "";
+            string learn_disable = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -5915,6 +5916,11 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 {
                     hostif_name = fvValue(i);
                 }
+                if (fvField(i) == "learn_disable")
+                {
+                    learn_disable = fvValue(i);
+                }
+                
             }
 
             /*
@@ -5956,6 +5962,13 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     {
                         gIntfsOrch->setRouterIntfsMac(vl);
                     }
+                }
+                if (!learn_disable.empty())
+                {
+                    sai_object_id_t vlan_oid = vl.m_vlan_oid;
+                    setProgramSaiVlanLearnDisable(learn_disable, vlan_oid);
+                    SWSS_LOG_INFO("Programmed learn_disable=%s for VLAN %s (OID: %" PRIx64 ")",
+                                  learn_disable.c_str(), vlan_alias.c_str(), vlan_oid);
                 }
                 if (!hostif_name.empty())
                 {
@@ -11994,5 +12007,28 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
     if (m_port_state_poll.size() == 0)
     {
         m_port_state_poller->stop();
+    }
+}
+
+// Per-VLAN MAC learning disable support - SAI programming
+void PortsOrch::setProgramSaiVlanLearnDisable(const string& learn_disable, sai_object_id_t vlan_oid)
+{
+    if (!learn_disable.empty())
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_VLAN_ATTR_LEARN_DISABLE;
+        attr.value.booldata = (learn_disable == "true");
+        
+        sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan_oid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set learn_disable=%s on VLAN OID %" PRIx64 ", rv:%d",
+                    learn_disable.c_str(), vlan_oid, status);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Successfully set SAI_VLAN_ATTR_LEARN_DISABLE=%s on VLAN OID %" PRIx64,
+                    learn_disable.c_str(), vlan_oid);
+        }
     }
 }

@@ -653,6 +653,8 @@ private:
     bool m_isWredPortCounterMapGenerated = false;
     std::unique_ptr<swss::Table> m_queueCounterCapabilitiesTable = nullptr;
     std::unique_ptr<swss::Table> m_portCounterCapabilitiesTable = nullptr;
+    // Per-VLAN MAC Learning Control (NEW)
+    void setProgramSaiVlanLearnDisable(const std::string& learn_disable, sai_object_id_t vlan_oid);
 
 private:
     // Port config aggregator
