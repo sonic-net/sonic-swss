@@ -243,6 +243,46 @@ TEST_F(MacSyncTest, RemoteMacDeletedOnDelNeigh)
     EXPECT_FALSE(getEntry(TEST_KEY, values));
 }
 
+/*
+ * zebra replays router MACs on reconnect but never remote EVPN MACs, so an entry
+ * left in APPL_DB by fdbsyncd across a mode change, or by a previous fpmsyncd,
+ * is only removable if fpmsyncd adopted it when it entered fpm mode.
+ */
+TEST_F(MacSyncTest, InheritedRemoteMacIsWithdrawn)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{
+        {"remote_vtep", "10.1.1.1"},
+        {"type", "dynamic"},
+        {"vni", std::to_string(TEST_VNI)},
+    });
+
+    /* Enter fpm mode the way startup does, so the adoption runs. */
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    MacMsg del;
+    buildMacMsg(del, RTM_DELNEIGH, NUD_REACHABLE);
+    addVlan(del, TEST_VLAN);
+    addVtep(del, "10.1.1.1");
+    feed(del);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+TEST_F(MacSyncTest, EnteringFpmModeAdoptsExistingRemoteMacs)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 0u);
+
+    m_macSync->setMacSyncMode("fpm");
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
+}
+
 /* NUD_NOARP marks a sticky MAC, which fdbOrch consumes as a static entry. */
 TEST_F(MacSyncTest, StickyRemoteMacIsStatic)
 {

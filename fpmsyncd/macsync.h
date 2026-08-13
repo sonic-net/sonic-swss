@@ -60,11 +60,13 @@ private:
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
                       const std::string& port, bool isStatic, bool add);
     void loadLocalMacs();
+    void loadRemoteMacs();
     uint32_t nextGeneration();
     void replayLocalMacs();
     void sendReplayEnd();
 
     ProducerStateTable m_vxlanFdbTable;
+    Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
     SubscriberStateTable m_cfgFdbSyncTable;
     Table m_cfgFdbSyncTableRead;

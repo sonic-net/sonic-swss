@@ -71,6 +71,7 @@ static void parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int le
 
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
+    m_vxlanFdbTableRead(pipeline, APP_VXLAN_FDB_TABLE_NAME, false),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
@@ -104,6 +105,7 @@ void MacSync::setMacSyncMode(const string& mode)
 
     if (m_fpmMode)
     {
+        loadRemoteMacs();
         replayLocalMacs();
     }
 }
@@ -179,6 +181,23 @@ uint32_t MacSync::nextGeneration()
                              std::to_string(generation));
 
     return generation;
+}
+
+/*
+ * zebra replays router MACs on reconnect but never the remote EVPN MACs, so an
+ * entry inherited from fdbsyncd or from a previous fpmsyncd would otherwise
+ * find nothing to erase on withdrawal and stay programmed forever.
+ */
+void MacSync::loadRemoteMacs()
+{
+    std::vector<std::string> keys;
+
+    m_vxlanFdbTableRead.getKeys(keys);
+    m_remoteMacs.clear();
+    m_remoteMacs.insert(keys.begin(), keys.end());
+
+    SWSS_LOG_NOTICE("MacSync: adopted %zu remote MACs already in APPL_DB",
+                    m_remoteMacs.size());
 }
 
 void MacSync::loadLocalMacs()
