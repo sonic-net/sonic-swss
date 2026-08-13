@@ -23,6 +23,8 @@ extern "C" {
 
 namespace p4orch {
 
+constexpr uint32_t kMaxFallbackGroupBulkSize = 100;
+
 // Table entries for multicast_router_interface_table.
 struct P4MulticastRouterInterfaceEntry {
   std::string multicast_router_interface_entry_key;  // Unique key of the entry.
@@ -75,6 +77,7 @@ struct P4MulticastGroupEntry {
   std::vector<P4Replica> active_replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
+  std::vector<sai_object_id_t> nexthop_ids;
   // Used as a quick lookup for what replicas are in use.
   std::unordered_set<std::string> replica_keys;
 
@@ -94,10 +97,8 @@ typedef std::unordered_map<std::string, P4MulticastGroupEntry>
     P4MulticastGroupTable;
 
 // The L3MulticastManager handles updates to two P4 tables:
-// * The "fixed" table multicast_router_interface_table, which defines a single
-//   action set_multicast_src_mac to map output port and egress instance ID to
-//   an Ethernet source MAC address to use for replicated packets.  Entries in
-//   this table create router interface (RIF) objects in the ASIC.
+// * The "fixed" table multicast_router_interface_table.  Entries in this table
+//   create router interface (RIF) objects in the ASIC.
 // * The new "packet replication" table replication_multicast_table, which
 //   is modeled as an action-less table, where the table key of
 //   multicast group ID, egress instance, and output port will create entries
@@ -107,7 +108,8 @@ typedef std::unordered_map<std::string, P4MulticastGroupEntry>
 class L3MulticastManager : public ObjectManagerInterface {
  public:
   L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
-                     ResponsePublisherInterface* publisher);
+                     ResponsePublisherInterface* publisher,
+                     swss::SelectableEvent* fallback_event);
   virtual ~L3MulticastManager() = default;
 
   void enqueue(const std::string& table_name,
@@ -120,6 +122,16 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode getSaiObject(const std::string& json_key,
                           sai_object_type_t& object_type,
                           std::string& object_key) override;
+  // Refreshes port oper-status with the latest values from PortsOrch.
+  void refreshPortOperStatus();
+
+  // Updates port oper status and fallback group.
+  void updateFallbackGroup(const std::string& port,
+                           sai_port_oper_status_t status);
+
+  // Processes group update in m_fallback_groups, maximum of
+  // kMaxFallbackGroupBulkSize groups per call.
+  void processFallbackGroupEvent();
 
  private:
   // Drains entries associated with the multicast router interface table.
@@ -129,6 +141,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Drains entries associated with the multicast group table.
   ReturnCode drainMulticastGroupEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& group_entry_tuples);
+
+  // Returns the SAI attributes for an IPMC group.
+  std::vector<sai_attribute_t> prepareMulticastGroupSaiAttrs(
+      P4MulticastGroupEntry& group, std::string& group_label,
+      bool update = false);
 
   // Converts db table entry into P4MulticastRouterInterfaceEntry.
   ReturnCodeOr<P4MulticastRouterInterfaceEntry>
@@ -177,6 +194,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateDelMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
 
+  // Updates port oper status in m_port_oper_status_map for all the ports in the
+  // group.
+  void fetchPortOperStatus(const P4MulticastGroupEntry& multicast_group_entry);
+
   // Select the replicas to be used in a group.
   void setActiveReplicas(P4MulticastGroupEntry& multicast_group_entry);
 
@@ -196,40 +217,28 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode processMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
-      const std::string& op, bool update);
+      const std::string& op, bool update, bool is_ipmc);
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
-                                   sai_object_id_t* rif_oid);
+                                   sai_object_id_t& rif_oid,
+                                   std::string& label);
   ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,
                            const sai_object_id_t rif_oid,
-                           sai_object_id_t* next_hop_oid);
-  ReturnCode createNeighborEntry(
-    P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid);
+                           sai_object_id_t& next_hop_oid, std::string& label);
+  ReturnCode createNeighborEntry(P4MulticastRouterInterfaceEntry& entry,
+                                 const sai_object_id_t rif_oid);
 
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
-  ReturnCode createDefaultMyMac();
-
   ReturnCode deleteNextHop(P4MulticastRouterInterfaceEntry* entry,
                            const sai_object_id_t next_hop_oid);
 
-  // Wrapper around SAI setup and call to create multicast group.
-  ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
-                                  sai_object_id_t* mcast_group_oid);
-
-  ReturnCode deleteMulticastGroup(const std::string& multicast_group_id,
-                                  sai_object_id_t mcast_group_oid);
-
-  // Wrapper around SAI setup and call to create multicast group members.
-  ReturnCode createMulticastGroupMember(
-      const P4Replica& replica, const sai_object_id_t group_oid,
-      const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid);
-
   // Wrapper around SAI setup and call to create L2 multicast group.
   ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
-                                    sai_object_id_t* mcast_group_oid);
+                                    sai_object_id_t& mcast_group_oid,
+                                    std::string& group_label);
 
   ReturnCode deleteL2MulticastGroup(const std::string& multicast_group_id,
                                     sai_object_id_t mcast_group_oid);
@@ -262,35 +271,28 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastRouterInterfaceEntry* entry);
 
   // Add new multicast group table entries.
-  std::vector<ReturnCode> addMulticastGroupEntries(
+  std::vector<ReturnCode> addIpMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode addIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  std::vector<ReturnCode> addL2MulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
   ReturnCode addL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
   // TODO : We need to create a temporary l2mc entry to force
   // syncd to create the l2mc group SAI object.
   ReturnCode activateL2MulticastGroup(const sai_object_id_t l2mc_group_oid);
 
   // Update existing multicast group table entries.
-  std::vector<ReturnCode> updateMulticastGroupEntries(
+  std::vector<ReturnCode> updateIpMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries, bool fallback_event = false);
+  std::vector<ReturnCode> updateL2MulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode updateIpMulticastGroupEntry(P4MulticastGroupEntry& entry,
-                                         P4MulticastGroupEntry* old_entry);
   ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
                                          P4MulticastGroupEntry* old_entry);
-  // Used during failure scenarios where we try to revert to the previous state.
-  ReturnCode restoreDeletedGroupMembers(
-      const std::vector<P4Replica>& deleted_replicas,
-      const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
-      const sai_object_id_t group_oid, const std::string& error_message,
-      P4MulticastGroupEntry* old_entry);
 
   // Delete existing multicast group table entries.
-  std::vector<ReturnCode> deleteMulticastGroupEntries(
+  std::vector<ReturnCode> deleteIpMulticastGroupEntries(
       const std::vector<P4MulticastGroupEntry>& entries);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode deleteIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  std::vector<ReturnCode> deleteL2MulticastGroupEntries(
+      const std::vector<P4MulticastGroupEntry>& entries);
   ReturnCode deleteL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
 
   ReturnCode restoreDeletedL2GroupMembers(
@@ -323,9 +325,9 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies ASIC DB for a multicast group entry.
   std::string verifyMulticastGroupStateAsicDb(
-      const P4MulticastGroupEntry* multicast_group_entry);
+      P4MulticastGroupEntry* multicast_group_entry);
   std::string verifyIpMulticastGroupStateAsicDb(
-      const P4MulticastGroupEntry* multicast_group_entry);
+      P4MulticastGroupEntry* multicast_group_entry);
   std::string verifyL2MulticastGroupStateAsicDb(
       const P4MulticastGroupEntry* multicast_group_entry);
 
@@ -376,9 +378,33 @@ class L3MulticastManager : public ObjectManagerInterface {
   sai_object_id_t getBridgePortOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
+  // Returns true if the active replicas in the group will change.
+  bool checkActiveReplicasChange(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Inserts the group into m_port_name_to_ipmc_group_map.
+  void insertGroupInPortNameToIpmcGroupMap(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Removes the group from m_port_name_to_ipmc_group_map.
+  void removeGroupFromPortNameToIpmcGroupMap(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
+
+  // Maps port name to oper-status.
+  std::unordered_map<std::string, sai_port_oper_status_t>
+      m_port_oper_status_map;
+
+  // A set that stores the groups that need to be updated due to watchport
+  // events.
+  std::unordered_set<std::string> m_fallback_groups;
+
+  // Maps port name to an IPMC group.
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      m_port_name_to_ipmc_group_map;
 
   // OID for a valid MyMAC object, needed for creating multicast RIFs that will
   // *not* result in a MyStation entry being added.  This will prevent the
@@ -390,9 +416,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   swss::DBConnector m_asic_db;
   swss::Table m_asic_state_table;
   ResponsePublisherInterface* m_publisher;
+  swss::SelectableEvent* m_fallback_event;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
   friend class L3MulticastManagerTest;
+  friend class L3MulticastManagerTestNoMyMac;
 };
 
 }  // namespace p4orch

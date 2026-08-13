@@ -9,11 +9,15 @@
 #include <unordered_map>
 
 #include "mock_response_publisher.h"
+#include "mock_sai_acl.h"
 #include "mock_sai_my_mac.h"
+#include "mock_sai_serialize.h"
+#include "mock_sai_switch.h"
 #include "p4oidmapper.h"
 #include "p4orch/p4orch_util.h"
 #include "p4orch_util.h"
 #include "return_code.h"
+#include "switchorch.h"
 extern "C"
 {
 #include "sai.h"
@@ -29,11 +33,19 @@ using ::testing::SetArgPointee;
 using ::testing::StrictMock;
 using ::testing::Truly;
 
+extern swss::DBConnector* gAppDb;
+extern swss::DBConnector* gStateDb;
+extern swss::DBConnector* gConfigDb;
+
 extern sai_object_id_t gSwitchId;
+extern sai_acl_api_t* sai_acl_api;
 extern sai_my_mac_api_t *sai_my_mac_api;
+extern sai_switch_api_t* sai_switch_api;
 extern MockSaiMyMac *mock_sai_my_mac;
+extern SwitchOrch* gSwitchOrch;
 
 namespace
+
 {
 // A physical port set up in test_main.cpp
 constexpr char *kPortName1 = "Ethernet1";
@@ -51,6 +63,7 @@ constexpr char* kPortName3 = "Ethernet7";
 constexpr char *kL3AdmitP4AppDbKey1 = R"({"match/dst_mac":"00:02:03:04:00:00&ff:ff:ff:ff:00:00","priority":2030})";
 constexpr sai_object_id_t kL3AdmitOid1 = 0x1;
 constexpr sai_object_id_t kL3AdmitOid2 = 0x2;
+constexpr sai_object_id_t kDefaultMyMacOid = 0x301;
 
 // APP DB entries for Add request.
 const P4L3AdmitAppDbEntry kP4L3AdmitAppDbEntry1{/*port_name=*/"",
@@ -170,6 +183,7 @@ bool MatchCreateL3AdmitArgAttrList(const sai_attribute_t *attr_list,
 
     return true;
 }
+
 } // namespace
 
 class L3AdmitManagerTest : public ::testing::Test
@@ -179,13 +193,41 @@ class L3AdmitManagerTest : public ::testing::Test
     {
     }
 
+    void setUpSwitchOrch() {
+      EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_))
+          .WillRepeatedly(Return(EMPTY_STRING));
+      EXPECT_CALL(mock_sai_acl_, create_acl_table_group(_, _, _, _))
+          .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+      EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _))
+          .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+      EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
+          .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+      TableConnector stateDbSwitchTable(gStateDb, "SWITCH_CAPABILITY");
+      TableConnector app_switch_table(gAppDb, APP_SWITCH_TABLE_NAME);
+      TableConnector conf_asic_sensors(gConfigDb, CFG_ASIC_SENSORS_TABLE_NAME);
+      std::vector<TableConnector> switch_tables = {conf_asic_sensors,
+                                                   app_switch_table};
+      gSwitchOrch = new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable);
+    }
+
     void SetUp() override
     {
         // Set up mock stuff for SAI l3 admit API structure.
         mock_sai_my_mac = &mock_sai_my_mac_;
         sai_my_mac_api->create_my_mac = mock_create_my_mac;
         sai_my_mac_api->remove_my_mac = mock_remove_my_mac;
+
+        mock_sai_switch = &mock_sai_switch_;
+        sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
+        sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
+
+        mock_sai_acl = &mock_sai_acl_;
+       sai_acl_api->create_acl_table_group = create_acl_table_group;
+       mock_sai_serialize = &mock_sai_serialize_;
+      setUpSwitchOrch();
     }
+
+    void TearDown() override { delete gSwitchOrch; }
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
@@ -247,7 +289,10 @@ class L3AdmitManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiMyMac> mock_sai_my_mac_;
+    StrictMock<MockSaiSerialize> mock_sai_serialize_;
     StrictMock<MockResponsePublisher> publisher_;
+    StrictMock<MockSaiSwitch> mock_sai_switch_;
+    StrictMock<MockSaiAcl> mock_sai_acl_;
     P4OidMapper p4_oid_mapper_;
     L3AdmitManager l3_admit_manager_;
 };
@@ -552,6 +597,54 @@ TEST_F(L3AdmitManagerTest, DrainDeleteRequestShouldSucceedForExistingL3Admit)
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_MY_MAC, l3admit_key));
 }
 
+TEST_F(L3AdmitManagerTest, DrainAliasMacRequestShouldSucceed) {
+  // Setup alias MAC in SwitchOrch.
+  swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
+  std::vector<swss::FieldValueTuple> values;
+  values.push_back(swss::FieldValueTuple{
+      "alias_mac", kP4L3AdmitAppDbEntry3.mac_address_data.to_string()});
+  table.set("switch", values);
+  gSwitchOrch->addExistingData(&table);
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  Orch* switch_orch = gSwitchOrch;
+  switch_orch->doTask();
+
+  // Create, update, and delete request.
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry3.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry3.mac_address_mask.to_string();
+  j[p4orch::kPriority] = kP4L3AdmitAppDbEntry3.priority;
+
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kL3AdmitAction}};
+  std::vector<swss::FieldValueTuple> fvs_del;
+
+  swss::KeyOpFieldsValuesTuple app_db_entry(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  swss::KeyOpFieldsValuesTuple app_db_entry_del(
+      std::string(APP_P4RT_L3_ADMIT_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs_del);
+
+  Enqueue(app_db_entry);
+  Enqueue(app_db_entry);
+  Enqueue(app_db_entry_del);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(2);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_del)),
+                      Eq(kfvFieldsValues(app_db_entry_del)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+}
+
 TEST_F(L3AdmitManagerTest, DrainValidAppEntryShouldSucceed)
 {
     nlohmann::json j;
@@ -840,4 +933,34 @@ TEST_F(L3AdmitManagerTest, VerifyStateAsicDbTest)
             swss::FieldValueTuple{"SAI_MY_MAC_ATTR_MAC_ADDRESS", kP4L3AdmitAppDbEntry1.mac_address_data.to_string()},
             swss::FieldValueTuple{"SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK", "FF:FF:FF:FF:00:00"},
             swss::FieldValueTuple{"SAI_MY_MAC_ATTR_PRIORITY", "2030"}});
+}
+
+TEST_F(L3AdmitManagerTest, VerifyStateAliasMacTest) {
+  // Setup alias MAC in SwitchOrch.
+  swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
+  std::vector<swss::FieldValueTuple> values;
+  values.push_back(swss::FieldValueTuple{
+      "alias_mac", kP4L3AdmitAppDbEntry3.mac_address_data.to_string()});
+  table.set("switch", values);
+  gSwitchOrch->addExistingData(&table);
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  Orch* switch_orch = gSwitchOrch;
+  switch_orch->doTask();
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kDstMac)] =
+      kP4L3AdmitAppDbEntry3.mac_address_data.to_string() +
+      p4orch::kDataMaskDelimiter +
+      kP4L3AdmitAppDbEntry3.mac_address_mask.to_string();
+  j[p4orch::kPriority] = kP4L3AdmitAppDbEntry3.priority;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + APP_P4RT_L3_ADMIT_TABLE_NAME +
+                             kTableKeyDelimiter + j.dump();
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kL3AdmitAction});
+
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
 }

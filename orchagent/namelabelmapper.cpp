@@ -29,7 +29,7 @@ NameLabelMapper::NameLabelMapper() : m_db("STATE_DB", 0), m_table(&m_db, "SAI_KE
 {
 }
 
-bool NameLabelMapper::setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ std::string &label)
+bool NameLabelMapper::setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ const std::string& label)
 {
     SWSS_LOG_ENTER();
 
@@ -57,6 +57,12 @@ bool NameLabelMapper::getLabel(_In_ sai_object_type_t object_type, _In_ const st
 
     label = m_labelTables[object_type][key];
     return true;
+}
+
+bool NameLabelMapper::isLabelValid(std::string label) {
+  SWSS_LOG_ENTER();
+  size_t len = label.length();
+  return len >= 16 && len < 32;
 }
 
 bool NameLabelMapper::eraseLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key)
@@ -106,7 +112,7 @@ std::string NameLabelMapper::generateUniqueLabel()
     uint64_t msec =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
-    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%" PRIu64 "", msec);
+    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%" PRIx64 "", msec);
     return std::string(reinterpret_cast<char const *>(label_buf));
 }
 

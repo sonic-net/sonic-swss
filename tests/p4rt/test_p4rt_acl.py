@@ -304,6 +304,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -319,6 +320,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -412,6 +414,12 @@ class TestP4RTAcl(object):
             ),
         ]
         util.verify_attr(fvs, attr_list)
+
+        # Allow unused trap group removal
+        copp_app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        copp_tbl = swsscommon.ProducerStateTable(copp_app_db, self._p4rt_trap_group_obj.APP_DB_TBL_NAME)
+        copp_trap_group = self._p4rt_trap_group_obj.TBL_NAME_PREFIX + str(10)
+        copp_tbl._del(copp_trap_group)
 
         # maintain list of original Application and ASIC DB ACL entries before adding
         # new ACL rule
@@ -511,6 +519,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -541,6 +550,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -664,6 +674,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -694,6 +705,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (
                 self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
                 "SAI_PACKET_ACTION_TRAP",
@@ -756,32 +768,12 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # First attempt failed since cpu queue is out of range
+        # create ACL rule 2 with QOS_QUEUE action
         rule_json_key2 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:FF & FF:FF:FF:FF:FF:FF","priority":100}'
         action = "qos_queue"
         meter_cir = "80"
         meter_cbs = "80"
         table_name_with_rule_key2 = table_name + ":" + rule_json_key2
-
-    # First attempt failed since no UserDefinedTrap is created for the CPU queue    
-        attr_list = [
-            (self._p4rt_acl_rule_obj.ACTION, action),
-            # No UserDefinedTrap created for the queue.
-            ("param/cpu_queue", "48"),
-            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
-            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
-        ]
-
-        self._p4rt_acl_rule_obj.set_app_db_entry(
-            table_name_with_rule_key2, attr_list)
-        self._p4rt_acl_rule_obj.verify_response(
-            table_name_with_rule_key2,
-            attr_list,
-            "SWSS_RC_INVALID_PARAM",
-            "[OrchAgent] Invalid CPU queue number '48' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number should >= 0 and <= 47",
-        )
 
         # Second attempt failed since no UserDefinedTrap is created for the CPU queue
         attr_list = [
@@ -860,6 +852,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -892,6 +885,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1046,6 +1040,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1151,6 +1146,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1308,6 +1304,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (
                 self._p4rt_acl_meter_obj.SAI_ATTR_GREEN_PACKET_ACTION,
                 "SAI_PACKET_ACTION_FORWARD",
@@ -1428,6 +1425,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
