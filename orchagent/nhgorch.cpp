@@ -943,6 +943,28 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
             continue;
         }
 
+        /*
+         * getNhId() can have the side effect of creating the underlying next
+         * hop over NeighOrch (e.g. for labeled/MPLS next hops whose neighbor
+         * is already resolved but whose SAI next hop does not exist yet).
+         * NeighOrch::addNextHop() in turn calls NhgOrch::validateNextHop(),
+         * which re-enters this same group and, since this member is already
+         * present in m_members (just not yet synced), syncs it there and
+         * creates the real SAI next hop group member.
+         *
+         * Without re-checking here, this loop would go on to unconditionally
+         * create a second, duplicate SAI next hop group member for the same
+         * key using the OID just returned by getNhId(). That duplicate member
+         * is never tracked by m_members (which still only knows about the
+         * first, reentrantly-synced member), so it can never be removed by
+         * this group again, leaking a SAI object and permanently pinning the
+         * group's reference count.
+         */
+        if (nhgm.isSynced())
+        {
+            continue;
+        }
+
         /* If the neighbor's interface is down, skip from being syncd. */
         if (gNeighOrch->isNextHopFlagSet(nh_key, NHFLAGS_IFDOWN))
         {
