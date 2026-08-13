@@ -280,6 +280,8 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    void cleanupVrfTable(sai_object_id_t vrf_id);
+    void cleanupEmptyVrfTables();
 
     void flushResponses() override;
 
@@ -307,6 +309,8 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
+
+    std::vector<sai_object_id_t> m_pendingEmptyVrfCleanup;
 
     std::set<IpPrefix> m_SubnetDecapTermsCreated;
     ProducerStateTable m_appTunnelDecapTermProducer;
