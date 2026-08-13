@@ -116,7 +116,6 @@ public:
     MockBfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port = BFD_TEST_PORT, int debug = 0):BfdLink(db, stateDb, port, debug){}
     MOCK_METHOD(bool, sendmsg, (uint16_t msglen), ());
     MOCK_METHOD(string, exec, (const char* cmd), (override));
-    MOCK_METHOD(string, get_intf_mac, (const char* intf), (override));
 };
 
 static void addDefaultIpv6Session(MockBfdLink &bfd)
@@ -260,7 +259,6 @@ TEST_F(BfdSyncdTest, InvalidBfdDpMessage)
 
 TEST_F(BfdSyncdTest, StateUpdateWithRemoteFields)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 
@@ -279,7 +277,6 @@ TEST_F(BfdSyncdTest, StateUpdateWithRemoteFields)
 
 TEST_F(BfdSyncdTest, StateUpdateInvalidRemoteField)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 
@@ -303,7 +300,6 @@ TEST_F(BfdSyncdTest, StateUpdateInvalidKey)
 
 TEST_F(BfdSyncdTest, DuplicateAddIgnore)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
 
     addDefaultIpv6Session(m_bfd);
@@ -323,7 +319,6 @@ TEST_F(BfdSyncdTest, DuplicateAddIgnore)
 
 TEST_F(BfdSyncdTest, DuplicateAddRecreate)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
 
     unsigned char buf[BFD_WIRE_MSG_LEN];
@@ -348,7 +343,6 @@ TEST_F(BfdSyncdTest, DuplicateAddRecreate)
 
 TEST_F(BfdSyncdTest, Ipv4AddSession)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("00:11:22:33:44:55"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("00:22:33:44:55:66"));
 
     unsigned char buf[BFD_WIRE_MSG_LEN];
@@ -368,7 +362,6 @@ TEST_F(BfdSyncdTest, Ipv4AddSession)
 
 TEST_F(BfdSyncdTest, BfdStateUpdateFromStateDb)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 
@@ -389,7 +382,6 @@ TEST_F(BfdSyncdTest, StateUpdateMalformedKeyFormat)
 
 TEST_F(BfdSyncdTest, StateUpdateRemoteMultiplierOverflow)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 
@@ -446,7 +438,6 @@ TEST_F(BfdSyncdTest, Ipv4MultihopNoInterface)
 
 TEST_F(BfdSyncdTest, StateUpdateInvalidRemoteMinRx)
 {
-    ON_CALL(m_bfd, get_intf_mac(_)).WillByDefault(Return("78:12:83:58:08:00"));
     ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
     addDefaultIpv6Session(m_bfd);
 

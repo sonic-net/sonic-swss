@@ -69,7 +69,6 @@ public:
     virtual ~BfdLink();
 
     virtual std::string exec(const char* cmd);
-    virtual std::string get_intf_mac(const char* intf);
     virtual bool sendmsg(uint16_t msglen);
 
     /* Wait for connection (blocking) */

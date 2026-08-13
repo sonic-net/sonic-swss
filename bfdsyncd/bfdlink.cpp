@@ -12,7 +12,6 @@
 #include <cctype>
 #include <cstdint>
 #include <iostream>
-#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -161,18 +160,6 @@ BfdLink::~BfdLink()
         close(m_connection_socket);
     if (m_server_up)
         close(m_server_socket);
-}
-
-std::string BfdLink::get_intf_mac(const char* intf)
-{
-    std::string mac;
-    std::string path;
-    std::ifstream netfile;
-    path = "/sys/class/net/" + string(intf) + "/address";
-    netfile.open(path);
-    std::getline(netfile, mac);
-    netfile.close();
-    return mac;
 }
 
 std::string BfdLink::exec(const char* cmd) {
