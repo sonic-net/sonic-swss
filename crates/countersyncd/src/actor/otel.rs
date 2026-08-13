@@ -53,7 +53,7 @@ impl Default for OtelActorConfig {
     fn default() -> Self {
         Self {
             collector_endpoint: "http://localhost:4317".to_string(),
-            max_counters_per_export: 10_000,
+            max_counters_per_export: 50_000,
             flush_timeout: Duration::from_secs(1),
         }
     }

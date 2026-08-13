@@ -54,7 +54,8 @@ fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()
                 .add_service(
                     opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsServiceServer::new(
                         svc,
-                    ),
+                    )
+                    .max_decoding_message_size(256 * 1024 * 1024),
                 )
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = shutdown_rx.await;
@@ -87,7 +88,7 @@ async fn run_stream(messages: Vec<SAIStatsMessage>, total_counters: usize, endpo
 
     let cfg = OtelActorConfig {
         collector_endpoint: endpoint,
-        max_counters_per_export: 10_000,
+        max_counters_per_export: 50_000,
         flush_timeout: Duration::from_secs(1),
     };
 
