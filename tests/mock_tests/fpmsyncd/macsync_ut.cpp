@@ -283,6 +283,115 @@ TEST_F(MacSyncTest, EnteringFpmModeAdoptsExistingRemoteMacs)
     EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
 }
 
+/*
+ * An adopted entry that zebra does not replay was withdrawn while we were down.
+ * zebra will never mention it again, so end of replay is the only chance to
+ * remove it.
+ */
+TEST_F(MacSyncTest, StaleRemoteMacSweptAtEndOfReplay)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+    ASSERT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
+
+    m_macSync->m_remoteMacsSeen.clear();
+    m_macSync->m_remoteReplayPending = true;
+    m_macSync->onRemoteReplayEnd();
+
+    /* Held, not deleted: zebra may still be converging. */
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 1u);
+
+    m_macSync->onStaleTimer();
+
+    values.clear();
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 0u);
+}
+
+/*
+ * The case the lab caught: on a restart of the whole bgp container zebra's
+ * replay is empty because BGP has not converged yet. A MAC re-advertised during
+ * the hold-down must survive, or a live entry is dropped.
+ */
+TEST_F(MacSyncTest, LateReadvertisementCancelsTheDeletion)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    m_macSync->m_remoteMacsSeen.clear();
+    m_macSync->m_remoteReplayPending = true;
+    m_macSync->onRemoteReplayEnd();
+    ASSERT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 1u);
+
+    /* zebra catches up after the marker. */
+    MacMsg late;
+    buildMacMsg(late, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(late, TEST_VLAN);
+    addVtep(late, "10.1.1.1");
+    addSrcVni(late, TEST_VNI);
+    feed(late);
+
+    EXPECT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 0u);
+
+    m_macSync->onStaleTimer();
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
+}
+
+TEST_F(MacSyncTest, ReplayedRemoteMacSurvivesTheSweep)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    m_macSync->m_remoteMacsSeen.clear();
+    m_macSync->m_remoteReplayPending = true;
+
+    MacMsg replay;
+    buildMacMsg(replay, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(replay, TEST_VLAN);
+    addVtep(replay, "10.1.1.1");
+    addSrcVni(replay, TEST_VNI);
+    feed(replay);
+
+    m_macSync->onRemoteReplayEnd();
+    m_macSync->onStaleTimer();
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
+}
+
+/* A marker outside a replay would otherwise delete every remote MAC. */
+TEST_F(MacSyncTest, UnsolicitedReplayEndSweepsNothing)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    m_macSync->m_remoteReplayPending = false;
+    m_macSync->onRemoteReplayEnd();
+    m_macSync->onStaleTimer();
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 1u);
+}
+
 /* NUD_NOARP marks a sticky MAC, which fdbOrch consumes as a static entry. */
 TEST_F(MacSyncTest, StickyRemoteMacIsStatic)
 {
