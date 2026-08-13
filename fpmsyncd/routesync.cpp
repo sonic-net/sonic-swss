@@ -2450,6 +2450,10 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         hdr_len = sizeof(struct evpn_backup_nhg_msg);
         break;
+    case RTM_FPM_MAC_REPLAY_END:
+        /* Marker only; the generation travels in nlmsg_seq. */
+        hdr_len = 0;
+        break;
     default:
         hdr_len = sizeof(struct ndmsg);
         break;
@@ -2503,6 +2507,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         if (m_macsync)
         {
             m_macsync->onMacMsg(h, len);
+        }
+        return;
+    case RTM_FPM_MAC_REPLAY_END:
+        if (m_macsync)
+        {
+            m_macsync->onRemoteReplayEnd();
         }
         return;
     default:
