@@ -400,7 +400,25 @@ impl SwssActor {
             .and_then(|value| AggregatorConfig::parse(&value.to_string_lossy()))
             .and_then(|config| config.reporting_rate);
 
-        Some(AggregatorConfig { reporting_rate })
+        let heatmap_counters = field_values
+            .get("heatmap_counters")
+            .and_then(|value| {
+                match crate::message::aggregator::CounterSelector::parse_list(
+                    &value.to_string_lossy(),
+                ) {
+                    Ok(selectors) => Some(selectors),
+                    Err(reason) => {
+                        warn!("Ignoring invalid heatmap_counters: {}", reason);
+                        None
+                    }
+                }
+            })
+            .unwrap_or_default();
+
+        Some(AggregatorConfig {
+            reporting_rate,
+            heatmap_counters,
+        })
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -832,12 +850,14 @@ mod tests {
 
         let mut aggregator_fields = HashMap::new();
         aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
-        assert_eq!(
-            SwssActor::parse_aggregator_config(&aggregator_fields)
-                .expect("aggregator config")
-                .reporting_rate,
-            Some(100)
+        aggregator_fields.insert(
+            "heatmap_counters".to_string(),
+            CxxString::from("PORT|IF_IN_UCAST_PKTS,QUEUE|WATERMARK_BYTES"),
         );
+        let config =
+            SwssActor::parse_aggregator_config(&aggregator_fields).expect("aggregator config");
+        assert_eq!(config.reporting_rate, Some(100));
+        assert_eq!(config.heatmap_counters.len(), 2);
 
         let empty_aggregator_fields = HashMap::new();
         assert_eq!(
@@ -854,6 +874,7 @@ mod tests {
             "harm0".to_string(),
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
+                ..Default::default()
             }),
         );
         assert_eq!(
@@ -876,6 +897,7 @@ mod tests {
             "harm0".to_string(),
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
+                ..Default::default()
             }),
         );
 
@@ -898,6 +920,7 @@ mod tests {
             "harm0".to_string(),
             Some(AggregatorConfig {
                 reporting_rate: Some(200),
+                ..Default::default()
             }),
         );
 

@@ -3,6 +3,7 @@
 //! This module defines data structures for converting SAI statistics
 //! to OpenTelemetry gauge format for export to observability systems.
 
+use super::aggregator::Heatmap;
 use crate::message::saistats::{SAIStat, SAIStats};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
@@ -49,6 +50,35 @@ pub struct OtelAttribute {
     pub key: String,
     /// Attribute value
     pub value: String,
+}
+
+impl Heatmap {
+    pub fn to_proto(
+        &self,
+        session_key: Option<&str>,
+    ) -> opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+        let mut attributes = vec![
+            OtelAttribute::new("object_name", &self.object_name).to_proto(),
+            OtelAttribute::new("sai_type_id", self.type_id.to_string()).to_proto(),
+            OtelAttribute::new("sai_stat_id", self.stat_id.to_string()).to_proto(),
+        ];
+        if let Some(session_key) = session_key {
+            attributes.push(OtelAttribute::new("hft_session", session_key).to_proto());
+        }
+
+        opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+            attributes,
+            start_time_unix_nano: self.start_time_unix_nano,
+            time_unix_nano: self.time_unix_nano,
+            count: self.count,
+            sum: Some(self.sum),
+            bucket_counts: self.bucket_counts.clone(),
+            explicit_bounds: self.explicit_bounds.clone(),
+            min: Some(self.min as f64),
+            max: Some(self.max as f64),
+            ..Default::default()
+        }
+    }
 }
 
 impl OtelAttribute {
@@ -412,5 +442,42 @@ fn test_sai_to_otel_gauge_conversion() {
         assert_eq!(otel_metrics.len(), 0);
         assert!(otel_metrics.is_empty());
         assert_eq!(otel_metrics.service_name, "countersyncd");
+    }
+
+    #[test]
+    fn converts_heatmap_to_otel_histogram() {
+        let heatmap = Heatmap {
+            object_name: "Ethernet0".to_string(),
+            type_id: 1,
+            stat_id: 2,
+            start_time_unix_nano: 1_000,
+            time_unix_nano: 2_000,
+            count: 3,
+            sum: 11.0,
+            min: 1,
+            max: 8,
+            explicit_bounds: vec![1.0, 2.0, 8.0],
+            bucket_counts: vec![1, 1, 1, 0],
+        };
+
+        let point = heatmap.to_proto(Some("profile|PORT"));
+
+        assert_eq!(point.start_time_unix_nano, 1_000);
+        assert_eq!(point.time_unix_nano, 2_000);
+        assert_eq!(point.count, 3);
+        assert_eq!(point.sum, Some(11.0));
+        assert_eq!(point.min, Some(1.0));
+        assert_eq!(point.max, Some(8.0));
+        assert_eq!(point.explicit_bounds, vec![1.0, 2.0, 8.0]);
+        assert_eq!(point.bucket_counts, vec![1, 1, 1, 0]);
+        assert_eq!(point.attributes.len(), 4);
+        assert!(point.attributes.iter().any(|attribute| {
+            attribute.key == "hft_session"
+                && attribute
+                    .value
+                    .as_ref()
+                    .and_then(|value| value.value.as_ref())
+                    == Some(&Value::StringValue("profile|PORT".to_string()))
+        }));
     }
 }

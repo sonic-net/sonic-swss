@@ -1,12 +1,102 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use super::saistats::SAIStatsMessage;
+use crate::sai::{
+    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CounterSelector {
+    pub type_id: u32,
+    pub stat_id: u32,
+}
+
+impl CounterSelector {
+    pub fn new(type_id: u32, stat_id: u32) -> Self {
+        Self { type_id, stat_id }
+    }
+
+    pub fn parse_list(serialized: &str) -> Result<HashSet<Self>, String> {
+        serialized
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(Self::parse)
+            .collect()
+    }
+
+    fn parse(item: &str) -> Result<Self, String> {
+        let (group, counter) = item
+            .split_once('|')
+            .ok_or_else(|| format!("Invalid heatmap counter '{}'; expected GROUP|COUNTER", item))?;
+        if counter.contains('|') {
+            return Err(format!(
+                "Invalid heatmap counter '{}'; expected GROUP|COUNTER",
+                item
+            ));
+        }
+
+        let selector = match group {
+            "PORT" => Self::new(
+                SaiObjectType::Port.to_u32(),
+                format!("SAI_PORT_STAT_{}", counter)
+                    .parse::<SaiPortStat>()
+                    .map_err(|_| format!("Invalid PORT heatmap counter '{}'", counter))?
+                    .to_u32(),
+            ),
+            "QUEUE" => Self::new(
+                SaiObjectType::Queue.to_u32(),
+                format!("SAI_QUEUE_STAT_{}", counter)
+                    .parse::<SaiQueueStat>()
+                    .map_err(|_| format!("Invalid QUEUE heatmap counter '{}'", counter))?
+                    .to_u32(),
+            ),
+            "BUFFER_POOL" => Self::new(
+                SaiObjectType::BufferPool.to_u32(),
+                format!("SAI_BUFFER_POOL_STAT_{}", counter)
+                    .parse::<SaiBufferPoolStat>()
+                    .map_err(|e| format!("Invalid BUFFER_POOL heatmap counter: {}", e))?
+                    .to_u32(),
+            ),
+            "INGRESS_PRIORITY_GROUP" => Self::new(
+                SaiObjectType::IngressPriorityGroup.to_u32(),
+                format!("SAI_INGRESS_PRIORITY_GROUP_STAT_{}", counter)
+                    .parse::<SaiIngressPriorityGroupStat>()
+                    .map_err(|_| {
+                        format!(
+                            "Invalid INGRESS_PRIORITY_GROUP heatmap counter '{}'",
+                            counter
+                        )
+                    })?
+                    .to_u32(),
+            ),
+            _ => return Err(format!("Invalid heatmap counter group '{}'", group)),
+        };
+
+        let is_marker = match group {
+            "PORT" => counter == "START" || selector.stat_id == SaiPortStat::End.to_u32(),
+            "QUEUE" => selector.stat_id == SaiQueueStat::CustomRangeBase.to_u32(),
+            "BUFFER_POOL" => selector.stat_id == SaiBufferPoolStat::CustomRangeBase.to_u32(),
+            "INGRESS_PRIORITY_GROUP" => {
+                selector.stat_id == SaiIngressPriorityGroupStat::CustomRangeBase.to_u32()
+            }
+            _ => false,
+        };
+        if is_marker {
+            return Err(format!("Invalid {} heatmap counter '{}'", group, counter));
+        }
+
+        Ok(selector)
+    }
+}
 
 /// CounterSyncd-side subset of HIGH_FREQUENCY_TELEMETRY_AGGREGATOR.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AggregatorConfig {
     /// Reporting interval in microseconds.
     pub reporting_rate: Option<u32>,
+    /// Counters summarized as heatmaps within each reporting interval.
+    pub heatmap_counters: HashSet<CounterSelector>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,14 +125,56 @@ impl AggregatorConfigMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct AggregatorStatsMessage {
+pub struct StatsMessage {
     pub key: Option<Arc<str>>,
     pub stats: SAIStatsMessage,
+    pub heatmaps: Arc<[Heatmap]>,
 }
 
-impl AggregatorStatsMessage {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Heatmap {
+    pub object_name: String,
+    pub type_id: u32,
+    pub stat_id: u32,
+    pub start_time_unix_nano: u64,
+    pub time_unix_nano: u64,
+    pub count: u64,
+    pub sum: f64,
+    pub min: u64,
+    pub max: u64,
+    pub explicit_bounds: Vec<f64>,
+    pub bucket_counts: Vec<u64>,
+}
+
+/// Common message format for every actor downstream of the aggregator.
+pub type AggregatorStatsMessage = StatsMessage;
+pub type AggregatedStatsMessage = StatsMessage;
+
+impl StatsMessage {
     pub fn new(key: Option<Arc<str>>, stats: SAIStatsMessage) -> Self {
-        Self { key, stats }
+        Self {
+            key,
+            stats,
+            heatmaps: Arc::from([]),
+        }
+    }
+
+    pub fn with_heatmaps(
+        key: Option<Arc<str>>,
+        stats: SAIStatsMessage,
+        heatmaps: Vec<Heatmap>,
+    ) -> Self {
+        Self {
+            key,
+            stats,
+            heatmaps: heatmaps.into(),
+        }
+    }
+}
+
+impl From<SAIStatsMessage> for StatsMessage {
+    fn from(stats: SAIStatsMessage) -> Self {
+        Self::new(None, stats)
     }
 }
 
@@ -62,12 +194,15 @@ impl AggregatorConfig {
         match reporting_rate {
             Some(0) => Some(Self {
                 reporting_rate: None,
+                ..Default::default()
             }),
             Some(value) => Some(Self {
                 reporting_rate: Some(value),
+                ..Default::default()
             }),
             None => Some(Self {
                 reporting_rate: None,
+                ..Default::default()
             }),
         }
     }
@@ -144,5 +279,30 @@ mod tests {
                 .reporting_rate,
             None
         );
+    }
+
+    #[test]
+    fn parses_heatmap_counter_selectors() {
+        let selectors = CounterSelector::parse_list(
+            "PORT|IF_IN_UCAST_PKTS,QUEUE|WATERMARK_BYTES,BUFFER_POOL|CURR_OCCUPANCY_BYTES,INGRESS_PRIORITY_GROUP|PACKETS",
+        )
+        .unwrap();
+
+        assert!(selectors.contains(&CounterSelector::new(1, 1)));
+        assert!(selectors.contains(&CounterSelector::new(21, 25)));
+        assert!(selectors.contains(&CounterSelector::new(24, 0)));
+        assert!(selectors.contains(&CounterSelector::new(26, 0)));
+    }
+
+    #[test]
+    fn rejects_invalid_heatmap_counter_selectors() {
+        assert!(CounterSelector::parse_list("QUEUE|IF_IN_UCAST_PKTS").is_err());
+        assert!(CounterSelector::parse_list("PORT").is_err());
+        assert!(CounterSelector::parse_list("UNKNOWN|PACKETS").is_err());
+        assert!(CounterSelector::parse_list("PORT|END").is_err());
+        assert!(CounterSelector::parse_list("PORT|START").is_err());
+        assert!(CounterSelector::parse_list("QUEUE|CUSTOM_RANGE_BASE").is_err());
+        assert!(CounterSelector::parse_list("BUFFER_POOL|CUSTOM_RANGE_BASE").is_err());
+        assert!(CounterSelector::parse_list("INGRESS_PRIORITY_GROUP|CUSTOM_RANGE_BASE").is_err());
     }
 }

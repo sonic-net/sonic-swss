@@ -36,6 +36,7 @@ chrono = { workspace = true }
 # Utilities
 rand = { workspace = true }
 once_cell = { workspace = true }
+hdrhistogram = { version = "=7.5.4", default-features = false }
 
 # Command line utilities
 clap = { workspace = true }

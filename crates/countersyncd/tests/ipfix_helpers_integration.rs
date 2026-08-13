@@ -7,10 +7,11 @@ use tokio::time::{sleep, timeout, Duration};
 
 use countersyncd::actor::{aggregator::AggregatorActor, ipfix::IpfixActor};
 use countersyncd::message::{
+    aggregator::{
+        AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage,
+    },
     buffer::SocketBufferMessage,
-    aggregator::{AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage},
     ipfix::IPFixTemplatesMessage,
-    saistats::SAIStatsMessage,
 };
 
 async fn start_ipfix_aggregator_pipeline(
@@ -22,14 +23,14 @@ async fn start_ipfix_aggregator_pipeline(
     tokio::sync::mpsc::Sender<IPFixTemplatesMessage>,
     tokio::sync::mpsc::Sender<SocketBufferMessage>,
     tokio::sync::mpsc::Sender<AggregatorConfigMessage>,
-    tokio::sync::mpsc::Receiver<SAIStatsMessage>,
+    tokio::sync::mpsc::Receiver<AggregatedStatsMessage>,
 ) {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(buffer_capacity);
     let (template_sender, template_receiver) = channel(template_capacity);
     let (aggregator_config_sender, aggregator_config_receiver) = channel(config_capacity);
     let (aggregator_stats_sender, aggregator_stats_receiver) =
         channel::<AggregatorStatsMessage>(stats_capacity);
-    let (saistats_sender, saistats_receiver) = channel::<SAIStatsMessage>(stats_capacity);
+    let (saistats_sender, saistats_receiver) = channel::<AggregatedStatsMessage>(stats_capacity);
 
     let mut ipfix = IpfixActor::new(template_receiver, buffer_receiver);
     ipfix.add_recipient(aggregator_stats_sender);
@@ -101,6 +102,7 @@ async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
             key.to_string(),
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
+                ..Default::default()
             }),
         ))
         .await
@@ -119,12 +121,12 @@ async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
         .expect("second aggregated sample should arrive")
         .expect("second aggregated sample channel should be open");
 
-    assert_eq!(first.observation_time, 90_000);
-    assert_eq!(first.stats.len(), 1);
-    assert_eq!(first.stats[0].counter, 90_000);
-    assert_eq!(second.observation_time, 190_000);
-    assert_eq!(second.stats.len(), 1);
-    assert_eq!(second.stats[0].counter, 190_000);
+    assert_eq!(first.stats.observation_time, 90_000);
+    assert_eq!(first.stats.stats.len(), 1);
+    assert_eq!(first.stats.stats[0].counter, 90_000);
+    assert_eq!(second.stats.observation_time, 190_000);
+    assert_eq!(second.stats.stats.len(), 1);
+    assert_eq!(second.stats.stats[0].counter, 190_000);
     assert!(
         timeout(Duration::from_millis(100), saistats_receiver.recv())
             .await
@@ -145,6 +147,7 @@ async fn aggregator_delete_while_streaming_forwards_later_samples() {
             key.to_string(),
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
+                ..Default::default()
             }),
         ))
         .await
@@ -171,9 +174,9 @@ async fn aggregator_delete_while_streaming_forwards_later_samples() {
         .expect("post-delete sample should be forwarded")
         .expect("post-delete sample channel should be open");
 
-    assert_eq!(forwarded.observation_time, 20_000);
-    assert_eq!(forwarded.stats.len(), 1);
-    assert_eq!(forwarded.stats[0].counter, 20_000);
+    assert_eq!(forwarded.stats.observation_time, 20_000);
+    assert_eq!(forwarded.stats.stats.len(), 1);
+    assert_eq!(forwarded.stats.stats[0].counter, 20_000);
 }
 
 #[tokio::test]

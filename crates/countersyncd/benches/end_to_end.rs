@@ -18,10 +18,9 @@ use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
 use countersyncd::actor::stats_reporter::{OutputWriter, StatsReporterActor, StatsReporterConfig};
 use countersyncd::message::{
+    aggregator::{AggregatedStatsMessage, AggregatorConfigMessage, AggregatorStatsMessage},
     buffer::SocketBufferMessage,
-    aggregator::{AggregatorConfigMessage, AggregatorStatsMessage},
     ipfix::IPFixTemplatesMessage,
-    saistats::SAIStatsMessage,
 };
 
 mod ipfix_bench_data;
@@ -124,9 +123,9 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
     let (aggregator_config_tx, aggregator_config_rx) = mpsc::channel::<AggregatorConfigMessage>(prepared.template_messages.len() + 4);
     let (aggregator_stats_tx, aggregator_stats_rx) = mpsc::channel::<AggregatorStatsMessage>(1024);
-    let (counter_tx, counter_rx) = mpsc::channel::<SAIStatsMessage>(1024);
-    let (otel_tx, otel_rx) = mpsc::channel::<SAIStatsMessage>(1024);
-    let (stats_tx, stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
+    let (counter_tx, counter_rx) = mpsc::channel::<AggregatedStatsMessage>(1024);
+    let (otel_tx, otel_rx) = mpsc::channel::<AggregatedStatsMessage>(1024);
+    let (stats_tx, stats_rx) = mpsc::channel::<AggregatedStatsMessage>(1024);
     let (otel_done_tx, otel_done_rx) = oneshot::channel();
 
     let mut ipfix = IpfixActor::new(template_rx, buffer_rx);

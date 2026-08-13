@@ -9,7 +9,7 @@ use tokio::{
     time::{interval, Interval},
 };
 
-use super::super::message::saistats::SAIStatsMessage;
+use super::super::message::{aggregator::AggregatedStatsMessage, saistats::SAIStatsMessage};
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
@@ -111,7 +111,7 @@ impl Default for StatsReporterConfig {
 /// - Formatted output to terminal with optional detail levels
 pub struct StatsReporterActor<W: OutputWriter> {
     /// Channel for receiving SAI statistics messages
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<AggregatedStatsMessage>,
     /// Configuration for reporting behavior
     config: StatsReporterConfig,
     /// Timer for periodic reporting
@@ -141,7 +141,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     ///
     /// A new StatsReporterActor instance
     pub fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<AggregatedStatsMessage>,
         config: StatsReporterConfig,
         writer: W,
     ) -> Self {
@@ -175,7 +175,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     /// A new StatsReporterActor instance with default settings
     #[allow(dead_code)]
     pub fn new_with_defaults(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<AggregatedStatsMessage>,
     ) -> StatsReporterActor<ConsoleWriter> {
         StatsReporterActor::new(
             stats_receiver,
@@ -487,7 +487,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                                 ChannelLabel::IpfixToStatsReporter,
                                 actor.stats_receiver.len(),
                             );
-                            actor.update_stats(stats);
+                            actor.update_stats(stats.stats);
                         }
                         None => {
                             info!("Stats receiver channel closed, shutting down reporter");
@@ -564,7 +564,7 @@ mod tests {
 
         // Send test statistics
         let test_stats = create_test_stats(12345, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender.send(Arc::new(test_stats).into()).await.unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -574,7 +574,7 @@ mod tests {
 
         // Send another set of statistics
         let test_stats2 = create_test_stats(67890, 2);
-        sender.send(Arc::new(test_stats2)).await.unwrap();
+        sender.send(Arc::new(test_stats2).into()).await.unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -630,7 +630,7 @@ mod tests {
 
         // Send test statistics
         let test_stats = create_test_stats(12345, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender.send(Arc::new(test_stats).into()).await.unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -640,7 +640,7 @@ mod tests {
 
         // Send another set of statistics
         let test_stats2 = create_test_stats(67890, 2);
-        sender.send(Arc::new(test_stats2)).await.unwrap();
+        sender.send(Arc::new(test_stats2).into()).await.unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -730,7 +730,7 @@ mod tests {
 
         // Send test statistics with known values
         let test_stats = create_test_stats(99999, 3);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender.send(Arc::new(test_stats).into()).await.unwrap();
 
         // Wait for processing and one report
         sleep(Duration::from_millis(150)).await;
@@ -892,7 +892,7 @@ mod tests {
 
         // Send stats with more entries than the limit
         let test_stats = create_test_stats(55555, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender.send(Arc::new(test_stats).into()).await.unwrap();
 
         // Wait for processing but not long enough for multiple reports
         sleep(Duration::from_millis(50)).await;
@@ -1008,7 +1008,7 @@ mod tests {
             stats,
         };
 
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender.send(Arc::new(test_stats).into()).await.unwrap();
 
         // Wait for processing and one report
         sleep(Duration::from_millis(150)).await;
