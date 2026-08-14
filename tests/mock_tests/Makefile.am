@@ -100,6 +100,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_ut.cpp \
                 macsecorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
+                prbshandler_ut.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
                 shlorch_ut.cpp \
@@ -213,8 +214,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp \
-                $(top_srcdir)/orchagent/shlorch.cpp
-
+                $(top_srcdir)/orchagent/shlorch.cpp \
+                $(top_srcdir)/orchagent/prbshandler.cpp
 
 
 tests_SOURCES += common/vxlan_ut_helpers.cpp
