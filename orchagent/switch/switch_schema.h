@@ -21,9 +21,23 @@
 #define SWITCH_HASH_FIELD_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 #define SWITCH_HASH_FIELD_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
 #define SWITCH_HASH_FIELD_IPV6_FLOW_LABEL   "IPV6_FLOW_LABEL"
+#define SWITCH_HASH_FIELD_RDMA_BTH_OPCODE	"RDMA_BTH_OPCODE"
+#define SWITCH_HASH_FIELD_RDMA_BTH_DEST_QP  "RDMA_BTH_DEST_QP"
 
 #define SWITCH_HASH_ECMP_HASH "ecmp_hash"
 #define SWITCH_HASH_LAG_HASH  "lag_hash"
+
+#define SWITCH_HASH_ECMP_HASH_IPV4          "ecmp_hash_ipv4"
+#define SWITCH_HASH_ECMP_HASH_IPV6          "ecmp_hash_ipv6"
+#define SWITCH_HASH_ECMP_HASH_IPNIP         "ecmp_hash_ipnip"
+#define SWITCH_HASH_ECMP_HASH_IPV4_RDMA     "ecmp_hash_ipv4_rdma"
+#define SWITCH_HASH_ECMP_HASH_IPV6_RDMA     "ecmp_hash_ipv6_rdma"
+
+#define SWITCH_HASH_LAG_HASH_IPV4          "lag_hash_ipv4"
+#define SWITCH_HASH_LAG_HASH_IPV6          "lag_hash_ipv6"
+#define SWITCH_HASH_LAG_HASH_IPNIP         "lag_hash_ipnip"
+#define SWITCH_HASH_LAG_HASH_IPV4_RDMA     "lag_hash_ipv4_rdma"
+#define SWITCH_HASH_LAG_HASH_IPV6_RDMA     "lag_hash_ipv6_rdma"
 
 #define SWITCH_HASH_ALGORITHM_CRC       "CRC"
 #define SWITCH_HASH_ALGORITHM_XOR       "XOR"
