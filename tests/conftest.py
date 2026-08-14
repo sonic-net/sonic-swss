@@ -2170,3 +2170,23 @@ def dpb_setup_fixture(dvs):
         dvs.vct.restart()
     yield
     remove_dpb_config_file(dvs)
+
+@pytest.fixture(scope="module", autouse=True)
+def enable_p4rt_feature(request, dvs):
+    """
+    Automatically enables P4RT in ConfigDB and restarts orchagent
+    to ensure ZMQ server is initialized.
+    """
+
+    if "tests/p4rt" not in str(request.fspath):
+        return
+
+    ec, out = dvs.runcmd("show feature status p4rt")
+    if out and "enabled" in out:
+        return
+
+    dvs.runcmd("python3 -c 'import json; f=\"/etc/sonic/config_db.json\"; data=json.load(open(f)); data.setdefault(\"FEATURE\", {}); data[\"FEATURE\"].setdefault(\"p4rt\", {}); data[\"FEATURE\"][\"p4rt\"][\"state\"]=\"enabled\"; json.dump(data, open(f,\"w\"), indent=4)'")
+
+    dvs.restart()
+    time.sleep(2)
+
