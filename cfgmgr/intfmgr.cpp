@@ -12,6 +12,7 @@
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
 #include "subintf.h"
+#include <sys/stat.h>
 
 using namespace std;
 using namespace swss;
@@ -89,11 +90,26 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     string          broadcastIpStr = ipPrefix.getBroadcastIp().to_string();
     int             prefixLen = ipPrefix.getMaskLength();
 
+    /*
+     * Use iproute2's idempotent "replace" instead of "add" on the SET path.
+     * The kernel netdev state can outlive intfmgrd (warm-restart replay) and
+     * can also be re-seen mid-run via the Centralized subtype L3 replay in
+     * doPortTableTask, which re-invokes doIntfAddrTask(SET_COMMAND) for every
+     * configured prefix on a host port/LAG every time STATE_PORT_TABLE
+     * transitions to "ok". Plain "ip address add" then returns rc 2
+     * ("File exists") for prefixes the kernel already has, which we surface
+     * as SWSS_LOG_ERROR and analyze_logs flags as a test failure even though
+     * the configured state is correct. "ip address replace" no-ops with rc 0
+     * if the same prefix is already on the dev, and adds it otherwise -- same
+     * end state as "add", just idempotent. "del" is intentionally untouched.
+     */
+    const string ipOp = (opCmd == "add") ? "replace" : opCmd;
+
     if (ipPrefix.isV4())
     {
         (prefixLen < 31) ?
-        (cmd << IP_CMD << " address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<" dev " << shellquote(alias)) :
-        (cmd << IP_CMD << " address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
+        (cmd << IP_CMD << " address " << shellquote(ipOp) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<" dev " << shellquote(alias)) :
+        (cmd << IP_CMD << " address " << shellquote(ipOp) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
     }
     else
     {
@@ -111,9 +127,9 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         }
 
         (prefixLen < 127) ?
-        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<
+        (cmd << IP_CMD << " -6 address " << shellquote(ipOp) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<
          " dev " << shellquote(alias) << metric) :
-        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
+        (cmd << IP_CMD << " -6 address " << shellquote(ipOp) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
     }
 
     int ret = swss::exec(cmd.str(), res);
@@ -266,12 +282,34 @@ void IntfMgr::addLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
+    /*
+     * Skip the kernel "ip link add" if the netdev already exists. The
+     * in-process m_loopbackIntfList dedups within a single intfmgrd lifetime
+     * and on cold boot flushLoopbackIntfs() wipes stale dummies first, but
+     * across a warm restart the kernel keeps Loopback* while m_loopbackIntfList
+     * starts empty -- so the unconditional "ip link add" returns rc 2
+     * ("File exists") and gets logged as ERR (analyze_logs then fails the
+     * warm-reboot test even though the netdev is correctly present). Probe
+     * /sys/class/net/<alias> via lstat (same idiom as TeamMgr::isPortMaster
+     * in cfgmgr/teammgr.cpp) and only issue the add if the kernel doesn't
+     * already have it.
+     */
+    struct stat sb;
+    const string sysPath = "/sys/class/net/" + alias;
+    if (lstat(sysPath.c_str(), &sb) == 0)
+    {
+        SWSS_LOG_INFO("Loopback %s already present in kernel; skipping link add", alias.c_str());
+        return;
+    }
+
     cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy";
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return;
     }
+    SWSS_LOG_INFO("Added loopback interface %s", alias.c_str());
 }
 
 void IntfMgr::delLoopbackIntf(const string &alias)
@@ -400,6 +438,27 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
 {
     stringstream cmd;
     string res;
+
+    /*
+     * Same warm-restart hole as addLoopbackIntf: m_subIntfList is in-process
+     * state and starts empty after a warm restart, but the kernel kept the
+     * sub-interface netdev (e.g. Ethernet0_4.50). The caller then sets
+     * needHostVlanCreate=true and we land here with a netdev that already
+     * exists, "ip link add link ... type vlan id ..." returns rc 2
+     * ("File exists") and gets logged as ERROR. Probe /sys/class/net/<subIntf>
+     * via lstat (same idiom as TeamMgr::isPortMaster and the Loopback fix in
+     * addLoopbackIntf) and treat the kernel's pre-existing netdev as success.
+     * Matches the "cache says yes, kernel says no" repair at the caller site
+     * (subIntf path in doIntfGeneralTask), just for the inverse direction.
+     */
+    struct stat sb;
+    const string sysPath = "/sys/class/net/" + subIntf;
+    if (lstat(sysPath.c_str(), &sb) == 0)
+    {
+        SWSS_LOG_INFO("Sub-interface %s already present in kernel; skipping ip link add link=%s vlan=%s",
+                      subIntf.c_str(), intf.c_str(), vlan.c_str());
+        return;
+    }
 
     cmd << IP_CMD " link add link " << shellquote(intf) << " name " << shellquote(subIntf) << " type vlan id " << shellquote(vlan);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
@@ -928,7 +987,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             {
                 addLoopbackIntf(alias);
                 m_loopbackIntfList.insert(alias);
-                SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
             }
 
             if (adminStatus.empty())
