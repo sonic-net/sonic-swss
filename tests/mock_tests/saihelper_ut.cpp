@@ -1,9 +1,12 @@
 #include "ut_helper.h"
 #include "saihelper.h"
 #include "mock_table.h"
+#include "mock_sai_capability_wrap.h"
 
+#include <cstdint>
 #include <memory>
 #include <sstream>
+#include <vector>
 
 extern std::unique_ptr<swss::DBConnector> gHealthStateDb;
 extern std::unique_ptr<swss::Table> gOrchHealthTable;
@@ -199,5 +202,114 @@ namespace sai_failure_status_test
 
         // Re-init for TearDown safety
         initSaiFailureTable();
+    }
+
+    /*
+     * querySupportedAclTableGroupType() must preserve the historical PARALLEL
+     * default on every outcome except a *successful* enum-values query that
+     * reports PARALLEL unsupported while SEQUENTIAL is supported. The enum-values
+     * SAI call is driven through the shared --wrap override (sai_enum_cap_ut).
+     */
+    namespace
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverride makeAclGroupTypeOverride(
+            sai_status_t status, std::vector<int32_t> supported_values)
+        {
+            return [status, supported_values](
+                       sai_object_id_t /*switch_id*/,
+                       sai_object_type_t object_type,
+                       sai_attr_id_t attr_id,
+                       sai_s32_list_t *cap) -> sai_status_t
+            {
+                // Only intercept the ACL table group TYPE query.
+                if (object_type != SAI_OBJECT_TYPE_ACL_TABLE_GROUP ||
+                    attr_id != SAI_ACL_TABLE_GROUP_ATTR_TYPE)
+                {
+                    if (cap)
+                    {
+                        cap->count = 0;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }
+
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    if (cap)
+                    {
+                        cap->count = 0;
+                    }
+                    return status;
+                }
+
+                // The helper pre-sizes the buffer to the enum's total value
+                // count, so a supported subset always fits.
+                if (!cap || !cap->list ||
+                    cap->count < supported_values.size())
+                {
+                    if (cap)
+                    {
+                        cap->count = static_cast<uint32_t>(supported_values.size());
+                    }
+                    return SAI_STATUS_BUFFER_OVERFLOW;
+                }
+                for (size_t i = 0; i < supported_values.size(); i++)
+                {
+                    cap->list[i] = supported_values[i];
+                }
+                cap->count = static_cast<uint32_t>(supported_values.size());
+                return SAI_STATUS_SUCCESS;
+            };
+        }
+    }
+
+    TEST(QuerySupportedAclTableGroupType, ParallelSupportedReturnsParallel)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_SUCCESS,
+                {SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL,
+                 SAI_ACL_TABLE_GROUP_TYPE_PARALLEL}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_PARALLEL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
+    }
+
+    TEST(QuerySupportedAclTableGroupType, OnlySequentialReturnsSequential)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_SUCCESS,
+                {SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
+    }
+
+    TEST(QuerySupportedAclTableGroupType, EmptyListPreservesParallel)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_SUCCESS, {}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_PARALLEL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
+    }
+
+    TEST(QuerySupportedAclTableGroupType, NotSupportedPreservesParallel)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_NOT_SUPPORTED, {}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_PARALLEL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
+    }
+
+    TEST(QuerySupportedAclTableGroupType, NotImplementedPreservesParallel)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_NOT_IMPLEMENTED, {}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_PARALLEL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
+    }
+
+    TEST(QuerySupportedAclTableGroupType, GenuineFailurePreservesParallel)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard guard(
+            makeAclGroupTypeOverride(SAI_STATUS_FAILURE, {}));
+        EXPECT_EQ(SAI_ACL_TABLE_GROUP_TYPE_PARALLEL,
+                  querySupportedAclTableGroupType(SAI_NULL_OBJECT_ID));
     }
 }
