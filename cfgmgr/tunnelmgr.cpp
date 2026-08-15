@@ -148,7 +148,7 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
 
 
     auto consumerStateTable = new swss::ConsumerStateTable(appDb, APP_TUNNEL_ROUTE_TABLE_NAME,
-                              TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+                              TableConsumable::DEFAULT_POP_BATCH_SIZE);
     auto consumer = new Consumer(consumerStateTable, this, APP_TUNNEL_ROUTE_TABLE_NAME);
     Orch::addExecutor(consumer);
 

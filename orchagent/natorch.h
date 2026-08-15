@@ -180,7 +180,7 @@ class NatOrch: public Orch, public Subject, public Observer
 {
 public:
 
-    NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, RouteOrch *routeOrch, NeighOrch *neighOrch);
+    NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames, RouteOrch *routeOrch, NeighOrch *neighOrch);
 
     ~NatOrch()
     {

@@ -12,6 +12,7 @@
 #include "json.h"
 
 #include <csignal>
+#include <type_traits>
 
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
@@ -34,6 +35,9 @@ namespace orchdaemon_test
     DBConnector state_db("STATE_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector counters_db("COUNTERS_DB", 0);
+
+    static_assert(!std::is_constructible<Orch, DBConnector *, std::string, int>::value,
+                  "Orch must not expose a consumer priority constructor");
 
     class OrchDaemonTest : public ::testing::Test
     {

@@ -75,7 +75,7 @@ namespace dashhafloworch_ut
         void CreateFlowSyncSession(const string &key, const string &ha_set_id, const string &target_server_ip, const string &target_server_port, const string &timeout = "120")
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
             consumer->addToSync(
@@ -101,7 +101,7 @@ namespace dashhafloworch_ut
         void RemoveFlowSyncSession(const string &key)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
             consumer->addToSync(
@@ -121,7 +121,7 @@ namespace dashhafloworch_ut
         void CreateFlowDumpFilter(const string &key, const string &filter_key, const string &filter_op, const string &filter_value)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME));
 
             consumer->addToSync(
@@ -145,7 +145,7 @@ namespace dashhafloworch_ut
         void RemoveFlowDumpFilter(const string &key)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME));
 
             consumer->addToSync(
@@ -165,7 +165,7 @@ namespace dashhafloworch_ut
         void CreateFlowDumpSession(const string &key, const string &flow_state = "true", const string &max_flows = "1000", const string &timeout = "300", const vector<string> &filters = {})
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
             vector<FieldValueTuple> fvs = {
@@ -198,7 +198,7 @@ namespace dashhafloworch_ut
         void RemoveFlowDumpSession(const string &key)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
                 m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
             consumer->addToSync(
@@ -248,7 +248,7 @@ namespace dashhafloworch_ut
 
         // Missing target_server_ip
         auto consumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
             m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
         consumer->addToSync(
@@ -312,7 +312,7 @@ namespace dashhafloworch_ut
 
         // Create session before filters are available - should return task_need_retry
         auto consumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME, 1),
             m_dashHaFlowOrch, APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME));
 
         vector<FieldValueTuple> fvs = {

@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
     gStateDb = &state_db;
     gConfigDb = &config_db;
     gCountersDb = &counters_db;
-    std::vector<table_name_with_pri_t> ports_tables;
+    std::vector<std::string> ports_tables;
     PortsOrch ports_orch(gAppDb, gStateDb, ports_tables, gAppDb);
     gPortsOrch = &ports_orch;
     CrmOrch crm_orch(gConfigDb, CFG_CRM_TABLE_NAME);
@@ -280,10 +280,9 @@ int main(int argc, char *argv[])
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
 
-    const int routeorch_pri = 5;
-    vector<table_name_with_pri_t> route_tables = {
-        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
-        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    vector<string> route_tables = {
+        APP_ROUTE_TABLE_NAME,
+        APP_LABEL_ROUTE_TABLE_NAME
     };
     RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
     gRouteOrch = &route_orch;

@@ -62,7 +62,7 @@ namespace aclorch_rule_test
             aclMockState = make_unique<SaiMockState>();
             /* Port init done is a pre-req for Aclorch */
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
+                new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1), gPortsOrch, APP_PORT_TABLE_NAME));
             consumer->addToSync({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
             static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
         }
@@ -78,7 +78,7 @@ namespace aclorch_rule_test
         void doAclTableTypeTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME, 1, 1), 
+                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME, 1),
                     gAclOrch, CFG_ACL_TABLE_TYPE_TABLE_NAME));
             consumer->addToSync(entries);
             static_cast<Orch *>(gAclOrch)->doTask(*consumer);
@@ -87,7 +87,7 @@ namespace aclorch_rule_test
         void doAclTableTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME, 1, 1), 
+                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME, 1),
                     gAclOrch, CFG_ACL_TABLE_TABLE_NAME));
             consumer->addToSync(entries);
             static_cast<Orch *>(gAclOrch)->doTask(*consumer);
@@ -96,7 +96,7 @@ namespace aclorch_rule_test
         void doAclRuleTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_RULE_TABLE_NAME, 1, 1), 
+                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_RULE_TABLE_NAME, 1),
                     gAclOrch, CFG_ACL_RULE_TABLE_NAME));
             consumer->addToSync(entries);
             static_cast<Orch *>(gAclOrch)->doTask(*consumer);
@@ -122,7 +122,7 @@ namespace aclorch_rule_test
 
             /* Create a tunnel */
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME, 1),
                                              m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME));
 
             consumer->addToSync(
@@ -149,7 +149,7 @@ namespace aclorch_rule_test
 
             /* Delete the Tunnel Object */
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME, 1),
                                              m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME));
 
             consumer->addToSync(

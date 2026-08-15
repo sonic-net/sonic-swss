@@ -180,7 +180,7 @@ namespace aclorch_test
         void doAclTableTypeTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TYPE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TYPE_TABLE_NAME));
+                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TYPE_TABLE_NAME, 1), m_aclOrch, CFG_ACL_TABLE_TYPE_TABLE_NAME));
 
             consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
@@ -189,7 +189,7 @@ namespace aclorch_test
         void doAclTableTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
+                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
 
             consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
@@ -198,7 +198,7 @@ namespace aclorch_test
         void doAclRuleTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
+                new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
             consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
@@ -370,14 +370,12 @@ namespace aclorch_test
 
             // Create dependencies ...
 
-            const int portsorch_base_pri = 40;
-
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);
@@ -390,20 +388,18 @@ namespace aclorch_test
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
-            vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
-                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            vector<string> intf_tables = {
+                APP_INTF_TABLE_NAME,
+                APP_SAG_TABLE_NAME
             };
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
-            const int fdborch_pri = 20;
-
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
-                { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
+            vector<string> app_fdb_tables = {
+                APP_FDB_TABLE_NAME,
+                APP_VXLAN_FDB_TABLE_NAME,
+                APP_MCLAG_FDB_TABLE_NAME
             };
 
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -416,12 +412,11 @@ namespace aclorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
-            const int fgnhgorch_pri = 15;
 
-            vector<table_name_with_pri_t> fgnhg_tables = {
-                { CFG_FG_NHG,                 fgnhgorch_pri },
-                { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
-                { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
+            vector<string> fgnhg_tables = {
+                CFG_FG_NHG,
+                CFG_FG_NHG_PREFIX,
+                CFG_FG_NHG_MEMBER
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
@@ -438,10 +433,9 @@ namespace aclorch_test
             gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
-            const int routeorch_pri = 5;
-            vector<table_name_with_pri_t> route_tables = {
-                { APP_ROUTE_TABLE_NAME,        routeorch_pri },
-                { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+            vector<string> route_tables = {
+                APP_ROUTE_TABLE_NAME,
+                APP_LABEL_ROUTE_TABLE_NAME
             };
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
 
@@ -461,7 +455,7 @@ namespace aclorch_test
                                          gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
 
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
+                new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
             consumer->addToSync({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
             static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
@@ -1350,7 +1344,7 @@ namespace aclorch_test
 
         // Create a policer so POLICER_ACTION can resolve its OID.
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,
@@ -1434,7 +1428,7 @@ namespace aclorch_test
 
         // Create a policer so POLICER_ACTION can resolve its OID.
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,
@@ -1502,7 +1496,7 @@ namespace aclorch_test
 
         // Create a policer so POLICER_ACTION can resolve its OID.
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,
@@ -1567,7 +1561,7 @@ namespace aclorch_test
         auto orch = createAclOrch();
 
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,
@@ -1621,7 +1615,7 @@ namespace aclorch_test
         auto orch = createAclOrch();
 
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,
@@ -1676,7 +1670,7 @@ namespace aclorch_test
         auto orch = createAclOrch();
 
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         auto createPolicer = [&](const string &name) {
             policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
@@ -1783,7 +1777,7 @@ namespace aclorch_test
 
         // Create the policer, then re-run the rule task: the rule is now programmed.
         auto policerConsumer = unique_ptr<Consumer>(new Consumer(
-            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1, 1),
+            new swss::ConsumerStateTable(m_config_db.get(), CFG_POLICER_TABLE_NAME, 1),
             gPolicerOrch, CFG_POLICER_TABLE_NAME));
         policerConsumer->addToSync(deque<KeyOpFieldsValuesTuple>(
             { { policerName, SET_COMMAND,

@@ -89,38 +89,30 @@ bool RingBuffer::serves(const std::string& tableName)
     return m_consumerSet.find(tableName) != m_consumerSet.end();  
 }
 
-Orch::Orch(DBConnector *db, const string tableName, int pri)
+Orch::Orch(DBConnector *db, const string tableName)
 {
-    addConsumer(db, tableName, pri);
+    addConsumer(db, tableName);
 }
 
 Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri);
+        addConsumer(db, it);
     }
 }
 
-Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2, 
+Orch::Orch(swss::DBConnector *db1, swss::DBConnector *db2,
     const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2)
 {
     for(auto it : tableNames_1)
     {
-        addConsumer(db1, it, default_orch_pri);
+        addConsumer(db1, it);
     }
 
     for(auto it : tableNames_2)
     {
-        addConsumer(db2, it, default_orch_pri);
-    }
-}
-
-Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
-{
-    for (const auto& it : tableNames_with_pri)
-    {
-        addConsumer(db, it.first, it.second);
+        addConsumer(db2, it);
     }
 }
 
@@ -1208,15 +1200,15 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
     return true;
 }
 
-void Orch::addConsumer(DBConnector *db, string tableName, int pri)
+void Orch::addConsumer(DBConnector *db, string tableName)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
-        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
     }
     else
     {
-        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this, tableName));
     }
 }
 

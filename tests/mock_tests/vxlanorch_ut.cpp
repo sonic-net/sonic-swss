@@ -167,14 +167,12 @@ namespace vxlanorch_test
                 gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
                 // Create dependencies ...
-                const int portsorch_base_pri = 40;
-
-                vector<table_name_with_pri_t> ports_tables = {
-                    { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                    { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                    { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                    { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                    { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+                vector<string> ports_tables = {
+                    APP_PORT_TABLE_NAME,
+                    APP_VLAN_TABLE_NAME,
+                    APP_VLAN_MEMBER_TABLE_NAME,
+                    APP_LAG_TABLE_NAME,
+                    APP_LAG_MEMBER_TABLE_NAME
                 };
 
                 ASSERT_EQ(gPortsOrch, nullptr);

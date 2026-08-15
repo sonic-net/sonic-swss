@@ -58,8 +58,6 @@ const char state_db_key_delimiter  = '|';
 #define RING_SIZE 30
 #define SLEEP_MSECONDS 500
 
-const int default_orch_pri = 0;
-
 typedef enum
 {
     task_success,
@@ -93,8 +91,6 @@ typedef std::pair<std::string, sai_object_id_t> object_map_pair;
 // insertion and does not change. (since C++11)
 typedef std::multimap<std::string, swss::KeyOpFieldsValuesTuple> SyncMap;
 
-typedef std::pair<std::string, int> table_name_with_pri_t;
-
 class Orch;
 
 using AnyTask = std::function<void()>; // represents a function with no argument and returns void
@@ -123,6 +119,9 @@ public:
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }
+
+    // Executors have priority 0 and are scheduled in least-recently-used order.
+    int getPri() const override { return 0; }
 
     // Disable copying
     Executor(const Executor&) = delete;
@@ -312,11 +311,10 @@ typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector
 class Orch
 {
 public:
-    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
+    Orch(swss::DBConnector *db, const std::string tableName);
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     Orch(swss::DBConnector *db1, swss::DBConnector *db2,
         const std::vector<std::string> &tableNames_1, const std::vector<std::string> &tableNames_2);
-    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
 
@@ -416,7 +414,7 @@ protected:
 
     ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
+    void addConsumer(swss::DBConnector *db, std::string tableName);
 };
 
 #include "request_parser.h"
@@ -424,8 +422,8 @@ private:
 class Orch2 : public Orch
 {
 public:
-    Orch2(swss::DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
-        : Orch(db, tableName, pri), request_(request)
+    Orch2(swss::DBConnector *db, const std::string& tableName, Request& request)
+        : Orch(db, tableName), request_(request)
     {
     }
 

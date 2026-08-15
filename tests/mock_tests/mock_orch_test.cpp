@@ -99,13 +99,12 @@ void MockOrchTest::SetUp()
 
     PrepareSai();
 
-    const int portsorch_base_pri = 40;
-    vector<table_name_with_pri_t> ports_tables = {
-        { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-        { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-        { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-        { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-        { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+    vector<string> ports_tables = {
+        APP_PORT_TABLE_NAME,
+        APP_VLAN_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME,
+        APP_LAG_TABLE_NAME,
+        APP_LAG_MEMBER_TABLE_NAME
     };
 
     TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
@@ -143,8 +142,8 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gVrfOrch);
     global_orch_list.insert((Orch **)&gVrfOrch);
 
-    vector<table_name_with_pri_t> intf_tables = {
-        { APP_INTF_TABLE_NAME, IntfsOrch::intfsorch_pri }
+    vector<string> intf_tables = {
+        APP_INTF_TABLE_NAME
     };
     gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
     gDirectory.set(gIntfsOrch);
@@ -169,12 +168,10 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
     global_orch_list.insert((Orch **)&gEvpnMhOrch);
 
-    const int fgnhgorch_pri = 15;
-
-    vector<table_name_with_pri_t> fgnhg_tables = {
-        { CFG_FG_NHG, fgnhgorch_pri },
-        { CFG_FG_NHG_PREFIX, fgnhgorch_pri },
-        { CFG_FG_NHG_MEMBER, fgnhgorch_pri }
+    vector<string> fgnhg_tables = {
+        CFG_FG_NHG,
+        CFG_FG_NHG_PREFIX,
+        CFG_FG_NHG_MEMBER
     };
 
     gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
@@ -182,12 +179,10 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gFgNhgOrch);
     global_orch_list.insert((Orch **)&gFgNhgOrch);
 
-    const int fdborch_pri = 20;
-
-    vector<table_name_with_pri_t> app_fdb_tables = {
-        { APP_FDB_TABLE_NAME, FdbOrch::fdborch_pri },
-        { APP_VXLAN_FDB_TABLE_NAME, FdbOrch::fdborch_pri },
-        { APP_MCLAG_FDB_TABLE_NAME, fdborch_pri }
+    vector<string> app_fdb_tables = {
+        APP_FDB_TABLE_NAME,
+        APP_VXLAN_FDB_TABLE_NAME,
+        APP_MCLAG_FDB_TABLE_NAME
     };
 
     TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -262,10 +257,9 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gCrmOrch);
     global_orch_list.insert((Orch **)&gCrmOrch);
 
-    const int routeorch_pri = 5;
-    vector<table_name_with_pri_t> route_tables = {
-        { APP_ROUTE_TABLE_NAME, routeorch_pri },
-        { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
+    vector<string> route_tables = {
+        APP_ROUTE_TABLE_NAME,
+        APP_LABEL_ROUTE_TABLE_NAME
     };
     gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
     gDirectory.set(gRouteOrch);

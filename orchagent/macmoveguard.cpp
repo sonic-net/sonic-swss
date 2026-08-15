@@ -56,7 +56,7 @@ MacMoveGuard::MacMoveGuard(DBConnector *configDb, DBConnector *stateDb,
     // Register a Consumer for the MAC_MOVE_GUARD CONFIG_DB table on the owning
     // FdbOrch. FdbOrch::doTask(Consumer&) dispatches back into doConfigTask().
     auto *consumerTable = new swss::SubscriberStateTable(
-        configDb, tableName, swss::TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+        configDb, tableName, swss::TableConsumable::DEFAULT_POP_BATCH_SIZE);
     auto *consumer      = new Consumer(consumerTable, m_fdbOrch, tableName);
     m_fdbOrch->addExecutor(consumer);
 

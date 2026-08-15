@@ -18,7 +18,7 @@ using TimePoint = std::chrono::time_point<Clock>;
 class FabricPortsOrch : public Orch, public Subject
 {
 public:
-    FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pri_t> &tableNames,
+    FabricPortsOrch(DBConnector *appl_db, vector<string> &tableNames,
                     bool fabricPortStatEnabled=true, bool fabricQueueStatEnabled=true);
     bool allPortsReady();
     void generateQueueStats();

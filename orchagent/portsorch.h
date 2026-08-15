@@ -151,7 +151,7 @@ class PortSerdesAttrTest;
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
     bool isInitDone();

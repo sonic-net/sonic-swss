@@ -137,7 +137,7 @@ namespace dashhaorch_ut
         void CreateHaSet()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -172,7 +172,7 @@ namespace dashhaorch_ut
         void UpdatePeerIp(std::string peer_ip)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             std::vector<std::pair<std::string, std::string>> fields = {{"version", "2"}};
@@ -197,7 +197,7 @@ namespace dashhaorch_ut
         void InvalidIpAddresses()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -232,7 +232,7 @@ namespace dashhaorch_ut
         void InvalidField()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -268,7 +268,7 @@ namespace dashhaorch_ut
         void CreateEniScopeHaSet()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -303,7 +303,7 @@ namespace dashhaorch_ut
         void RemoveHaSet()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -323,7 +323,7 @@ namespace dashhaorch_ut
         void CreateHaScope()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -350,7 +350,7 @@ namespace dashhaorch_ut
         void CreateHaScopeLessFields()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -373,7 +373,7 @@ namespace dashhaorch_ut
         void RemoveHaScope()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -393,7 +393,7 @@ namespace dashhaorch_ut
         void SetHaScopeHaRole(std::string role="active")
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -417,7 +417,7 @@ namespace dashhaorch_ut
         void SetHaScopeActivateRoleRequest()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -441,7 +441,7 @@ namespace dashhaorch_ut
         void SetHaScopeFlowReconcileRequest()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -465,7 +465,7 @@ namespace dashhaorch_ut
         void SetHaScopeBrainSplitRecovered()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -497,7 +497,7 @@ namespace dashhaorch_ut
         void RandomTable()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), "RANDOM_TABLE", 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), "RANDOM_TABLE", 1),
                 m_dashHaOrch, "RANDOM_TABLE"));
 
             consumer->addToSync(
@@ -519,7 +519,7 @@ namespace dashhaorch_ut
         void InvalidHaScopePbString()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
 
             consumer->addToSync(
@@ -541,7 +541,7 @@ namespace dashhaorch_ut
         void InvalidHaSetPbString()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(
@@ -563,7 +563,7 @@ namespace dashhaorch_ut
         void HaSetScopeUnspecified()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             dash::ha_set::HaSet ha_set = dash::ha_set::HaSet();
@@ -589,7 +589,7 @@ namespace dashhaorch_ut
         void CreateSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
         {
             auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1),
                 m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
 
             vector<FieldValueTuple> bfd_session_data = {
@@ -619,7 +619,7 @@ namespace dashhaorch_ut
         void deleteSoftwareBfdSession(string bfd_session_key = "default:default:192.168.1.100")
         {
             auto bfd_consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_BFD_SESSION_TABLE_NAME , 1),
                 m_dashHaOrch, APP_BFD_SESSION_TABLE_NAME ));
 
             bfd_consumer->addToSync(
@@ -1165,7 +1165,7 @@ namespace dashhaorch_ut
         void CreateSwitchOwnerDpuScopeHaSet()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1),
                 m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
 
             consumer->addToSync(

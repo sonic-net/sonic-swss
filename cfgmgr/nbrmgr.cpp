@@ -62,7 +62,7 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     }
 
     auto consumerStateTable = new swss::ConsumerStateTable(appDb, APP_NEIGH_RESOLVE_TABLE_NAME,
-                              TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+                              TableConsumable::DEFAULT_POP_BATCH_SIZE);
     auto consumer = new Consumer(consumerStateTable, this, APP_NEIGH_RESOLVE_TABLE_NAME);
     Orch::addExecutor(consumer);
 
@@ -78,7 +78,7 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         if(swtype == "voq")
         {
             string tableName = STATE_SYSTEM_NEIGH_TABLE_NAME;
-            Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+            Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
             m_cfgVoqInbandInterfaceTable = unique_ptr<Table>(new Table(cfgDb, CFG_VOQ_INBAND_INTERFACE_TABLE_NAME));
         }
     }

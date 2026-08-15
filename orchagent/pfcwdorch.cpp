@@ -755,7 +755,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     timer->start();
 
     auto ssTable = new swss::SubscriberStateTable(
-            m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+            m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE);
     auto ssConsumer = new Consumer(ssTable, this, APP_PFC_WD_TABLE_NAME);
     Orch::addExecutor(ssConsumer);
 }

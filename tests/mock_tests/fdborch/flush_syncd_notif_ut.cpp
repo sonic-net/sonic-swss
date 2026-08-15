@@ -108,14 +108,12 @@ namespace fdb_syncd_flush_test
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             // 2) Portsorch
-            const int portsorch_base_pri = 40;
-
-            vector<table_name_with_pri_t> ports_tables = {
-                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            vector<string> ports_tables = {
+                APP_PORT_TABLE_NAME,
+                APP_VLAN_TABLE_NAME,
+                APP_VLAN_MEMBER_TABLE_NAME,
+                APP_LAG_TABLE_NAME,
+                APP_LAG_MEMBER_TABLE_NAME
             };
 
             m_portsOrch = std::make_shared<PortsOrch>(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
@@ -127,10 +125,10 @@ namespace fdb_syncd_flush_test
             gDirectory.set(m_vxlanTunnelOrch);
 
             // Construct fdborch
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
-                { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+            vector<string> app_fdb_tables = {
+                APP_FDB_TABLE_NAME,
+                APP_VXLAN_FDB_TABLE_NAME,
+                APP_MCLAG_FDB_TABLE_NAME
             };
 
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -147,8 +145,8 @@ namespace fdb_syncd_flush_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
-            vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME, IntfsOrch::intfsorch_pri }
+            vector<string> intf_tables = {
+                APP_INTF_TABLE_NAME
             };
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 

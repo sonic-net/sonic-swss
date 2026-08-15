@@ -20,7 +20,7 @@ sai_object_id_t gBridgePortOid;
 #define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 
-PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
+PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames,
                      DBConnector *chassisAppDb)
     : Orch(db, tableNames),
       m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),

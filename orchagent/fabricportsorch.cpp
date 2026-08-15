@@ -89,7 +89,7 @@ const vector<sai_switch_stat_t> switch_drop_counter_ids =
     SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP
 };
 
-FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pri_t> &tableNames,
+FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<string> &tableNames,
                                  bool fabricPortStatEnabled, bool fabricQueueStatEnabled) :
         Orch(appl_db, tableNames),
         port_stat_manager(FABRIC_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,

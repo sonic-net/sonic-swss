@@ -751,7 +751,7 @@ static bool isMlnxPlatform()
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
+PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
@@ -1012,7 +1012,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
             SWSS_LOG_ERROR("PortsOrch failed to set SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY attribute");
         }
 
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_TRANSCEIVER_INFO_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, STATE_TRANSCEIVER_INFO_TABLE_NAME));
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_TRANSCEIVER_INFO_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, STATE_TRANSCEIVER_INFO_TABLE_NAME));
     }
 
     if (gMySwitchType != "dpu")
@@ -1136,12 +1136,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         string tableName;
         //Add subscriber to process system LAG (System PortChannel) table
         tableName = CHASSIS_APP_LAG_TABLE_NAME;
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
         m_tableVoqSystemLagTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_TABLE_NAME));
 
         //Add subscriber to process system LAG member (System PortChannelMember) table
         tableName = CHASSIS_APP_LAG_MEMBER_TABLE_NAME;
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE), this, tableName));
         m_tableVoqSystemLagMemberTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_MEMBER_TABLE_NAME));
 
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));

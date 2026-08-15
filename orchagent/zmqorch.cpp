@@ -58,32 +58,24 @@ ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *z
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri, zmqServer, dbPersistence);
+        addConsumer(db, it, zmqServer, dbPersistence);
     }
 }
 
-
-ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer, bool dbPersistence)
-{
-    for (const auto& it : tableNames_with_pri)
-    {
-        addConsumer(db, it.first, it.second, zmqServer, dbPersistence);
-    }
-}
-
-void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer, bool dbPersistence)
+void ZmqOrch::addConsumer(DBConnector *db, string tableName, ZmqServer *zmqServer, bool dbPersistence)
 {
     if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {
             SWSS_LOG_DEBUG("ZmqConsumer initialize for: %s", tableName.c_str());
-            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri, dbPersistence), this, tableName));
+            // swss-common places pri before dbPersistence; retain its default.
+            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, /*pri=*/0, dbPersistence), this, tableName));
         }
         else
         {
             SWSS_LOG_DEBUG("Consumer initialize for: %s", tableName.c_str());
-            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this, tableName));
         }
     }
     else
@@ -103,32 +95,24 @@ ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, Zm
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri, zmqServer, dbPersistence);
+        addConsumer(db, it, zmqServer, dbPersistence);
     }
 }
 
-ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer, bool dbPersistence)
-: ZmqOrch()
-{
-    for (const auto& it : tableNames_with_pri)
-    {
-        addConsumer(db, it.first, it.second, zmqServer, dbPersistence);
-    }
-}
-
-void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer, bool dbPersistence)
+void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, ZmqServer *zmqServer, bool dbPersistence)
 {
     if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {
             SWSS_LOG_DEBUG("ZmqRouteConsumer initialize for: %s", tableName.c_str());
-            addExecutor(new ZmqRouteConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri, dbPersistence), this, tableName));
+            // swss-common places pri before dbPersistence; retain its default.
+            addExecutor(new ZmqRouteConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, /*pri=*/0, dbPersistence), this, tableName));
         }
         else
         {
             SWSS_LOG_DEBUG("Consumer initialize for: %s", tableName.c_str());
-            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this, tableName));
         }
     }
     else

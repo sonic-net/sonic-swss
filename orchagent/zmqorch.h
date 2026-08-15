@@ -38,7 +38,6 @@ class ZmqOrch : public Orch
 {
 public:
     ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer, bool dbPersistence = true);
-    ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
@@ -50,15 +49,14 @@ protected:
     ZmqOrch() = default;
 
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+    void addConsumer(swss::DBConnector *db, std::string tableName, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 };
 
 class ZmqRouteOrch : public ZmqOrch
 {
 public:
     ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer, bool dbPersistence = true);
-    ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
+    void addConsumer(swss::DBConnector *db, std::string tableName, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 };
