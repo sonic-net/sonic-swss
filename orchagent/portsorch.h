@@ -3,6 +3,7 @@
 
 #include <map>
 #include <unordered_set>
+#include <chrono>
 
 #include "acltable.h"
 #include "orch.h"
@@ -154,6 +155,9 @@ public:
     PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
+    bool isInitPortConfigDone();
+    bool isPortReadySignalled() const { return m_portReadySignalled; }
+    void checkAndSignalVlanMemberDone();
     bool isInitDone();
     bool isConfigDone();
     bool isGearboxEnabled();
@@ -360,6 +364,11 @@ private:
     std::map<sai_object_id_t, sai_object_id_t> m_portIdToSerdesId;
 
     bool m_initDone = false;
+    bool m_portReadySignalled = false;
+    std::chrono::steady_clock::time_point m_lastPendingLog{};
+    size_t m_initExpectedVlanMemberCount = 0;
+    size_t m_addedVlanMemberCount = 0;
+    bool m_vlanMemberSignalled = false;
     bool m_isSendToIngressPortConfigured = false;
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class

@@ -1,5 +1,6 @@
 #include "tokenize.h"
 #include "bufferorch.h"
+#include "swssreadiness.h"
 #include "directory.h"
 #include "logger.h"
 #include "sai_serialize.h"
@@ -140,6 +141,12 @@ void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
             initBufferReadyList(queue_table, true);
         }
     }
+
+    // If no buffer PG/queue entries exist in CONFIG_DB (e.g. buffer is
+    // configured directly via BCM YAML), m_ready_list stays empty and
+    // checkAndSignalBufferReady() would never be called from processQueuePost/
+    // processPriorityGroupPost.  Signal immediately in that case.
+    checkAndSignalBufferReady();
 }
 
 void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
@@ -272,6 +279,22 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     }
 
     return result;
+}
+
+bool BufferOrch::areAllPortsReady() const
+{
+    for (const auto& kv : m_ready_list)
+    {
+        if (!kv.second) return false;
+    }
+    return true;
+}
+
+void BufferOrch::checkAndSignalBufferReady()
+{
+    if (m_bufferReadySignalled || !areAllPortsReady() || !gSwssReadiness) return;
+    m_bufferReadySignalled = true;
+    gSwssReadiness->signalDone("buffer");
 }
 
 void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id)
@@ -1197,6 +1220,7 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
     if (m_ready_list.find(key) != m_ready_list.end())
     {
         m_ready_list[key] = true;
+        checkAndSignalBufferReady();
     }
     else
     {
@@ -1567,6 +1591,7 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
     if (m_ready_list.find(key) != m_ready_list.end())
     {
         m_ready_list[key] = true;
+        checkAndSignalBufferReady();
     }
     else
     {

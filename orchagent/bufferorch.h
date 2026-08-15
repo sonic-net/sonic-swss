@@ -101,6 +101,8 @@ class BufferOrch : public Orch
 public:
     BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames);
     bool isPortReady(const std::string& port_name) const;
+    bool areAllPortsReady() const;
+    void checkAndSignalBufferReady();
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
     const object_reference_map &getBufferPoolNameOidMap(void);
@@ -157,6 +159,7 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+    bool m_bufferReadySignalled = false;
     set<string> m_partiallyAppliedQueues;
 
     // Bulk task buffers per DB operation
