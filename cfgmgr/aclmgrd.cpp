@@ -37,13 +37,12 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
         WarmStart::initialize("aclmgrd", "swss");
         WarmStart::checkWarmStart("aclmgrd", "swss");
 
-        AclMgr aclmgr(&cfgDb, &appDb, &stateDb, cfg_acl_tables);
+        AclMgr aclmgr(&cfgDb, &stateDb, cfg_acl_tables);
 
         std::vector<Orch *> cfgOrchList = {&aclmgr};
 
