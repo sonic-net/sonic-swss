@@ -1740,6 +1740,11 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
+std::set<std::string> PortsOrch::getPendingInitPorts() const
+{
+    return std::set<std::string>(m_pendingPortSet.begin(), m_pendingPortSet.end());
+}
+
 /* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
 bool PortsOrch::isInitDone()
 {

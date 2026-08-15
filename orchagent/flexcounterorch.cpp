@@ -146,6 +146,36 @@ FlexCounterOrch::~FlexCounterOrch(void)
     SWSS_LOG_ENTER();
 }
 
+// Log (throttled) why port flex counter processing is deferred at the
+// allPortsReady() gate, so the otherwise silent, unbounded wait is diagnosable.
+void FlexCounterOrch::warnPortsNotReady()
+{
+    // Log once per not-ready episode; re-armed in doTask() when ports are ready.
+    if (m_portsNotReadyWarned)
+    {
+        return;
+    }
+    m_portsNotReadyWarned = true;
+
+    if (!gPortsOrch->isInitDone())
+    {
+        SWSS_LOG_WARN("Port flex counters deferred: port init not complete "
+                      "(PortInitDone not received). Counters unavailable until it finishes.");
+        return;
+    }
+
+    auto pendingPorts = gPortsOrch->getPendingInitPorts();
+    string pendingStr;
+    for (const auto &alias : pendingPorts)
+    {
+        pendingStr += (pendingStr.empty() ? "" : ", ") + alias;
+    }
+    SWSS_LOG_WARN("Port flex counters deferred: %zu port(s) not initialized "
+                  "(e.g. buffer config not applied) block counters for ALL ports: [%s]. "
+                  "\"show interfaces counters\" stays empty until they are ready.",
+                  pendingPorts.size(), pendingStr.c_str());
+}
+
 void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -167,6 +197,8 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     DashHaOrch* dash_ha_orch = gDirectory.get<DashHaOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
+        // Deferral is by design; warn (throttled) so the wait is not silent.
+        warnPortsNotReady();
         return;
     }
 
@@ -174,6 +206,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     {
         return;
     }
+
+    // Ports are ready; re-arm the diagnostic for any future deferral.
+    m_portsNotReadyWarned = false;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
