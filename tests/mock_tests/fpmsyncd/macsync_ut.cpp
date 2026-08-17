@@ -34,6 +34,20 @@ using namespace swss;
 #define NDA_SRC_VNI 11
 #endif
 
+#ifndef NDA_PROTOCOL
+#define NDA_PROTOCOL 12
+#endif
+
+/* Hardware-learnt MAC marker, from the SONiC rtnetlink patch. */
+#ifndef RTPROT_HW
+#define RTPROT_HW 193
+#endif
+
+/* Present only on newer kernel headers. */
+#ifndef NTF_STICKY
+#define NTF_STICKY 0x40
+#endif
+
 namespace {
 
 constexpr uint16_t TEST_VLAN = 100;
@@ -544,6 +558,68 @@ private:
 };
 
 /*
+ * The outbound encoding zebra actually parses. Stickiness rides in ndm_flags as
+ * NTF_STICKY, and zebra sets NUD_NOARP only alongside it, so a hardware-learnt
+ * MAC must carry neither: were it sent sticky, BGP would advertise it as an
+ * EVPN static MAC and the address could never move. NDA_PROTOCOL is the FPM
+ * stand-in for the "proto hw" the kernel path passed to "bridge fdb".
+ */
+static const struct rtattr *findAttr(const nlmsghdr *hdr, int type)
+{
+    const struct ndmsg *ndm = (const struct ndmsg *)NLMSG_DATA(hdr);
+    int len = (int)(hdr->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
+    const struct rtattr *rta =
+        (const struct rtattr *)((const char *)ndm + NLMSG_ALIGN(sizeof(struct ndmsg)));
+
+    for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
+    {
+        if (rta->rta_type == type)
+            return rta;
+    }
+    return nullptr;
+}
+
+TEST_F(MacSyncTest, LocalDynamicMacIsNotSticky)
+{
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 2u);
+
+    const nlmsghdr *hdr = fpm.at(0);
+    const struct ndmsg *ndm = (const struct ndmsg *)NLMSG_DATA(hdr);
+
+    EXPECT_TRUE(ndm->ndm_flags & NTF_MASTER);
+    EXPECT_TRUE(ndm->ndm_flags & NTF_EXT_LEARNED);
+    EXPECT_FALSE(ndm->ndm_flags & NTF_STICKY);
+    EXPECT_FALSE(ndm->ndm_state & NUD_NOARP);
+
+    const struct rtattr *proto = findAttr(hdr, NDA_PROTOCOL);
+    ASSERT_NE(proto, nullptr);
+    EXPECT_EQ(*(const uint8_t *)RTA_DATA(proto), RTPROT_HW);
+}
+
+/*
+ * A provisioned MAC is pinned to a port by configuration, so it is advertised
+ * sticky and remote PEs reject a move for it (RFC 7432 section 7.8). Only local
+ * entries reach STATE_DB, so this can never catch an EVPN-learnt address.
+ */
+TEST_F(MacSyncTest, LocalStaticMacIsSticky)
+{
+    seedStateFdb("Vlan100:00:11:22:33:44:66", "lo", true);
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 2u);
+
+    const struct ndmsg *ndm = (const struct ndmsg *)NLMSG_DATA(fpm.at(0));
+
+    EXPECT_TRUE(ndm->ndm_flags & NTF_STICKY);
+    EXPECT_TRUE(ndm->ndm_state & NUD_NOARP);
+}
+
+/*
  * The replay must come from STATE_DB, not from whatever the subscriber happens
  * to have delivered: zebra can connect before the select loop has run, and a
  * replay of nothing tells zebra to withdraw every local MAC.
@@ -564,6 +640,27 @@ TEST_F(MacSyncTest, ReplayLoadsLocalMacsFromStateDb)
     /* Both must carry the same generation or the marker sweeps what it replayed. */
     EXPECT_EQ(fpm.at(0)->nlmsg_seq, fpm.at(1)->nlmsg_seq);
     EXPECT_NE(fpm.at(0)->nlmsg_seq, 0u);
+}
+
+/*
+ * Switching into fpm mode has to replay what STATE_DB already holds. The local
+ * cache cannot be trusted here: processStateFdb() drops updates while fdbsyncd
+ * owns the kernel path, so entering fpm mode with a stale cache would leave
+ * every already-learnt local MAC unknown to zebra until the next reconnect.
+ */
+TEST_F(MacSyncTest, EnteringFpmModeReplaysExistingLocalMacs)
+{
+    m_macSync->setMacSyncMode("kernel");
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 0u);
+
+    m_macSync->setMacSyncMode("fpm");
+
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
 }
 
 /*
