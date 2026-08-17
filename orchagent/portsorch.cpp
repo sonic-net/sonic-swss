@@ -24,6 +24,8 @@
 #include <sstream>
 #include <unordered_set>
 
+#include <boost/algorithm/string.hpp>
+
 #include <netinet/if_ether.h>
 #include "net/if.h"
 
@@ -6438,9 +6440,13 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                         continue;
                     }
                     std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                    std::string lower_port_asic = port_asic;
+                    std::string lower_my_asic = gMyAsicName;
+                    boost::algorithm::to_lower(lower_port_asic);
+                    boost::algorithm::to_lower(lower_my_asic);
                     SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
                                    lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
-                    if (port_asic == gMyAsicName)
+                    if (lower_port_asic == lower_my_asic)
                     {
                         SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
                         it = consumer.m_toSync.erase(it);
