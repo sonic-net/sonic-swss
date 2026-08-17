@@ -90,8 +90,7 @@ PfcWdHwOrch::PfcWdQueueStats PfcWdHwOrch::getQueueStats(const string &queueIdStr
 {
     SWSS_LOG_ENTER();
     // TODO: Implementation
-    PfcWdQueueStats stats;
-    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    PfcWdQueueStats stats{};
     return stats;
 }
 
@@ -111,15 +110,19 @@ bool PfcWdHwOrch::determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, 
 task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
+
     // TODO: Implementation
-    return task_process_status::task_success;
+    SWSS_LOG_ERROR("Hardware PFC watchdog is not implemented, ignoring config on %s", key.c_str());
+    return task_process_status::task_invalid_entry;
 }
 
 task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 {
     SWSS_LOG_ENTER();
+
     // TODO: Implementation
-    return task_process_status::task_success;
+    SWSS_LOG_ERROR("Hardware PFC watchdog is not implemented, ignoring delete on %s", key.c_str());
+    return task_process_status::task_invalid_entry;
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,

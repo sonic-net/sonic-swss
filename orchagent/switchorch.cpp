@@ -1,6 +1,5 @@
 #include <map>
 #include <set>
-#include <regex>
 #include <inttypes.h>
 #include <iomanip>
 
@@ -128,6 +127,30 @@ static std::unordered_set<std::string> serializeSwitchCounterStats(const std::ve
 
 // Switch OA ----------------------------------------------------------------------------------------------------------
 
+void SwitchOrch::set_switch_pfc_dldr_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLDR capability. SAI_QUEUE_ATTR_ENABLE_PFC_DLDR covers both
+     * deadlock detection and recovery in hardware, so it distinguishes a
+     * complete hardware watchdog from a hybrid one, which only supports
+     * SAI_QUEUE_ATTR_PFC_DLR_INIT. */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_ENABLE_PFC_DLDR);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is not supported");
+        m_PfcDldrEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is supported");
+        m_PfcDldrEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -186,23 +209,6 @@ void SwitchOrch::set_switch_bfd_next_hop_capability()
     set_switch_capability(fvVector);
 }
 
-bool SwitchOrch::isHwPfcWdSupportedSku() const
-{
-    static const std::vector<std::regex> patterns = {
-        std::regex("nh-4010.*", std::regex_constants::icase)
-    };
-
-    for (const auto& pattern : patterns)
-    {
-        if (std::regex_match(m_hwSku, pattern))
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
@@ -218,14 +224,9 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
 
-    // Read HWSKU from CONFIG_DB
-    DBConnector configDb("CONFIG_DB", 0);
-    Table deviceMetadataTable(&configDb, CFG_DEVICE_METADATA_TABLE_NAME);
-    deviceMetadataTable.hget("localhost", "hwsku", m_hwSku);
-    SWSS_LOG_NOTICE("HWSKU: %s", m_hwSku.c_str());
-
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_pfc_dldr_capability();
     set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
