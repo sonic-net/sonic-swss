@@ -21,6 +21,18 @@ using namespace swss;
 #define NDA_SRC_VNI 11
 #endif
 
+#ifndef NDA_PROTOCOL
+#define NDA_PROTOCOL 12
+#endif
+
+/* Marks a MAC as data-plane (hardware) learnt, as opposed to a control-plane
+ * entry zebra originated. The kernel path carried this as "bridge fdb ...
+ * proto hw"; on the FPM channel it rides as NDA_PROTOCOL so zebra can still
+ * tell the two apart. */
+#ifndef RTPROT_HW
+#define RTPROT_HW 193
+#endif
+
 #define MAC_SYNC_MODE_FIELD "mac_sync_mode"
 #define MAC_SYNC_MODE_FPM   "fpm"
 #define FDB_SYNC_GLOBAL_KEY "global"
@@ -116,6 +128,9 @@ void MacSync::setMacSyncMode(const string& mode)
     if (m_fpmMode)
     {
         loadRemoteMacs();
+        /* processStateFdb() discards updates while fdbsyncd owns the kernel
+         * path, so the local cache is stale on the way into fpm mode. */
+        loadLocalMacs();
         replayLocalMacs();
     }
 }
@@ -477,11 +492,34 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, const stri
     req.n.nlmsg_seq = m_generation;
     req.ndm.ndm_family = AF_BRIDGE;
     req.ndm.ndm_ifindex = (int)ifindex;
-    req.ndm.ndm_state = isStatic ? NUD_NOARP : NUD_REACHABLE;
     req.ndm.ndm_flags = NTF_MASTER | NTF_EXT_LEARNED;
+    /* Follow zebra's own encoding (netlink_macfdb_update_ctx): NTF_STICKY and
+     * NUD_NOARP are set together, and only for a sticky entry. NUD_NOARP on its
+     * own is not an encoding zebra produces or reads, so it must not be used to
+     * mean "static" on its own.
+     *
+     * Only administratively configured MACs are sticky. STATE_DB carries local
+     * entries only, so a static entry here is a provisioned MAC that is pinned
+     * to a port by configuration and must not move; RFC 7432 section 7.8 wants
+     * exactly that advertised with the sticky bit so remote PEs reject a move.
+     * Hardware-learnt MACs stay mobile. */
+    if (isStatic)
+    {
+        req.ndm.ndm_flags |= NTF_STICKY;
+        req.ndm.ndm_state = NUD_REACHABLE | NUD_NOARP;
+    }
+    else
+    {
+        req.ndm.ndm_state = NUD_REACHABLE;
+    }
+
+    /* Marks the entry as hardware learnt, the FPM equivalent of the "proto hw"
+     * the kernel path passed to "bridge fdb". */
+    uint8_t protocol = RTPROT_HW;
 
     if (!addAttr(&req.n, sizeof(req), NDA_LLADDR, macAddress.getMac(), ETHER_ADDR_LEN) ||
-        !addAttr(&req.n, sizeof(req), NDA_VLAN, &vlanId, sizeof(vlanId)))
+        !addAttr(&req.n, sizeof(req), NDA_VLAN, &vlanId, sizeof(vlanId)) ||
+        !addAttr(&req.n, sizeof(req), NDA_PROTOCOL, &protocol, sizeof(protocol)))
     {
         return;
     }
@@ -493,8 +531,9 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, const stri
         return;
     }
 
-    SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s",
-                  add ? "add" : "del", vlanName.c_str(), mac.c_str(), port.c_str());
+    SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s%s",
+                  add ? "add" : "del", vlanName.c_str(), mac.c_str(), port.c_str(),
+                  isStatic ? " (static, sticky)" : "");
 }
 
 void MacSync::onMacMsg(struct nlmsghdr *h, int len)
