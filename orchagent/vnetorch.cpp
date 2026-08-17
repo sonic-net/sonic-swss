@@ -1903,15 +1903,14 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
-    auto nextHops = ip_addresses.getIpAddresses();
-    auto nextHop = nextHops.begin()->to_string();
+    auto nextHop = ip_addresses.begin()->to_string();
     auto it_route = syncd_tunnel_routes_[vnet_name].find(nextHop);
     if (ifname.find(VXLAN_NAME_PREFIX) == 0 && it_route != syncd_tunnel_routes_[vnet_name].end())
     {
         auto tunnelRoute = it_route->second;
         map<NextHopKey, IpAddress> monitors;
         string empty = "";
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, tunnelRoute.primary, op, empty, empty, tunnelRoute.secondary, ip_pfx, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, tunnelRoute.primary, op, empty, empty, DEFAULT_MONITOR_TIMER, DEFAULT_MONITOR_TIMER, tunnelRoute.secondary, ip_pfx, monitors);
     }
 
     if (op == SET_COMMAND)
@@ -3278,8 +3277,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<IpAddress> primary_list;
     vector<IpAddress> secondary_list;
     string monitoring;
-    int32_t rx_monitor_timer = -1;
-    int32_t tx_monitor_timer = -1;
+    int32_t rx_monitor_timer = DEFAULT_MONITOR_TIMER;
+    int32_t tx_monitor_timer = DEFAULT_MONITOR_TIMER;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
@@ -3638,99 +3637,6 @@ void VNetRouteOrch::getCustomMonitors(const string& vnet, const IpPrefix& ipPref
             }
         }
     }
-}
-
-VNetCfgRouteOrch::VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames)
-                                  : Orch(db, tableNames),
-                                  m_appVnetRouteTable(appDb, APP_VNET_RT_TABLE_NAME),
-                                  m_appVnetRouteTunnelTable(appDb, APP_VNET_RT_TUNNEL_TABLE_NAME)
-{
-}
-
-void VNetCfgRouteOrch::doTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
-
-    const string & table_name = consumer.getTableName();
-    auto it = consumer.m_toSync.begin();
-
-    while (it != consumer.m_toSync.end())
-    {
-        bool task_result = false;
-        auto t = it->second;
-        const string & op = kfvOp(t);
-        if (table_name == CFG_VNET_RT_TABLE_NAME)
-        {
-            task_result = doVnetRouteTask(t, op);
-        }
-        else if (table_name == CFG_VNET_RT_TUNNEL_TABLE_NAME)
-        {
-            task_result = doVnetTunnelRouteTask(t, op);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
-        }
-
-        if (task_result == true)
-        {
-            it = consumer.m_toSync.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-}
-
-bool VNetCfgRouteOrch::doVnetTunnelRouteTask(const KeyOpFieldsValuesTuple & t, const string & op)
-{
-    SWSS_LOG_ENTER();
-
-    string vnetRouteTunnelName = kfvKey(t);
-    replace(vnetRouteTunnelName.begin(), vnetRouteTunnelName.end(), config_db_key_delimiter, delimiter);
-    if (op == SET_COMMAND)
-    {
-        m_appVnetRouteTunnelTable.set(vnetRouteTunnelName, kfvFieldsValues(t));
-        SWSS_LOG_INFO("Create vnet route tunnel %s", vnetRouteTunnelName.c_str());
-    }
-    else if (op == DEL_COMMAND)
-    {
-        m_appVnetRouteTunnelTable.del(vnetRouteTunnelName);
-        SWSS_LOG_INFO("Delete vnet route tunnel %s", vnetRouteTunnelName.c_str());
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown command : %s", op.c_str());
-        return false;
-    }
-
-    return true;
-}
-
-bool VNetCfgRouteOrch::doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const string & op)
-{
-    SWSS_LOG_ENTER();
-
-    string vnetRouteName = kfvKey(t);
-    replace(vnetRouteName.begin(), vnetRouteName.end(), config_db_key_delimiter, delimiter);
-    if (op == SET_COMMAND)
-    {
-        m_appVnetRouteTable.set(vnetRouteName, kfvFieldsValues(t));
-        SWSS_LOG_INFO("Create vnet route %s", vnetRouteName.c_str());
-    }
-    else if (op == DEL_COMMAND)
-    {
-        m_appVnetRouteTable.del(vnetRouteName);
-        SWSS_LOG_INFO("Delete vnet route %s", vnetRouteName.c_str());
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown command : %s", op.c_str());
-        return false;
-    }
-
-    return true;
 }
 
 MonitorOrch::MonitorOrch(DBConnector *db, string tableName):

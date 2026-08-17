@@ -295,11 +295,6 @@ bool OrchDaemon::init()
             APP_VNET_RT_TUNNEL_TABLE_NAME
     };
 
-    vector<string> cfg_vnet_tables = {
-            CFG_VNET_RT_TABLE_NAME,
-            CFG_VNET_RT_TUNNEL_TABLE_NAME
-    };
-
     VNetOrch *vnet_orch;
     vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
 

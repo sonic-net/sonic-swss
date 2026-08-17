@@ -10,7 +10,7 @@ from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 TUNNEL = "Tunnel1"
-VNET = "Vnet1"
+VNET   = "Vnet1"
 
 
 def create_entry(tbl, key, pairs):
@@ -82,7 +82,7 @@ def vnetmgr_env(dvs):
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
-    delete_entry_pst(app_db, "SWITCH_TABLE", "switch")
+    delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
 
     yield cfg_db, app_db
 
@@ -94,7 +94,7 @@ def vnetmgr_env(dvs):
         delete_entry_tbl(cfg_db, "VNET", key)
     for key in swsscommon.Table(cfg_db, "VXLAN_TUNNEL").getKeys():
         delete_entry_tbl(cfg_db, "VXLAN_TUNNEL", key)
-    delete_entry_pst(app_db, "SWITCH_TABLE", "switch")
+    delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
     time.sleep(2)
 
 
@@ -186,6 +186,8 @@ class TestVnetMgr(object):
         assert fv_map.get("endpoint") == endpoint
         assert fv_map.get("vni") == route_vni
         assert fv_map.get("mac_address") == dst_mac
+        assert "install_on_kernel" not in fv_map, \
+            "install_on_kernel must be stripped before write to APP_DB"
 
         delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
 
@@ -282,7 +284,7 @@ class TestVnetMgr(object):
             [("nexthop", nexthop), ("ifname", ifname)],
         )
 
-        app_rt = swsscommon.Table(app_db, "VNET_ROUTE_TABLE")
+        app_rt = swsscommon.Table(app_db, "_VNET_ROUTE_TABLE")
 
         def _app_route_present():
             keys = app_rt.getKeys()
@@ -291,10 +293,10 @@ class TestVnetMgr(object):
         wait_for_result(
             _app_route_present,
             polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not created",
+            failure_message=f"APP_DB _VNET_ROUTE_TABLE row {app_key} not created by vnetmgrd",
         )
         ok, fvs = app_rt.get(app_key)
-        assert ok, f"APP_DB VNET_ROUTE_TABLE {app_key} vanished before read"
+        assert ok, f"APP_DB _VNET_ROUTE_TABLE {app_key} vanished before read"
         fv_map = dict(fvs)
         assert fv_map.get("nexthop") == nexthop
         assert fv_map.get("ifname") == ifname
@@ -308,14 +310,14 @@ class TestVnetMgr(object):
         wait_for_result(
             _app_route_gone,
             polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not deleted",
+            failure_message=f"APP_DB _VNET_ROUTE_TABLE row {app_key} not deleted by vnetmgrd",
         )
 
     def test_install_on_kernel_uses_vxlan_sport_override(self, dvs, vnetmgr_env):
         # APP_SWITCH_TABLE:switch|vxlan_sport override must appear as dstport on the Vxlan dev.
         cfg_db, app_db = vnetmgr_env
         override_port = "13579"
-        create_entry_pst(app_db, "SWITCH_TABLE", ':', "switch",
+        create_entry_tbl(app_db, "SWITCH_TABLE", ':', "switch",
                          [("vxlan_sport", override_port)])
 
         tunnel     = TUNNEL
