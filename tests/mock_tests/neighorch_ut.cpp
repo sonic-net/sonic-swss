@@ -269,7 +269,7 @@ namespace neighorch_test
         SetVoqInbandPortReady();
 
         auto consumer = CreateVoqSystemNeighConsumer();
-        string local_asic_alias = gMyHostName + "|" + gMyAsicName + "|Ethernet999";
+        string local_asic_alias = gMyHostName + "|asic0|Ethernet999";
         AddVoqSystemNeighTask(*consumer, local_asic_alias);
 
         gNeighOrch->doVoqSystemNeighTask(*consumer);

@@ -9,6 +9,8 @@
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
 
+#include <boost/algorithm/string.hpp>
+
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
@@ -2262,9 +2264,13 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
             else
             {
                 std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                std::string lower_port_asic = port_asic;
+                std::string lower_my_asic = gMyAsicName;
+                boost::algorithm::to_lower(lower_port_asic);
+                boost::algorithm::to_lower(lower_my_asic);
                 SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
                                alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
-                is_local_by_host_asic = (port_asic == gMyAsicName);
+                is_local_by_host_asic = (lower_port_asic == lower_my_asic);
             }
         }
         bool is_local_intf = gIntfsOrch->isLocalSystemPortIntf(alias);

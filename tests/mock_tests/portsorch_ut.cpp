@@ -4799,8 +4799,10 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, LagMemberFromDifferentAsicOnSameHost)
     {
         string savedSwitchType = gMySwitchType;
+        string savedAsicName = gMyAsicName;
         bool savedMultiAsicVoq = gMultiAsicVoq;
         gMySwitchType = "voq";
+        gMyAsicName = "Asic0";
         gMultiAsicVoq = true;
 
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -4835,6 +4837,7 @@ namespace portsorch_test
         ASSERT_FALSE(ts.empty());
 
         gMySwitchType = savedSwitchType;
+        gMyAsicName = savedAsicName;
         gMultiAsicVoq = savedMultiAsicVoq;
     }
 
@@ -4846,8 +4849,10 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, LagMemberFromSameAsicOnSameHost)
     {
         string savedSwitchType = gMySwitchType;
+        string savedAsicName = gMyAsicName;
         bool savedMultiAsicVoq = gMultiAsicVoq;
         gMySwitchType = "voq";
+        gMyAsicName = "Asic0";
         gMultiAsicVoq = true;
 
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -4864,7 +4869,7 @@ namespace portsorch_test
         portTable.set("PortInitDone", { { } });
 
         // LAG member from same hostname AND same ASIC (Asic0 matches local gMyAsicName)
-        string localAsicLag = gMyHostName + "|" + gMyAsicName + "|PortChannel999";
+        string localAsicLag = gMyHostName + "|asic0|PortChannel999";
         lagMemberTable.set(
             localAsicLag + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
             { {"status", "enabled"} });
@@ -4882,6 +4887,7 @@ namespace portsorch_test
         ASSERT_TRUE(ts.empty());
 
         gMySwitchType = savedSwitchType;
+        gMyAsicName = savedAsicName;
         gMultiAsicVoq = savedMultiAsicVoq;
     }
 
