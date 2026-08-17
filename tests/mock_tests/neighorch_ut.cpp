@@ -51,6 +51,35 @@ namespace neighorch_test
         }
     };
 
+    struct PortListGuard
+    {
+        string alias;
+        bool port_exists;
+        Port port;
+
+        explicit PortListGuard(const string &alias) : alias(alias)
+        {
+            auto port_it = gPortsOrch->m_portList.find(alias);
+            port_exists = (port_it != gPortsOrch->m_portList.end());
+            if (port_exists)
+            {
+                port = port_it->second;
+            }
+        }
+
+        ~PortListGuard()
+        {
+            if (port_exists)
+            {
+                gPortsOrch->m_portList[alias] = port;
+            }
+            else
+            {
+                gPortsOrch->m_portList.erase(alias);
+            }
+        }
+    };
+
     class NeighOrchTest : public MockOrchTest
     {
     protected:
@@ -97,6 +126,17 @@ namespace neighorch_test
             inband_port.m_type = Port::VLAN;
             gPortsOrch->m_portList[inband_alias] = inband_port;
             gPortsOrch->m_inbandPortName = inband_alias;
+        }
+
+        void AddRemoteSystemPort(const string &alias)
+        {
+            Port remote_system_port;
+            remote_system_port.m_alias = alias;
+            remote_system_port.m_type = Port::SYSTEM;
+            remote_system_port.m_rif_id = SAI_NULL_OBJECT_ID;
+            remote_system_port.m_system_port_info.alias = alias;
+            remote_system_port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+            gPortsOrch->m_portList[alias] = remote_system_port;
         }
 
         void ApplyInitialConfigs()
@@ -250,6 +290,8 @@ namespace neighorch_test
 
         auto consumer = CreateVoqSystemNeighConsumer();
         string remote_asic_alias = gMyHostName + "|Asic1|Ethernet999";
+        PortListGuard port_guard(remote_asic_alias);
+        AddRemoteSystemPort(remote_asic_alias);
         AddVoqSystemNeighTask(*consumer, remote_asic_alias);
 
         gNeighOrch->doVoqSystemNeighTask(*consumer);

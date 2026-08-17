@@ -53,6 +53,20 @@ namespace portsorch_test
     // SAI default ports
     std::map<std::string, std::vector<swss::FieldValueTuple>> defaultPortList;
 
+    struct VoqGlobalsGuard
+    {
+        string switch_type = gMySwitchType;
+        string asic_name = gMyAsicName;
+        bool multi_asic_voq = gMultiAsicVoq;
+
+        ~VoqGlobalsGuard()
+        {
+            gMySwitchType = switch_type;
+            gMyAsicName = asic_name;
+            gMultiAsicVoq = multi_asic_voq;
+        }
+    };
+
     sai_port_api_t ut_sai_port_api;
     sai_port_api_t *pold_sai_port_api;
     sai_switch_api_t ut_sai_switch_api;
@@ -4798,9 +4812,7 @@ namespace portsorch_test
      */
     TEST_F(PortsOrchTest, LagMemberFromDifferentAsicOnSameHost)
     {
-        string savedSwitchType = gMySwitchType;
-        string savedAsicName = gMyAsicName;
-        bool savedMultiAsicVoq = gMultiAsicVoq;
+        VoqGlobalsGuard guard;
         gMySwitchType = "voq";
         gMyAsicName = "Asic0";
         gMultiAsicVoq = true;
@@ -4835,10 +4847,6 @@ namespace portsorch_test
         auto consumer = static_cast<Consumer*>(exec);
         consumer->dumpPendingTasks(ts);
         ASSERT_FALSE(ts.empty());
-
-        gMySwitchType = savedSwitchType;
-        gMyAsicName = savedAsicName;
-        gMultiAsicVoq = savedMultiAsicVoq;
     }
 
     /* Test that a LAG member entry from the same ASIC on the same host IS erased
@@ -4848,9 +4856,7 @@ namespace portsorch_test
      */
     TEST_F(PortsOrchTest, LagMemberFromSameAsicOnSameHost)
     {
-        string savedSwitchType = gMySwitchType;
-        string savedAsicName = gMyAsicName;
-        bool savedMultiAsicVoq = gMultiAsicVoq;
+        VoqGlobalsGuard guard;
         gMySwitchType = "voq";
         gMyAsicName = "Asic0";
         gMultiAsicVoq = true;
@@ -4885,10 +4891,6 @@ namespace portsorch_test
         auto consumer = static_cast<Consumer*>(exec);
         consumer->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
-
-        gMySwitchType = savedSwitchType;
-        gMyAsicName = savedAsicName;
-        gMultiAsicVoq = savedMultiAsicVoq;
     }
 
     /* This test checks that a LAG member validation happens on orchagent level
