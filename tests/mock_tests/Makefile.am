@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_vnetmgrd tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_vnetmgrd tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -425,3 +425,19 @@ tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
         -lswsscommon -ldl -lhiredis -lgtest -lgtest_main -lpthread -lteam -lteamdctl -lnl-route-3
 
 LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py
+
+## vnetmgrd unit tests
+
+tests_vnetmgrd_SOURCES = vnetmgrd/vnetmgr_ut.cpp \
+                         $(top_srcdir)/cfgmgr/vnetmgr.cpp \
+                         $(top_srcdir)/lib/recorder.cpp \
+                         $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/request_parser.cpp \
+                         fake_response_publisher.cpp \
+                         common/mock_shell_command.cpp
+
+tests_vnetmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_vnetmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_vnetmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_vnetmgrd_INCLUDES)
+tests_vnetmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main

@@ -1,0 +1,329 @@
+#include "gtest/gtest.h"
+#include <string>
+#include <vector>
+#include <algorithm>
+#include "schema.h"
+#include "warm_restart.h"
+
+#define private public
+#include "vnetmgr.h"
+#undef private
+
+extern int (*callback)(const std::string &cmd, std::string &stdout);
+extern std::vector<std::string> mockCallArgs;
+
+namespace vnetmgr_ut
+{
+
+using namespace swss;
+
+static bool g_fail_link_add = false;
+static bool g_fail_link_set_vrf = false;
+static bool g_fail_link_set_up = false;
+static bool g_fail_route_add = false;
+static bool g_fail_neigh_add = false;
+
+static int vnet_cb(const std::string &cmd, std::string &stdout)
+{
+    mockCallArgs.push_back(cmd);
+    if (cmd.find("link show type vxlan") != std::string::npos)
+    {
+        stdout = "";
+        return 0;
+    }
+    if (g_fail_link_add && cmd.find("link add ") != std::string::npos)
+    {
+        return 1;
+    }
+    if (g_fail_link_set_vrf && cmd.find("link set dev ") != std::string::npos
+        && cmd.find(" vrf ") != std::string::npos)
+    {
+        return 1;
+    }
+    if (g_fail_link_set_up && cmd.find("link set dev ") != std::string::npos
+        && cmd.find(" up") != std::string::npos
+        && cmd.find(" vrf ") == std::string::npos)
+    {
+        return 1;
+    }
+    if (g_fail_route_add && cmd.find("route add ") != std::string::npos)
+    {
+        return 1;
+    }
+    if (g_fail_neigh_add && cmd.find("neigh add ") != std::string::npos)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+static bool cmdWasIssued(const std::string &needle)
+{
+    for (const auto &c : mockCallArgs)
+    {
+        if (c.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+static KeyOpFieldsValuesTuple makeTuple(const std::string &key,
+                                        const std::string &op,
+                                        const std::vector<FieldValueTuple> &fvs)
+{
+    return KeyOpFieldsValuesTuple{key, op, fvs};
+}
+
+struct VNetMgrTest : public ::testing::Test
+{
+    std::shared_ptr<swss::DBConnector> m_cfg_db;
+    std::shared_ptr<swss::DBConnector> m_app_db;
+    std::vector<std::string> m_tables;
+
+    void SetUp() override
+    {
+        m_cfg_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
+        m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        m_cfg_db->flushdb();
+        m_app_db->flushdb();
+        swss::WarmStart::initialize("vnetmgrd", "swss");
+        m_tables = {};
+        mockCallArgs.clear();
+        callback = vnet_cb;
+        g_fail_link_add = false;
+        g_fail_link_set_vrf = false;
+        g_fail_link_set_up = false;
+        g_fail_route_add = false;
+        g_fail_neigh_add = false;
+    }
+
+    void TearDown() override
+    {
+        callback = nullptr;
+    }
+};
+
+static void addBaseTunnelAndVnet(VNetMgr &mgr,
+                               const std::string &tunnel = "tunnel0",
+                               const std::string &tunnelSrcIp = "10.0.0.1",
+                               const std::string &vnet = "Vnet1",
+                               const std::string &vni = "2000",
+                               const std::string &srcMac = "aa:bb:cc:dd:ee:ff")
+{
+    auto tun = KeyOpFieldsValuesTuple{tunnel, SET_COMMAND,
+        {{"src_ip", tunnelSrcIp}}};
+    mgr.doVxlanTunnelCreateTask(tun);
+    auto v = KeyOpFieldsValuesTuple{vnet, SET_COMMAND,
+        {{"vxlan_tunnel", tunnel}, {"vni", vni}, {"src_mac", srcMac}}};
+    mgr.doVnetCreateTask(v);
+}
+
+TEST_F(VNetMgrTest, VxlanTunnelCreateThenDelete)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto t = makeTuple("tunnel0", SET_COMMAND, {{"src_ip", "10.0.0.1"}});
+    ASSERT_TRUE(mgr.doVxlanTunnelCreateTask(t));
+    ASSERT_NE(mgr.m_vxlanTunnelCache.find("tunnel0"), mgr.m_vxlanTunnelCache.end());
+    ASSERT_EQ(mgr.m_vxlanTunnelCache["tunnel0"].m_sourceIp, "10.0.0.1");
+    auto d = makeTuple("tunnel0", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVxlanTunnelDeleteTask(d));
+    ASSERT_EQ(mgr.m_vxlanTunnelCache.find("tunnel0"), mgr.m_vxlanTunnelCache.end());
+    ASSERT_TRUE(mgr.doVxlanTunnelDeleteTask(d));
+}
+
+TEST_F(VNetMgrTest, VnetCreateWaitsForTunnel)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto t = makeTuple("Vnet1", SET_COMMAND,
+                       {{"vxlan_tunnel", "tunnel0"}, {"vni", "2000"},
+                        {"src_mac", "00:11:22:33:44:55"}});
+    ASSERT_FALSE(mgr.doVnetCreateTask(t));
+    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+}
+
+TEST_F(VNetMgrTest, VnetCreateIncompleteFieldsAreIgnored)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto t = makeTuple("Vnet1", SET_COMMAND, {{"vxlan_tunnel", "tunnel0"}});
+    ASSERT_TRUE(mgr.doVnetCreateTask(t));
+    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+    auto t2 = makeTuple("Vnet1", SET_COMMAND, {{"vni", "2000"}});
+    ASSERT_TRUE(mgr.doVnetCreateTask(t2));
+    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+}
+
+TEST_F(VNetMgrTest, VnetCreate)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto tun = makeTuple("tunnel0", SET_COMMAND, {{"src_ip", "10.0.0.1"}});
+    ASSERT_TRUE(mgr.doVxlanTunnelCreateTask(tun));
+    auto vnet = makeTuple("Vnet1", SET_COMMAND,
+                          {{"vxlan_tunnel", "tunnel0"}, {"vni", "2000"},
+                           {"src_mac", "aa:bb:cc:dd:ee:ff"}});
+    ASSERT_TRUE(mgr.doVnetCreateTask(vnet));
+    ASSERT_NE(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+    ASSERT_EQ(mgr.m_vnetCache["Vnet1"].m_sourceIp, "10.0.0.1");
+    ASSERT_EQ(mgr.m_vnetCache["Vnet1"].m_vni, "2000");
+    ASSERT_NE(mgr.m_vxlanNetDevices.find("Vxlan2000"), mgr.m_vxlanNetDevices.end());
+    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
+    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+    ASSERT_EQ(mgr.m_vxlanNetDevices.find("Vxlan2000"), mgr.m_vxlanNetDevices.end());
+    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelCreateBeforeVnetCreation)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_EQ(mgr.m_kernelRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_kernelRouteTunnelCache.end());
+}
+
+TEST_F(VNetMgrTest, RouteTunnelCreateVniMatchesVnetIsSkipped)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "2000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_EQ(mgr.m_kernelRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_kernelRouteTunnelCache.end());
+}
+
+TEST_F(VNetMgrTest, RouteTunnelCreateHappyPathIssuesIpCommands)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_NE(mgr.m_kernelRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_kernelRouteTunnelCache.end());
+    ASSERT_TRUE(cmdWasIssued("link add \"Vxlan3000\""));
+    ASSERT_TRUE(cmdWasIssued("link set dev \"Vxlan3000\" vrf \"Vnet1\""));
+    ASSERT_TRUE(cmdWasIssued("link set dev \"Vxlan3000\" up"));
+    ASSERT_TRUE(cmdWasIssued("route add \"20.0.0.0/24\" dev \"Vxlan3000\" vrf \"Vnet1\""));
+    ASSERT_FALSE(cmdWasIssued("neigh add"));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelHostRouteAddsStaticNeigh)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|20.0.0.5/32", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_TRUE(cmdWasIssued("neigh add \"20.0.0.5\" lladdr \"22:33:44:55:66:77\" dev \"Vxlan3000\""));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelIpv6HostRouteAddsStaticNeigh)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|2001:db8::1/128", SET_COMMAND,
+                        {{"endpoint", "2001:db8:1::1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_TRUE(cmdWasIssued("route add \"2001:db8::1/128\""));
+    ASSERT_TRUE(cmdWasIssued("neigh add \"2001:db8::1\""));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelIpv6PrefixNoNeigh)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|2001:db8::/64", SET_COMMAND,
+                        {{"endpoint", "2001:db8:1::1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_TRUE(cmdWasIssued("route add \"2001:db8::/64\""));
+    ASSERT_FALSE(cmdWasIssued("neigh add"));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelInstallOnKernelFalseSkipsIpCommands)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "false"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_FALSE(cmdWasIssued("link add"));
+    ASSERT_FALSE(cmdWasIssued("route add"));
+    ASSERT_NE(mgr.m_vnetRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_vnetRouteTunnelCache.end());
+}
+
+TEST_F(VNetMgrTest, RouteTunnelDeleteRemovesKernelRoute)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "3000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    mockCallArgs.clear();
+    auto d = makeTuple("Vnet1|20.0.0.0/24", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+    ASSERT_TRUE(cmdWasIssued("link del \"Vxlan3000\""));
+    ASSERT_EQ(mgr.m_vnetRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_vnetRouteTunnelCache.end());
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+}
+
+TEST_F(VNetMgrTest, ExecFailurePropagatesForEachIpCommand)
+{
+    struct Case
+    {
+        const char *name;
+        bool *flag;
+        const char *prefix;
+    };
+    const std::vector<Case> cases = {
+        {"link add",         &g_fail_link_add,     "Vnet1|20.0.0.0/24"},
+        {"link set vrf",     &g_fail_link_set_vrf, "Vnet1|20.0.0.0/24"},
+        {"link set up",      &g_fail_link_set_up,  "Vnet1|20.0.0.0/24"},
+        {"route add",        &g_fail_route_add,    "Vnet1|20.0.0.0/24"},
+        {"neigh add",        &g_fail_neigh_add,    "Vnet1|20.0.0.5/32"},
+    };
+    for (const auto &c : cases)
+    {
+        SCOPED_TRACE(c.name);
+        VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+        addBaseTunnelAndVnet(mgr);
+        *c.flag = true;
+        auto rt = makeTuple(c.prefix, SET_COMMAND,
+                            {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                             {"vni", "3000"}, {"install_on_kernel", "true"}});
+        ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(rt));
+        ASSERT_EQ(mgr.m_kernelRouteTunnelCache.find(c.prefix),
+                  mgr.m_kernelRouteTunnelCache.end());
+        *c.flag = false;
+        m_cfg_db->flushdb();
+        m_app_db->flushdb();
+    }
+}
+
+TEST_F(VNetMgrTest, LocalVnetRouteSetAndDelete)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    auto s = makeTuple("Vnet1|30.0.0.0/24", SET_COMMAND,
+                       {{"nexthop", "1.2.3.4"}, {"ifname", "Ethernet0"}});
+    ASSERT_TRUE(mgr.doVnetRouteTask(s, SET_COMMAND));
+    auto d = makeTuple("Vnet1|30.0.0.0/24", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
+    ASSERT_FALSE(mgr.doVnetRouteTask(s, "UNKNOWN"));
+}
+
+}  // namespace vnetmgr_ut
