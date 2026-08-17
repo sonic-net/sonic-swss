@@ -825,29 +825,15 @@ bool OrchDaemon::init()
             }
         }
 
-        // Check if SKU supports PFC hardware watchdog
-        bool pfcHwWdSupportedSku = gSwitchOrch->isHwPfcWdSupportedSku();
-
-        if (pfcHwWdSupportedSku)
+        // Complete hardware recovery needs deadlock detection and recovery in
+        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        if (gSwitchOrch->checkPfcDldrEnable())
         {
-            SWSS_LOG_NOTICE("HWSKU '%s' supports PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("HWSKU '%s' does not support PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
+            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
         }
 
-        if (pfcDlrInit && pfcHwWdSupportedSku)
-        {
-            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
-            m_orchList.push_back(new PfcWdHwOrch(
-                        m_configDb,
-                        pfc_wd_tables,
-                        portStatIds,
-                        queueStatIds,
-                        queueAttrIds));
-        }
-        else if(pfcDlrInit)
+        if(pfcDlrInit)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
