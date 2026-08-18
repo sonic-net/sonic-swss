@@ -679,6 +679,14 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, u
  */
 void FdbSync::macRefreshStateDB(int vlan, string kmac, uint8_t protocol)
 {
+    /* Reached from onMsgNbr() ahead of its own fpm check: in fpm mode the kernel
+     * bridge is not the transport, so refreshing it there is both useless and a
+     * process spawn per MAC. */
+    if (m_fpmMacSync)
+    {
+        return;
+    }
+
     string key = "Vlan" + to_string(vlan) + ":" + kmac;
     char *type;
     string port_name = "";
