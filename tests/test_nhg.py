@@ -1409,6 +1409,30 @@ class TestNextHopGroup(TestNextHopGroupBase):
         mainline_labeled_nhs_test()
         routeorch_nhgorch_interop_test()
 
+    def test_nhgorch_reentrant_sync_no_duplicate_member(self, dvs, testlog):
+        # Verify a NHG with labeled (MPLS) NHs -- whose SAI next hop creation
+        # reenters syncMembers() for the same group -- ends up with exactly
+        # one SAI NHG member per NH (no duplicates/leaks), and that the
+        # group can still be cleanly removed afterwards.
+        self.init_test(dvs, 2)
+
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ('mpls_nh', 'push1,push3'),
+                                        ('ifname', 'Ethernet0,Ethernet4')])
+        self.nhg_ps.set('group1', fvs)
+
+        # Exactly 2 NHG members should exist, one per next hop.
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 2)
+        assert len(self.get_nhgm_ids('group1')) == 2
+
+        # The group and its members should be fully removable.
+        self.nhg_ps._del('group1')
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
+
     def test_nhgorch_excp_group_cases(self, dvs, testlog):
         # Test scenario:
         # - remove a NHG that does not exist and assert the number of NHGs in ASIC DB remains the same
