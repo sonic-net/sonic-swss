@@ -33,7 +33,6 @@ using namespace swss;
 #endif
 
 #define VXLAN_IF_NAME_PREFIX    "Brvxlan"
-#define VXLAN_NAME_PREFIX       "Vxlan"
 #define VNET_PREFIX             "Vnet"
 #define VRF_PREFIX              "Vrf"
 #define MGMT_VRF_PREFIX         "mgmt"
@@ -3293,14 +3292,6 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     /* Regular VNET route */
     else
     {
-        // Vxlan interface and route is created by vnetmgr for vxlan tunnel routes. If kernel sends the same route, ignore it since
-        // it is already processed by vnetmgr.
-        if ((nexthops.empty() || nexthops == "0.0.0.0" || nexthops == "::") && ifnames.find(VXLAN_NAME_PREFIX) == 0)
-        {
-            SWSS_LOG_INFO("Nexthop list is empty for VXLAN tunnel route %s, NH= %s", vnet_dip.c_str(), nexthops.c_str());
-            return;
-        }
-
         VnetRouteTableFieldValueTupleWrapper fvw{vnet_dip, isNbZmqEnabled()};
         fvw.ifname = ifnames;
 
