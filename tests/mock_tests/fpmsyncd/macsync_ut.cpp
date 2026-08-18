@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <net/if.h>
+
 #include <cstring>
 #include <vector>
 
@@ -625,6 +627,49 @@ TEST_F(MacSyncTest, LocalStaticMacIsSticky)
  * to have delivered: zebra can connect before the select loop has run, and a
  * replay of nothing tells zebra to withdraw every local MAC.
  */
+/*
+ * A MAC on an Ethernet Segment we also hold locally is reachable through our own
+ * access port, so zebra sends it against that port with neither a VTEP nor a
+ * nexthop group. It must be programmed against the port, not discarded as the
+ * bridge-side duplicate, and FdbOrch disables ageing on it.
+ */
+TEST_F(MacSyncTest, MacOnLocalEthernetSegmentProgrammedAgainstItsPort)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "ifname"), "lo");
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "");
+    EXPECT_EQ(fieldValue(values, "type"), "static");
+
+    cfgEs.del("lo");
+}
+
+/* The same message on a port with no Ethernet Segment is the bridge-side copy of
+ * a remote MAC, and is still discarded. */
+TEST_F(MacSyncTest, MacOnNonEsPortWithoutVtepIsSkipped)
+{
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
 /*
  * A MAC behind an Ethernet Segment reaches several VTEPs at once, so zebra
  * resolves it to an L2 nexthop group and sends NDA_NH_ID with no NDA_DST. It
