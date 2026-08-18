@@ -171,7 +171,7 @@ bool PortsOrch::unbindRemoveAclTableGroup(sai_object_id_t port_oid, sai_object_i
 }
 
 bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid,
-                             acl_stage_type_t acl_stage)
+                             acl_stage_type_t acl_stage, sai_uint32_t group_member_priority)
 {
     return true;
 }
