@@ -2368,6 +2368,30 @@ TEST_F(FdbSyncdEvpnMhTest, AddLocalMacNotProgrammedIntoKernelInFpmMode)
     EXPECT_EQ(countBridgeFdbCmds(), 0u);
 }
 
+/* onMsgNbr() reaches macRefreshStateDB() well before its own fpm check, so the
+ * guard has to sit in the refresh itself. Without it, fpm mode still spawns a
+ * bridge process per local MAC to refresh a kernel FDB it no longer uses. */
+TEST_F(FdbSyncdEvpnMhTest, MacRefreshIssuesNoBridgeCommandInFpmMode)
+{
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:23";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet8";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    mockCallArgs.clear();
+    m_mockFdbSync.macRefreshStateDB(100, "aa:bb:cc:dd:ee:23", RTPROT_UNSPEC);
+    EXPECT_GT(countBridgeFdbCmds(), 0u);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.macRefreshStateDB(100, "aa:bb:cc:dd:ee:23", RTPROT_UNSPEC);
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
+
 /* fpmsyncd carries ES-backed MACs as a nexthop group, so an Ethernet Segment
  * does not stop fpm mode. fdbsyncd must therefore stand down in that case too,
  * rather than both daemons driving the kernel. */
