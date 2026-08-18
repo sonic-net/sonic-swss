@@ -76,7 +76,7 @@ def _neigh_on(dvs, ifname, ip=None):
 @pytest.fixture
 def vnetmgr_env(dvs):
     """
-    Provide clean CONFIG_DB / APP_DB state around each test, and tear down
+    Cleanup CONFIG_DB / APP_DB state around each test, and tear down
     any VNET / VXLAN_TUNNEL / VNET_ROUTE_TUNNEL rows left behind.
     """
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -117,7 +117,7 @@ class TestVnetMgr(object):
         assert out.strip(), "vnetmgrd is not running inside the DVS"
 
     def test_install_on_kernel_prefix_route_full_lifecycle(self, dvs, vnetmgr_env):
-        # Subnet route: Vxlan netdev + VRF route created (no neigh); all cleaned on delete.
+        # Subnet route: Vxlan netdev + VRF route created (no neigh)
         cfg_db, _ = vnetmgr_env
 
         tunnel     = TUNNEL
@@ -284,7 +284,7 @@ class TestVnetMgr(object):
             [("nexthop", nexthop), ("ifname", ifname)],
         )
 
-        app_rt = swsscommon.Table(app_db, "_VNET_ROUTE_TABLE")
+        app_rt = swsscommon.Table(app_db, "VNET_ROUTE_TABLE")
 
         def _app_route_present():
             keys = app_rt.getKeys()
@@ -293,10 +293,10 @@ class TestVnetMgr(object):
         wait_for_result(
             _app_route_present,
             polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB _VNET_ROUTE_TABLE row {app_key} not created by vnetmgrd",
+            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not created by vnetmgrd",
         )
         ok, fvs = app_rt.get(app_key)
-        assert ok, f"APP_DB _VNET_ROUTE_TABLE {app_key} vanished before read"
+        assert ok, f"APP_DB VNET_ROUTE_TABLE {app_key} vanished before read"
         fv_map = dict(fvs)
         assert fv_map.get("nexthop") == nexthop
         assert fv_map.get("ifname") == ifname
@@ -310,7 +310,7 @@ class TestVnetMgr(object):
         wait_for_result(
             _app_route_gone,
             polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB _VNET_ROUTE_TABLE row {app_key} not deleted by vnetmgrd",
+            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not deleted by vnetmgrd",
         )
 
     def test_install_on_kernel_uses_vxlan_sport_override(self, dvs, vnetmgr_env):
@@ -359,6 +359,7 @@ class TestVnetMgr(object):
             polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
             failure_message=f"{dev} was not deleted on VNET_ROUTE_TUNNEL delete",
         )
+
 
 
 def test_nonflaky_dummy():
