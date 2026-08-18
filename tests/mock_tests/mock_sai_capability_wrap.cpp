@@ -53,6 +53,7 @@ namespace
             CollectorCreateNotImplemented,
             SwitchNotifySetNotImplemented,
             AllSupported,
+            AttributeCapabilitySuccessUnsupported,
         };
 
         thread_local Hook g_hook = Hook::None;
@@ -193,6 +194,17 @@ extern "C"
             return SAI_STATUS_SUCCESS;
         }
 
+        if (hftel::g_hook == hftel::Hook::AttributeCapabilitySuccessUnsupported)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+            // Query succeeds but the attribute is not implemented (create_implemented false).
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
+            return SAI_STATUS_SUCCESS;
+        }
+
         if (hftel::g_hook == hftel::Hook::AttributeCapabilityQueryFail)
         {
             return SAI_STATUS_NOT_SUPPORTED;
@@ -327,6 +339,11 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookAllSupported()
     {
         hftel::g_hook = hftel::Hook::AllSupported;
+    }
+
+    void setSaiHookAttributeCapabilitySuccessUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::AttributeCapabilitySuccessUnsupported;
     }
 
     HFTelSaiHookGuard::HFTelSaiHookGuard(void (*apply)())
