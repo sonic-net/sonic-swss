@@ -58,11 +58,13 @@ public:
         std::string sock;
         // wpa_supplicant process id
         pid_t       wpa_supplicant_pid;
-        // Fallback key material currently applied to wpa_supplicant, in the
-        // encoded form held in CONFIG_DB. A hot update diffs against this rather
-        // than against the previous profile, so a partially applied update is
-        // retried against what the port actually has. Empty when the port has no
-        // fallback CA.
+        // Key material currently applied to wpa_supplicant, in the encoded form
+        // held in CONFIG_DB. A hot update diffs against this rather than against
+        // the previous profile, so a partially applied update is retried against
+        // what the port actually has. The fallback pair is empty when the port
+        // has no fallback CA.
+        std::string primary_cak;
+        std::string primary_ckn;
         std::string fallback_cak;
         std::string fallback_ckn;
     };

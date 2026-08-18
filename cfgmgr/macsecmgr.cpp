@@ -611,6 +611,8 @@ task_process_status MACsecMgr::enableMACsec(
         return disableMACsec(port_name, port_attr);
     }
     // Record what is now programmed on the port; hot updates diff against it.
+    session.primary_cak = profile.primary_cak;
+    session.primary_ckn = profile.primary_ckn;
     session.fallback_cak = profile.fallback_cak;
     session.fallback_ckn = profile.fallback_ckn;
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
@@ -1162,6 +1164,70 @@ bool MACsecMgr::hotUpdateProfile(
     SWSS_LOG_ENTER();
 
     const std::string & sock = session.sock;
+
+    // Rotate the primary CA. wpa_supplicant falls back to the standby CA for as
+    // long as the port has no live primary, so the old primary is retired before
+    // the new one is added and no third CA is ever staged.
+    if (!boost::iequals(session.primary_ckn, profile.primary_ckn))
+    {
+        if (session.fallback_ckn.empty())
+        {
+            SWSS_LOG_ERROR(
+                "Refusing to rotate the primary MACsec CAK on port '%s': no "
+                "fallback CA is established to carry traffic during the rotation",
+                port_name.c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE(
+            "Rotating the primary MACsec CAK on port '%s' (CKN '%s' -> '%s')",
+            port_name.c_str(),
+            session.primary_ckn.c_str(),
+            profile.primary_ckn.c_str());
+
+        // Stop before touching the fallback below: leaving the old primary in
+        // place and then retiring the standby would strand the port.
+        if (!delMKA(sock, port_name, session.primary_ckn))
+        {
+            return false;
+        }
+        session.primary_ckn.clear();
+        session.primary_cak.clear();
+
+        if (!addMKA(
+                sock,
+                port_name,
+                profile.primary_ckn,
+                decodeKey(profile.primary_cak, profile.cipher_suite),
+                false))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to add the new primary CKN '%s' on port '%s'; the port "
+                "is running on the fallback CA only",
+                profile.primary_ckn.c_str(),
+                port_name.c_str());
+            return false;
+        }
+        session.primary_ckn = profile.primary_ckn;
+        session.primary_cak = profile.primary_cak;
+        // The new primary may have taken over the CKN the fallback was holding,
+        // in which case the port no longer has a standby CA to reconcile below.
+        if (boost::iequals(session.fallback_ckn, profile.primary_ckn))
+        {
+            session.fallback_ckn.clear();
+            session.fallback_cak.clear();
+        }
+    }
+    else if (session.primary_cak != profile.primary_cak)
+    {
+        // A participant is keyed by CKN, so the same CKN cannot hold two CAs and
+        // there is nothing to rotate through. Leave the live CA alone; the new
+        // key is picked up from CONFIG_DB on the next wpa_supplicant restart.
+        SWSS_LOG_WARN(
+            "The primary MACsec CAK changed on port '%s' without a CKN change; "
+            "the new key applies on the next wpa_supplicant restart",
+            port_name.c_str());
+    }
 
     // Reconcile the fallback CA.
     const bool fallback_changed =
