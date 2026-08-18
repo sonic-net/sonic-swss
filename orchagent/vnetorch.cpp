@@ -46,9 +46,6 @@ extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
 extern SwitchOrch *gSwitchOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
-
-#define VXLAN_NAME_PREFIX       "Vxlan"
-
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -1902,16 +1899,6 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
-
-    auto nextHop = ip_addresses.begin()->to_string();
-    auto it_route = syncd_tunnel_routes_[vnet_name].find(nextHop);
-    if (ifname.find(VXLAN_NAME_PREFIX) == 0 && it_route != syncd_tunnel_routes_[vnet_name].end())
-    {
-        auto tunnelRoute = it_route->second;
-        map<NextHopKey, IpAddress> monitors;
-        string empty = "";
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, tunnelRoute.primary, op, empty, empty, DEFAULT_MONITOR_TIMER, DEFAULT_MONITOR_TIMER, tunnelRoute.secondary, ip_pfx, monitors);
-    }
 
     if (op == SET_COMMAND)
     {
