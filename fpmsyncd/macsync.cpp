@@ -21,6 +21,10 @@ using namespace swss;
 #define NDA_SRC_VNI 11
 #endif
 
+#ifndef NDA_NH_ID
+#define NDA_NH_ID 13
+#endif
+
 #ifndef NDA_PROTOCOL
 #define NDA_PROTOCOL 12
 #endif
@@ -608,21 +612,40 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    if (!tb[NDA_DST])
+    /* A MAC behind an Ethernet Segment reaches several VTEPs, so zebra resolves
+     * it to an L2 nexthop group and sends NDA_NH_ID with no NDA_DST. The group
+     * itself is published to L2_NEXTHOP_GROUP_TABLE by fdbsyncd, which keeps
+     * reading it from the kernel in either mac_sync_mode. */
+    string nexthopGroup;
+
+    if (tb[NDA_NH_ID])
     {
-        /* The bridge-side copy of a remote MAC; the VxLAN-side copy carries the VTEP. */
-        SWSS_LOG_INFO("MacSync: skipping inbound MAC %s without NDA_DST", key.c_str());
-        return;
+        uint32_t nhid = *(uint32_t *)RTA_DATA(tb[NDA_NH_ID]);
+        if (nhid)
+        {
+            nexthopGroup = to_string(nhid);
+        }
     }
 
     char vtep[INET6_ADDRSTRLEN] = {0};
-    size_t dstLen = RTA_PAYLOAD(tb[NDA_DST]);
-    int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
 
-    if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))
+    if (nexthopGroup.empty())
     {
-        SWSS_LOG_ERROR("MacSync: cannot parse remote VTEP for %s", key.c_str());
-        return;
+        if (!tb[NDA_DST])
+        {
+            /* The bridge-side copy of a remote MAC; the VxLAN-side copy carries the VTEP. */
+            SWSS_LOG_INFO("MacSync: skipping inbound MAC %s without NDA_DST", key.c_str());
+            return;
+        }
+
+        size_t dstLen = RTA_PAYLOAD(tb[NDA_DST]);
+        int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
+
+        if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))
+        {
+            SWSS_LOG_ERROR("MacSync: cannot parse remote VTEP for %s", key.c_str());
+            return;
+        }
     }
 
     /* zebra encodes the VNI as NDA_SRC_VNI; NDA_VNI is accepted as a fallback. */
@@ -637,7 +660,14 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
 
     std::vector<FieldValueTuple> fvVector;
-    fvVector.emplace_back("remote_vtep", vtep);
+    if (nexthopGroup.empty())
+    {
+        fvVector.emplace_back("remote_vtep", vtep);
+    }
+    else
+    {
+        fvVector.emplace_back("nexthop_group", nexthopGroup);
+    }
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
@@ -649,5 +679,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         m_remoteMacsSeen.insert(key);
     }
 
-    SWSS_LOG_INFO("MacSync: added remote MAC %s vtep %s vni %u", key.c_str(), vtep, vni);
+    string dest = nexthopGroup.empty() ? ("vtep " + string(vtep))
+                                       : ("nexthop_group " + nexthopGroup);
+    SWSS_LOG_INFO("MacSync: added remote MAC %s %s vni %u", key.c_str(), dest.c_str(), vni);
 }
