@@ -100,6 +100,7 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
+    m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
     m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
     m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_staleTimer(timespec{MAC_STALE_HOLD_SECONDS, 0})
@@ -115,6 +116,15 @@ void MacSync::readCfgFdbSyncMode()
     {
         setMacSyncMode(mode);
     }
+}
+
+/* The Ethernet Segment table is keyed by the interface the ESI is bound to, so
+ * an entry is the authority on whether this port carries one. */
+bool MacSync::isEthernetSegmentInterface(const string& ifname)
+{
+    std::vector<FieldValueTuple> values;
+
+    return m_cfgEvpnEsTable.get(ifname, values);
 }
 
 void MacSync::setMacSyncMode(const string& mode)
@@ -628,22 +638,33 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
 
     char vtep[INET6_ADDRSTRLEN] = {0};
+    string esInterface;
 
     if (nexthopGroup.empty())
     {
-        if (!tb[NDA_DST])
+        if (tb[NDA_DST])
+        {
+            size_t dstLen = RTA_PAYLOAD(tb[NDA_DST]);
+            int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
+
+            if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))
+            {
+                SWSS_LOG_ERROR("MacSync: cannot parse remote VTEP for %s", key.c_str());
+                return;
+            }
+        }
+        else if (ifname[0] && isEthernetSegmentInterface(ifname))
+        {
+            /* A MAC on an Ethernet Segment we also hold locally is reachable
+             * through our own access port, so zebra sends it against that port
+             * with neither a VTEP nor a group. FdbOrch programs it against the
+             * port with ageing disabled. */
+            esInterface = ifname;
+        }
+        else
         {
             /* The bridge-side copy of a remote MAC; the VxLAN-side copy carries the VTEP. */
             SWSS_LOG_INFO("MacSync: skipping inbound MAC %s without NDA_DST", key.c_str());
-            return;
-        }
-
-        size_t dstLen = RTA_PAYLOAD(tb[NDA_DST]);
-        int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
-
-        if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))
-        {
-            SWSS_LOG_ERROR("MacSync: cannot parse remote VTEP for %s", key.c_str());
             return;
         }
     }
@@ -660,13 +681,17 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
 
     std::vector<FieldValueTuple> fvVector;
-    if (nexthopGroup.empty())
+    if (!nexthopGroup.empty())
     {
-        fvVector.emplace_back("remote_vtep", vtep);
+        fvVector.emplace_back("nexthop_group", nexthopGroup);
+    }
+    else if (!esInterface.empty())
+    {
+        fvVector.emplace_back("ifname", esInterface);
     }
     else
     {
-        fvVector.emplace_back("nexthop_group", nexthopGroup);
+        fvVector.emplace_back("remote_vtep", vtep);
     }
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
@@ -679,7 +704,8 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         m_remoteMacsSeen.insert(key);
     }
 
-    string dest = nexthopGroup.empty() ? ("vtep " + string(vtep))
-                                       : ("nexthop_group " + nexthopGroup);
+    string dest = !nexthopGroup.empty() ? ("nexthop_group " + nexthopGroup)
+                : !esInterface.empty()  ? ("ifname " + esInterface)
+                                        : ("vtep " + string(vtep));
     SWSS_LOG_INFO("MacSync: added remote MAC %s %s vni %u", key.c_str(), dest.c_str(), vni);
 }
