@@ -117,6 +117,7 @@ public:
 
     void addVlan(MacMsg& req, uint16_t vlan) { addAttr(req, NDA_VLAN, &vlan, sizeof(vlan)); }
     void addSrcVni(MacMsg& req, uint32_t vni) { addAttr(req, NDA_SRC_VNI, &vni, sizeof(vni)); }
+    void addNhgId(MacMsg& req, uint32_t nhid) { addAttr(req, NDA_NH_ID, &nhid, sizeof(nhid)); }
 
     void addVtep(MacMsg& req, const char *ip)
     {
@@ -624,6 +625,96 @@ TEST_F(MacSyncTest, LocalStaticMacIsSticky)
  * to have delivered: zebra can connect before the select loop has run, and a
  * replay of nothing tells zebra to withdraw every local MAC.
  */
+/*
+ * A MAC behind an Ethernet Segment reaches several VTEPs at once, so zebra
+ * resolves it to an L2 nexthop group and sends NDA_NH_ID with no NDA_DST. It
+ * has to be programmed against that group rather than discarded as though it
+ * were the harmless bridge-side duplicate. fdbsyncd publishes the group itself
+ * into L2_NEXTHOP_GROUP_TABLE from the kernel in either mac_sync_mode.
+ */
+TEST_F(MacSyncTest, EsBackedRemoteMacProgrammedAgainstNexthopGroup)
+{
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    addNhgId(req, 4242);
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+    EXPECT_EQ(fieldValue(values, "vni"), std::to_string(TEST_VNI));
+}
+
+/* Zero is the "no group" sentinel, so such a MAC still needs a VTEP and is the
+ * bridge-side copy when it has none. */
+TEST_F(MacSyncTest, RemoteMacWithZeroNexthopGroupIsNotProgrammed)
+{
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    addNhgId(req, 0);
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/* An ES-backed MAC is withdrawn the same way as a VTEP-backed one. */
+TEST_F(MacSyncTest, EsBackedRemoteMacWithdrawn)
+{
+    MacMsg add;
+    buildMacMsg(add, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(add, TEST_VLAN);
+    addSrcVni(add, TEST_VNI);
+    addNhgId(add, 4242);
+    feed(add);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+
+    MacMsg del;
+    buildMacMsg(del, RTM_DELNEIGH, NUD_REACHABLE);
+    addVlan(del, TEST_VLAN);
+    addNhgId(del, 4242);
+    feed(del);
+
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/*
+ * fpm mode used to be refused outright while Ethernet Segments existed, because
+ * an ES-backed MAC was dropped for want of a VTEP. Now that such a MAC is
+ * carried as a nexthop group the two features coexist, so the mode must be
+ * accepted and the MAC still programmed.
+ */
+TEST_F(MacSyncTest, FpmModeCoexistsWithEvpnMultihoming)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("PortChannel121", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    EXPECT_TRUE(m_macSync->isFpmMode());
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    addNhgId(req, 4242);
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
+
+    cfgEs.del("PortChannel121");
+}
+
 TEST_F(MacSyncTest, ReplayLoadsLocalMacsFromStateDb)
 {
     /* Deliberately not touching m_localMacs - only STATE_DB. "lo" is used

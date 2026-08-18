@@ -2367,3 +2367,26 @@ TEST_F(FdbSyncdEvpnMhTest, AddLocalMacNotProgrammedIntoKernelInFpmMode)
     m_mockFdbSync.addLocalMac(key, "replace");
     EXPECT_EQ(countBridgeFdbCmds(), 0u);
 }
+
+/* fpmsyncd carries ES-backed MACs as a nexthop group, so an Ethernet Segment
+ * does not stop fpm mode. fdbsyncd must therefore stand down in that case too,
+ * rather than both daemons driving the kernel. */
+TEST_F(FdbSyncdEvpnMhTest, FpmModeHonouredWhileEvpnMultihomingConfigured)
+{
+    const std::string key = "Vlan100:aa:bb:cc:dd:ee:22";
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:22";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet8";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    swss::Table esTable(m_configDb.get(), "EVPN_ETHERNET_SEGMENT");
+    esTable.hset("PortChannel1", "esi", "00:11:22:33:44:55:66:77:88:99");
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.addLocalMac(key, "replace");
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
