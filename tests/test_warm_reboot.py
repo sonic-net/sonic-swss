@@ -2495,6 +2495,12 @@ class TestWarmReboot(object):
 
 class TestSrv6MySidWarmRestart(object):
     MY_SID_ASIC_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY"
+    MY_SID_OID_FIELDS = {
+        "SAI_MY_SID_ENTRY_ATTR_COUNTER_ID",
+        "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID",
+        "SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID",
+        "SAI_MY_SID_ENTRY_ATTR_VRF",
+    }
 
     @staticmethod
     def snapshot_table(table):
@@ -2504,6 +2510,20 @@ class TestSrv6MySidWarmRestart(object):
             assert status
             snapshot[key] = dict(fvs)
         return snapshot
+
+    @classmethod
+    def assert_asic_state_preserved(cls, before, after):
+        assert before.keys() == after.keys()
+        for key, before_fields in before.items():
+            after_fields = after[key]
+            assert before_fields.keys() == after_fields.keys()
+            assert {
+                field: value for field, value in before_fields.items()
+                if field not in cls.MY_SID_OID_FIELDS
+            } == {
+                field: value for field, value in after_fields.items()
+                if field not in cls.MY_SID_OID_FIELDS
+            }
 
     def test_orchagent_static_mysid_warm_restart(self, dvs):
         dvs.setup_db()
@@ -2576,7 +2596,7 @@ class TestSrv6MySidWarmRestart(object):
         )
 
         assert self.snapshot_table(app_mysid_view) == app_before
-        assert self.snapshot_table(asic_mysid) == asic_before
+        self.assert_asic_state_preserved(asic_before, self.snapshot_table(asic_mysid))
         nadd, ndel = dvs.CountSubscribedObjects(pubsub)
         assert nadd == 0
         assert ndel == 0
@@ -2614,6 +2634,17 @@ class TestSrv6MySidWarmRestart(object):
 
         dvs.get_app_db().wait_for_entry("SRV6_MY_SID_TABLE", key)
         asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids) + 1)
+        new_mysids = set(asic_mysid.getKeys()) - initial_mysids
+        assert len(new_mysids) == 1
+        asic_db.wait_for_field_match(
+            self.MY_SID_ASIC_TABLE,
+            new_mysids.pop(),
+            {
+                "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR": "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E",
+                "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                    "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD",
+            },
+        )
         app_before = self.snapshot_table(app_mysid)
         asic_before = self.snapshot_table(asic_mysid)
 

@@ -224,6 +224,21 @@ TEST_F(Srv6OrchMySidTest, MissingNeighborRetriesAndDuplicateKeepsOneReference)
     EXPECT_EQ(gNeighOrch->getNextHopRefCount(nexthop), 1);
 }
 
+TEST_F(Srv6OrchMySidTest, NeighborRetryIgnoresAliasResolutionChanges)
+{
+    const string key = "32:16:16:0:fc00:0:1:31::";
+    const string neighbor_ip = "2001:db8::31";
+
+    runAppMySidTask(key, "end.x", "", neighbor_ip);
+    auto* retry = static_cast<Orch*>(gSrv6Orch)->getRetryCache(APP_SRV6_MY_SID_TABLE_NAME);
+    ASSERT_NE(retry, nullptr);
+    EXPECT_EQ(retry->getRetryMap().count(key), 1u);
+
+    notifyNextHopAvailable(NextHopKey(IpAddress(neighbor_ip), "Ethernet0"));
+    EXPECT_EQ(static_cast<Orch*>(gSrv6Orch)->retryToSync(APP_SRV6_MY_SID_TABLE_NAME), 1u);
+    EXPECT_EQ(retry->getRetryMap().count(key), 0u);
+}
+
 TEST_F(Srv6OrchMySidTest, VrfAndActionReplacementBalancesReferences)
 {
     const string key = "32:16:16:0:fc00:0:1:4::";

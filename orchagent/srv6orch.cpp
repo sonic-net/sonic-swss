@@ -1270,9 +1270,8 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
     {
         SWSS_LOG_INFO("Neighbor ADD event: %s alias '%s', retrying pending SRv6 SIDs",
                         update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
-        NextHopKey nexthop(update.entry.ip_address.to_string(), update.entry.alias);
         notifyRetry(this, APP_SRV6_MY_SID_TABLE_NAME,
-                    make_constraint(RETRY_CST_MYSID_NEXTHOP, nexthop.to_string()));
+                    make_constraint(RETRY_CST_MYSID_NEXTHOP, update.entry.ip_address.to_string()));
     }
     else
     {
@@ -1356,7 +1355,7 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
             }
             addToRetry(APP_SRV6_MY_SID_TABLE_NAME,
                        Task{my_sid_string, SET_COMMAND, fields},
-                       make_constraint(RETRY_CST_MYSID_NEXTHOP, NextHopKey(adj).to_string()));
+                       make_constraint(RETRY_CST_MYSID_NEXTHOP, NextHopKey(adj).ip_address.to_string()));
         }
     }
 }
@@ -2569,7 +2568,7 @@ Srv6Orch::MySidTaskResult Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTupl
                 m_neighOrch->getNextHopId(nexthop) == SAI_NULL_OBJECT_ID)
             {
                 return {task_need_retry,
-                        make_constraint(RETRY_CST_MYSID_NEXTHOP, nexthop.to_string())};
+                        make_constraint(RETRY_CST_MYSID_NEXTHOP, nexthop.ip_address.to_string())};
             }
         }
 
