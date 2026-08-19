@@ -22,6 +22,7 @@ extern "C" {
 #include "zmqconsumerstatetable.h"
 #include "zmqserver.h"
 #include "notificationconsumer.h"
+#include "selectableevent.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
 #include "response_publisher.h"
@@ -340,6 +341,7 @@ public:
     virtual void doTask(Consumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
+    virtual void doTask(swss::SelectableEvent &event) { }
 
     /*
      * Called once after APPLY_VIEW in warm/fast boot scenario.

@@ -765,6 +765,10 @@ namespace dashhaorch_ut
     TEST_F(DashHaOrchTest, UpdatePeerIp)
     {
         CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute)
+        .Times(1);
+
         UpdatePeerIp("192.168.2.100");
 
         auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
@@ -800,6 +804,8 @@ namespace dashhaorch_ut
         CreateHaSet();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(0);
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute)
         .Times(0);
 
         CreateHaSet();
