@@ -153,6 +153,30 @@ VNetMgr::VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::
         m_appSwitchTable(appDb, APP_SWITCH_TABLE_NAME)
 {
     getAllVxlanNetDevices();
+
+    if (!WarmStart::isWarmStart())
+    {
+        clearAllVxlanDevices();
+    }
+}
+
+VNetMgr::~VNetMgr()
+{
+    clearAllVxlanDevices();
+}
+
+void VNetMgr::clearAllVxlanDevices()
+{
+    for (auto it = m_vxlanNetDevices.begin(); it != m_vxlanNetDevices.end();)
+    {
+        const std::string & netdev_name = it->first;
+        SWSS_LOG_NOTICE("Deleting stale VXLAN netdev %s", netdev_name.c_str());
+        VxlanKernelRouteInfo info;
+        info.m_vxlanDevName = netdev_name;
+        std::string res;
+        cmdDeleteVxlan(info, res);
+        it = m_vxlanNetDevices.erase(it);
+    }
 }
 
 std::vector<std::string> VNetMgr::parseNetDev(const std::string& stdout){
