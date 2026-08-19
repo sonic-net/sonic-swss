@@ -581,24 +581,7 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
 
     VnetInfo vnetInfo = m_vnetCache[vxlanRouteInfo.m_vnet];
 
-    if (vnetInfo.m_vni == vxlanRouteInfo.m_vni)
-    {
-        SWSS_LOG_DEBUG("Skipping kernel routes since Vnet %s VNI %s match route VNI %s", 
-                        vxlanRouteInfo.m_vnet.c_str(),
-                        vnetInfo.m_vni.c_str(),
-                        vxlanRouteInfo.m_vni.c_str());
-
-        return false;
-    }
-
     std::string vxlanDevName = VXLAN_NAME_PREFIX + vxlanRouteInfo.m_vni;
-
-    auto it = m_vxlanNetDevices.find(vxlanDevName);
-    if (it != m_vxlanNetDevices.end())
-    {
-        SWSS_LOG_INFO("Vxlan device %s already present", it->first.c_str());
-        //return false;
-    }
 
     VxlanKernelRouteInfo vxlanKernelRouteInfo;
     vxlanKernelRouteInfo.m_routeName = vxlanRouteInfo.m_routeName;
@@ -612,35 +595,53 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
     vxlanKernelRouteInfo.m_vxlanDevName = vxlanDevName;
     vxlanKernelRouteInfo.m_vxlanSrcUdpPort = getVxlanSourcePort();
 
-    // Create Vxlan Device
     std::string res;
-    int ret = cmdCreateVxlan(vxlanKernelRouteInfo, res);
-    if (ret != RET_SUCCESS)
+    int ret;
+    if (vnetInfo.m_vni == vxlanRouteInfo.m_vni)
     {
-        SWSS_LOG_ERROR("Vxlan device %s creation failed: %s", 
-                        vxlanDevName.c_str(), res.c_str());
-        return false;
+        // vxlanmgrd owns Vxlan<vni> when vnis match; defer if not present yet.
+        std::ostringstream showCmd;
+        showCmd << IP_CMD " -o link show dev " << shellquote(vxlanDevName);
+        if (swss::exec(showCmd.str(), res) != RET_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Vxlan device %s not yet created by vxlanmgrd; retry",
+                           vxlanDevName.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        auto it = m_vxlanNetDevices.find(vxlanDevName);
+        if (it != m_vxlanNetDevices.end())
+        {
+            SWSS_LOG_INFO("Vxlan device %s already present", it->first.c_str());
+        }
+
+        ret = cmdCreateVxlan(vxlanKernelRouteInfo, res);
+        if (ret != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Vxlan device %s creation failed: %s",
+                            vxlanDevName.c_str(), res.c_str());
+            return false;
+        }
+
+        ret = cmdAttachVxlanIfToVnet(vxlanKernelRouteInfo, res);
+        if (ret != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Vxlan device %s failed to attach to vnet: %s",
+                            vxlanDevName.c_str(), res.c_str());
+            return false;
+        }
+
+        ret = cmdUpVxlan(vxlanKernelRouteInfo, res);
+        if (ret != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Vxlan device %s up failed: %s",
+                            vxlanDevName.c_str(), res.c_str());
+            return false;
+        }
     }
 
-    // Attach Vxlan Device to Vnet
-    ret = cmdAttachVxlanIfToVnet(vxlanKernelRouteInfo, res);
-    if (ret != RET_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Vxlan device %s failed to attach to vnet: %s", 
-                        vxlanDevName.c_str(), res.c_str());
-        return false;
-    }
-
-    // Bring up Vxlan Device
-    ret = cmdUpVxlan(vxlanKernelRouteInfo, res);
-    if (ret != RET_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Vxlan device %s up failed: %s", 
-                        vxlanDevName.c_str(), res.c_str());
-        return false;
-    }
-
-    // Create Kernel Route
     ret = cmdCreateKernelRoute(vxlanKernelRouteInfo, res);
     if (ret != RET_SUCCESS)
     {

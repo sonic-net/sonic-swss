@@ -478,5 +478,92 @@ class TestVnetMgr(object):
             _cleanup()
 
 
+    def test_install_on_kernel_vni_matches_vnet_defers_until_netdev_exists(self, dvs, vnetmgr_env):
+        # If route vni == vnet vni, vxlanmgrd owns Vxlan<vni>; vnetmgrd defers route programming if Vxlan<vni> is not created
+        cfg_db, app_db = vnetmgr_env
+
+        tunnel   = TUNNEL
+        vnet     = VNET
+        vni      = "6500"
+        prefix   = "100.150.1.0/24"
+        endpoint = "10.30.30.1"
+        src_ip   = "10.0.0.7"
+        dst_mac  = "aa:bb:cc:dd:ee:65"
+        dev      = f"Vxlan{vni}"
+
+        # Absent APP_SWITCH_TABLE|switch stalls vxlanmgrd on router-MAC prereq.
+        delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+        dvs.runcmd(["ip", "link", "del", dev])
+
+        marker = dvs.add_log_marker("/var/log/syslog")
+
+        _push_vnet_topology(cfg_db, tunnel, vnet, vni, src_ip)
+        create_entry_tbl(
+            cfg_db, "VNET_ROUTE_TUNNEL", "|", f"{vnet}|{prefix}",
+            [("endpoint", endpoint),
+             ("mac_address", dst_mac),
+             ("vni", vni),
+             ("install_on_kernel", "true")],
+        )
+
+        try:
+            time.sleep(5)
+            assert not _link_present(dvs, dev), (
+                f"{dev} unexpectedly present before APP_SWITCH_TABLE|switch was created; "
+                f"details={_link_details(dvs, dev)!r}"
+            )
+            assert _route_in_vrf(dvs, prefix, vnet) == "", (
+                f"route {prefix} present in {vnet} vrf before netdev was created"
+            )
+
+            def _retry_log_seen():
+                _, raw = dvs.runcmd(
+                    ["sh", "-c",
+                     "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
+                     "grep -F 'Vxlan device %s not yet created by vxlanmgrd' | tail -1"
+                     % (marker, dev)],
+                )
+                return (raw.strip() != "", raw)
+
+            wait_for_result(
+                _retry_log_seen,
+                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                failure_message=(
+                    f"vnetmgrd did not log the 'not yet created by vxlanmgrd' retry "
+                    f"for {dev}; the `ip -o link show dev` probe path did not run"
+                ),
+            )
+
+            # Create router MAC, which results in vxlanmgrd creating Vxlan<vni> on next retry.
+            create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
+                             [("vxlan_router_mac", "00:11:22:33:44:55")])
+
+            def _netdev_created():
+                return (_link_present(dvs, dev), _link_details(dvs, dev))
+            wait_for_result(
+                _netdev_created,
+                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message=(
+                    f"vxlanmgrd never created {dev} after APP_SWITCH_TABLE|switch was seeded"
+                ),
+            )
+
+            def _route_installed():
+                r = _route_in_vrf(dvs, prefix, vnet)
+                return (dev in r, r)
+            wait_for_result(
+                _route_installed,
+                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message=(
+                    f"vnetmgrd never installed {prefix} in {vnet} vrf after "
+                    f"{dev} was created by vxlanmgrd"
+                ),
+            )
+        finally:
+            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
+            delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+            dvs.runcmd(["ip", "link", "del", dev])
+
+
 def test_nonflaky_dummy():
     pass
