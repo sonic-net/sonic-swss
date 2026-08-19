@@ -678,18 +678,20 @@ void L2McMgr::updateGrpStaticEntry(const string vlan_id, const string ifname)
         msg->op_code = L2MCD_OP_ENABLE;
         msg->vlan_id = vlanid;
         msg->count   = 1;
-
-        memcpy(msg->gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        strncpy(msg->gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+        msg->gaddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
 
         if (IpAddress(ipKey).isV4())
         {
             msg->afi = MLD_IP_IPV4_AFI;
-            memcpy(msg->saddr, srcipv4.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+            strncpy(msg->saddr, srcipv4.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+            msg->saddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
         }
         else
         {
             msg->afi = MLD_IP_IPV6_AFI;
-            memcpy(msg->saddr, srcipv6.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+            strncpy(msg->saddr, srcipv6.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+            msg->saddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
         }
 
         PORT_ATTR *ports = msg->ports;
@@ -749,8 +751,10 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
         msg->vlan_id = vlan_id;
         msg->count=1;
         
-        memcpy(msg->gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        memcpy(msg->saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        strncpy(msg->gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+        msg->gaddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
+        strncpy(msg->saddr, srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+        msg->saddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
         msg->afi = MLD_IP_IPV4_AFI;
 
         PORT_ATTR *ports = msg->ports;
@@ -812,8 +816,10 @@ void L2McMgr::doL2McMldStaticEntryTask(Consumer &consumer)
         msg->vlan_id = vlan_id;
         msg->count=1;
         msg->afi = MLD_IP_IPV6_AFI;
-        memcpy(msg->gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        memcpy(msg->saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        strncpy(msg->gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+        msg->gaddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
+        strncpy(msg->saddr, srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+        msg->saddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
         PORT_ATTR *ports = msg->ports;
         memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
@@ -1168,6 +1174,7 @@ int  L2McMgr::getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list)
 
         string vlanName;
         string intfName;
+        memset(&port_id, 0, sizeof(port_id));
         if (found != string::npos)
         {
             vlanName = key.substr(0, found);
@@ -1182,6 +1189,7 @@ int  L2McMgr::getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list)
         if (vlanKey == vlanName)
         {
             strncpy(port_id.pnames, intfName.c_str(), L2MCD_IFNAME_SIZE-1);
+            port_id.pnames[L2MCD_IFNAME_SIZE - 1] = '\0';
             vector<FieldValueTuple> tupEntry;
             string vlanmemkey = vlanKey + "|" + intfName;
 
@@ -1416,7 +1424,8 @@ void L2McMgr::doL2McL3InterfaceUpdateTask(Consumer &consumer)
             string prefix = key.substr(found2+1);
             int pr_len = stoi(prefix);
             msg.vlan_id =vlanid;
-            memcpy(msg.gaddr,ipstr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+            strncpy(msg.gaddr, ipstr.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+            msg.gaddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
             msg.prefix_length = pr_len;
             SWSS_LOG_NOTICE("L2MCD_CFG:INTERFACE %s Vid:%s %d ip:%s prefix:%s(%d)", op.c_str(), vlanstr.c_str(),  msg.vlan_id, msg.gaddr, prefix.c_str(),msg.prefix_length);
             if (ipstr.find(':') != string::npos)
@@ -1590,8 +1599,10 @@ void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperato
     }
     auto leave = key.substr(pos4+1, pos5-pos4-1);
     msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
-    memcpy(msg->saddr,saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-    memcpy(msg->gaddr,gaddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+    strncpy(msg->saddr, saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+    msg->saddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
+    strncpy(msg->gaddr, gaddr.c_str(), L2MCD_IP_ADDR_STR_SIZE - 1);
+    msg->gaddr[L2MCD_IP_ADDR_STR_SIZE - 1] = '\0';
     if (IpAddress(gaddr).isV4())
     {
         msg->afi = MLD_IP_IPV4_AFI;
