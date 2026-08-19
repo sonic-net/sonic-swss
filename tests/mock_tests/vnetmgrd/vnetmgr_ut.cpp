@@ -22,6 +22,7 @@ static bool g_fail_link_set_vrf = false;
 static bool g_fail_link_set_up = false;
 static bool g_fail_route_add = false;
 static bool g_fail_neigh_add = false;
+static bool g_fail_link_show_dev = false;
 
 static int vnet_cb(const std::string &cmd, std::string &stdout)
 {
@@ -30,6 +31,10 @@ static int vnet_cb(const std::string &cmd, std::string &stdout)
     {
         stdout = "";
         return 0;
+    }
+    if (cmd.find("-o link show dev ") != std::string::npos)
+    {
+        return g_fail_link_show_dev ? 1 : 0;
     }
     if (g_fail_link_add && cmd.find("link add ") != std::string::npos)
     {
@@ -94,6 +99,7 @@ struct VNetMgrTest : public ::testing::Test
         g_fail_link_set_up = false;
         g_fail_route_add = false;
         g_fail_neigh_add = false;
+        g_fail_link_show_dev = false;
     }
 
     void TearDown() override
@@ -182,16 +188,40 @@ TEST_F(VNetMgrTest, RouteTunnelCreateBeforeVnetCreation)
               mgr.m_kernelRouteTunnelCache.end());
 }
 
-TEST_F(VNetMgrTest, RouteTunnelCreateVniMatchesVnetIsSkipped)
+TEST_F(VNetMgrTest, RouteTunnelVniMatchesUsesExistingVxlanmgrdNetdev)
 {
+    // vxlanmgrd owns the netdev when vnis match; existing netdev -> just add route.
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     addBaseTunnelAndVnet(mgr);
+    mockCallArgs.clear();
+    auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
+                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
+                         {"vni", "2000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
+    ASSERT_NE(mgr.m_kernelRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
+              mgr.m_kernelRouteTunnelCache.end());
+    ASSERT_TRUE(cmdWasIssued("-o link show dev \"Vxlan2000\""));
+    ASSERT_FALSE(cmdWasIssued("link add \"Vxlan2000\""));
+    ASSERT_FALSE(cmdWasIssued("link set dev \"Vxlan2000\" vrf \"Vnet1\""));
+    ASSERT_FALSE(cmdWasIssued("link set dev \"Vxlan2000\" up"));
+    ASSERT_TRUE(cmdWasIssued("route add "));
+}
+
+TEST_F(VNetMgrTest, RouteTunnelVniMatchesReturnsFalseWhenNetdevMissing)
+{
+    // vxlanmgrd has not created the netdev yet -> return false to retry.
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    addBaseTunnelAndVnet(mgr);
+    g_fail_link_show_dev = true;
+    mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
                          {"vni", "2000"}, {"install_on_kernel", "true"}});
     ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(rt));
     ASSERT_EQ(mgr.m_kernelRouteTunnelCache.find("Vnet1|20.0.0.0/24"),
               mgr.m_kernelRouteTunnelCache.end());
+    ASSERT_FALSE(cmdWasIssued("link add \"Vxlan2000\""));
+    ASSERT_FALSE(cmdWasIssued("route add "));
 }
 
 TEST_F(VNetMgrTest, RouteTunnelCreateHappyPathIssuesIpCommands)
