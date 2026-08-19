@@ -5740,11 +5740,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  * then replay the deferred admin-up so the link comes up exactly once. This
                  * shapes pCfg.admin_status BEFORE serdes is applied. */
                 auto &siGate = m_portAdminSiGate[p.m_alias];
-                bool gateAdminOnSi = m_xcvrdSiSyncExpected && isFrontPanelPort(p);
+                // Only external (transceiver) ports are SI-notified by xcvrd; internal-role
+                // ports (inband/recirc/internal/DPU-connect) would otherwise defer forever.
+                bool gateAdminOnSi = m_xcvrdSiSyncExpected && isFrontPanelPort(p)
+                                     && p.m_role == Port::Role::Ext;
 
                 if (pCfg.serdes_settings_sync_status.is_set)
                 {
-                    /* If we get UNAVIL or NOTIFIED, we can allow admin_up to proceed */
+                    /* If we get UNAVAIL or NOTIFIED, we can allow admin_up to proceed */
                     siGate.si_notified =
                         (pCfg.serdes_settings_sync_status.type != PORT_SI_SETTINGS_DEFAULT);
                 }
