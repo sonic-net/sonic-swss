@@ -18,6 +18,7 @@ class VNetMgr : public Orch
 {
 public:
     VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tables);
+    ~VNetMgr();
     using Orch::doTask;
 
     typedef struct VnetInfo
@@ -64,6 +65,7 @@ private:
     void doTask(Consumer &consumer);
     std::vector<std::string> parseNetDev(const std::string& stdout);
     void getAllVxlanNetDevices();
+    void clearAllVxlanDevices();
     bool doVnetCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVnetDeleteTask(const KeyOpFieldsValuesTuple & t);
     bool doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t);
