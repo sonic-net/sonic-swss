@@ -360,6 +360,122 @@ class TestVnetMgr(object):
             failure_message=f"{dev} was not deleted on VNET_ROUTE_TUNNEL delete",
         )
 
+    def test_vnetmgrd_cold_restart_clears_stale_vxlan_netdevs(self, dvs, vnetmgr_env):
+        # Cold restart test to check that stale Vxlan netdevs + associated vrf neigh/routes
+        # are deleted
+        cfg_db, _ = vnetmgr_env
+
+        # Stale: should be deleted after cold restart.
+        stale_vrf   = "VnetStale99"
+        stale_dev   = "Vxlan99999"
+        stale_pfx   = "203.0.113.0/24"
+        stale_neigh = "203.0.113.5"
+        stale_mac   = "aa:bb:cc:dd:ee:99"
+
+        # Live: should be recreated after cold restart.
+        tunnel    = TUNNEL
+        vnet      = VNET
+        vnet_vni  = "6000"
+        route_vni = "6001"
+        live_pfx  = "100.200.1.0/24"
+        endpoint  = "10.20.20.1"
+        src_ip    = "10.0.0.6"
+        live_mac  = "aa:bb:cc:dd:ee:66"
+        live_dev  = f"Vxlan{route_vni}"
+
+        def _cleanup():
+            dvs.runcmd(["ip", "link", "del", stale_dev])
+            dvs.runcmd(["ip", "link", "del", stale_vrf])
+            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{live_pfx}")
+
+        _cleanup()
+
+        rc, out = dvs.runcmd(["ip", "link", "add", stale_vrf,
+                              "type", "vrf", "table", "99999"])
+        assert rc == 0, f"failed to create stale VRF {stale_vrf}: {out}"
+        dvs.runcmd(["ip", "link", "set", "dev", stale_vrf, "up"])
+
+        rc, out = dvs.runcmd(["ip", "link", "add", stale_dev,
+                              "type", "vxlan", "id", "99999", "dstport", "4789"])
+        assert rc == 0, f"failed to create stale netdev {stale_dev}: {out}"
+        dvs.runcmd(["ip", "link", "set", "dev", stale_dev, "master", stale_vrf])
+        dvs.runcmd(["ip", "link", "set", "dev", stale_dev, "up"])
+
+        rc, out = dvs.runcmd(["ip", "route", "add", stale_pfx,
+                              "dev", stale_dev, "vrf", stale_vrf])
+        assert rc == 0, f"failed to add stale route {stale_pfx}: {out}"
+        rc, out = dvs.runcmd(["ip", "neigh", "add", stale_neigh,
+                              "lladdr", stale_mac, "dev", stale_dev])
+        assert rc == 0, f"failed to add stale neigh {stale_neigh}: {out}"
+
+        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
+        create_entry_tbl(
+            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{vnet}|{live_pfx}",
+            [("endpoint", endpoint),
+             ("mac_address", live_mac),
+             ("vni", route_vni),
+             ("install_on_kernel", "true")],
+        )
+
+        def _live_dev_and_route_present():
+            details = _link_details(dvs, live_dev)
+            route   = _route_in_vrf(dvs, live_pfx, vnet)
+            return ("vxlan" in details and live_dev in route,
+                    f"link={details!r} route={route!r}")
+
+        wait_for_result(
+            _live_dev_and_route_present,
+            polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+            failure_message=f"live {live_dev} + route {live_pfx} not created pre-restart",
+        )
+
+        assert _link_present(dvs, stale_dev)
+        assert stale_pfx in _route_in_vrf(dvs, stale_pfx, stale_vrf)
+        assert _neigh_on(dvs, stale_dev, stale_neigh) != ""
+        assert _link_present(dvs, live_dev)
+
+        dvs.runcmd(["config", "warm_restart", "disable", "swss"])
+        dvs.runcmd(["supervisorctl", "restart", "vnetmgrd"])
+
+        def _stale_gone():
+            netdev_gone = not _link_present(dvs, stale_dev)
+            route_gone  = _route_in_vrf(dvs, stale_pfx, stale_vrf) == ""
+            neigh_gone  = _neigh_on(dvs, stale_dev, stale_neigh) == ""
+            return (netdev_gone and route_gone and neigh_gone,
+                    f"netdev={_link_details(dvs, stale_dev)!r} "
+                    f"route={_route_in_vrf(dvs, stale_pfx, stale_vrf)!r} "
+                    f"neigh={_neigh_on(dvs, stale_dev, stale_neigh)!r}")
+
+        try:
+            wait_for_result(
+                _stale_gone,
+                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                failure_message=(
+                    f"vnetmgrd cold restart did not cascade-clean {stale_dev} / "
+                    f"{stale_pfx} in {stale_vrf} / neigh {stale_neigh}"
+                ),
+            )
+
+            def _live_recreated():
+                details = _link_details(dvs, live_dev)
+                route   = _route_in_vrf(dvs, live_pfx, vnet)
+                ok = ("vxlan" in details and
+                      f"id {route_vni}" in details and
+                      f"local {src_ip}" in details and
+                      f"remote {endpoint}" in details and
+                      live_dev in route)
+                return (ok, f"link={details!r} route={route!r}")
+
+            wait_for_result(
+                _live_recreated,
+                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message=(
+                    f"vnetmgrd cold restart did not recreate live {live_dev} / "
+                    f"{live_pfx} in vrf {vnet} from CONFIG_DB"
+                ),
+            )
+        finally:
+            _cleanup()
 
 
 def test_nonflaky_dummy():
