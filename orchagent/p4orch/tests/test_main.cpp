@@ -84,6 +84,9 @@ sai_my_mac_api_t *sai_my_mac_api;
 sai_counter_api_t *sai_counter_api;
 sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
+sai_l2mc_api_t*              sai_l2mc_entry_api;
+sai_l2mc_group_api_t*        sai_l2mc_group_api;
+sai_vlan_api_t *sai_vlan_api;
 
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
 {
