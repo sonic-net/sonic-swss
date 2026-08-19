@@ -22,6 +22,7 @@ public:
 
     void execute() override;
     void drain() override;
+    void dumpPendingTasks(std::vector<std::string> &ts) override;
 
 /* protected rather than private so the unit tests (which compile with
  * protected mapped to public) can assert staging invariants such as

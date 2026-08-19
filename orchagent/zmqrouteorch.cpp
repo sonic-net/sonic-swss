@@ -58,6 +58,22 @@ void ZmqRouteConsumer::execute()
     drain();
 }
 
+void ZmqRouteConsumer::dumpPendingTasks(std::vector<std::string> &ts)
+{
+    // Tuples staged in m_ingress by the mqPollThread callback are pending work
+    // just like m_toSync entries; report both so pending-task introspection
+    // (e.g. warm-reboot restore validation via OrchDaemon::getTaskToSync) sees
+    // tuples that have arrived but have not yet been drained by execute().
+    {
+        std::lock_guard<std::mutex> lk(m_ingressMutex);
+        for (auto &kv : m_ingress)
+        {
+            ts.push_back(dumpTuple(kv.second));
+        }
+    }
+    ConsumerBase::dumpPendingTasks(ts);
+}
+
 void ZmqRouteConsumer::drain()
 {
     // TODO: doTask() currently walks the whole of m_toSync in one go. Per the

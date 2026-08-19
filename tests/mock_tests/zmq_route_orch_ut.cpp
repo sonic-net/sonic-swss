@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -510,4 +512,168 @@ TEST(ZmqRouteConsumerTest, SelectWakesAfterBurstQuiesce)
         return orch->seenKeys.count("route_q") == 1;
     }));
     EXPECT_TRUE(zrc->m_ingress.empty());
+}
+
+// dumpPendingTasks must also report tuples still staged in m_ingress (arrived
+// via the poll thread but not yet drained by execute()), so warm-reboot
+// restore validation and debug dumps see the complete pending set rather than
+// just m_toSync.
+TEST(ZmqRouteConsumerTest, DumpPendingTasksIncludesStagedIngress)
+{
+    vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_DUMPI", 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server("tcp://*:1273", "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    // One tuple staged in m_ingress, one already merged into m_toSync.
+    {
+        std::lock_guard<std::mutex> lk(zrc->m_ingressMutex);
+        zrc->m_ingress["staged_key"] = KeyOpFieldsValuesTuple(
+            "staged_key", SET_COMMAND, vector<FieldValueTuple>{{"f", "v"}});
+    }
+    zrc->addToSync(KeyOpFieldsValuesTuple(
+        "merged_key", SET_COMMAND, vector<FieldValueTuple>{{"f", "v"}}));
+
+    auto contains = [](const std::vector<std::string> &ts, const string &needle) {
+        return std::any_of(ts.begin(), ts.end(), [&](const string &s) {
+            return s.find(needle) != string::npos;
+        });
+    };
+
+    std::vector<std::string> ts;
+    zrc->dumpPendingTasks(ts);
+    ASSERT_EQ(ts.size(), 2u);
+    EXPECT_TRUE(contains(ts, "staged_key"));
+    EXPECT_TRUE(contains(ts, "merged_key"));
+
+    // The Orch-level aggregation dispatches through ConsumerBase* -- the
+    // virtual hook must reach the override and see both entries as well.
+    std::vector<std::string> ots;
+    orch->dumpPendingTasks(ots);
+    ASSERT_EQ(ots.size(), 2u);
+    EXPECT_TRUE(contains(ots, "staged_key"));
+    EXPECT_TRUE(contains(ots, "merged_key"));
+}
+
+// Two-batch retry-cache handoff: a failed SET parked in the retry cache is
+// evicted and merged when the *coalesced* final tuple of a later burst reaches
+// addToSync(). With complete route tuples, merge(cached SET, final SET)
+// reduces to exactly the final SET's contents, so coalescing away the
+// intermediate SET of the burst does not change the programmed result.
+TEST(ZmqRouteConsumerTest, RetryCacheTwoBatchHandoffAfterCoalescing)
+{
+    const string tableName = "ZMQ_ROUTE_UT_RETRY1";
+    vector<table_name_with_pri_t> tables = { { tableName, 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server("tcp://*:1274", "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    orch->createRetryCache(tableName);
+    auto *cache = orch->getRetryCache(tableName);
+    ASSERT_NE(cache, nullptr);
+
+    const string key = "10.1.0.0/16";
+    // Complete route tuple, mirroring the fpmsyncd ZMQ contract of every SET
+    // carrying the full field set.
+    auto fullSet = [&](const string &nh, const string &ifn) {
+        return KeyOpFieldsValuesTuple(key, SET_COMMAND,
+            vector<FieldValueTuple>{
+                {"protocol", "sharp"}, {"nexthop", nh},
+                {"ifname", ifn}, {"weight", "1"}});
+    };
+
+    // Batch 1: SET A failed in doTask and was parked in the retry cache.
+    Constraint cst = make_constraint(RETRY_CST_PIC, "ctx1");
+    cache->insert(fullSet("10.0.0.1", "Ethernet0"), cst);
+    ASSERT_EQ(cache->getRetryMap().count(key), 1u);
+
+    // Batch 2: SET B then SET C stage into m_ingress; last writer wins.
+    {
+        std::lock_guard<std::mutex> lk(zrc->m_ingressMutex);
+        zrc->m_ingress[key] = fullSet("10.0.0.2", "Ethernet4");
+        zrc->m_ingress[key] = fullSet("10.0.0.3", "Ethernet8");
+    }
+    ASSERT_EQ(zrc->m_ingress.size(), 1u);
+
+    zrc->execute();
+
+    // The coalesced SET C took the count==1 SET/SET path in
+    // addToSyncInternal(): cached SET A evicted and merged, one delivery.
+    EXPECT_TRUE(cache->getRetryMap().empty());
+    EXPECT_EQ(orch->totalEntries.load(), 1);
+    ASSERT_EQ(orch->seenKeys.count(key), 1u);
+
+    // Nothing from SET A (or the coalesced-away SET B) survives the merge:
+    // exactly SET C's four fields, with SET C's values.
+    const auto &fields = orch->lastFields[key];
+    ASSERT_EQ(fields.size(), 4u);
+    std::map<string, string> fm;
+    for (const auto &fv : fields)
+        fm[fvField(fv)] = fvValue(fv);
+    EXPECT_EQ(fm["protocol"], "sharp");
+    EXPECT_EQ(fm["nexthop"], "10.0.0.3");
+    EXPECT_EQ(fm["ifname"], "Ethernet8");
+    EXPECT_EQ(fm["weight"], "1");
+}
+
+// The count==2 (cached DEL + SET) retry-cache branch stays reachable with
+// ingress coalescing: coalescing is per staging window only, so a DEL and a
+// SET parked across earlier batches still meet a later coalesced SET in
+// addToSyncInternal().
+TEST(ZmqRouteConsumerTest, RetryCacheDelPlusSetReachableAfterCoalescing)
+{
+    const string tableName = "ZMQ_ROUTE_UT_RETRY2";
+    vector<table_name_with_pri_t> tables = { { tableName, 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server("tcp://*:1275", "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    orch->createRetryCache(tableName);
+    auto *cache = orch->getRetryCache(tableName);
+    ASSERT_NE(cache, nullptr);
+
+    const string key = "10.2.0.0/16";
+    auto fullSet = [&](const string &nh, const string &ifn) {
+        return KeyOpFieldsValuesTuple(key, SET_COMMAND,
+            vector<FieldValueTuple>{
+                {"protocol", "sharp"}, {"nexthop", nh},
+                {"ifname", ifn}, {"weight", "1"}});
+    };
+
+    // Earlier batches parked a DEL and a newer SET for the key.
+    Constraint cst = make_constraint(RETRY_CST_PIC, "ctx2");
+    cache->insert(KeyOpFieldsValuesTuple(key, DEL_COMMAND,
+                                         vector<FieldValueTuple>{}), cst);
+    cache->insert(fullSet("10.0.0.1", "Ethernet0"), cst);
+    ASSERT_EQ(cache->getRetryMap().count(key), 2u);
+
+    // A later burst coalesces to one final SET and reaches addToSync().
+    {
+        std::lock_guard<std::mutex> lk(zrc->m_ingressMutex);
+        zrc->m_ingress[key] = fullSet("10.0.0.9", "Ethernet12");
+    }
+    zrc->execute();
+
+    // count==2 / SET path: the cached SET is evicted and merged with the new
+    // tuple; the cached DEL stays parked awaiting its constraint.
+    ASSERT_EQ(cache->getRetryMap().count(key), 1u);
+    EXPECT_EQ(kfvOp(cache->getRetryMap().find(key)->second.second), DEL_COMMAND);
+    EXPECT_EQ(orch->totalEntries.load(), 1);
+
+    const auto &fields = orch->lastFields[key];
+    ASSERT_EQ(fields.size(), 4u);
+    std::map<string, string> fm;
+    for (const auto &fv : fields)
+        fm[fvField(fv)] = fvValue(fv);
+    EXPECT_EQ(fm["nexthop"], "10.0.0.9");
+    EXPECT_EQ(fm["ifname"], "Ethernet12");
 }
