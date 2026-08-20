@@ -9,6 +9,7 @@ use countersyncd::actor::{aggregator::AggregatorActor, ipfix::IpfixActor};
 use countersyncd::message::{
     aggregator::{
         AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage,
+        CounterSelector,
     },
     buffer::SocketBufferMessage,
     ipfix::IPFixTemplatesMessage,
@@ -41,7 +42,8 @@ async fn start_ipfix_aggregator_pipeline(
         });
     });
 
-    let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
+    let mut aggregator =
+        AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
     aggregator.add_recipient(saistats_sender);
     tokio::spawn(async move {
         AggregatorActor::run(aggregator).await;
@@ -90,13 +92,29 @@ async fn send_record_with_observation_time(
         .expect("record send should succeed");
 }
 
+async fn send_record_with_value(
+    buffer_sender: &tokio::sync::mpsc::Sender<SocketBufferMessage>,
+    templates: &[u8],
+    observation_time: u64,
+    counter: u64,
+) {
+    let records = ipfix_test_helpers::generate_ipfix_records_with_values(
+        templates,
+        std::iter::once(observation_time),
+        |_, _| counter,
+    );
+    buffer_sender
+        .send(Arc::new(records))
+        .await
+        .expect("record send should succeed");
+}
+
 #[tokio::test]
 async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
     let key = "aggregated_downsample|PORT";
     let (template_sender, buffer_sender, config_sender, mut saistats_receiver) =
         start_ipfix_aggregator_pipeline(1, 25, 1, 10).await;
 
-    let templates = send_single_counter_template(&template_sender, key, 500).await;
     config_sender
         .send(AggregatorConfigMessage::new(
             key.to_string(),
@@ -107,8 +125,13 @@ async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
         ))
         .await
         .expect("aggregator config send should succeed");
+    sleep(Duration::from_millis(20)).await;
+    let templates = send_single_counter_template(&template_sender, key, 500).await;
 
-    for observation_time in (0..=200_000).step_by(10_000) {
+    for observation_time in (0..=200_001)
+        .step_by(10_000)
+        .chain(std::iter::once(200_001))
+    {
         send_record_with_observation_time(&buffer_sender, &templates, observation_time).await;
     }
 
@@ -121,18 +144,75 @@ async fn ipfix_aggregator_downsamples_10us_stream_to_100us() {
         .expect("second aggregated sample should arrive")
         .expect("second aggregated sample channel should be open");
 
-    assert_eq!(first.stats.observation_time, 90_000);
+    assert_eq!(first.stats.observation_time, 100_000);
     assert_eq!(first.stats.stats.len(), 1);
-    assert_eq!(first.stats.stats[0].counter, 90_000);
-    assert_eq!(second.stats.observation_time, 190_000);
+    assert_eq!(first.stats.stats[0].counter, 100_000);
+    assert_eq!(second.stats.observation_time, 200_000);
     assert_eq!(second.stats.stats.len(), 1);
-    assert_eq!(second.stats.stats[0].counter, 190_000);
+    assert_eq!(second.stats.stats[0].counter, 200_000);
     assert!(
         timeout(Duration::from_millis(100), saistats_receiver.recv())
             .await
             .is_err(),
         "10us input samples should only produce completed 100us windows"
     );
+}
+
+#[tokio::test]
+async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
+    let key = "aggregator_composition|PORT";
+    let (template_sender, buffer_sender, config_sender, mut saistats_receiver) =
+        start_ipfix_aggregator_pipeline(1, 10, 1, 10).await;
+
+    let selector = CounterSelector::new(1, 1);
+    config_sender
+        .send(AggregatorConfigMessage::new(
+            key.to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(100),
+                rollover_counters: std::collections::HashSet::from([selector]),
+                heatmap_interval: Some(1_000),
+                heatmap_counters: std::collections::HashSet::from([selector]),
+                heatmap_bucket_boundaries: vec![100, 500, 1_000],
+            }),
+        ))
+        .await
+        .expect("aggregator config send should succeed");
+    sleep(Duration::from_millis(20)).await;
+    let templates = send_single_counter_template(&template_sender, key, 502).await;
+
+    for sample_index in 1..=100u64 {
+        let time = sample_index * 10_000;
+        let raw = ((sample_index - 1) % 20 + 1) * 10;
+        send_record_with_value(&buffer_sender, &templates, time, raw).await;
+    }
+    send_record_with_value(&buffer_sender, &templates, 1_000_001, 10).await;
+    send_record_with_value(&buffer_sender, &templates, 1_100_001, 20).await;
+
+    let mut outputs = Vec::new();
+    while let Ok(Some(output)) = timeout(Duration::from_millis(100), saistats_receiver.recv()).await
+    {
+        outputs.push(output);
+    }
+
+    let reporting_points = outputs
+        .iter()
+        .filter_map(|output| output.stats.stats.first())
+        .take(10)
+        .map(|stat| stat.counter)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reporting_points,
+        vec![100, 200, 300, 400, 500, 600, 700, 800, 900, 1_000]
+    );
+    let heatmap = outputs
+        .iter()
+        .find_map(|output| output.heatmaps.first())
+        .expect("completed heatmap should arrive");
+    assert_eq!(heatmap.count, 10);
+    assert_eq!(heatmap.bucket_counts, vec![1, 4, 5, 0]);
+    assert_eq!(heatmap.start_time_unix_nano, 0);
+    assert_eq!(heatmap.time_unix_nano, 1_000_000);
 }
 
 #[tokio::test]
@@ -255,7 +335,8 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
 
     let mut received = Vec::new();
     for _ in 0..expected_counts.len() {
-        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
+        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
+        {
             let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
             received.push(stats);
         } else {
@@ -263,14 +344,27 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         }
     }
 
-    assert_eq!(received.len(), expected_counts.len(), "should receive one stats message per template");
+    assert_eq!(
+        received.len(),
+        expected_counts.len(),
+        "should receive one stats message per template"
+    );
 
     for (i, stats) in received.iter().enumerate() {
         let expected_count = expected_counts[i];
         let expected_obs_time = (i as u64) + 1;
 
-        assert_eq!(stats.observation_time, expected_obs_time, "observation time mismatch for message {}", i);
-        assert_eq!(stats.stats.len(), expected_count, "counter count mismatch for message {}", i);
+        assert_eq!(
+            stats.observation_time, expected_obs_time,
+            "observation time mismatch for message {}",
+            i
+        );
+        assert_eq!(
+            stats.stats.len(),
+            expected_count,
+            "counter count mismatch for message {}",
+            i
+        );
 
         let mut got: Vec<(u32, u32, u64)> = stats
             .stats
@@ -292,9 +386,23 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             let (type_id, stat_id, counter) = got[idx];
             let expected_idx = (idx + 1) as u32;
 
-            assert_eq!(type_id, expected_idx, "type_id mismatch at stat {} for message {}", idx, i);
-            assert_eq!(stat_id, expected_idx, "stat_id mismatch at stat {} for message {}", idx, i);
-            assert_eq!(counter, expected_obs_time + idx as u64, "counter mismatch at stat {} for message {}", idx, i);
+            assert_eq!(
+                type_id, expected_idx,
+                "type_id mismatch at stat {} for message {}",
+                idx, i
+            );
+            assert_eq!(
+                stat_id, expected_idx,
+                "stat_id mismatch at stat {} for message {}",
+                idx, i
+            );
+            assert_eq!(
+                counter,
+                expected_obs_time + idx as u64,
+                "counter mismatch at stat {} for message {}",
+                idx,
+                i
+            );
         }
     }
 
@@ -320,10 +428,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     );
 
     // Re-add the deleted key with the same template IDs but different shapes
-    let readd_template_defs = vec![
-        (delete_key, 302u16, 4usize),
-        (delete_key, 303u16, 6usize),
-    ];
+    let readd_template_defs = vec![(delete_key, 302u16, 4usize), (delete_key, 303u16, 6usize)];
 
     let mut readd_templates_bytes = Vec::new();
     for (_, template_id, counters) in &readd_template_defs {
@@ -349,10 +454,12 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .await
         .expect("record send after re-add should succeed");
 
-    let expected_readd_counts: Vec<usize> = readd_template_defs.iter().map(|(_, _, c)| *c).collect();
+    let expected_readd_counts: Vec<usize> =
+        readd_template_defs.iter().map(|(_, _, c)| *c).collect();
     let mut readd_received = Vec::new();
     for _ in 0..expected_readd_counts.len() {
-        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
+        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
+        {
             let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
             readd_received.push(stats);
         } else {
@@ -370,8 +477,17 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         let expected_count = expected_readd_counts[i];
         let expected_obs_time = (i as u64) + 1;
 
-        assert_eq!(stats.observation_time, expected_obs_time, "observation time mismatch after re-add for message {}", i);
-        assert_eq!(stats.stats.len(), expected_count, "counter count mismatch after re-add for message {}", i);
+        assert_eq!(
+            stats.observation_time, expected_obs_time,
+            "observation time mismatch after re-add for message {}",
+            i
+        );
+        assert_eq!(
+            stats.stats.len(),
+            expected_count,
+            "counter count mismatch after re-add for message {}",
+            i
+        );
 
         let mut got: Vec<(u32, u32, u64)> = stats
             .stats
@@ -393,9 +509,23 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             let (type_id, stat_id, counter) = got[idx];
             let expected_idx = (idx + 1) as u32;
 
-            assert_eq!(type_id, expected_idx, "type_id mismatch at stat {} after re-add for message {}", idx, i);
-            assert_eq!(stat_id, expected_idx, "stat_id mismatch at stat {} after re-add for message {}", idx, i);
-            assert_eq!(counter, expected_obs_time + idx as u64, "counter mismatch at stat {} after re-add for message {}", idx, i);
+            assert_eq!(
+                type_id, expected_idx,
+                "type_id mismatch at stat {} after re-add for message {}",
+                idx, i
+            );
+            assert_eq!(
+                stat_id, expected_idx,
+                "stat_id mismatch at stat {} after re-add for message {}",
+                idx, i
+            );
+            assert_eq!(
+                counter,
+                expected_obs_time + idx as u64,
+                "counter mismatch at stat {} after re-add for message {}",
+                idx,
+                i
+            );
         }
     }
 

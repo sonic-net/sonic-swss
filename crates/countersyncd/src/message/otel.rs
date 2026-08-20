@@ -38,7 +38,7 @@ pub struct OtelDataPoint {
     /// Timestamp in nanoseconds since Unix epoch
     pub time_unix_nano: u64,
     /// The gauge value (converted from SAI counter)
-    pub value: i64,
+    pub value: u64,
 }
 
 /// OpenTelemetry Attribute (Key-Value Pair)
@@ -113,15 +113,20 @@ impl OtelDataPoint {
         Self {
             attributes,
             time_unix_nano: observation_time_nano,
-            value: sai_stat.counter as i64,
+            value: sai_stat.counter,
         }
     }
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
     pub fn to_proto(&self) -> NumberDataPoint {
+        let value = if self.value <= i64::MAX as u64 {
+            number_data_point::Value::AsInt(self.value as i64)
+        } else {
+            number_data_point::Value::AsDouble(self.value as f64)
+        };
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
-            value: Some(number_data_point::Value::AsInt(self.value)),
+            value: Some(value),
             attributes: self.attributes.iter().map(|attr| attr.to_proto()).collect(),
             ..Default::default()
         }
@@ -479,5 +484,19 @@ fn test_sai_to_otel_gauge_conversion() {
                     .and_then(|value| value.value.as_ref())
                     == Some(&Value::StringValue("profile|PORT".to_string()))
         }));
+    }
+
+    #[test]
+    fn preserves_large_u64_gauge_as_nonnegative_double() {
+        let stat = SAIStat {
+            object_name: "Ethernet0".to_string(),
+            type_id: 1,
+            stat_id: 2,
+            counter: i64::MAX as u64 + 1,
+        };
+
+        let point = OtelDataPoint::from_sai_stat(&stat, 1).to_proto();
+
+        assert_eq!(point.value, Some(number_data_point::Value::AsDouble((i64::MAX as u64 + 1) as f64)));
     }
 }

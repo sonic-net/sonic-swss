@@ -122,9 +122,7 @@ impl SwssActor {
     /// # Arguments
     /// * `actor` - SwssActor instance to run
     pub async fn run(actor: SwssActor) {
-        info!(
-            "SwssActor started, monitoring HFT session state and aggregator/profile config"
-        );
+        info!("SwssActor started, monitoring HFT session state and aggregator/profile config");
 
         let SwssActor {
             mut session_table,
@@ -203,17 +201,43 @@ impl SwssActor {
 
             for event in events {
                 match event {
-                SwssEvent::SessionUpdate { key, session_data } => {
-                    if Self::process_session_update(&template_recipient, &key, &session_data).await {
-                        aggregator_state.add_session(key.clone());
-                        Self::send_aggregator_config_for_session(
-                            &aggregator_config_recipient,
-                            &aggregator_state,
-                            &key,
-                            false,
-                        )
-                        .await;
-                    } else {
+                    SwssEvent::SessionUpdate { key, session_data } => {
+                        if Self::validate_session(&key, &session_data) {
+                            aggregator_state.add_session(key.clone());
+                            Self::send_aggregator_config_for_session(
+                                &aggregator_config_recipient,
+                                &aggregator_state,
+                                &key,
+                                false,
+                            )
+                            .await;
+                            if let Err(e) =
+                                Self::send_session_update(&template_recipient, &key, &session_data)
+                                    .await
+                            {
+                                error!("Failed to process session {}: {}", key, e);
+                                aggregator_state.remove_session(&key);
+                                Self::send_aggregator_config_for_session(
+                                    &aggregator_config_recipient,
+                                    &aggregator_state,
+                                    &key,
+                                    true,
+                                )
+                                .await;
+                            }
+                        } else {
+                            aggregator_state.remove_session(&key);
+                            Self::send_aggregator_config_for_session(
+                                &aggregator_config_recipient,
+                                &aggregator_state,
+                                &key,
+                                true,
+                            )
+                            .await;
+                        }
+                    }
+                    SwssEvent::SessionDelete { key } => {
+                        Self::process_session_delete(&template_recipient, &key).await;
                         aggregator_state.remove_session(&key);
                         Self::send_aggregator_config_for_session(
                             &aggregator_config_recipient,
@@ -223,67 +247,57 @@ impl SwssActor {
                         )
                         .await;
                     }
+                    SwssEvent::ProfileUpdate {
+                        profile,
+                        aggregator,
+                    } => {
+                        let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                        aggregator_state.set_profile_aggregator(profile, aggregator);
+                        Self::send_aggregator_configs_for_sessions(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            affected_sessions,
+                        )
+                        .await;
+                    }
+                    SwssEvent::ProfileDelete { profile } => {
+                        let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
+                        aggregator_state.remove_profile(&profile);
+                        Self::send_aggregator_configs_for_sessions(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            affected_sessions,
+                        )
+                        .await;
+                    }
+                    SwssEvent::AggregatorUpdate { name, config } => {
+                        let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                        aggregator_state.set_aggregator_config(name, config);
+                        Self::send_aggregator_configs_for_sessions(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            affected_sessions,
+                        )
+                        .await;
+                    }
+                    SwssEvent::AggregatorDelete { name } => {
+                        let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
+                        aggregator_state.remove_aggregator(&name);
+                        Self::send_aggregator_configs_for_sessions(
+                            &aggregator_config_recipient,
+                            &aggregator_state,
+                            affected_sessions,
+                        )
+                        .await;
+                    }
                 }
-                SwssEvent::SessionDelete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
-                    aggregator_state.remove_session(&key);
-                    Self::send_aggregator_config_for_session(
-                        &aggregator_config_recipient,
-                        &aggregator_state,
-                        &key,
-                        true,
-                    )
-                    .await;
-                }
-                SwssEvent::ProfileUpdate {
-                    profile,
-                    aggregator,
-                } => {
-                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
-                    aggregator_state.set_profile_aggregator(profile, aggregator);
-                    Self::send_aggregator_configs_for_sessions(
-                        &aggregator_config_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::ProfileDelete { profile } => {
-                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
-                    aggregator_state.remove_profile(&profile);
-                    Self::send_aggregator_configs_for_sessions(
-                        &aggregator_config_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::AggregatorUpdate { name, config } => {
-                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
-                    aggregator_state.set_aggregator_config(name, config);
-                    Self::send_aggregator_configs_for_sessions(
-                        &aggregator_config_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::AggregatorDelete { name } => {
-                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
-                    aggregator_state.remove_aggregator(&name);
-                    Self::send_aggregator_configs_for_sessions(
-                        &aggregator_config_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-            }
             }
         }
     }
 
-    fn collect_session_events(session_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+    fn collect_session_events(
+        session_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
         let items = session_table
             .pops()
             .map_err(|e| format!("Error popping items from session table: {}", e))?;
@@ -308,17 +322,17 @@ impl SwssActor {
         Ok(events)
     }
 
-    fn collect_profile_events(profile_table: &SubscriberStateTable) -> Result<Vec<SwssEvent>, String> {
+    fn collect_profile_events(
+        profile_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
         let items = profile_table
             .pops()
             .map_err(|e| format!("Error popping items from profile table: {}", e))?;
         let mut events = Vec::with_capacity(items.len());
 
         for item in items {
-            let profile = Self::extract_config_key(
-                &item.key,
-                CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
-            );
+            let profile =
+                Self::extract_config_key(&item.key, CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE);
             match item.operation {
                 KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
                     profile,
@@ -345,10 +359,18 @@ impl SwssActor {
                 CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
             );
             match item.operation {
-                KeyOperation::Set => events.push(SwssEvent::AggregatorUpdate {
-                    name,
-                    config: Self::parse_aggregator_config(&item.field_values),
-                }),
+                KeyOperation::Set => match Self::parse_aggregator_config(&item.field_values) {
+                    Ok(config) => events.push(SwssEvent::AggregatorUpdate {
+                        name,
+                        config: Some(config),
+                    }),
+                    Err(reason) => {
+                        error!(
+                            "Rejecting aggregator config update for {}: {}",
+                            name, reason
+                        )
+                    }
+                },
                 KeyOperation::Del => events.push(SwssEvent::AggregatorDelete { name }),
             }
         }
@@ -356,9 +378,7 @@ impl SwssActor {
         Ok(events)
     }
 
-    fn parse_session_data(
-        field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> SessionData {
+    fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
         let mut session_data = SessionData::default();
 
         for (field, value) in field_values {
@@ -394,31 +414,72 @@ impl SwssActor {
 
     fn parse_aggregator_config(
         field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> Option<AggregatorConfig> {
-        let reporting_rate = field_values
-            .get("reporting_rate")
-            .and_then(|value| AggregatorConfig::parse(&value.to_string_lossy()))
-            .and_then(|config| config.reporting_rate);
-
-        let heatmap_counters = field_values
-            .get("heatmap_counters")
-            .and_then(|value| {
-                match crate::message::aggregator::CounterSelector::parse_list(
-                    &value.to_string_lossy(),
-                ) {
-                    Ok(selectors) => Some(selectors),
-                    Err(reason) => {
-                        warn!("Ignoring invalid heatmap_counters: {}", reason);
-                        None
-                    }
+    ) -> Result<AggregatorConfig, String> {
+        let reporting_rate = match field_values.get("reporting_rate") {
+            Some(value) => {
+                let value = value.to_string_lossy();
+                let rate = value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid reporting_rate '{}'", value))?;
+                if rate == 0 {
+                    return Err("reporting_rate must be greater than zero".to_string());
                 }
-            })
-            .unwrap_or_default();
+                Some(rate)
+            }
+            None => None,
+        };
 
-        Some(AggregatorConfig {
+        let rollover_counters = match Self::config_field(field_values, "rollover_counters") {
+            Some(value) => {
+                crate::message::aggregator::CounterSelector::parse_list(&value.to_string_lossy())?
+            }
+            None => HashSet::new(),
+        };
+        let heatmap_interval = match field_values.get("heatmap_interval") {
+            Some(value) => {
+                let value = value.to_string_lossy();
+                let interval = value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid heatmap_interval '{}'", value))?;
+                if interval == 0 {
+                    return Err("heatmap_interval must be greater than zero".to_string());
+                }
+                Some(interval)
+            }
+            None => None,
+        };
+        let heatmap_counters = match Self::config_field(field_values, "heatmap_counters") {
+            Some(value) => {
+                crate::message::aggregator::CounterSelector::parse_list(&value.to_string_lossy())?
+            }
+            None => HashSet::new(),
+        };
+        let heatmap_bucket_boundaries =
+            match Self::config_field(field_values, "heatmap_bucket_boundaries") {
+                Some(value) => AggregatorConfig::parse_bucket_boundaries(&value.to_string_lossy())?,
+                None => Vec::new(),
+            };
+
+        let config = AggregatorConfig {
             reporting_rate,
+            rollover_counters,
+            heatmap_interval,
             heatmap_counters,
-        })
+            heatmap_bucket_boundaries,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn config_field<'a>(
+        field_values: &'a HashMap<String, swss_common::CxxString>,
+        name: &str,
+    ) -> Option<&'a swss_common::CxxString> {
+        field_values
+            .get(name)
+            .or_else(|| field_values.get(&format!("{}@", name)))
     }
 
     /// Extracts the session key from the full Redis key by removing the table name prefix
@@ -473,24 +534,7 @@ impl SwssActor {
         }
     }
 
-    async fn process_session_update(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) -> bool {
-        match Self::validate_and_send_session(template_recipient, key, session_data).await {
-            Ok(processed) => processed,
-            Err(e) => {
-                error!("Failed to process session {}: {}", key, e);
-                false
-            }
-        }
-    }
-
-    async fn process_session_delete(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-    ) {
+    async fn process_session_delete(template_recipient: &Sender<IPFixTemplatesMessage>, key: &str) {
         info!("Session deleted: {}", key);
 
         let delete_message = IPFixTemplatesMessage::delete(key.to_string());
@@ -518,7 +562,11 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<bool, String> {
-        Self::validate_and_send_session(&self.template_recipient, key, session_data).await
+        if !Self::validate_session(key, session_data) {
+            return Ok(false);
+        }
+        Self::send_session_update(&self.template_recipient, key, session_data).await?;
+        Ok(true)
     }
 
     /// Validates session data and processes enabled IPFIX sessions
@@ -526,15 +574,10 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session identifier
     /// * `session_data` - Parsed session configuration
-    async fn validate_and_send_session(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) -> Result<bool, String> {
-        // Only process enabled sessions with ipfix type
+    fn validate_session(key: &str, session_data: &SessionData) -> bool {
         if session_data.stream_status != "enabled" {
             debug!("Skipping disabled session: {}", key);
-            return Ok(false);
+            return false;
         }
 
         if session_data.session_type != "ipfix" {
@@ -542,13 +585,22 @@ impl SwssActor {
                 "Skipping non-IPFIX session: {} (type: {})",
                 key, session_data.session_type
             );
-            return Ok(false);
+            return false;
         }
 
         if session_data.session_config.is_empty() {
-            return Err("Session config is empty".to_string());
+            error!("Failed to process session {}: Session config is empty", key);
+            return false;
         }
 
+        true
+    }
+
+    async fn send_session_update(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<(), String> {
         info!(
             "Processing enabled IPFIX session: key={}, object_names={}, object_ids={}",
             key, session_data.object_names, session_data.object_ids
@@ -614,12 +666,8 @@ impl SwssActor {
             }
         };
 
-        let message = IPFixTemplatesMessage::new(
-            key.to_string(),
-            templates,
-            object_names,
-            object_ids,
-        );
+        let message =
+            IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
 
         template_recipient
             .send(message)
@@ -627,7 +675,7 @@ impl SwssActor {
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
 
         info!("Successfully sent IPFix templates for session: {}", key);
-        Ok(true)
+        Ok(())
     }
 
     async fn send_aggregator_config_for_session(
@@ -778,7 +826,8 @@ mod tests {
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
         let (aggregator_config_sender, mut aggregator_config_receiver) = channel(100);
         tokio::spawn(async move { while aggregator_config_receiver.recv().await.is_some() {} });
-        SwssActor::new(template_sender, aggregator_config_sender).expect("Failed to create SwssActor")
+        SwssActor::new(template_sender, aggregator_config_sender)
+            .expect("Failed to create SwssActor")
     }
 
     #[tokio::test]
@@ -851,13 +900,25 @@ mod tests {
         let mut aggregator_fields = HashMap::new();
         aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
         aggregator_fields.insert(
-            "heatmap_counters".to_string(),
+            "rollover_counters@".to_string(),
+            CxxString::from("PORT|IF_IN_OCTETS"),
+        );
+        aggregator_fields.insert("heatmap_interval".to_string(), CxxString::from("1000"));
+        aggregator_fields.insert(
+            "heatmap_counters@".to_string(),
             CxxString::from("PORT|IF_IN_UCAST_PKTS,QUEUE|WATERMARK_BYTES"),
+        );
+        aggregator_fields.insert(
+            "heatmap_bucket_boundaries@".to_string(),
+            CxxString::from("0,1024,4096"),
         );
         let config =
             SwssActor::parse_aggregator_config(&aggregator_fields).expect("aggregator config");
         assert_eq!(config.reporting_rate, Some(100));
+        assert_eq!(config.rollover_counters.len(), 1);
+        assert_eq!(config.heatmap_interval, Some(1000));
         assert_eq!(config.heatmap_counters.len(), 2);
+        assert_eq!(config.heatmap_bucket_boundaries, vec![0, 1024, 4096]);
 
         let empty_aggregator_fields = HashMap::new();
         assert_eq!(
@@ -866,6 +927,13 @@ mod tests {
                 .reporting_rate,
             None
         );
+
+        let mut invalid_heatmap = HashMap::new();
+        invalid_heatmap.insert(
+            "heatmap_counters@".to_string(),
+            CxxString::from("PORT|IF_IN_UCAST_PKTS"),
+        );
+        assert!(SwssActor::parse_aggregator_config(&invalid_heatmap).is_err());
 
         let mut state = AggregatorConfigState::default();
         state.add_session("profile0|PORT".to_string());
@@ -995,7 +1063,6 @@ mod tests {
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
-
     }
 
     #[tokio::test]

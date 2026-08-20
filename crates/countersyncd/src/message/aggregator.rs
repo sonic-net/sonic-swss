@@ -5,6 +5,8 @@ use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
 
+pub const MAX_EXACT_OTLP_BOUNDARY: u64 = 1 << 53;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CounterSelector {
     pub type_id: u32,
@@ -17,21 +19,33 @@ impl CounterSelector {
     }
 
     pub fn parse_list(serialized: &str) -> Result<HashSet<Self>, String> {
-        serialized
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(Self::parse)
-            .collect()
+        let serialized = serialized.trim();
+        if serialized.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        serialized.split(',').map(Self::parse).collect()
     }
 
     fn parse(item: &str) -> Result<Self, String> {
-        let (group, counter) = item
-            .split_once('|')
-            .ok_or_else(|| format!("Invalid heatmap counter '{}'; expected GROUP|COUNTER", item))?;
+        let item = item.trim();
+        let (group, counter) = item.split_once('|').ok_or_else(|| {
+            format!(
+                "Invalid counter selector '{}'; expected GROUP|COUNTER",
+                item
+            )
+        })?;
+        let group = group.trim();
+        let counter = counter.trim();
+        if group.is_empty() || counter.is_empty() {
+            return Err(format!(
+                "Invalid counter selector '{}'; expected GROUP|COUNTER",
+                item
+            ));
+        }
         if counter.contains('|') {
             return Err(format!(
-                "Invalid heatmap counter '{}'; expected GROUP|COUNTER",
+                "Invalid counter selector '{}'; expected GROUP|COUNTER",
                 item
             ));
         }
@@ -41,36 +55,31 @@ impl CounterSelector {
                 SaiObjectType::Port.to_u32(),
                 format!("SAI_PORT_STAT_{}", counter)
                     .parse::<SaiPortStat>()
-                    .map_err(|_| format!("Invalid PORT heatmap counter '{}'", counter))?
+                    .map_err(|_| format!("Invalid PORT counter '{}'", counter))?
                     .to_u32(),
             ),
             "QUEUE" => Self::new(
                 SaiObjectType::Queue.to_u32(),
                 format!("SAI_QUEUE_STAT_{}", counter)
                     .parse::<SaiQueueStat>()
-                    .map_err(|_| format!("Invalid QUEUE heatmap counter '{}'", counter))?
+                    .map_err(|_| format!("Invalid QUEUE counter '{}'", counter))?
                     .to_u32(),
             ),
             "BUFFER_POOL" => Self::new(
                 SaiObjectType::BufferPool.to_u32(),
                 format!("SAI_BUFFER_POOL_STAT_{}", counter)
                     .parse::<SaiBufferPoolStat>()
-                    .map_err(|e| format!("Invalid BUFFER_POOL heatmap counter: {}", e))?
+                    .map_err(|e| format!("Invalid BUFFER_POOL counter: {}", e))?
                     .to_u32(),
             ),
             "INGRESS_PRIORITY_GROUP" => Self::new(
                 SaiObjectType::IngressPriorityGroup.to_u32(),
                 format!("SAI_INGRESS_PRIORITY_GROUP_STAT_{}", counter)
                     .parse::<SaiIngressPriorityGroupStat>()
-                    .map_err(|_| {
-                        format!(
-                            "Invalid INGRESS_PRIORITY_GROUP heatmap counter '{}'",
-                            counter
-                        )
-                    })?
+                    .map_err(|_| format!("Invalid INGRESS_PRIORITY_GROUP counter '{}'", counter))?
                     .to_u32(),
             ),
-            _ => return Err(format!("Invalid heatmap counter group '{}'", group)),
+            _ => return Err(format!("Invalid counter selector group '{}'", group)),
         };
 
         let is_marker = match group {
@@ -83,7 +92,7 @@ impl CounterSelector {
             _ => false,
         };
         if is_marker {
-            return Err(format!("Invalid {} heatmap counter '{}'", group, counter));
+            return Err(format!("Invalid {} counter '{}'", group, counter));
         }
 
         Ok(selector)
@@ -95,8 +104,14 @@ impl CounterSelector {
 pub struct AggregatorConfig {
     /// Reporting interval in microseconds.
     pub reporting_rate: Option<u32>,
-    /// Counters summarized as heatmaps within each reporting interval.
+    /// Counters corrected when a newly reported raw value is lower than the previous value.
+    pub rollover_counters: HashSet<CounterSelector>,
+    /// Heatmap aggregation interval in microseconds.
+    pub heatmap_interval: Option<u32>,
+    /// Counters summarized as heatmaps after optional reporting-rate aggregation.
     pub heatmap_counters: HashSet<CounterSelector>,
+    /// Inclusive upper bounds shared by all heatmap counters.
+    pub heatmap_bucket_boundaries: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -179,107 +194,68 @@ impl From<SAIStatsMessage> for StatsMessage {
 }
 
 impl AggregatorConfig {
-    pub fn parse(serialized: &str) -> Option<Self> {
-        let trimmed = serialized.trim();
-        if trimmed.is_empty() {
-            return None;
+    pub fn validate(&self) -> Result<(), String> {
+        if self.reporting_rate == Some(0) {
+            return Err("reporting_rate must be greater than zero".to_string());
+        }
+        if self.heatmap_interval == Some(0) {
+            return Err("heatmap_interval must be greater than zero".to_string());
         }
 
-        let reporting_rate = if let Ok(value) = trimmed.parse::<u32>() {
-            Some(value)
-        } else {
-            parse_named_u32(trimmed, "reporting_rate")
-        };
-
-        match reporting_rate {
-            Some(0) => Some(Self {
-                reporting_rate: None,
-                ..Default::default()
-            }),
-            Some(value) => Some(Self {
-                reporting_rate: Some(value),
-                ..Default::default()
-            }),
-            None => Some(Self {
-                reporting_rate: None,
-                ..Default::default()
-            }),
-        }
-    }
-}
-
-fn parse_named_u32(input: &str, name: &str) -> Option<u32> {
-    let start = input.find(name)? + name.len();
-    let value_start = input[start..].char_indices().find_map(|(offset, ch)| {
-        if ch.is_ascii_digit() {
-            Some(start + offset)
-        } else if ch.is_ascii_whitespace()
-            || matches!(ch, '=' | ':' | ',' | ';' | '{' | '}' | '"' | '\'')
+        let heatmap_configured = self.heatmap_interval.is_some();
+        if heatmap_configured != !self.heatmap_counters.is_empty()
+            || heatmap_configured != !self.heatmap_bucket_boundaries.is_empty()
         {
-            None
-        } else {
-            Some(input.len())
+            return Err(
+                "heatmap_interval, heatmap_counters, and heatmap_bucket_boundaries must be configured together"
+                    .to_string(),
+            );
         }
-    })?;
 
-    if value_start >= input.len() {
-        return None;
+        for boundaries in self.heatmap_bucket_boundaries.windows(2) {
+            if boundaries[0] >= boundaries[1] {
+                return Err("heatmap_bucket_boundaries must be strictly increasing".to_string());
+            }
+        }
+        if self
+            .heatmap_bucket_boundaries
+            .iter()
+            .any(|boundary| *boundary > MAX_EXACT_OTLP_BOUNDARY)
+        {
+            return Err(format!(
+                "heatmap_bucket_boundaries must not exceed {}",
+                MAX_EXACT_OTLP_BOUNDARY
+            ));
+        }
+
+        Ok(())
     }
 
-    let value_end = input[value_start..]
-        .char_indices()
-        .find_map(|(offset, ch)| (!ch.is_ascii_digit()).then_some(value_start + offset))
-        .unwrap_or(input.len());
+    pub fn parse_bucket_boundaries(serialized: &str) -> Result<Vec<u64>, String> {
+        let serialized = serialized.trim();
+        if serialized.is_empty() {
+            return Ok(Vec::new());
+        }
 
-    input[value_start..value_end].parse::<u32>().ok()
+        serialized
+            .split(',')
+            .map(|item| {
+                let item = item.trim();
+                if item.is_empty() {
+                    return Err(
+                        "heatmap bucket boundaries must not contain empty entries".to_string()
+                    );
+                }
+                item.parse::<u64>()
+                    .map_err(|_| format!("Invalid heatmap bucket boundary '{}'", item))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_reporting_rate_from_supported_formats() {
-        assert_eq!(
-            AggregatorConfig::parse("100").unwrap().reporting_rate,
-            Some(100)
-        );
-        assert_eq!(
-            AggregatorConfig::parse("reporting_rate=200")
-                .unwrap()
-                .reporting_rate,
-            Some(200)
-        );
-        assert_eq!(
-            AggregatorConfig::parse("{\"reporting_rate\":300}")
-                .unwrap()
-                .reporting_rate,
-            Some(300)
-        );
-        assert_eq!(
-            AggregatorConfig::parse("rollover_counters=PORT|A;reporting_rate:400")
-                .unwrap()
-                .reporting_rate,
-            Some(400)
-        );
-    }
-
-    #[test]
-    fn parse_preserves_missing_or_zero_reporting_rate() {
-        assert_eq!(AggregatorConfig::parse(""), None);
-        assert_eq!(
-            AggregatorConfig::parse("rollover_counters=PORT|A")
-                .unwrap()
-                .reporting_rate,
-            None
-        );
-        assert_eq!(
-            AggregatorConfig::parse("reporting_rate=0")
-                .unwrap()
-                .reporting_rate,
-            None
-        );
-    }
 
     #[test]
     fn parses_heatmap_counter_selectors() {
@@ -304,5 +280,48 @@ mod tests {
         assert!(CounterSelector::parse_list("QUEUE|CUSTOM_RANGE_BASE").is_err());
         assert!(CounterSelector::parse_list("BUFFER_POOL|CUSTOM_RANGE_BASE").is_err());
         assert!(CounterSelector::parse_list("INGRESS_PRIORITY_GROUP|CUSTOM_RANGE_BASE").is_err());
+        assert!(CounterSelector::parse_list("PORT|IF_IN_OCTETS,,QUEUE|PACKETS").is_err());
+    }
+
+    #[test]
+    fn parses_and_validates_heatmap_bucket_boundaries() {
+        assert_eq!(
+            AggregatorConfig::parse_bucket_boundaries("0, 1024,4096").unwrap(),
+            vec![0, 1024, 4096]
+        );
+        assert!(AggregatorConfig::parse_bucket_boundaries("0,invalid").is_err());
+        assert!(AggregatorConfig::parse_bucket_boundaries("0,,1024").is_err());
+
+        let valid = AggregatorConfig {
+            heatmap_interval: Some(1_000),
+            heatmap_counters: HashSet::from([CounterSelector::new(1, 2)]),
+            heatmap_bucket_boundaries: vec![0, 1024, 4096],
+            ..Default::default()
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut missing_boundaries = valid.clone();
+        missing_boundaries.heatmap_bucket_boundaries.clear();
+        assert!(missing_boundaries.validate().is_err());
+
+        let mut missing_interval = valid.clone();
+        missing_interval.heatmap_interval = None;
+        assert!(missing_interval.validate().is_err());
+
+        let mut zero_interval = valid.clone();
+        zero_interval.heatmap_interval = Some(0);
+        assert!(zero_interval.validate().is_err());
+
+        let mut unordered = valid;
+        unordered.heatmap_bucket_boundaries = vec![0, 4096, 1024];
+        assert!(unordered.validate().is_err());
+
+        let too_large = AggregatorConfig {
+            heatmap_interval: Some(1_000),
+            heatmap_counters: HashSet::from([CounterSelector::new(1, 2)]),
+            heatmap_bucket_boundaries: vec![MAX_EXACT_OTLP_BOUNDARY + 1],
+            ..Default::default()
+        };
+        assert!(too_large.validate().is_err());
     }
 }

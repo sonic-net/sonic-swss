@@ -22,7 +22,10 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
 
     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
     let message_length = 16 + set_length;
-    assert!(message_length <= u16::MAX as usize, "template too large for a single IPFIX message");
+    assert!(
+        message_length <= u16::MAX as usize,
+        "template too large for a single IPFIX message"
+    );
 
     let mut buf = Vec::with_capacity(message_length);
 
@@ -71,6 +74,16 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
 pub fn generate_ipfix_records_with_observation_times(
     ipfix_templates: &[u8],
     observation_times: impl IntoIterator<Item = u64>,
+) -> Vec<u8> {
+    generate_ipfix_records_with_values(ipfix_templates, observation_times, |time, index| {
+        time + index as u64
+    })
+}
+
+pub fn generate_ipfix_records_with_values(
+    ipfix_templates: &[u8],
+    observation_times: impl IntoIterator<Item = u64>,
+    mut counter_value: impl FnMut(u64, usize) -> u64,
 ) -> Vec<u8> {
     let mut records = Vec::new();
     let mut offset: usize = 0;
@@ -161,7 +174,7 @@ pub fn generate_ipfix_records_with_observation_times(
             data_message.extend_from_slice(&observation_time.to_be_bytes());
 
             for idx in 0..counters_count {
-                let counter = observation_time + idx as u64;
+                let counter = counter_value(observation_time, idx);
                 data_message.extend_from_slice(&counter.to_be_bytes());
             }
 

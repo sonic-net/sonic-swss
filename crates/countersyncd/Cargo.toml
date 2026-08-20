@@ -36,7 +36,6 @@ chrono = { workspace = true }
 # Utilities
 rand = { workspace = true }
 once_cell = { workspace = true }
-hdrhistogram = { version = "=7.5.4", default-features = false }
 
 # Command line utilities
 clap = { workspace = true }
@@ -91,4 +90,8 @@ harness = false
 
 [[bench]]
 name = "counter_db_actor_perf"
+harness = false
+
+[[bench]]
+name = "aggregator_perf"
 harness = false
