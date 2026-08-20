@@ -82,7 +82,15 @@ def vnetmgr_env(dvs):
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
+    # vxlanmgrd needs vxlan_router_mac; vnetmgrd only needs the SWITCH_TABLE key to exist.
     delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+    create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
+                     [("vxlan_router_mac", "00:aa:bb:cc:dd:ee")])
+    # Restart both daemons so their in-memory VxlanSwitchTableConfig cache is
+    # fresh for each test; without this, a router_mac / vxlan_port override in
+    # one test would be masked by a stale value from a previous test.
+    dvs.runcmd(["supervisorctl", "restart", "vxlanmgrd", "vnetmgrd"])
+    time.sleep(3)
 
     yield cfg_db, app_db
 
@@ -313,12 +321,12 @@ class TestVnetMgr(object):
             failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not deleted by vnetmgrd",
         )
 
-    def test_install_on_kernel_uses_vxlan_sport_override(self, dvs, vnetmgr_env):
-        # APP_SWITCH_TABLE:switch|vxlan_sport override must appear as dstport on the Vxlan dev.
+    def test_install_on_kernel_uses_vxlan_port_override(self, dvs, vnetmgr_env):
+        # APP_SWITCH_TABLE:switch|vxlan_port override must appear as dstport on the Vxlan dev.
         cfg_db, app_db = vnetmgr_env
         override_port = "13579"
         create_entry_tbl(app_db, "SWITCH_TABLE", ':', "switch",
-                         [("vxlan_sport", override_port)])
+                         [("vxlan_port", override_port)])
 
         tunnel     = TUNNEL
         vnet       = VNET
@@ -346,7 +354,7 @@ class TestVnetMgr(object):
         wait_for_result(
             _dev_uses_port,
             polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-            failure_message=f"{dev} did not pick up vxlan_sport override {override_port}",
+            failure_message=f"{dev} did not pick up vxlan_port override {override_port}",
         )
 
         delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
@@ -478,8 +486,82 @@ class TestVnetMgr(object):
             _cleanup()
 
 
+    def test_install_on_kernel_defers_when_switch_table_missing(self, dvs, vnetmgr_env):
+        # Missing SWITCH_TABLE|switch must make vnetmgrd defer and log the retry.
+        cfg_db, app_db = vnetmgr_env
+
+        tunnel   = TUNNEL
+        vnet     = VNET
+        vni      = "6600"
+        prefix   = "100.160.1.0/24"
+        endpoint = "10.30.30.2"
+        src_ip   = "10.0.0.8"
+        dst_mac  = "aa:bb:cc:dd:ee:66"
+        dev      = f"Vxlan{vni}"
+
+        # Erase fixture's seeded router_mac and reset daemon caches.
+        delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+        dvs.runcmd(["ip", "link", "del", dev])
+        dvs.runcmd(["supervisorctl", "restart", "vxlanmgrd", "vnetmgrd"])
+        time.sleep(3)
+
+        marker = dvs.add_log_marker("/var/log/syslog")
+
+        _push_vnet_topology(cfg_db, tunnel, vnet, vni, src_ip)
+        create_entry_tbl(
+            cfg_db, "VNET_ROUTE_TUNNEL", "|", f"{vnet}|{prefix}",
+            [("endpoint", endpoint),
+             ("mac_address", dst_mac),
+             ("vni", vni),
+             ("install_on_kernel", "true")],
+        )
+
+        try:
+            def _switch_table_not_ready_log_seen():
+                _, raw = dvs.runcmd(
+                    ["sh", "-c",
+                     "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
+                     "grep -F 'SWITCH_TABLE|switch not present for vxlan device %s' | tail -1"
+                     % (marker, dev)],
+                )
+                return (raw.strip() != "", raw)
+
+            wait_for_result(
+                _switch_table_not_ready_log_seen,
+                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                failure_message=(
+                    f"vnetmgrd did not log the 'SWITCH_TABLE|switch not present' defer "
+                    f"message for {dev}"
+                ),
+            )
+
+            # Log seen => vnetmgrd processed the route; deferral must be side-effect-free.
+            assert not _link_present(dvs, dev)
+            assert _route_in_vrf(dvs, prefix, vnet) == ""
+
+            # vxlanmgrd still needs vxlan_router_mac to build Vxlan<vni>.
+            create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
+                             [("vxlan_router_mac", "00:11:22:33:44:55")])
+
+            def _route_installed():
+                r = _route_in_vrf(dvs, prefix, vnet)
+                return (dev in r, r)
+            wait_for_result(
+                _route_installed,
+                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message=(
+                    f"vnetmgrd never installed {prefix} in {vnet} vrf after router_mac was seeded"
+                ),
+            )
+        finally:
+            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
+            delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+            dvs.runcmd(["ip", "link", "del", dev])
+
     def test_install_on_kernel_vni_matches_vnet_defers_until_netdev_exists(self, dvs, vnetmgr_env):
-        # If route vni == vnet vni, vxlanmgrd owns Vxlan<vni>; vnetmgrd defers route programming if Vxlan<vni> is not created
+        # router_mac is present (fixture seed); stopping vxlanmgrd holds off Vxlan<vni>.
+        # vnetmgrd must log the "not yet created by vxlanmgrd" defer message, then
+        # program the route once vxlanmgrd is restarted and creates the netdev.
         cfg_db, app_db = vnetmgr_env
 
         tunnel   = TUNNEL
@@ -491,9 +573,11 @@ class TestVnetMgr(object):
         dst_mac  = "aa:bb:cc:dd:ee:65"
         dev      = f"Vxlan{vni}"
 
-        # Absent APP_SWITCH_TABLE|switch stalls vxlanmgrd on router-MAC prereq.
-        delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+        # Ensure Vxlan<vni> netdev is absent and vxlanmgrd can't recreate it.
         dvs.runcmd(["ip", "link", "del", dev])
+        dvs.runcmd(["supervisorctl", "stop", "vxlanmgrd"])
+        dvs.runcmd(["supervisorctl", "restart", "vnetmgrd"])
+        time.sleep(3)
 
         marker = dvs.add_log_marker("/var/log/syslog")
 
@@ -509,7 +593,7 @@ class TestVnetMgr(object):
         try:
             time.sleep(5)
             assert not _link_present(dvs, dev), (
-                f"{dev} unexpectedly present before APP_SWITCH_TABLE|switch was created; "
+                f"{dev} unexpectedly present before vxlanmgrd was restarted; "
                 f"details={_link_details(dvs, dev)!r}"
             )
             assert _route_in_vrf(dvs, prefix, vnet) == "", (
@@ -530,13 +614,11 @@ class TestVnetMgr(object):
                 polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
                 failure_message=(
                     f"vnetmgrd did not log the 'not yet created by vxlanmgrd' retry "
-                    f"for {dev}; the `ip -o link show dev` probe path did not run"
+                    f"for {dev}"
                 ),
             )
 
-            # Create router MAC, which results in vxlanmgrd creating Vxlan<vni> on next retry.
-            create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
-                             [("vxlan_router_mac", "00:11:22:33:44:55")])
+            dvs.runcmd(["supervisorctl", "start", "vxlanmgrd"])
 
             def _netdev_created():
                 return (_link_present(dvs, dev), _link_details(dvs, dev))
@@ -544,7 +626,7 @@ class TestVnetMgr(object):
                 _netdev_created,
                 polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
                 failure_message=(
-                    f"vxlanmgrd never created {dev} after APP_SWITCH_TABLE|switch was seeded"
+                    f"vxlanmgrd never created {dev} after being restarted"
                 ),
             )
 
@@ -560,9 +642,153 @@ class TestVnetMgr(object):
                 ),
             )
         finally:
+            dvs.runcmd(["supervisorctl", "start", "vxlanmgrd"])
+            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
+            dvs.runcmd(["ip", "link", "del", dev])
+
+    def test_install_on_kernel_vxlan_sport_and_mask_are_accepted(self, dvs, vnetmgr_env):
+        # sport=20000/mask=8 => srcport 19968 20223; vxlan_port omitted => dstport 4789.
+        cfg_db, app_db = vnetmgr_env
+        create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
+                         [("vxlan_sport", "20000"),
+                          ("vxlan_mask", "8")])
+        tunnel     = TUNNEL
+        vnet       = VNET
+        vnet_vni   = "8000"
+        route_vni  = "8001"
+        prefix     = "100.180.1.0/24"
+        endpoint   = "10.30.50.1"
+        src_ip     = "10.0.0.9"
+        dst_mac    = "aa:bb:cc:dd:ee:88"
+        dev        = f"Vxlan{route_vni}"
+
+        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
+        create_entry_tbl(
+            cfg_db, "VNET_ROUTE_TUNNEL", "|", f"{vnet}|{prefix}",
+            [("endpoint", endpoint),
+             ("mac_address", dst_mac),
+             ("vni", route_vni),
+             ("install_on_kernel", "true")],
+        )
+
+        # Wait for kernel to have every expected attribute in one shot.
+        expected = [
+            f"vxlan id {route_vni}",
+            f"local {src_ip}",
+            f"remote {endpoint}",
+            "dstport 4789",
+            "srcport 19968 20223",
+        ]
+
+        def _dev_matches_all():
+            details = _link_details(dvs, dev)
+            missing = [tok for tok in expected if tok not in details]
+            return (not missing, f"missing={missing!r} details={details!r}")
+
+        try:
+            try:
+                wait_for_result(
+                    _dev_matches_all,
+                    polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                    failure_message=(
+                        f"{dev} did not materialize with all expected SWITCH_TABLE attrs "
+                        f"(id/local/remote/dstport=4789/srcport 19968 20223)"
+                    ),
+                )
+            except AssertionError:
+                _, _dbg = dvs.runcmd(["ip", "-d", "link", "show", dev])
+                raise AssertionError(f"{dev} attrs incomplete. `ip -d link show`:\n{_dbg}")
+        finally:
             delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
             delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
             dvs.runcmd(["ip", "link", "del", dev])
+
+    def test_vxlanmgrd_creates_bridge_and_vxlan_with_switch_table(self, dvs, vnetmgr_env):
+        cfg_db, app_db = vnetmgr_env
+
+        router_mac = "00:11:22:33:44:88"
+        vxlan_port = "14444"
+        sport      = "40000"
+        mask       = "6"
+        srcport_min = "40000"
+        srcport_max = "40063"
+
+        tunnel   = TUNNEL
+        vnet     = VNET
+        vni      = "9100"
+        src_ip   = "10.0.0.11"
+        vxlan_dev = f"Vxlan{vni}"
+        bridge   = f"Brvxlan{vni}"
+
+        # Reset stale cache/state in both daemons before test.
+        delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+        dvs.runcmd(["ip", "link", "del", vxlan_dev])
+        dvs.runcmd(["ip", "link", "del", bridge])
+        dvs.runcmd(["supervisorctl", "restart", "vxlanmgrd", "vnetmgrd"])
+        time.sleep(3)
+
+        create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
+                         [("vxlan_router_mac", router_mac),
+                          ("vxlan_port",       vxlan_port),
+                          ("vxlan_sport",      sport),
+                          ("vxlan_mask",       mask)])
+
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        create_entry_tbl(state_db, "VRF_TABLE", "|", vnet, [("state", "ok")])
+
+        create_entry_tbl(cfg_db, "VXLAN_TUNNEL", "|", tunnel, [("src_ip", src_ip)])
+        create_entry_tbl(cfg_db, "VNET", "|", vnet,
+                         [("vxlan_tunnel", tunnel),
+                          ("vni", vni)])
+
+        try:
+            expected_vxlan = [
+                f"vxlan id {vni}",
+                f"local {src_ip}",
+                f"dstport {vxlan_port}",
+                f"srcport {srcport_min} {srcport_max}",
+                f"master {bridge}",
+            ]
+
+            def _vxlan_matches():
+                details = _link_details(dvs, vxlan_dev)
+                missing = [tok for tok in expected_vxlan if tok not in details]
+                return (not missing, f"missing={missing!r} details={details!r}")
+
+            wait_for_result(
+                _vxlan_matches,
+                polling_config=PollingConfig(polling_interval=1, timeout=60, strict=True),
+                failure_message=(
+                    f"{vxlan_dev} missing expected attrs from "
+                    f"SWITCH_TABLE/VXLAN_TUNNEL/VNET"
+                ),
+            )
+
+            expected_bridge = [
+                f"link/ether {router_mac}",
+                "bridge",
+            ]
+
+            def _bridge_matches():
+                details = _link_details(dvs, bridge)
+                missing = [tok for tok in expected_bridge if tok not in details]
+                return (not missing, f"missing={missing!r} details={details!r}")
+
+            wait_for_result(
+                _bridge_matches,
+                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message=(
+                    f"{bridge} is absent for router_mac={router_mac}"
+                ),
+            )
+        finally:
+            delete_entry_tbl(cfg_db, "VNET", vnet)
+            delete_entry_tbl(cfg_db, "VXLAN_TUNNEL", tunnel)
+            delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+            delete_entry_tbl(state_db, "VRF_TABLE", vnet)
+            dvs.runcmd(["ip", "link", "del", vxlan_dev])
+            dvs.runcmd(["ip", "link", "del", bridge])
+
 
 
 def test_nonflaky_dummy():
