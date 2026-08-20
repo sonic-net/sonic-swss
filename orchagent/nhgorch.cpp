@@ -982,6 +982,18 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
             continue;
         }
 
+        /*
+         * getNhId() may create the next hop over NeighOrch, whose
+         * addNextHop() calls NhgOrch::validateNextHop() and reenters this
+         * group, syncing this member.  Re-check, as creating a member for an
+         * already-synced key would leak a duplicate SAI member that m_members
+         * does not track and this group can never remove.
+         */
+        if (nhgm.isSynced())
+        {
+            continue;
+        }
+
         /* If the neighbor's interface is down, skip from being syncd. */
         if (gNeighOrch->isNextHopFlagSet(nh_key, NHFLAGS_IFDOWN))
         {
