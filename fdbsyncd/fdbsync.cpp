@@ -1239,6 +1239,14 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
 void FdbSync::onMsgNhg(struct nlmsghdr *msg)
 {
+    /* fpmsyncd publishes these straight from the FPM channel in this mode.
+     * Leaving both in place would have two writers racing on the cascade a
+     * withdrawn member triggers. */
+    if (m_fpmMacSync)
+    {
+        return;
+    }
+
     if (!m_isEvpnNvoExist)
     {
         SWSS_LOG_DEBUG("EVPN NVO is not configured, skipping L2 nexthop group message");

@@ -1,8 +1,11 @@
 #include <arpa/inet.h>
 #include <assert.h>
+#include <linux/nexthop.h>
 #include <net/if.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <algorithm>
 
 #include "logger.h"
 #include "macaddress.h"
@@ -88,6 +91,7 @@ static void parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int le
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
     m_vxlanFdbTableRead(pipeline, APP_VXLAN_FDB_TABLE_NAME, false),
+    m_l2NhgTable(pipeline, APP_L2_NEXTHOP_GROUP_TABLE_NAME, true),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
@@ -186,6 +190,175 @@ void MacSync::onFpmConnected(FpmInterface& fpm)
 void MacSync::onFpmDisconnected()
 {
     m_fpmInterface = nullptr;
+}
+
+/*
+ * An FDB nexthop is an EVPN Ethernet Segment destination: either one remote
+ * VTEP, or a group of other FDB nexthops. zebra programs these straight to the
+ * kernel, so until now fdbsyncd read them back out of it; over FPM they arrive
+ * here instead. Returns true once NHA_FDB identifies the message as ours, even
+ * when nothing is published, because the route path must never see it.
+ */
+bool MacSync::onFdbNhgMsg(struct nlmsghdr *h, int len)
+{
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(h);
+    struct rtattr *tb[NHA_MAX + 1];
+
+    parseRtAttrs(tb, NHA_MAX, (struct rtattr *)((char *)nhm + NLMSG_ALIGN(sizeof(*nhm))), len);
+
+    if (!tb[NHA_FDB])
+    {
+        return false;
+    }
+
+    /* fdbsyncd still owns this table while the kernel is the transport. */
+    if (!m_fpmMode)
+    {
+        return true;
+    }
+
+    if (!tb[NHA_ID])
+    {
+        SWSS_LOG_ERROR("MacSync: FDB nexthop without an id");
+        return true;
+    }
+
+    uint32_t nhid = *(uint32_t *)RTA_DATA(tb[NHA_ID]);
+    string key = to_string(nhid);
+
+    if (h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        m_l2NhgTable.del(key);
+        m_l2Nhgs.erase(nhid);
+
+        /* A group naming this id is no longer what it claimed to be. */
+        for (auto it = m_l2Nhgs.begin(); it != m_l2Nhgs.end(); )
+        {
+            if (it->second.type != L2_NHG_TYPE_GROUP)
+            {
+                ++it;
+                continue;
+            }
+
+            auto& members = it->second.memberIds;
+            auto gone = std::find(members.begin(), members.end(), nhid);
+            if (gone == members.end())
+            {
+                ++it;
+                continue;
+            }
+
+            members.erase(gone);
+            if (members.empty())
+            {
+                m_l2NhgTable.del(to_string(it->first));
+                it = m_l2Nhgs.erase(it);
+                continue;
+            }
+
+            string remaining;
+            for (size_t i = 0; i < members.size(); i++)
+            {
+                remaining += (i ? "," : "") + to_string(members[i]);
+            }
+            m_l2NhgTable.set(to_string(it->first),
+                             vector<FieldValueTuple>{{"nexthop_group", remaining}});
+            ++it;
+        }
+
+        SWSS_LOG_INFO("MacSync: removed FDB nexthop %u", nhid);
+        return true;
+    }
+
+    /* An output interface makes it an ordinary nexthop, not an ES destination. */
+    if (tb[NHA_OIF])
+    {
+        SWSS_LOG_INFO("MacSync: FDB nexthop %u has an OIF, skipping", nhid);
+        return true;
+    }
+
+    if (tb[NHA_GATEWAY])
+    {
+        char vtep[INET6_ADDRSTRLEN] = {0};
+
+        if (nhm->nh_family == AF_INET)
+        {
+            struct in_addr addr;
+
+            memcpy(&addr, RTA_DATA(tb[NHA_GATEWAY]), sizeof(addr));
+            /* A link-local VTEP is the kernel's own plumbing, not a peer. */
+            if ((ntohl(addr.s_addr) & 0xFFFF0000) == 0xA9FE0000)
+            {
+                return true;
+            }
+            inet_ntop(AF_INET, &addr, vtep, sizeof(vtep));
+        }
+        else if (nhm->nh_family == AF_INET6)
+        {
+            struct in6_addr addr;
+
+            memcpy(&addr, RTA_DATA(tb[NHA_GATEWAY]), sizeof(addr));
+            if (addr.s6_addr[0] == 0xfe && (addr.s6_addr[1] & 0xc0) == 0x80)
+            {
+                return true;
+            }
+            inet_ntop(AF_INET6, &addr, vtep, sizeof(vtep));
+        }
+        else
+        {
+            SWSS_LOG_INFO("MacSync: FDB nexthop %u has family %d, skipping",
+                          nhid, nhm->nh_family);
+            return true;
+        }
+
+        m_l2NhgTable.set(key, vector<FieldValueTuple>{{"remote_vtep", vtep}});
+
+        L2NhgInfo info;
+        info.type = L2_NHG_TYPE_VTEP;
+        info.vtepIp = vtep;
+        m_l2Nhgs[nhid] = info;
+
+        SWSS_LOG_INFO("MacSync: FDB nexthop %u -> vtep %s", nhid, vtep);
+        return true;
+    }
+
+    if (tb[NHA_GROUP])
+    {
+        struct nexthop_grp *grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
+        size_t count = RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(struct nexthop_grp);
+        vector<uint32_t> members;
+        string joined;
+
+        for (size_t i = 0; i < count; i++)
+        {
+            /* A group is only meaningful once every member is known, otherwise
+             * fdbOrch would resolve it against a nexthop that does not exist. */
+            if (!m_l2Nhgs.count(grp[i].id))
+            {
+                SWSS_LOG_INFO("MacSync: FDB nexthop group %u names unknown member %u, skipping",
+                              nhid, grp[i].id);
+                return true;
+            }
+            members.push_back(grp[i].id);
+            joined += (i ? "," : "") + to_string(grp[i].id);
+        }
+
+        if (members.empty())
+        {
+            return true;
+        }
+
+        m_l2NhgTable.set(key, vector<FieldValueTuple>{{"nexthop_group", joined}});
+
+        L2NhgInfo info;
+        info.type = L2_NHG_TYPE_GROUP;
+        info.memberIds = members;
+        m_l2Nhgs[nhid] = info;
+
+        SWSS_LOG_INFO("MacSync: FDB nexthop group %u -> %s", nhid, joined.c_str());
+    }
+
+    return true;
 }
 
 /*
@@ -609,9 +782,20 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
 
     if (nexthopGroup.empty())
     {
-        if (tb[NDA_DST])
+        size_t dstLen = tb[NDA_DST] ? RTA_PAYLOAD(tb[NDA_DST]) : 0;
+        bool haveDst = false;
+
+        /* zebra emits NDA_DST even when there is no VTEP, sized from the address
+         * family it guessed rather than from what it holds, so an unusable or
+         * all-zero destination means "no VTEP" and not 0.0.0.0. */
+        if (dstLen == sizeof(struct in_addr) || dstLen == sizeof(struct in6_addr))
         {
-            size_t dstLen = RTA_PAYLOAD(tb[NDA_DST]);
+            const uint8_t *dst = (const uint8_t *)RTA_DATA(tb[NDA_DST]);
+            haveDst = std::any_of(dst, dst + dstLen, [](uint8_t b) { return b != 0; });
+        }
+
+        if (haveDst)
+        {
             int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
 
             if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))

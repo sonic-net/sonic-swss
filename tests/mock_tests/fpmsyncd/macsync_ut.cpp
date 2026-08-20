@@ -21,6 +21,7 @@
 
 #include <linux/if_ether.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -163,6 +164,72 @@ public:
     {
         auto v = swss::fvsGetValue(values, field);
         return v.has_value() ? *v : std::string();
+    }
+
+    /* Builds the nexthop message zebra emits for an Ethernet Segment. */
+    struct NhgMsg
+    {
+        struct nlmsghdr n;
+        struct nhmsg nhm;
+        char buf[256];
+    };
+
+    void buildNhgMsg(NhgMsg& req, uint16_t nlmsgType, uint32_t id, bool fdb = true)
+    {
+        memset(&req, 0, sizeof(req));
+        req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+        req.n.nlmsg_type = nlmsgType;
+        req.nhm.nh_family = AF_UNSPEC;
+        addNhgAttr(req, NHA_ID, &id, sizeof(id));
+        if (fdb)
+        {
+            addNhgAttr(req, NHA_FDB, nullptr, 0);
+        }
+    }
+
+    void addNhgAttr(NhgMsg& req, int type, const void *data, size_t alen)
+    {
+        size_t len = RTA_LENGTH(alen);
+        struct rtattr *rta =
+            (struct rtattr *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+        rta->rta_type = (unsigned short)type;
+        rta->rta_len = (unsigned short)len;
+        if (alen)
+        {
+            memcpy(RTA_DATA(rta), data, alen);
+        }
+        req.n.nlmsg_len = (uint32_t)(NLMSG_ALIGN(req.n.nlmsg_len) + RTA_ALIGN(len));
+    }
+
+    void addNhgGateway(NhgMsg& req, const char *ip)
+    {
+        struct in_addr addr;
+        inet_pton(AF_INET, ip, &addr);
+        req.nhm.nh_family = AF_INET;
+        addNhgAttr(req, NHA_GATEWAY, &addr, sizeof(addr));
+    }
+
+    void addNhgMembers(NhgMsg& req, const std::vector<uint32_t>& ids)
+    {
+        std::vector<struct nexthop_grp> grp(ids.size());
+        for (size_t i = 0; i < ids.size(); i++)
+        {
+            memset(&grp[i], 0, sizeof(grp[i]));
+            grp[i].id = ids[i];
+        }
+        addNhgAttr(req, NHA_GROUP, grp.data(), grp.size() * sizeof(struct nexthop_grp));
+    }
+
+    bool feedNhg(NhgMsg& req)
+    {
+        int len = (int)(req.n.nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+        return m_macSync->onFdbNhgMsg(&req.n, len);
+    }
+
+    bool getL2Nhg(uint32_t id, std::vector<FieldValueTuple>& values)
+    {
+        Table table(m_appDb.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+        return table.get(std::to_string(id), values);
     }
 
 protected:
@@ -660,6 +727,55 @@ TEST_F(MacSyncTest, MacOnNonEsPortWithoutVtepIsSkipped)
 }
 
 /*
+ * zebra sizes NDA_DST from the address family it guessed rather than from what
+ * it actually holds, so a MAC with no VTEP still arrives carrying a 16 byte
+ * all-zero destination. Treating that as a real address published `::` as the
+ * remote VTEP and hid the Ethernet Segment the MAC really sits on.
+ */
+TEST_F(MacSyncTest, UnspecifiedVtepIsNotAnAddress)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+
+    struct in6_addr unspecified;
+    memset(&unspecified, 0, sizeof(unspecified));
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    addAttr(req, NDA_DST, &unspecified, sizeof(unspecified));
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "ifname"), "lo");
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+
+    cfgEs.del("lo");
+}
+
+/* Same encoding on a port that is not an Ethernet Segment: there is nothing to
+ * program the MAC against, so it must be dropped rather than published. */
+TEST_F(MacSyncTest, UnspecifiedVtepOnNonEsPortIsSkipped)
+{
+    struct in6_addr unspecified;
+    memset(&unspecified, 0, sizeof(unspecified));
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    addAttr(req, NDA_DST, &unspecified, sizeof(unspecified));
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/*
  * A MAC behind an Ethernet Segment reaches several VTEPs at once, so zebra
  * resolves it to an L2 nexthop group and sends NDA_NH_ID with no NDA_DST. It
  * has to be programmed against that group rather than discarded as though it
@@ -847,4 +963,125 @@ TEST_F(MacSyncTest, ReplayWithNoLocalMacsStillSendsMarker)
     ASSERT_EQ(fpm.count(), 1u);
     EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
     EXPECT_NE(fpm.at(0)->nlmsg_seq, 0u);
+}
+
+/*
+ * The FDB nexthop cases below all share one hazard: RTM_NEWNEXTHOP is also how
+ * L3 nexthop groups arrive, and routesync will publish anything it is handed as
+ * a real NEXTHOP_GROUP. Misclassifying in either direction is silent.
+ */
+TEST_F(MacSyncTest, FdbNexthopWithGatewayPublishesRemoteVtep)
+{
+    NhgMsg req;
+    buildNhgMsg(req, RTM_NEWNEXTHOP, 4001);
+    addNhgGateway(req, "10.1.1.1");
+    ASSERT_TRUE(feedNhg(req));
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getL2Nhg(4001, values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.1.1.1");
+}
+
+TEST_F(MacSyncTest, FdbNexthopGroupPublishesItsMembers)
+{
+    NhgMsg a, b, g;
+    buildNhgMsg(a, RTM_NEWNEXTHOP, 4001);
+    addNhgGateway(a, "10.1.1.1");
+    feedNhg(a);
+
+    buildNhgMsg(b, RTM_NEWNEXTHOP, 4002);
+    addNhgGateway(b, "10.1.1.2");
+    feedNhg(b);
+
+    buildNhgMsg(g, RTM_NEWNEXTHOP, 5000);
+    addNhgMembers(g, {4001, 4002});
+    ASSERT_TRUE(feedNhg(g));
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getL2Nhg(5000, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4001,4002");
+}
+
+/* fdbOrch would resolve the group against a nexthop that does not exist. */
+TEST_F(MacSyncTest, FdbNexthopGroupWithUnknownMemberIsNotPublished)
+{
+    NhgMsg g;
+    buildNhgMsg(g, RTM_NEWNEXTHOP, 5000);
+    addNhgMembers(g, {4001, 9999});
+    EXPECT_TRUE(feedNhg(g));
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getL2Nhg(5000, values));
+}
+
+/* Withdrawing a member must re-derive every group that named it. */
+TEST_F(MacSyncTest, FdbNexthopDeleteRederivesTheGroupsThatNamedIt)
+{
+    NhgMsg a, b, g, del;
+    buildNhgMsg(a, RTM_NEWNEXTHOP, 4001);
+    addNhgGateway(a, "10.1.1.1");
+    feedNhg(a);
+    buildNhgMsg(b, RTM_NEWNEXTHOP, 4002);
+    addNhgGateway(b, "10.1.1.2");
+    feedNhg(b);
+    buildNhgMsg(g, RTM_NEWNEXTHOP, 5000);
+    addNhgMembers(g, {4001, 4002});
+    feedNhg(g);
+
+    buildNhgMsg(del, RTM_DELNEXTHOP, 4001);
+    ASSERT_TRUE(feedNhg(del));
+
+    std::vector<FieldValueTuple> gone;
+    EXPECT_FALSE(getL2Nhg(4001, gone));
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getL2Nhg(5000, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4002");
+}
+
+/* An output interface makes it an ordinary nexthop, not an ES destination. */
+TEST_F(MacSyncTest, FdbNexthopWithOifIsNotPublished)
+{
+    NhgMsg req;
+    uint32_t oif = 7;
+
+    buildNhgMsg(req, RTM_NEWNEXTHOP, 4001);
+    addNhgGateway(req, "10.1.1.1");
+    addNhgAttr(req, NHA_OIF, &oif, sizeof(oif));
+    EXPECT_TRUE(feedNhg(req));
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getL2Nhg(4001, values));
+}
+
+/*
+ * The safety property: without NHA_FDB the message is an L3 nexthop and must be
+ * declined, or routesync never sees it and the route's group disappears.
+ */
+TEST_F(MacSyncTest, NonFdbNexthopIsDeclinedForTheRoutePath)
+{
+    NhgMsg req;
+    buildNhgMsg(req, RTM_NEWNEXTHOP, 4001, false /* no NHA_FDB */);
+    addNhgGateway(req, "10.1.1.1");
+
+    EXPECT_FALSE(feedNhg(req));
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getL2Nhg(4001, values));
+}
+
+/* fdbsyncd still owns the table while the kernel is the transport. */
+TEST_F(MacSyncTest, FdbNexthopIsConsumedButNotPublishedInKernelMode)
+{
+    m_macSync->m_fpmMode = false;
+
+    NhgMsg req;
+    buildNhgMsg(req, RTM_NEWNEXTHOP, 4001);
+    addNhgGateway(req, "10.1.1.1");
+
+    /* Consumed, so it cannot reach the route path, but not published. */
+    EXPECT_TRUE(feedNhg(req));
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getL2Nhg(4001, values));
 }

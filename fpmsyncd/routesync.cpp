@@ -2472,6 +2472,13 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     {
     case RTM_NEWNEXTHOP:
     case RTM_DELNEXTHOP:
+        /* An FDB nexthop names an EVPN Ethernet Segment destination, not an L3
+         * nexthop. Letting it reach onNextHopMsg() would publish it as a real
+         * NEXTHOP_GROUP. */
+        if (m_macsync && m_macsync->onFdbNhgMsg(h, len))
+        {
+            return;
+        }
         onNextHopMsg(h, len);
         return;
     case RTM_NEWPICCONTEXT:
