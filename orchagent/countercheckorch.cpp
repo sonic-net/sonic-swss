@@ -223,6 +223,12 @@ QueueMcCounters CounterCheckOrch::getQueueMcCounters(
 
 void CounterCheckOrch::addPort(const Port& port)
 {
+    // Skip non-PHY ports (CPU, MGMT, RECYCLE, etc.) as they do not have
+    // PFC frame counters or multicast queue counters on the ASIC
+    if (port.m_type != Port::PHY)
+    {
+        return;
+    }
     m_mcCountersMap.emplace(port.m_port_id, getQueueMcCounters(port));
     m_pfcFrameCountersMap.emplace(port.m_port_id, getPfcFrameCounters(port.m_port_id));
 }
