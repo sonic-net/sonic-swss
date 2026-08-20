@@ -115,7 +115,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
     { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
-    { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
+    { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER },
+    { ACTION_PACKET_COLOR_ACTION,              SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -149,6 +150,13 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
     { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
+};
+
+static acl_packet_color_lookup_t aclPacketColorLookup =
+{
+    { PACKET_COLOR_GREEN,  SAI_PACKET_COLOR_GREEN },
+    { PACKET_COLOR_YELLOW, SAI_PACKET_COLOR_YELLOW },
+    { PACKET_COLOR_RED,    SAI_PACKET_COLOR_RED },
 };
 
 static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
@@ -2240,6 +2248,17 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         actionData.parameter.oid = policer_oid;
         m_policerName = _attr_value;
     }
+    else if (attr_name == ACTION_PACKET_COLOR_ACTION)
+    {
+        const auto it = aclPacketColorLookup.find(attr_value);
+        if (it == aclPacketColorLookup.cend())
+        {
+            SWSS_LOG_ERROR("Invalid packet color %s for action %s",
+                           attr_value.c_str(), attr_name.c_str());
+            return false;
+        }
+        actionData.parameter.s32 = it->second;
+    }
     else
     {
         return false;
@@ -2356,16 +2375,23 @@ bool AclRulePacket::validate()
         return false;
     }
 
-    size_t nonPolicerActions = 0;
-    for (const auto& action : m_actions)
+    // SET_POLICER and SET_PACKET_COLOR are composable QoS modifiers, not terminating
+    // actions: SET_POLICER meters the matched packet and SET_PACKET_COLOR sets its
+    // drop-precedence color (consumed downstream by a color-aware policer or WRED).
+    // Either may accompany a single forwarding/terminating action such as
+    // PACKET_ACTION, plus a counter, so only the non-composable actions are capped
+    // at one; SAI applies each as an independent CREATE_AND_SET action.
+    size_t nonComposableActions = 0;
+    for (const auto &action : m_actions)
     {
-        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER &&
+            action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR)
         {
-            nonPolicerActions++;
+            nonComposableActions++;
         }
     }
 
-    if (nonPolicerActions > 1)
+    if (nonComposableActions > 1)
     {
         return false;
     }
@@ -2383,10 +2409,9 @@ bool AclRulePacket::createRule()
     SWSS_LOG_ENTER();
 
     // When the rule binds a policer, take the policer reference BEFORE creating the
-    // SAI ACL entry (same ordering as AclRuleMirror's session policer). This way a
-    // refcount failure -- only reachable if the policer disappeared after validate()
-    // -- leaves nothing to unwind. m_policerRefHeld keeps the count balanced across
-    // recreate cycles.
+    // SAI ACL entry. This way a refcount failure -- only reachable if the policer
+    // disappeared after validate() -- leaves nothing to unwind. m_policerRefHeld
+    // keeps the count balanced across recreate cycles.
     if (!m_policerName.empty() && !m_policerRefHeld)
     {
         if (!gPolicerOrch->increaseRefCount(m_policerName))
@@ -4296,6 +4321,9 @@ void AclOrch::queryAclActionCapability()
     queryAclActionAttrEnumValues(ACTION_PACKET_ACTION,
                                  aclL3ActionLookup,
                                  aclPacketActionLookup);
+    queryAclActionAttrEnumValues(ACTION_PACKET_COLOR_ACTION,
+                                 aclL3ActionLookup,
+                                 aclPacketColorLookup);
     queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
                                  aclDTelActionLookup,
                                  aclDTelFlowOpTypeLookup);
