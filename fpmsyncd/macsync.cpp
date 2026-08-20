@@ -10,6 +10,7 @@
 #include "logger.h"
 #include "macaddress.h"
 #include "schema.h"
+#include "warm_restart.h"
 #include "fpm/fpm.h"
 #include "fpmsyncd/macsync.h"
 
@@ -94,10 +95,12 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_l2NhgTable(pipeline, APP_L2_NEXTHOP_GROUP_TABLE_NAME, true),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
+    m_appPortTable(pipeline->getDBConnector(), APP_PORT_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
     m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
-    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME)
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
+    m_appPortTableRead(pipeline, APP_PORT_TABLE_NAME, false)
 {
     readCfgFdbSyncMode();
 }
@@ -140,6 +143,16 @@ void MacSync::setMacSyncMode(const string& mode)
          * path, so the local cache is stale on the way into fpm mode. */
         loadLocalMacs();
         replayLocalMacs();
+        /* Only a fresh connect sends the marker otherwise, so without this a
+         * mode change back to fpm would leave zebra writing local MACs too. */
+        trySendReplayEnd();
+    }
+    else
+    {
+        /* fdbsyncd owns the kernel path again, so zebra has to stop deferring
+         * local MACs to us. Nothing else tells it the mode changed. */
+        sendLocalMacRelease();
+        m_localMacs.clear();
     }
 }
 
@@ -184,12 +197,13 @@ void MacSync::onFpmConnected(FpmInterface& fpm)
 
     loadLocalMacs();
     replayLocalMacs();
-    sendReplayEnd();
+    trySendReplayEnd();
 }
 
 void MacSync::onFpmDisconnected()
 {
     m_fpmInterface = nullptr;
+    m_replayEndPending = false;
 }
 
 /*
@@ -418,6 +432,12 @@ uint32_t MacSync::nextGeneration()
     }
 
     ++generation;
+    /* 0 means "local MACs are not owned over the FPM", so it is never a
+     * replay generation. */
+    if (generation == 0)
+    {
+        generation = 1;
+    }
     m_stateFdbSyncTable.hset(FDB_SYNC_GLOBAL_KEY, FDB_SYNC_GENERATION_FIELD,
                              std::to_string(generation));
 
@@ -504,6 +524,73 @@ void MacSync::replayLocalMacs()
     }
 }
 
+/*
+ * The marker tells zebra to drop every local MAC it did not just receive, so
+ * sending it while STATE_DB is still filling would withdraw MACs that exist.
+ * orchagent owns STATE_DB FDB_TABLE, so the question is whether orchagent is
+ * far enough along for its silence to mean "no MACs" rather than "not yet".
+ *
+ * PortInitDone says orchagent finished creating ports, and a warm restart adds
+ * the ASIC's retained MACs afterwards during reconciliation.
+ */
+bool MacSync::isLocalMacViewComplete()
+{
+    std::vector<FieldValueTuple> values;
+    /* Retries are driven by port and FDB events, so without this only-once
+     * guard a boot logs one line per event: ~700 on a 500 port switch. */
+    bool firstCheckOfHold = !m_replayEndPending;
+
+    if (!m_appPortTableRead.get("PortInitDone", values))
+    {
+        if (firstCheckOfHold)
+        {
+            SWSS_LOG_NOTICE("MacSync: orchagent has not signalled PortInitDone, "
+                            "holding the end-of-replay marker");
+        }
+        return false;
+    }
+
+    if (WarmStart::isWarmStart())
+    {
+        WarmStart::WarmStartState state;
+
+        WarmStart::getWarmStartState("orchagent", state);
+        if (state != WarmStart::REPLAYED && state != WarmStart::RECONCILED)
+        {
+            if (firstCheckOfHold)
+            {
+                SWSS_LOG_NOTICE("MacSync: orchagent is still reconciling its warm "
+                                "restart, holding the end-of-replay marker");
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/*
+ * Deferring is the safe direction: zebra keeps MACs it might have swept, and
+ * the sweep still happens once STATE_DB is trustworthy. Local MAC adds are not
+ * held back, only the marker, so nothing is delayed except the withdrawal.
+ */
+void MacSync::trySendReplayEnd()
+{
+    if (!m_fpmMode || !m_fpmInterface)
+    {
+        return;
+    }
+
+    if (!isLocalMacViewComplete())
+    {
+        m_replayEndPending = true;
+        return;
+    }
+
+    m_replayEndPending = false;
+    sendReplayEnd();
+}
+
 void MacSync::sendReplayEnd()
 {
     if (!m_fpmMode || !m_fpmInterface)
@@ -527,6 +614,53 @@ void MacSync::sendReplayEnd()
 
     SWSS_LOG_NOTICE("MacSync: replayed %zu local MACs, generation %u",
                     m_localMacs.size(), m_generation);
+}
+
+/*
+ * Hand local MACs back to zebra. Generation 0 is not a replay, so it does not
+ * go through trySendReplayEnd(): there is no view of STATE_DB left to complete
+ * and holding the message would leave zebra suppressing writes nobody is making.
+ */
+void MacSync::sendLocalMacRelease()
+{
+    if (!m_fpmInterface)
+    {
+        return;
+    }
+
+    struct nlmsghdr n{};
+
+    n.nlmsg_len = NLMSG_LENGTH(0);
+    n.nlmsg_flags = NLM_F_REQUEST;
+    n.nlmsg_type = RTM_FPM_MAC_REPLAY_END;
+    n.nlmsg_seq = 0;
+
+    if (!m_fpmInterface->send(&n))
+    {
+        SWSS_LOG_ERROR("MacSync: failed to release local MACs to zebra");
+        return;
+    }
+
+    m_replayEndPending = false;
+    SWSS_LOG_NOTICE("MacSync: released local MACs, zebra owns them again");
+}
+
+/*
+ * orchagent signals PortInitDone here. A marker held because STATE_DB could not
+ * be trusted yet has no other wake-up: if orchagent comes up owning no MACs it
+ * publishes nothing to STATE_DB, so waiting on FDB traffic alone would hold the
+ * marker until the next FPM reconnect.
+ */
+void MacSync::processAppPort()
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+
+    m_appPortTable.pops(entries);
+
+    if (m_replayEndPending)
+    {
+        trySendReplayEnd();
+    }
 }
 
 void MacSync::processStateFdb()
@@ -592,6 +726,13 @@ void MacSync::processStateFdb()
         }
 
         sendLocalMac(vlanName, mac, port, isStatic, add);
+    }
+
+    /* orchagent publishing again is the signal that its silence would now mean
+     * "no MACs", which is what a held marker was waiting for. */
+    if (m_replayEndPending)
+    {
+        trySendReplayEnd();
     }
 }
 
