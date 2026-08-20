@@ -2414,3 +2414,23 @@ TEST_F(FdbSyncdEvpnMhTest, FpmModeHonouredWhileEvpnMultihomingConfigured)
     m_mockFdbSync.addLocalMac(key, "replace");
     EXPECT_EQ(countBridgeFdbCmds(), 0u);
 }
+
+/* fpmsyncd publishes L2_NEXTHOP_GROUP_TABLE from the FPM channel in fpm mode.
+ * Both daemons writing it would race on the cascade a withdrawn member causes,
+ * so the same message must be acted on in kernel mode and ignored in fpm mode. */
+TEST_F(FdbSyncdEvpnMhTest, L2NhgNotPublishedInFpmMode)
+{
+    uint32_t vtep_nhid = 4242;
+    struct nlmsghdr *nhg = create_l2_nhg_member_msg(vtep_nhid, "10.0.0.9", 0);
+    std::vector<swss::FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    m_mockFdbSync.onMsgRaw(nhg);
+    EXPECT_FALSE(getNhgTable().get(std::to_string(vtep_nhid), values));
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    m_mockFdbSync.onMsgRaw(nhg);
+    EXPECT_TRUE(getNhgTable().get(std::to_string(vtep_nhid), values));
+
+    free(nhg);
+}
