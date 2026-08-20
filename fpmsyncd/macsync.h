@@ -36,9 +36,13 @@ public:
 
     SubscriberStateTable *getStateFdbTable() { return &m_stateFdbTable; }
     SubscriberStateTable *getCfgFdbSyncTable() { return &m_cfgFdbSyncTable; }
+    SubscriberStateTable *getAppPortTable() { return &m_appPortTable; }
 
     /* CONFIG_DB FDB_SYNC|global updates. */
     void processCfgFdbSync();
+
+    /* APPL_DB PORT_TABLE updates: orchagent readiness for a held replay marker. */
+    void processAppPort();
 
     /* STATE_DB FDB_TABLE updates: local MACs toward zebra. */
     void processStateFdb();
@@ -92,17 +96,22 @@ private:
     void loadRemoteMacs();
     uint32_t nextGeneration();
     void replayLocalMacs();
+    bool isLocalMacViewComplete();
+    void trySendReplayEnd();
     void sendReplayEnd();
+    void sendLocalMacRelease();
 
     ProducerStateTable m_vxlanFdbTable;
     Table m_vxlanFdbTableRead;
     ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_stateFdbTable;
     SubscriberStateTable m_cfgFdbSyncTable;
+    SubscriberStateTable m_appPortTable;
     Table m_cfgFdbSyncTableRead;
     Table m_cfgEvpnEsTable;
     Table m_stateFdbTableRead;
     Table m_stateFdbSyncTable;
+    Table m_appPortTableRead;
 
     FpmInterface *m_fpmInterface {nullptr};
     bool m_fpmMode {false};
@@ -119,6 +128,11 @@ private:
      * missing from this set at end of replay no longer exist. */
     std::set<std::string> m_remoteMacsSeen;
     bool m_remoteReplayPending {false};
+
+    /* The end-of-replay marker makes zebra drop every local MAC we did not just
+     * replay, so it may only be sent once STATE_DB is known to hold the real
+     * set. Held here until then. */
+    bool m_replayEndPending {false};
 
     std::map<uint32_t, L2NhgInfo> m_l2Nhgs;
 };

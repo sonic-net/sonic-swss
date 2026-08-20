@@ -151,6 +151,7 @@ int main(int argc, char **argv)
             s.addSelectable(&netlink);
             s.addSelectable(macsync.getStateFdbTable());
             s.addSelectable(macsync.getCfgFdbSyncTable());
+            s.addSelectable(macsync.getAppPortTable());
 
             if (sync.isSuppressionEnabled())
             {
@@ -209,6 +210,12 @@ int main(int argc, char **argv)
                 if (temps == (Selectable *)macsync.getCfgFdbSyncTable())
                 {
                     macsync.processCfgFdbSync();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getAppPortTable())
+                {
+                    macsync.processAppPort();
                     continue;
                 }
 

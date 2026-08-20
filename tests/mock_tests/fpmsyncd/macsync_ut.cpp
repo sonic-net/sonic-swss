@@ -75,6 +75,10 @@ public:
         /* CONFIG_DB is not populated under the mock, so drive the mode directly. */
         m_macSync->m_fpmMode = true;
 
+        /* A ready orchagent is the normal case, so the end-of-replay marker is
+         * not gated in most tests; the gate itself is covered separately. */
+        setPortInitDone();
+
         /* Needed to exercise the real dispatch path rather than calling the
          * handler directly; onMsgRaw filters message types before MacSync. */
         m_routeSync = std::make_unique<RouteSync>(m_pipeline.get());
@@ -86,6 +90,18 @@ public:
         m_routeSync.reset();
         m_macSync.reset();
         m_pipeline.reset();
+    }
+
+    void setPortInitDone()
+    {
+        Table portTable(m_appDb.get(), APP_PORT_TABLE_NAME);
+        portTable.set("PortInitDone", std::vector<FieldValueTuple>{{"lanes", "0"}});
+    }
+
+    void clearPortInitDone()
+    {
+        Table portTable(m_appDb.get(), APP_PORT_TABLE_NAME);
+        portTable.del("PortInitDone");
     }
 
     /* Builds an AF_BRIDGE neighbour message of the shape zebra emits. */
@@ -900,8 +916,11 @@ TEST_F(MacSyncTest, EnteringFpmModeReplaysExistingLocalMacs)
 
     m_macSync->setMacSyncMode("fpm");
 
-    ASSERT_EQ(fpm.count(), 1u);
+    /* The MAC, then the marker that claims ownership of local MACs. */
+    ASSERT_EQ(fpm.count(), 2u);
     EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
+    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_NE(fpm.at(1)->nlmsg_seq, 0u);
 }
 
 /*
@@ -963,6 +982,154 @@ TEST_F(MacSyncTest, ReplayWithNoLocalMacsStillSendsMarker)
     ASSERT_EQ(fpm.count(), 1u);
     EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
     EXPECT_NE(fpm.at(0)->nlmsg_seq, 0u);
+}
+
+/*
+ * Leaving fpm mode hands local MACs back. Without this zebra keeps suppressing
+ * its own kernel writes while fdbsyncd owns the path, so nobody programs them.
+ */
+TEST_F(MacSyncTest, LeavingFpmModeReleasesLocalMacs)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 1u);
+
+    m_macSync->setMacSyncMode("kernel");
+
+    ASSERT_EQ(fpm.count(), 2u);
+    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_EQ(fpm.at(1)->nlmsg_seq, 0u);
+}
+
+/* Re-entering fpm mode takes ownership back with a real generation. */
+TEST_F(MacSyncTest, ReEnteringFpmModeTakesLocalMacsBack)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    m_macSync->setMacSyncMode("kernel");
+    ASSERT_EQ(fpm.count(), 2u);
+
+    m_macSync->setMacSyncMode("fpm");
+
+    ASSERT_EQ(fpm.count(), 3u);
+    EXPECT_EQ(fpm.at(2)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_NE(fpm.at(2)->nlmsg_seq, 0u);
+}
+
+/* A mode set that changes nothing must not disturb ownership. */
+TEST_F(MacSyncTest, RepeatedKernelModeReleasesOnlyOnce)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    m_macSync->setMacSyncMode("kernel");
+    ASSERT_EQ(fpm.count(), 2u);
+
+    m_macSync->setMacSyncMode("kernel");
+
+    EXPECT_EQ(fpm.count(), 2u);
+}
+
+/*
+ * The marker makes zebra drop every local MAC it did not just receive, so it
+ * asserts that STATE_DB holds the real set. Sending it before orchagent has
+ * signalled PortInitDone turns "orchagent has not filled STATE_DB yet" into
+ * "SONiC has no MACs", withdrawing MACs that exist.
+ */
+TEST_F(MacSyncTest, MarkerIsHeldUntilOrchagentIsReady)
+{
+    clearPortInitDone();
+    seedStateFdb("Vlan100:00:11:22:33:44:55", "lo", false);
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    /* The MAC still goes out; only the marker waits. */
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
+    EXPECT_TRUE(m_macSync->m_replayEndPending);
+}
+
+/* Once orchagent publishes, its silence means "no MACs" and the marker is due. */
+TEST_F(MacSyncTest, HeldMarkerIsSentOnceOrchagentPublishes)
+{
+    clearPortInitDone();
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 0u);
+    ASSERT_TRUE(m_macSync->m_replayEndPending);
+
+    setPortInitDone();
+    m_macSync->processStateFdb();
+
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_FALSE(m_macSync->m_replayEndPending);
+}
+
+/* A held marker must not go out while orchagent is still unready. */
+TEST_F(MacSyncTest, HeldMarkerSurvivesAnEarlyRetry)
+{
+    clearPortInitDone();
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_TRUE(m_macSync->m_replayEndPending);
+
+    m_macSync->processStateFdb();
+
+    EXPECT_EQ(fpm.count(), 0u);
+    EXPECT_TRUE(m_macSync->m_replayEndPending);
+}
+
+/*
+ * PortInitDone is the only wake-up a held marker gets when orchagent comes up
+ * owning no MACs: it publishes nothing to STATE_DB, so waiting on FDB traffic
+ * alone would hold the marker until the next FPM reconnect.
+ */
+TEST_F(MacSyncTest, HeldMarkerIsSentWhenPortInitDoneArrives)
+{
+    clearPortInitDone();
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_EQ(fpm.count(), 0u);
+    ASSERT_TRUE(m_macSync->m_replayEndPending);
+
+    setPortInitDone();
+    m_macSync->processAppPort();
+
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_FPM_MAC_REPLAY_END);
+    EXPECT_FALSE(m_macSync->m_replayEndPending);
+}
+
+/* The same wake-up must not release the marker while orchagent is still absent. */
+TEST_F(MacSyncTest, PortTableActivityAloneDoesNotReleaseTheMarker)
+{
+    clearPortInitDone();
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_TRUE(m_macSync->m_replayEndPending);
+
+    m_macSync->processAppPort();
+
+    EXPECT_EQ(fpm.count(), 0u);
+    EXPECT_TRUE(m_macSync->m_replayEndPending);
+}
+
+/* A marker owed to a session that has gone away must not follow the next one. */
+TEST_F(MacSyncTest, HeldMarkerIsDroppedOnDisconnect)
+{
+    clearPortInitDone();
+
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    ASSERT_TRUE(m_macSync->m_replayEndPending);
+
+    m_macSync->onFpmDisconnected();
+    EXPECT_FALSE(m_macSync->m_replayEndPending);
 }
 
 /*
