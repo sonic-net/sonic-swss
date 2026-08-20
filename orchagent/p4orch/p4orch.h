@@ -61,6 +61,8 @@ class P4Orch : public ZmqOrch
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
     bool bake() override;
+    void handlePortStatusUpdate(const std::string& alias,
+                                const sai_port_oper_status_t& status);
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
@@ -75,7 +77,6 @@ class P4Orch : public ZmqOrch
     void doTask(swss::SelectableEvent& event);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
     ReturnCode drain();
-    void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
     // P4 object manager request processing order.
     std::vector<ObjectManagerInterface*> m_p4ManagerAddPrecedence;
@@ -103,8 +104,7 @@ class P4Orch : public ZmqOrch
     // DBConnector backing the port-state notification consumer.
     std::shared_ptr<swss::DBConnector> m_notificationsDb;
 
-    // Notification consumer for port state change
-    swss::NotificationConsumer *m_portStatusNotificationConsumer;
+    // Notification consumer
 
     swss::ZmqServer* m_zmqServer;
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
