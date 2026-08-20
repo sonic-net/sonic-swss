@@ -42,15 +42,6 @@ using namespace swss;
 #define FDB_SYNC_GLOBAL_KEY "global"
 #define FDB_SYNC_GENERATION_FIELD "generation"
 
-/* zebra replays what it knows at FPM connect, which on a restart of the whole
- * bgp container is before BGP has re-learned anything. Deleting on that basis
- * would drop live MACs, so the decision is held until the peer has had time to
- * converge. Matches the interval fdbsyncd uses for the same reason.
- *
- * zebra holds the MACs it learns from here on a separate timer of its own. The
- * two are deliberately not synchronised: this window waits on BGP converging,
- * that one waits on STATE_DB becoming readable, so they need not agree. */
-#define MAC_STALE_HOLD_SECONDS 120
 /* Same buffer shape zebra uses for AF_BRIDGE FDB messages. */
 struct MacNlRequest
 {
@@ -102,8 +93,7 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
     m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
-    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
-    m_staleTimer(timespec{MAC_STALE_HOLD_SECONDS, 0})
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME)
 {
     readCfgFdbSyncMode();
 }
@@ -210,49 +200,26 @@ void MacSync::onRemoteReplayEnd()
         return;
     }
 
-    m_staleCandidates.clear();
-    for (const auto& key : m_remoteMacs)
+    unsigned int removed = 0;
+
+    for (auto it = m_remoteMacs.begin(); it != m_remoteMacs.end(); )
     {
-        if (!m_remoteMacsSeen.count(key))
+        if (m_remoteMacsSeen.count(*it))
         {
-            m_staleCandidates.insert(key);
+            ++it;
+            continue;
         }
+
+        m_vxlanFdbTable.del(*it);
+        it = m_remoteMacs.erase(it);
+        ++removed;
     }
 
     m_remoteMacsSeen.clear();
     m_remoteReplayPending = false;
 
-    if (m_staleCandidates.empty())
-    {
-        SWSS_LOG_NOTICE("MacSync: remote replay ended, all %zu remote MAC(s) accounted for",
-                        m_remoteMacs.size());
-        return;
-    }
-
-    m_staleTimer.start();
-    SWSS_LOG_NOTICE("MacSync: remote replay ended, %zu remote MAC(s) unaccounted for, "
-                    "deleting in %ds unless re-advertised",
-                    m_staleCandidates.size(), MAC_STALE_HOLD_SECONDS);
-}
-
-void MacSync::onStaleTimer()
-{
-    m_staleTimer.stop();
-
-    unsigned int removed = 0;
-
-    for (const auto& key : m_staleCandidates)
-    {
-        if (m_remoteMacs.erase(key))
-        {
-            m_vxlanFdbTable.del(key);
-            ++removed;
-        }
-    }
-
-    SWSS_LOG_NOTICE("MacSync: hold-down expired, removed %u stale remote MAC(s), retained %zu",
+    SWSS_LOG_NOTICE("MacSync: remote replay ended, removed %u stale remote MAC(s), retained %zu",
                     removed, m_remoteMacs.size());
-    m_staleCandidates.clear();
 }
 
 /*
@@ -698,7 +665,6 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
 
     m_vxlanFdbTable.set(key, fvVector);
     m_remoteMacs.insert(key);
-    m_staleCandidates.erase(key);
     if (m_remoteReplayPending)
     {
         m_remoteMacsSeen.insert(key);

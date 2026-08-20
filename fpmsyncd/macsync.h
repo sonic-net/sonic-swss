@@ -33,7 +33,6 @@ public:
 
     SubscriberStateTable *getStateFdbTable() { return &m_stateFdbTable; }
     SubscriberStateTable *getCfgFdbSyncTable() { return &m_cfgFdbSyncTable; }
-    SelectableTimer *getStaleTimer() { return &m_staleTimer; }
 
     /* CONFIG_DB FDB_SYNC|global updates. */
     void processCfgFdbSync();
@@ -46,9 +45,6 @@ public:
 
     /* zebra finished replaying its remote MACs. */
     void onRemoteReplayEnd();
-
-    /* Hold-down expired: whatever zebra still has not mentioned is gone. */
-    void onStaleTimer();
 
     void onFpmConnected(FpmInterface& fpm);
     void onFpmDisconnected();
@@ -98,11 +94,6 @@ private:
      * missing from this set at end of replay no longer exist. */
     std::set<std::string> m_remoteMacsSeen;
     bool m_remoteReplayPending {false};
-
-    /* Not deleted at end of replay: zebra's own EVPN state may still be
-     * converging, so a re-advertisement clears the entry from this set. */
-    std::set<std::string> m_staleCandidates;
-    SelectableTimer m_staleTimer;
 };
 
 }
