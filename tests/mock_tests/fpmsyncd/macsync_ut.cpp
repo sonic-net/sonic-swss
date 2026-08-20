@@ -318,24 +318,17 @@ TEST_F(MacSyncTest, StaleRemoteMacSweptAtEndOfReplay)
     m_macSync->m_remoteReplayPending = true;
     m_macSync->onRemoteReplayEnd();
 
-    /* Held, not deleted: zebra may still be converging. */
     std::vector<FieldValueTuple> values;
-    EXPECT_TRUE(getEntry(TEST_KEY, values));
-    EXPECT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 1u);
-
-    m_macSync->onStaleTimer();
-
-    values.clear();
     EXPECT_FALSE(getEntry(TEST_KEY, values));
     EXPECT_EQ(m_macSync->m_remoteMacs.count(TEST_KEY), 0u);
 }
 
 /*
- * The case the lab caught: on a restart of the whole bgp container zebra's
- * replay is empty because BGP has not converged yet. A MAC re-advertised during
- * the hold-down must survive, or a live entry is dropped.
+ * The marker is the whole answer, so a MAC zebra did not replay is gone the
+ * moment it arrives. If zebra advertises it afterwards the entry comes back,
+ * but it was absent in between: there is no hold-down to sit in.
  */
-TEST_F(MacSyncTest, LateReadvertisementCancelsTheDeletion)
+TEST_F(MacSyncTest, ReadvertisementAfterTheSweepRestoresTheMac)
 {
     Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
     appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"}});
@@ -346,7 +339,9 @@ TEST_F(MacSyncTest, LateReadvertisementCancelsTheDeletion)
     m_macSync->m_remoteMacsSeen.clear();
     m_macSync->m_remoteReplayPending = true;
     m_macSync->onRemoteReplayEnd();
-    ASSERT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 1u);
+
+    std::vector<FieldValueTuple> swept;
+    ASSERT_FALSE(getEntry(TEST_KEY, swept));
 
     /* zebra catches up after the marker. */
     MacMsg late;
@@ -355,10 +350,6 @@ TEST_F(MacSyncTest, LateReadvertisementCancelsTheDeletion)
     addVtep(late, "10.1.1.1");
     addSrcVni(late, TEST_VNI);
     feed(late);
-
-    EXPECT_EQ(m_macSync->m_staleCandidates.count(TEST_KEY), 0u);
-
-    m_macSync->onStaleTimer();
 
     std::vector<FieldValueTuple> values;
     EXPECT_TRUE(getEntry(TEST_KEY, values));
@@ -384,7 +375,6 @@ TEST_F(MacSyncTest, ReplayedRemoteMacSurvivesTheSweep)
     feed(replay);
 
     m_macSync->onRemoteReplayEnd();
-    m_macSync->onStaleTimer();
 
     std::vector<FieldValueTuple> values;
     EXPECT_TRUE(getEntry(TEST_KEY, values));
@@ -402,7 +392,6 @@ TEST_F(MacSyncTest, UnsolicitedReplayEndSweepsNothing)
 
     m_macSync->m_remoteReplayPending = false;
     m_macSync->onRemoteReplayEnd();
-    m_macSync->onStaleTimer();
 
     std::vector<FieldValueTuple> values;
     EXPECT_TRUE(getEntry(TEST_KEY, values));
