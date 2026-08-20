@@ -19,6 +19,7 @@
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE                   "BFD_NEXT_HOP_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE                 "MIRROR_ON_DROP_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE                   "PATH_TRACING_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE                   "ICMP_OFFLOAD_CAPABLE"
 
@@ -109,6 +110,7 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchMirrorOnDropCapability();
     void querySwitchPortMirrorCapability();
     void querySwitchSamplePacketCapability();
 
