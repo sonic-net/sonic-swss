@@ -189,6 +189,34 @@ namespace neighorch_test
         }
     };
 
+    TEST_F(NeighOrchTest, LocalNeighborDependenciesRetryWhileInterfaceRemovalPending)
+    {
+        gIntfsOrch->m_removingIntfses.insert(VLAN_1000);
+
+        NeighborContext neighbor_ctx(VLAN1000_NEIGH);
+        neighbor_ctx.mac = MacAddress(MAC1);
+        EXPECT_FALSE(gNeighOrch->addNeighbor(neighbor_ctx));
+
+        NeighborContext next_hop_ctx(VLAN1000_NEIGH);
+        EXPECT_FALSE(gNeighOrch->addNextHop(next_hop_ctx));
+
+        gIntfsOrch->m_removingIntfses.erase(VLAN_1000);
+    }
+
+    TEST_F(NeighOrchTest, LocalNeighborDependenciesRetryWhileVrfUpdatePending)
+    {
+        gIntfsOrch->m_pendingVrfUpdates.insert(VLAN_1000);
+
+        NeighborContext neighbor_ctx(VLAN1000_NEIGH);
+        neighbor_ctx.mac = MacAddress(MAC1);
+        EXPECT_FALSE(gNeighOrch->addNeighbor(neighbor_ctx));
+
+        NeighborContext next_hop_ctx(VLAN1000_NEIGH);
+        EXPECT_FALSE(gNeighOrch->addNextHop(next_hop_ctx));
+
+        gIntfsOrch->m_pendingVrfUpdates.erase(VLAN_1000);
+    }
+
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
