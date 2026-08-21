@@ -2225,6 +2225,42 @@ class TestMuxTunnel(TestMuxTunnelBase):
         )
 
 
+class TestMuxShutdownWithStandby(TestMuxTunnelBase):
+    """Validate orchagent shuts down cleanly when mux ports are in standby."""
+
+    def test_orchagent_clean_shutdown_with_standby_mux(
+        self, dvs, dvs_route, setup_vlan, setup_mux_cable,
+        setup_tunnel, setup_peer_switch, testlog
+    ):
+        """
+        Validate that orchagent exits cleanly when a mux port is in standby.
+
+        Sets a mux port to standby state so that MuxAclHandler ACL rules are
+        active, then stops orchagent via supervisorctl (SIGTERM) and verifies
+        it exits without crashing or producing a coredump.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        time.sleep(1)
+
+        dvs.stop_swss()
+
+        exitcode, output = dvs.runcmd("supervisorctl status orchagent")
+        assert "STOPPED" in output, \
+            "orchagent did not stop cleanly: {}".format(output)
+        assert "FATAL" not in output, \
+            "orchagent crashed on shutdown: {}".format(output)
+
+        exitcode, coredumps = dvs.runcmd(
+            "find /var/core/ -name 'core.orchagent.*' -newer /proc/1/cmdline"
+        )
+        assert coredumps.strip() == "", \
+            "orchagent produced a coredump on shutdown: {}".format(coredumps)
+
+        dvs.start_swss()
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
