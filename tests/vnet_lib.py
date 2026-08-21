@@ -194,12 +194,62 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     time.sleep(2)
 
 
+def create_vnet_routes_appdb(tbl, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+    set_vnet_routes_appdb(tbl, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric)
+
+
+def set_vnet_routes_appdb(tbl, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+    attrs = [
+            ("endpoint", endpoint),
+    ]
+
+    if vni:
+        attrs.append(('vni', vni))
+
+    if mac:
+        attrs.append(('mac_address', mac))
+
+    if ep_monitor:
+        attrs.append(('endpoint_monitor', ep_monitor))
+
+    if profile:
+        attrs.append(('profile', profile))
+
+    if primary:
+        attrs.append(('primary', primary))
+
+    if monitoring:
+        attrs.append(('monitoring', monitoring))
+
+    if adv_prefix:
+        attrs.append(('adv_prefix', adv_prefix))
+
+    if check_directly_connected:
+        attrs.append(('check_directly_connected', 'true'))
+
+    if rx_monitor_timer != -1:
+        attrs.append(('rx_monitor_timer', str(rx_monitor_timer)))
+
+    if tx_monitor_timer != -1:
+        attrs.append(('tx_monitor_timer', str(tx_monitor_timer)))
+
+    if metric >= 0:
+        attrs.append(('metric', str(metric)))
+
+    fvs = swsscommon.FieldValuePairs(attrs)
+    tbl.set("%s:%s" % (vnet_name, prefix), fvs)
+
+
 def delete_vnet_routes(dvs, prefix, vnet_name):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
     delete_entry_pst(app_db, "VNET_ROUTE_TUNNEL_TABLE", "%s:%s" % (vnet_name, prefix))
 
     time.sleep(2)
+
+
+def delete_vnet_routes_appdb(tbl, prefix, vnet_name):
+    tbl._del("%s:%s" % (vnet_name, prefix))
 
 
 def create_vlan(dvs, vlan_name, vlan_ids):
@@ -519,6 +569,14 @@ def check_state_db_routes(dvs, vnet, prefix, endpoints):
         assert fvs['state'] == 'active'
     else:
         assert fvs['state'] == 'inactive'
+
+
+def check_vnet_route_exists(dvs, vnet, prefix):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl =  swsscommon.Table(state_db, "VNET_ROUTE_TUNNEL_TABLE")
+    
+    status, fvs = tbl.get(vnet + '|' + prefix)
+    assert status, f"Route {vnet}|{prefix} not found in STATE_DB"
 
 
 def check_remove_state_db_routes(dvs, vnet, prefix):
