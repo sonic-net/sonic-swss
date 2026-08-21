@@ -245,8 +245,11 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     //               /sbin/bridge vlan del vid 1 dev {{ port_alias }} &&
     //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     ostringstream cmds, inner;
+    // The default vid removal is best-effort: on a tagging_mode change of an existing
+    // member this runs a second time when vid 1 is already gone, and a hard failure here
+    // would throw before APPL_DB is updated, dropping the mode change end-to-end.
     inner << IP_CMD " link set " << shellquote(port_alias) << " master " DOT1Q_BRIDGE_NAME " && "
-      BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " && "
+      "( " BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " || true ) && "
       BRIDGE_CMD " vlan add vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " " + tagging_cmd;
     cmds << BASH_CMD " -c " << shellquote(inner.str());
 
@@ -542,6 +545,24 @@ bool VlanMgr::isVlanMemberStateOk(const string &vlanMemberKey)
     return false;
 }
 
+// Checks STATE_DB so a previously applied tagging_mode is still known right after a vlanmgrd restart
+bool VlanMgr::isVlanMemberModeApplied(const string &vlanMemberKey, const string &tagging_mode)
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateVlanMemberTable.get(vlanMemberKey, temp))
+    {
+        for (const auto &fv : temp)
+        {
+            if (fvField(fv) == "tagging_mode" && fvValue(fv) == tagging_mode)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /*
  * members is grouped in format like
  * "Ethernet1,Ethernet2,Ethernet3,Ethernet4,Ethernet5,Ethernet6,
@@ -630,21 +651,6 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
        // TODO:  store port/lag/VLAN data in local data structure and perform more validations.
         if (op == SET_COMMAND)
         {
-             if (isVlanMemberStateOk(kfvKey(t)))
-             {
-                SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
-                m_vlanMemberReplay.erase(kfvKey(t));
-                it = consumer.m_toSync.erase(it);
-                continue;
-             }
-
-            /* Don't proceed if member port/lag is not ready yet */
-            if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
-            {
-                SWSS_LOG_DEBUG("%s not ready, delaying", kfvKey(t).c_str());
-                it++;
-                continue;
-            }
             string tagging_mode = "untagged";
 
             for (auto i : kfvFieldsValues(t))
@@ -664,6 +670,23 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
+            // Skip only duplicates. Checked against STATE_DB, not the in-memory m_PortVlanMember cache
+            if (isVlanMemberModeApplied(kfvKey(t), tagging_mode))
+            {
+                SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
+                m_vlanMemberReplay.erase(kfvKey(t));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Don't proceed if member port/lag is not ready yet */
+            if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
+            {
+                SWSS_LOG_DEBUG("%s not ready, delaying", kfvKey(t).c_str());
+                it++;
+                continue;
+            }
+
             if (addHostVlanMember(vlan_id, port_alias, tagging_mode))
             {
                 key = VLAN_PREFIX + to_string(vlan_id);
@@ -674,6 +697,8 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 vector<FieldValueTuple> fvVector;
                 FieldValueTuple s("state", "ok");
                 fvVector.push_back(s);
+                FieldValueTuple tm("tagging_mode", tagging_mode);
+                fvVector.push_back(tm);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
 
                 m_vlanMemberReplay.erase(kfvKey(t));
@@ -891,6 +916,8 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
                 vector<FieldValueTuple> fvVector1;
                 FieldValueTuple s1("state", "ok");
                 fvVector.push_back(s1);
+                FieldValueTuple tm("tagging_mode", tagging_mode);
+                fvVector.push_back(tm);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
             }
         }
@@ -944,6 +971,8 @@ void VlanMgr::addPortToVlan(const std::string& membername, const std::string& vl
         vector<FieldValueTuple> fvVector1;
         FieldValueTuple s2("state", "ok");
         fvVector1.push_back(s2);
+        FieldValueTuple s3("tagging_mode", tagging_mode);
+        fvVector1.push_back(s3);
         key = VLAN_PREFIX + to_string(vlan_id);
         key += '|';
         key += membername;
