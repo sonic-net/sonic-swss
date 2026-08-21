@@ -58,11 +58,13 @@ tests_SOURCES = aclorch_ut.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
+                policerorch_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                chassisorch_ut.cpp \
                 evpnmhorch_ut.cpp \
                 vxlanorch_ut.cpp \
                 mux_rollback_ut.cpp \
@@ -97,6 +99,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                macsecorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
@@ -106,6 +109,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 icmporch_ut.cpp \
                 mock_sai_capability_wrap.cpp \
                 notifications_ut.cpp \
+                asan_ut.cpp \
+                $(top_srcdir)/lib/asan.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -151,6 +156,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/switch/trimming/helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
+                $(top_srcdir)/orchagent/pfcwdsworch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
                 $(top_srcdir)/orchagent/policerorch.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \
