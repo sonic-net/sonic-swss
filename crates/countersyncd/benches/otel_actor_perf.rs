@@ -54,7 +54,8 @@ fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()
                 .add_service(
                     opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsServiceServer::new(
                         svc,
-                    ),
+                    )
+                    .max_decoding_message_size(256 * 1024 * 1024),
                 )
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = shutdown_rx.await;
@@ -81,13 +82,13 @@ fn build_stats_message(counters: usize, seed: u64) -> SAIStatsMessage {
     Arc::new(SAIStats::new(seed, stats))
 }
 
-async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::Duration, usize) {
+async fn run_stream(messages: Vec<SAIStatsMessage>, total_counters: usize, endpoint: String) -> (std::time::Duration, usize) {
     let (tx, rx) = mpsc::channel(1024);
     let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 
     let cfg = OtelActorConfig {
         collector_endpoint: endpoint,
-        max_counters_per_export: 10_000,
+        max_counters_per_export: 50_000,
         flush_timeout: Duration::from_secs(1),
     };
 
@@ -97,14 +98,11 @@ async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::
 
     let handle = tokio::spawn(async move { actor.run().await });
 
-    let total_counters = prepared.expected_counters;
     let start = std::time::Instant::now();
 
-    for tmpl in prepared.templates.iter() {
-        for msg_idx in 0..tmpl.records {
-            let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            tx.send(msg).await.expect("send stats");
-        }
+    // Only sending + actor conversion/encode/send is timed
+    for msg in messages {
+        tx.send(msg).await.expect("send stats");
     }
 
     drop(tx); // close channel so actor exits after processing
@@ -154,16 +152,32 @@ fn bench_otel_actor(c: &mut Criterion) {
             b.to_async(&rt).iter_batched(
                 {
                     let spec = spec.clone();
-                    move || PreparedDataset::new(spec.clone())
+                    move || {
+                        // Build all input messages outside the profiled window so the
+                        // flamegraph reflects only conversion + protobuf + gRPC send.
+                        let prepared = PreparedDataset::new(spec.clone());
+                        let total_counters = prepared.expected_counters;
+                        let mut messages = Vec::new();
+                        for tmpl in prepared.templates.iter() {
+                            for msg_idx in 0..tmpl.records {
+                                messages.push(build_stats_message(
+                                    tmpl.spec.counters,
+                                    msg_idx as u64,
+                                ));
+                            }
+                        }
+                        (messages, total_counters)
+                    }
                 },
-                move |prepared| {
+                move |(messages, total_counters)| {
                     let endpoint = endpoint.clone();
                     let exports_counter = exports_counter.clone();
                     let spec = spec.clone();
                     async move {
                         let exports_before = exports_counter.load(Ordering::Relaxed);
 
-                        let (elapsed, counters) = run_stream(prepared, endpoint.clone()).await;
+                        let (elapsed, counters) =
+                            run_stream(messages, total_counters, endpoint.clone()).await;
 
                         let exports_after = exports_counter.load(Ordering::Relaxed);
                         let exported = exports_after.saturating_sub(exports_before);
@@ -174,7 +188,7 @@ fn bench_otel_actor(c: &mut Criterion) {
                         );
                     }
                 },
-                BatchSize::SmallInput,
+                BatchSize::PerIteration,
             )
         });
     }
