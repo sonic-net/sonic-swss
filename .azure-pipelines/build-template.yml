@@ -1,4 +1,8 @@
 parameters:
+- name: repo
+  type: string
+  default: self
+
 - name: arch
   type: string
   values:
@@ -20,38 +24,6 @@ parameters:
   type: number
   default: 90
 
-- name: sonic_slave
-  type: string
-
-- name: sairedis_artifact_name
-  type: string
-
-- name: sairedis_artifact_project
-  type: string
-  default: 'build'
-
-- name: sairedis_artifact_pipeline
-  type: string
-  default: 'Azure.sonic-sairedis'
-
-- name: sairedis_artifact_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
-- name: sairedis_artifact_pattern
-  type: string
-  default: '**'
-
-- name: swss_common_artifact_name
-  type: string
-
-- name: swss_common_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
-- name: dash_artifact_name
-  type: string
-
 - name: artifact_name
   type: string
 
@@ -63,31 +35,19 @@ parameters:
   type: boolean
   default: false
 
-- name: common_lib_artifact_name
-  type: string
-
-- name: common_lib_artifact_project
-  type: string
-  default: 'build'
-
-- name: common_lib_artifact_pipeline
-  type: string
-  default: 'Azure.sonic-buildimage.common_libs'
-
-- name: common_lib_artifact_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
 - name: asan
   type: boolean
   default: false
 
+- name: staged_upstreams
+  # List of {artifact: <current-run AZP artifact>, name: <upstream YAML name>}.
+  # Reusers stage same-run sairedis/swss-common bundles for the cascade.
+  type: object
+  default: []
+
 - name: debian_version
   type: string
-
-- name: vpp_artifact_name
-  type: string
-  default: 'vpp-bookworm'
+  default: bookworm
 
 jobs:
 - job:
@@ -104,173 +64,87 @@ jobs:
     image: sonicdev-microsoft.azurecr.io:443/sonic-slave-${{ parameters.debian_version }}:$(BUILD_BRANCH)-${{ parameters.arch }}
 
   steps:
-  - checkout: self
+  - checkout: ${{ parameters.repo }}
     clean: true
     submodules: true
-  - template: merge-target-branch.yml
+
+  - ${{ if eq(parameters.repo, 'self') }}:
+    - template: merge-target-branch.yml
+
+  - ${{ each up in parameters.staged_upstreams }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: ${{ up.artifact }}
+        path: $(Pipeline.Workspace)/staged/${{ up.name }}
+      displayName: "Stage current-run ${{ up.name }} for the cascade"
+
   - script: |
-      set -xe
+      set -ex
       sudo apt-get update
-      sudo apt-get install -y \
-        libhiredis-dev \
-        libzmq3-dev \
-        swig \
-        libdbus-1-dev \
-        libteam-dev
-      sudo pip3 install lcov_cobertura
-      sudo apt-get install -y redis-server
-      sudo sed -i 's/notify-keyspace-events ""/notify-keyspace-events AKE/' /etc/redis/redis.conf
-      sudo sed -ri 's/^# unixsocket/unixsocket/' /etc/redis/redis.conf
-      sudo sed -ri 's/^unixsocketperm .../unixsocketperm 777/' /etc/redis/redis.conf
-      sudo sed -ri 's/redis-server.sock/redis.sock/' /etc/redis/redis.conf
-      sudo service redis-server restart
-    displayName: "Install dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: Azure.sonic-swss-common
-      artifact: ${{ parameters.swss_common_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      allowPartiallySucceededBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download/swsscommon
-      patterns: |
-        libswsscommon_1.0.0_${{ parameters.arch }}.deb
-        libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.sairedis_artifact_project }}
-      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
-      artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
-      allowPartiallySucceededBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download/sairedis
-      patterns: |
-        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
-    displayName: "Download sonic sairedis deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.common_lib_artifact_project }}
-      pipeline: ${{ parameters.common_lib_artifact_pipeline }}
-      artifact: ${{ parameters.common_lib_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
-      path: $(Build.ArtifactStagingDirectory)/download/common
-      patterns: |
-        target/debs/${{ parameters.debian_version }}/libnl-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-genl-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-genl-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-route-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-route-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
-    displayName: "Download common libs"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.common_lib_artifact_project }}
-      pipeline: ${{ parameters.common_lib_artifact_pipeline }}
-      artifact: ${{ parameters.common_lib_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
-      path: $(Build.ArtifactStagingDirectory)/download/common
-      patterns: |
-        target/debs/${{ parameters.debian_version }}/libpcre3_*.deb
-    displayName: "Download Trixie-specific common libs"
-    condition: eq('${{ parameters.debian_version }}', 'trixie')
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: sonic-net.sonic-dash-api
-      artifact: ${{ parameters.dash_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: $(Build.ArtifactStagingDirectory)/download/common
-      patterns: |
-        libdashapi*.deb
-    displayName: "Download dash api"
-  - script: |
-      set -ex
-      cd download
-      sudo dpkg -i $(find common -type f -name '*.deb')
-      cd ..
-    workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install SONiC-built dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: sonic-net.sonic-platform-vpp
-      artifact: ${{ parameters.vpp_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      allowPartiallySucceededBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic platform-vpp deb packages"
-    condition: eq('${{ parameters.arch }}', 'amd64')
-  - script: |
-      set -ex
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra-dev_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/libvppinfra_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-crypto-engines_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dbg_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-dev_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-core_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-devtools_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/vpp-plugin-dpdk_*_${{ parameters.arch }}.deb
-      sudo env VPP_INSTALL_SKIP_SYSCTL=1 dpkg -i download/python3-vpp-api_*_${{ parameters.arch }}.deb
-    workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install sonic platform-vpp packages"
-    condition: eq('${{ parameters.arch }}', 'amd64')
-  - script: |
-      set -ex
-      cd download
-      sudo dpkg -i $(find swsscommon -type f -name '*.deb')
-      sudo dpkg -i $(find sairedis -type f -name '*.deb')
-      cd ..
-      rm -rf download
-    workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install sonic swss common and sairedis"
-  - script: |
-      set -ex
-      tar czf pytest.tgz tests
-      cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
-      if [ '${{ parameters.archive_gcov }}' == True ]; then
-         export ENABLE_GCOV=y
-         echo BUILD_DIR=$(pwd) > build.info
+      sudo apt-get install -qq -y python3-yaml python3-requests git jq
+
+      clone_swss_common() {
+        ref="$1"
+        for delay in 0 5 15; do
+          [ "$delay" -eq 0 ] || sleep "$delay"
+          rm -rf /tmp/sw-common
+          git clone --depth 1 --branch "$ref" \
+            https://github.com/sonic-net/sonic-swss-common /tmp/sw-common && return 0
+        done
+        return 1
+      }
+
+      SETUP_BRANCH="$(BUILD_BRANCH)"
+      if ! clone_swss_common "$SETUP_BRANCH"; then
+        case "$(BUILD_BRANCH)" in
+          master|20[0-9][0-9][0-9][0-9])
+            echo "Failed to clone required sonic-swss-common branch $(BUILD_BRANCH)" >&2
+            exit 1
+            ;;
+          *)
+            echo "No matching swss-common feature branch; falling back to master"
+            clone_swss_common master
+            SETUP_BRANCH=master
+            ;;
+        esac
       fi
-      if [ '${{ parameters.asan }}' == True ]; then
-         export ENABLE_ASAN=y
-      fi
-      ./autogen.sh
-      RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
-    displayName: "Compile sonic swss"
-  - script: |
-      RUSTFLAGS=-Dwarnings cargo test
-    displayName: "Test countersyncd"
+
+      REQ_ARGS=$(echo "$STAGED_UPSTREAMS_JSON" \
+        | jq -r '.[] | .name' \
+        | xargs -I{} echo --required-staged-upstream {} \
+        | tr '\n' ' ')
+      PYTHONPATH=/tmp/sw-common/ci python3 -m buildenv_setup \
+        --repo-dir $(Build.SourcesDirectory) \
+        --scope build \
+        --arch ${{ parameters.arch }} \
+        --debian-version ${{ parameters.debian_version }} \
+        --branch "$SETUP_BRANCH" \
+        --upstream-staged-dir $(Pipeline.Workspace)/staged \
+        $REQ_ARGS
+    displayName: "Set up build environment (buildenv_setup)"
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      STAGED_UPSTREAMS_JSON: ${{ convertToJson(parameters.staged_upstreams) }}
+
+  - ${{ if eq(parameters.archive_pytests, true) }}:
+    - script: |
+        set -ex
+        tar czf $(Build.ArtifactStagingDirectory)/pytest.tgz tests
+      displayName: "Archive SWSS pytest sources"
+
+  - script: GCOV=${{ parameters.archive_gcov }} ASAN=${{ parameters.asan }} ./build-env/build.sh
+    displayName: "Compile and test sonic-swss"
+
   - task: PublishTestResults@2
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: gtest
     condition: and(succeededOrFailed(), eq('${{ parameters.asan }}', false))
+
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
+
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"

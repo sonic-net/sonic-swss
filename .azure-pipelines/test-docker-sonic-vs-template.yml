@@ -1,4 +1,8 @@
 parameters:
+- name: repo
+  type: string
+  default: self
+
 - name: timeout
   type: number
   default: 480
@@ -6,27 +10,13 @@ parameters:
 - name: log_artifact_name
   type: string
 
-- name: gcov_artifact_name
-  type: string
-
-- name: sonic_slave
-  type: string
-
-- name: archive_gcov
-  type: boolean
-  default: false
-
 - name: docker_sonic_vs_name
   type: string
   default: docker-sonic-vs
 
-- name: swss_common_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
-- name: sonic_buildimage_ubuntu22_04
-  type: string
-  default: '$(BUILD_BRANCH)'
+- name: archive_gcov
+  type: boolean
+  default: false
 
 - name: asan
   type: boolean
@@ -39,6 +29,33 @@ parameters:
 - name: run_tests_pattern
   type: string
   default: ""
+
+- name: pytest_params
+  type: string
+  default: "--force-flaky"
+
+- name: parallelism
+  type: number
+  default: 8
+
+- name: retry
+  type: number
+  default: 3
+
+- name: continue_on_error
+  type: boolean
+  default: false
+
+- name: extra_modes
+  # List of {name, pattern, pytest_params, parallelism}; empty for consumers
+  # without an additional VS mode.
+  type: object
+  default: []
+
+- name: staged_upstreams
+  # Same-run host bundles, e.g. swss-common's Ubuntu artifact in its own Test.
+  type: object
+  default: []
 
 - name: debian_version
   type: string
@@ -59,102 +76,96 @@ jobs:
 
   steps:
   - script: |
+      set -ex
       ip a show dev eth0 || true
-      ls -A1 | xargs -I{} sudo rm -rf {}
+      ls -A1 | xargs -r -I{} sudo rm -rf {}
+      sudo apt-get purge -y libswsscommon python3-swsscommon || true
     displayName: "Clean workspace"
-  - checkout: self
-  - template: merge-target-branch.yml
+
+  - checkout: ${{ parameters.repo }}
+    clean: true
+
+  - ${{ if eq(parameters.repo, 'self') }}:
+    - template: merge-target-branch.yml
+
+  - ${{ each up in parameters.staged_upstreams }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: ${{ up.artifact }}
+        path: $(Pipeline.Workspace)/staged/${{ up.name }}
+      displayName: "Stage current-run ${{ up.name }} for test setup"
+
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.docker_sonic_vs_name }}
       path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download pre-stage built ${{ parameters.docker_sonic_vs_name }}"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: Azure.sonic-swss-common
-      artifact: sonic-swss-common.amd64.ubuntu22_04
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      path: $(Build.ArtifactStagingDirectory)/download
-      allowPartiallySucceededBuilds: true
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: Azure.sonic-buildimage.common_libs
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: $(Build.ArtifactStagingDirectory)/download
-      artifact: common-lib
-      patterns: |
-        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
-        target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
-    displayName: "Download libyang from common lib"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: sonic-net.sonic-buildimage-ubuntu22.04
-      artifact: sonic-buildimage.amd64.ubuntu22_04
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.sonic_buildimage_ubuntu22_04 }}'
-      path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic buildimage ubuntu22.04 deb packages"
+    displayName: "Download current-run ${{ parameters.docker_sonic_vs_name }}"
 
   - script: |
+      set -ex
+      sudo apt-get update
+      sudo apt-get install -y python3-yaml python3-requests git jq
+
+      clone_swss_common() {
+        ref="$1"
+        for delay in 0 5 15; do
+          [ "$delay" -eq 0 ] || sleep "$delay"
+          rm -rf /tmp/sw-common
+          git clone --depth 1 --branch "$ref" \
+            https://github.com/sonic-net/sonic-swss-common /tmp/sw-common && return 0
+        done
+        return 1
+      }
+
+      SETUP_BRANCH="$(BUILD_BRANCH)"
+      if ! clone_swss_common "$SETUP_BRANCH"; then
+        case "$(BUILD_BRANCH)" in
+          master|20[0-9][0-9][0-9][0-9])
+            echo "Failed to clone required sonic-swss-common branch $(BUILD_BRANCH)" >&2
+            exit 1
+            ;;
+          *)
+            echo "No matching swss-common feature branch; falling back to master"
+            clone_swss_common master
+            SETUP_BRANCH=master
+            ;;
+        esac
+      fi
+
+      REQ_ARGS=$(echo "$STAGED_UPSTREAMS_JSON" \
+        | jq -r '.[] | .name' \
+        | xargs -I{} echo --required-staged-upstream {} \
+        | tr '\n' ' ')
+      PYTHONPATH=/tmp/sw-common/ci python3 -m buildenv_setup \
+        --repo-dir $(Build.SourcesDirectory) \
+        --scope test \
+        --arch amd64 \
+        --debian-version ${{ parameters.debian_version }} \
+        --host-os ubuntu-22.04 \
+        --branch "$SETUP_BRANCH" \
+        --upstream-staged-dir $(Pipeline.Workspace)/staged \
+        $REQ_ARGS
+    displayName: "Set up VS test host (buildenv_setup)"
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      STAGED_UPSTREAMS_JSON: ${{ convertToJson(parameters.staged_upstreams) }}
+
+  - ${{ if eq(parameters.archive_gcov, true) }}:
+    - script: |
         set -ex
-        # Install .NET CORE
         curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
         sudo apt-add-repository https://packages.microsoft.com/ubuntu/22.04/prod
         sudo apt-get update
         sudo apt-get install -y dotnet-sdk-8.0
-        sudo dotnet tool install dotnet-reportgenerator-globaltool --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
-        rm log.log
-    displayName: "Install .NET CORE"
+        sudo dotnet tool install dotnet-reportgenerator-globaltool \
+          --tool-path /usr/bin 2>&1 | tee log.log || grep 'already installed' log.log
+        rm -f log.log
+      displayName: "Install coverage report tooling"
 
   - script: |
       set -ex
-      # install packages for vs test
-      sudo uv pip install --system pytest flaky exabgp docker lcov_cobertura
-
-      # install other dependencies
-      sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
-          bridge-utils \
-          vlan \
-          libzmq3-dev \
-          libzmq5 \
-          libhiredis0.14 \
-          libpcre3-dev \
-          python3-redis \
-          parallel
-
       sudo .azure-pipelines/build_and_install_module.sh
-
-      # Install libyang packages from downloaded artifacts
-      sudo apt-get  install -y \
-        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang3_*.deb \
-        $(Build.ArtifactStagingDirectory)/download/target/debs/${{ parameters.debian_version }}/libyang-dev_3*.deb
-
-      # python3-libyang's bookworm .deb pins python3 (>= 3.11~, << 3.12)
-      # and the sonictest pool host runs Ubuntu 22.04 (python 3.10), so the
-      # .deb won't install regardless of resolver. Build the Python bindings
-      # from PyPI instead — same fallback as the inline amd64/ubuntu-22.04
-      # job. --no-build-isolation + apt's python3-cffi sidesteps a cffi
-      # version-mismatch Exception that jammy's pip 22.0.2 build-isolation
-      # env otherwise triggers. --no-build-isolation needs wheel present
-      # in the environment to provide bdist_wheel, so install it first.
-      sudo apt-get install -y python3-cffi python3-dev
-      sudo uv pip install --system wheel
-      sudo uv pip install --system --no-build-isolation 'libyang==3.3.0'
-
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
-      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || sudo apt-get install -y -f
-      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
-    displayName: "Install dependencies"
+    displayName: "Build and install host kernel modules"
 
   - script: |
       set -ex
@@ -162,62 +173,67 @@ jobs:
       docker ps
       ip netns list
       uname -a
-      sudo /sbin/ip link add Vrf1 type vrf table 1001 || { echo 'vrf command failed' ; exit 1; }
+      sudo /sbin/ip link add Vrf1 type vrf table 1001 || { echo 'vrf command failed'; exit 1; }
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      params="--force-flaky"
+      params='${{ parameters.pytest_params }}'
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         cp $(Build.ArtifactStagingDirectory)/download/coverage.info ./
         cp $(Build.ArtifactStagingDirectory)/download/coverage.xml ./
-        params=" ${params} --enable-coverage --force-recreate-dvs "
+        params="$params --enable-coverage --force-recreate-dvs"
       fi
       if [ '${{ parameters.asan }}' == True ]; then
-        params=" ${params} --graceful-stop "
+        params="$params --graceful-stop"
       fi
       if [ ${{ parameters.num_ports }} -gt 0 ]; then
-        params=" ${params} --num-ports=${{ parameters.num_ports }} "
+        params="$params --num-ports=${{ parameters.num_ports }}"
       fi
 
       all_tests=$(ls test_*.py | xargs)
-      all_tests="${all_tests} p4rt dash"
-
+      all_tests="$all_tests p4rt dash"
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
-        all_tests=" $(ls ${{ parameters.run_tests_pattern }} | xargs) "
+        all_tests=$(ls ${{ parameters.run_tests_pattern }} | xargs)
       fi
-      # Run the tests in parallel and retry
-      retry=3
-      parallel=8
-      IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-      echo $all_tests | xargs -n 1 | parallel -j${parallel} sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh \'"$IMAGE_NAME"\' \'"$params"\' "{}" $retry
-      single_asic_voq_tests="test_portchannel.py test_neighbor.py test_route.py"
-      parallel=3
-      echo $single_asic_voq_tests | xargs -n 1 | parallel -j${parallel} sudo ./run-tests.sh \'"$IMAGE_NAME"\' \'"--force-flaky --force-recreate-dvs --switch-mode=single_asic_voq_fs"\' "{}" $retry
 
-      rm -rf $(Build.ArtifactStagingDirectory)/download
-    displayName: "Run vs tests"
-    continueOnError: ${{ parameters.asan }}
+      IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
+      echo "$all_tests" | xargs -n 1 | parallel -j${{ parameters.parallelism }} \
+        sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh \
+        \'"$IMAGE_NAME"\' \'"$params"\' "{}" ${{ parameters.retry }}
+    displayName: "Run VS tests"
+    continueOnError: ${{ parameters.continue_on_error }}
+
+  - ${{ each mode in parameters.extra_modes }}:
+    - script: |
+        set -ex
+        pushd tests
+        IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
+        echo '${{ mode.pattern }}' | xargs -n 1 | parallel -j${{ mode.parallelism }} \
+          sudo DEFAULT_CONTAINER_REGISTRY=publicmirror.azurecr.io/ ./run-tests.sh \
+          \'"$IMAGE_NAME"\' \'"${{ mode.pytest_params }}"\' "{}" ${{ parameters.retry }}
+      displayName: "Run VS tests (${{ mode.name }})"
+      continueOnError: ${{ parameters.continue_on_error }}
 
   - script: |
+      rm -rf $(Build.ArtifactStagingDirectory)/download
       echo "##vso[task.setvariable variable=TestsRun]Yes"
     condition: succeededOrFailed()
-    displayName: 'Record Test Status'
+    displayName: "Record test status"
 
-  - script: |
-      set -ex
-      reportgenerator -reporttypes:Cobertura -reports:tests/*coverage.xml -targetdir:.
-      mkdir $(Build.ArtifactStagingDirectory)/gcov
-      cp Cobertura.xml tests/*coverage.xml $(Build.ArtifactStagingDirectory)/gcov/
-      cp tests/*coverage.info $(Build.ArtifactStagingDirectory)/gcov/
-    condition: ${{ parameters.archive_gcov }}
-    displayName: "Generate coverage.xml"
+  - ${{ if eq(parameters.archive_gcov, true) }}:
+    - script: |
+        set -ex
+        reportgenerator -reporttypes:Cobertura -reports:tests/*coverage.xml -targetdir:.
+        mkdir -p $(Build.ArtifactStagingDirectory)/gcov
+        cp Cobertura.xml tests/*coverage.xml $(Build.ArtifactStagingDirectory)/gcov/
+        cp tests/*coverage.info $(Build.ArtifactStagingDirectory)/gcov/
+      displayName: "Generate coverage report"
 
-  - task: PublishCodeCoverageResults@1
-    condition: ${{ parameters.archive_gcov }}
-    inputs:
-      codeCoverageTool: Cobertura
-      summaryFileLocation: '$(System.DefaultWorkingDirectory)/Cobertura.xml'
-    displayName: 'Publish test coverage'
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/Cobertura.xml'
+      displayName: "Publish test coverage"
 
   - task: PublishTestResults@2
     inputs:
@@ -226,10 +242,11 @@ jobs:
     condition: and(eq(variables['TestsRun'], 'Yes'), ne(variables['isAsan'], 'true'))
 
   - script: |
-      cp -r tests/log $(Build.ArtifactStagingDirectory)/
-
-      if [ '${{ parameters.asan }}' == True ]; then
-        cp -vr tests/log/*/log/asan $(Build.ArtifactStagingDirectory)/
+      if [ -d tests/log ]; then
+        cp -r tests/log $(Build.ArtifactStagingDirectory)/
+        if [ '${{ parameters.asan }}' == True ]; then
+          cp -vr tests/log/*/log/asan $(Build.ArtifactStagingDirectory)/ || true
+        fi
       fi
     displayName: "Collect logs"
     condition: always()
@@ -245,17 +262,19 @@ jobs:
     condition: eq('${{ parameters.asan }}', true)
 
   - script: |
-      if [ "$(ls -A $(Build.ArtifactStagingDirectory)/asan)" ]; then
+      if [ -d $(Build.ArtifactStagingDirectory)/asan ] \
+          && [ "$(ls -A $(Build.ArtifactStagingDirectory)/asan)" ]; then
         echo "There are issues reported by ASAN"
         exit 1
-      else
-        echo "No issues reported by ASAN"
       fi
+      echo "No issues reported by ASAN"
     displayName: "Check ASAN reports"
     condition: eq('${{ parameters.asan }}', true)
     continueOnError: true
 
   - script: |
-      sudo apt-get -o DPkg::Lock::Timeout=600 install -y python-is-python3
-
-    displayName: "Install temporary workaround to add a symlink to python 3"
+      if ! command -v python >/dev/null 2>&1; then
+        sudo ln -s "$(command -v python3)" /usr/local/bin/python
+      fi
+      python --version
+    displayName: "Provide Python 3 compatibility symlink"
