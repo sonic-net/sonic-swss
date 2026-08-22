@@ -1445,7 +1445,7 @@ TEST_F(RouterInterfaceManagerTest, DrainStopOnFirstFailure) {
   EXPECT_CALL(
       publisher_,
       publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_3), Eq(attributes),
-              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+              Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
   EXPECT_NE(nullptr, GetRouterInterfaceEntry(
                          KeyGenerator::generateRouterInterfaceKey("intf-3/4")));
