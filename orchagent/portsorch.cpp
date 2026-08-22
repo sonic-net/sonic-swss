@@ -826,11 +826,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha, portFlrSha, gbPortRateSha;
+    string queueWmSha, pgWmSha, portRateSha, nvdaPortTrimSha, queueRateSha, portFlrSha, gbPortRateSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
     string nvdaPortTrimPluginName = "nvda_port_trim_drop.lua";
+    string queueRatePluginName = "queue_ctr_rates.lua";
     string portFlrPluginName = "port_flr.lua";
 
     try
@@ -847,6 +848,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         string nvdaPortTrimLuaScript = swss::loadLuaScript(nvdaPortTrimPluginName);
         nvdaPortTrimSha = swss::loadRedisScript(m_counter_db.get(), nvdaPortTrimLuaScript);
 
+        string queueCtrLuaScript = swss::loadLuaScript(queueRatePluginName);
+        queueRateSha = swss::loadRedisScript(m_counter_db.get(), queueCtrLuaScript);
         string portFlrLuaScript = swss::loadLuaScript(portFlrPluginName);
         portFlrSha = swss::loadRedisScript(m_counter_db.get(), portFlrLuaScript);
 
@@ -916,6 +919,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
                                  STATS_MODE_READ);
 
+    setFlexCounterGroupParameter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 QUEUE_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                                 STATS_MODE_READ,
+                                 QUEUE_PLUGIN_FIELD,
+                                 queueRateSha);
     /* Get CPU port */
     this->initializeCpuPort();
 
