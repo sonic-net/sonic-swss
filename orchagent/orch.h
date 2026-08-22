@@ -48,8 +48,15 @@ const char state_db_key_delimiter  = '|';
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
+#define CISCO_PLATFORM_SUBSTRING "cisco"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+
+inline bool isCiscoPlatform(const std::string &platform)
+{
+    return platform == CISCO_8000_PLATFORM_SUBSTRING ||
+           platform == CISCO_PLATFORM_SUBSTRING;
+}
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"

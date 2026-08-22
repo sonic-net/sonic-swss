@@ -32,6 +32,11 @@ extern "C" {
 #define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
 #define PFC_WD_RESTORATION_TIME_MIN     100
 
+inline std::string getPfcWdPluginPlatform(const std::string &platform)
+{
+    return isCiscoPlatform(platform) ? CISCO_8000_PLATFORM_SUBSTRING : platform;
+}
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
