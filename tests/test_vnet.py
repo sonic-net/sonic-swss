@@ -3347,6 +3347,19 @@ class TestVnetOrch(object):
         self.add_neighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05")
 
         vnet_obj.fetch_exist_entries(dvs)
+
+        # Recreating a local-only route must also recreate its custom BFD session,
+        # even though the directly connected next hop is reused.
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1', ep_monitor='9.1.0.1', primary='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
+        check_bfd_session(dvs, ['9.1.0.1'])
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        check_del_bfd_session(dvs, ['9.1.0.1'])
+
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1', ep_monitor='9.1.0.1', primary='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
+        check_bfd_session(dvs, ['9.1.0.1'])
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        check_del_bfd_session(dvs, ['9.1.0.1'])
+
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
 
         # default monitor status is down, route should not be programmed in this status
