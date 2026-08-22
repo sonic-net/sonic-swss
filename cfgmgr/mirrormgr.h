@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "orch.h"
 
+#include <cstdint>
 #include <set>
 #include <map>
 #include <string>
@@ -65,18 +66,23 @@ private:
     /* Internal tracking: session_name -> set of tc filter handles/prios */
     std::set<std::string> m_programmedSessions;
     std::map<std::string, std::string> m_sessionSrcPort;   // session -> src port(s)
+    std::map<std::string, uint32_t> m_sessionPrio;         // session -> tc filter prio
+    uint32_t m_nextPrio = 100;                              // next prio to assign
 
     void doTask(Consumer &consumer);
     void doMirrorSessionTask(Consumer &consumer);
 
     /* Kernel programming helpers */
     bool addSpanSession(const std::string &srcPort,
-                        const std::string &dstPort);
+                        const std::string &dstPort,
+                        uint32_t prio);
     bool addErspanSession(const std::string &srcPort,
                           const std::string &srcIp,
                           const std::string &dstIp,
-                          const std::string &dstPort);
-    bool removeMirrorSession(const std::string &srcPort);
+                          const std::string &dstPort,
+                          uint32_t prio);
+    bool removeMirrorSession(const std::string &srcPort,
+                             uint32_t prio);
 };
 
 } // namespace swss

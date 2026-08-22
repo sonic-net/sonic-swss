@@ -93,15 +93,29 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
                 continue;
             }
 
+            /* Assign a stable tc filter priority for this session so its
+             * filters can be idempotently re-applied and cleanly torn down. */
+            auto prioIt = m_sessionPrio.find(session_name);
+            uint32_t prio;
+            if (prioIt != m_sessionPrio.end())
+            {
+                prio = prioIt->second;
+            }
+            else
+            {
+                prio = m_nextPrio++;
+                m_sessionPrio[session_name] = prio;
+            }
+
             bool ok = true;
             for (auto &sp : tokenize(src_port, ','))
             {
                 string iface = resolveInterface(sp);
                 bool ret;
                 if (type == MIRROR_SESSION_TYPE_ERSPAN)
-                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port);
+                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port, prio);
                 else
-                    ret = addSpanSession(iface, dst_port);
+                    ret = addSpanSession(iface, dst_port, prio);
 
                 if (!ret)
                 {
@@ -128,11 +142,17 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
             auto portIt = m_sessionSrcPort.find(session_name);
             if (portIt != m_sessionSrcPort.end())
             {
+                uint32_t prio = 0;
+                auto prioIt = m_sessionPrio.find(session_name);
+                if (prioIt != m_sessionPrio.end())
+                    prio = prioIt->second;
+
                 for (auto &sp : tokenize(portIt->second, ','))
-                    removeMirrorSession(resolveInterface(sp));
+                    removeMirrorSession(resolveInterface(sp), prio);
                 m_sessionSrcPort.erase(portIt);
             }
 
+            m_sessionPrio.erase(session_name);
             m_programmedSessions.erase(session_name);
             m_stateMirrorSessionTable.del(session_name);
 
@@ -150,7 +170,7 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
  * addSpanSession — local (SPAN) port mirroring via tc mirred.
  *   tc filter add dev <src> ingress matchall action mirred egress mirror dev <dst>
  */
-bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort)
+bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort, uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -168,9 +188,15 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort)
     string ignored;
     swss::exec(qdisc_cmd.str(), ignored);
 
+    /* Remove any existing filter at this prio before re-adding, so a
+     * re-applied session does not accumulate duplicate matchall filters. */
+    ostringstream del_cmd;
+    del_cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
+    swss::exec(del_cmd.str(), ignored);
+
     ostringstream cmd;
-    cmd << TC_CMD << " filter add dev " << srcPort << " ingress matchall"
-        << " action mirred egress mirror dev " << dstIface;
+    cmd << TC_CMD << " filter add dev " << srcPort << " ingress prio " << prio
+        << " matchall action mirred egress mirror dev " << dstIface;
 
     SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
 
@@ -195,7 +221,8 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort)
  * monitor/egress port toward the ERSPAN destination.
  */
 bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
-                                 const string &dstIp, const string &dstPort)
+                                 const string &dstIp, const string &dstPort,
+                                 uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -212,8 +239,14 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
     string ignored;
     swss::exec(qdisc_cmd.str(), ignored);
 
+    /* Remove any existing filter at this prio before re-adding (idempotent). */
+    ostringstream del_cmd;
+    del_cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
+    swss::exec(del_cmd.str(), ignored);
+
     ostringstream cmd;
-    cmd << TC_CMD << " filter add dev " << srcPort << " ingress matchall"
+    cmd << TC_CMD << " filter add dev " << srcPort << " ingress prio " << prio
+        << " matchall"
         << " action tunnel_key set src_ip " << srcIp
         << " dst_ip " << dstIp
         << " id 100"
@@ -236,14 +269,14 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
 /*
  * removeMirrorSession — remove the matchall mirror filter from a source port.
  */
-bool MirrorMgr::removeMirrorSession(const string &srcPort)
+bool MirrorMgr::removeMirrorSession(const string &srcPort, uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
     ostringstream cmd;
-    /* matchall filters get the default pref 49152; delete by that pref
-     * (tc rejects `del ... matchall` as a malformed bulk-flush). */
-    cmd << TC_CMD << " filter del dev " << srcPort << " ingress pref 49152";
+    /* Delete by the session's tracked priority (tc rejects `del ... matchall`
+     * as a malformed bulk-flush). */
+    cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
 
     SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
 
