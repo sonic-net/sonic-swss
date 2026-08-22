@@ -932,8 +932,9 @@ class TestWarmReboot(object):
 
         time.sleep(1)
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
-        assert result == "RESTARTCHECK failed\n"
+        # Allow a longer wait so a slow orchagent reports NOT_READY rather than timing out.
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -w 5000", include_stderr=False)
+        assert result == "RESTARTCHECK failed: orchagent is not ready for warm restart, pending tasks remain (status: NOT_READY)\n"
 
         # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
         # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
@@ -949,7 +950,7 @@ class TestWarmReboot(object):
 
         # Should fail since orchagent has been frozen at last step.
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
-        assert result == "RESTARTCHECK failed\n"
+        assert result == "RESTARTCHECK failed: timed out waiting for orchagent to respond; try increasing the wait time (-w) or retry count (-r)\n"
 
         # Cleaning previously pushed route-entry to ease life of subsequent testcases.
         ps._del("2.2.2.0/24")
