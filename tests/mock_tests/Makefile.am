@@ -58,6 +58,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
                 policerorch_ut.cpp \
+                vnetorch_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
@@ -219,6 +220,7 @@ tests_SOURCES = aclorch_ut.cpp \
 
 
 tests_SOURCES += common/vxlan_ut_helpers.cpp
+tests_SOURCES += common/mock_test_helpers.cpp
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
