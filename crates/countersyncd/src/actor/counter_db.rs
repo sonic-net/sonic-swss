@@ -5,7 +5,7 @@ use log::{debug, error, info, warn};
 use swss_common::{CxxString, DbConnector};
 use tokio::{select, sync::mpsc::Receiver, time::interval};
 
-use crate::message::saistats::SAIStatsMessage;
+use crate::message::{aggregator::AggregatedStatsMessage, saistats::SAIStatsMessage};
 use crate::utilities::{record_comm_stats, ChannelLabel};
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
@@ -109,7 +109,7 @@ impl Default for CounterDBConfig {
 #[allow(dead_code)] // Main struct and fields used throughout but may not be detected in all configurations
 pub struct CounterDBActor {
     /// Channel for receiving SAI statistics messages
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<AggregatedStatsMessage>,
     /// Configuration for writing behavior (includes timer)
     config: CounterDBConfig,
     /// Local cache of counter values
@@ -138,7 +138,7 @@ impl CounterDBActor {
     ///
     /// Result containing a new CounterDBActor instance or an error
     pub fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<AggregatedStatsMessage>,
         config: CounterDBConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Connect to CounterDB
@@ -181,7 +181,7 @@ impl CounterDBActor {
                                 ChannelLabel::IpfixToCounterDb,
                                 self.stats_receiver.len(),
                             );
-                            self.handle_stats_message(msg).await;
+                            self.handle_stats_message(msg.stats).await;
                         }
                         None => {
                             info!("CounterDBActor: stats channel closed, shutting down");
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_get_counter_name_map_table() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(1);
         let config = CounterDBConfig::default();
 
         // Test with a real actor instance
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_get_stat_name() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn test_convert_object_name_for_lookup() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -636,7 +636,7 @@ mod tests {
     #[tokio::test]
     async fn test_counter_db_actor_integration() {
         // This test uses real Redis connection
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(10);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(10);
         let config = CounterDBConfig::default();
 
         // Try to create a real CounterDBActor
@@ -712,7 +712,7 @@ mod tests {
     async fn test_write_counter_uses_hset() {
         // Test that write_counter_to_db uses hset instead of set
         // This preserves existing fields in the Redis hash
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -750,7 +750,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_counter_redis_key_format() {
         // Test the actual write_counter_to_db method with mocked Redis connection
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<AggregatedStatsMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {

@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeMap,
     fmt::{Display, Formatter},
     pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -23,7 +25,9 @@ use opentelemetry_proto::tonic::{
         KeyValue as ProtoKeyValue,
     },
     metrics::v1::{
+        AggregationTemporality,
         Gauge as ProtoGauge,
+        Histogram as ProtoHistogram,
         Metric,
         ResourceMetrics,
         ScopeMetrics,
@@ -31,8 +35,8 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
+    aggregator::{AggregatedStatsMessage, Heatmap},
     otel::OtelMetrics,
-    saistats::SAIStatsMessage,
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
@@ -80,7 +84,7 @@ impl Display for OtelActorExportError {
 
 /// Actor that receives SAI statistics and exports to OpenTelemetry
 pub struct OtelActor {
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<AggregatedStatsMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
     client: Option<MetricsServiceClient<Channel>>,
@@ -91,6 +95,7 @@ pub struct OtelActor {
 
     // Batching
     buffer: Vec<OtelMetrics>,
+    heatmaps: Vec<(Option<Arc<str>>, Arc<[Heatmap]>)>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
 
@@ -110,9 +115,9 @@ pub struct OtelActor {
 impl OtelActor {
     /// Creates a new OtelActor instance
     pub async fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<AggregatedStatsMessage>,
         config: OtelActorConfig,
-        shutdown_notifier: oneshot::Sender<()>
+        shutdown_notifier: oneshot::Sender<()>,
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
         let client = None;
 
@@ -150,6 +155,7 @@ impl OtelActor {
             resource,
             instrumentation_scope,
             buffer: Vec::new(),
+            heatmaps: Vec::new(),
             buffered_counters: 0,
             flush_deadline,
             messages_received: 0,
@@ -219,13 +225,21 @@ impl OtelActor {
     }
 
     /// Handle incoming SAI statistics message
-    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) -> Result<(), Box<dyn ExportError>>{
+    async fn handle_stats_message(
+        &mut self,
+        message: AggregatedStatsMessage,
+    ) -> Result<(), Box<dyn ExportError>> {
         self.messages_received += 1;
 
-        debug!("Received SAI stats with {} entries, observation_time: {}",
-               stats.stats.len(), stats.observation_time);
+        let stats = message.stats;
 
-        let was_empty = self.buffer.is_empty();
+        debug!(
+            "Received SAI stats with {} entries, observation_time: {}",
+            stats.stats.len(),
+            stats.observation_time
+        );
+
+        let was_empty = self.buffer.is_empty() && self.heatmaps.is_empty();
 
         // Convert to OTel format using message types and buffer
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
@@ -236,7 +250,11 @@ impl OtelActor {
         }
 
         self.buffer.push(otel_metrics);
-        self.buffered_counters += counters_in_message;
+        let heatmaps_in_message = message.heatmaps.len();
+        if heatmaps_in_message != 0 {
+            self.heatmaps.push((message.key, message.heatmaps));
+        }
+        self.buffered_counters += counters_in_message + heatmaps_in_message;
 
         // Start timeout when buffer transitions from empty to non-empty
         if was_empty {
@@ -351,7 +369,7 @@ impl OtelActor {
 
     // Export buffered metrics to OpenTelemetry collector 
     async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
+        if self.buffer.is_empty() && self.heatmaps.is_empty() {
             return Ok(());
         }
 
@@ -377,8 +395,34 @@ impl OtelActor {
             }
         }
 
+        let mut histograms = BTreeMap::<(u32, u32), ProtoHistogram>::new();
+        for (key, heatmaps) in &self.heatmaps {
+            for heatmap in heatmaps.iter() {
+                histograms
+                    .entry((heatmap.type_id, heatmap.stat_id))
+                    .or_insert_with(|| ProtoHistogram {
+                        data_points: Vec::new(),
+                        aggregation_temporality: AggregationTemporality::Delta as i32,
+                    })
+                    .data_points
+                    .push(heatmap.to_proto(key.as_deref()));
+            }
+        }
+        for ((type_id, stat_id), histogram) in histograms {
+            proto_metrics.push(Metric {
+                name: format!("sai_counter_type_{}_stat_{}_heatmap", type_id, stat_id),
+                description: format!("SAI counter heatmap (type:{}, stat:{})", type_id, stat_id),
+                metadata: vec![],
+                data: Some(
+                    opentelemetry_proto::tonic::metrics::v1::metric::Data::Histogram(histogram),
+                ),
+                ..Default::default()
+            });
+        }
+
         if proto_metrics.is_empty() {
             self.buffer.clear();
+            self.heatmaps.clear();
             self.buffered_counters = 0;
             return Ok(());
         }
@@ -409,6 +453,7 @@ impl OtelActor {
         }
 
         self.buffer.clear();
+        self.heatmaps.clear();
         self.buffered_counters = 0;
 
         result

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{cell::RefCell, collections::LinkedList, rc::Rc, sync::Arc, time::SystemTime};
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -16,6 +16,7 @@ use ipfixrw::{
 };
 
 use super::super::message::{
+    aggregator::AggregatedStatsMessage,
     buffer::SocketBufferMessage,
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
@@ -483,15 +484,17 @@ type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 /// - Distributing parsed statistics to multiple recipients
 pub struct IpfixActor {
     /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
+    saistats_recipients: LinkedList<Sender<AggregatedStatsMessage>>,
     /// Channel for receiving IPFIX template messages
     template_recipient: Receiver<IPFixTemplatesMessage>,
     /// Channel for receiving IPFIX data records
     record_recipient: Receiver<SocketBufferMessage>,
     /// Mapping from template ID to message key for temporary templates
-    temporary_templates_map: HashMap<u16, String>,
+    temporary_templates_map: HashMap<u16, Arc<str>>,
     /// Mapping from message key to template IDs for applied templates
-    applied_templates_map: HashMap<String, Vec<u16>>,
+    applied_templates_map: HashMap<Arc<str>, Vec<u16>>,
+    /// Mapping from applied template ID to message key for hot path lookups
+    applied_template_key_map: HashMap<u16, Arc<str>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: HashMap<String, HashMap<u16, String>>,
 }
@@ -517,6 +520,7 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
+            applied_template_key_map: HashMap::new(),
             object_id_name_map: HashMap::new(),
         }
     }
@@ -526,7 +530,7 @@ impl IpfixActor {
     /// # Arguments
     ///
     /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
+    pub fn add_recipient(&mut self, recipient: Sender<AggregatedStatsMessage>) {
         self.saistats_recipients.push_back(recipient);
     }
 
@@ -536,7 +540,8 @@ impl IpfixActor {
     ///
     /// * `msg_key` - Unique key identifying the template message
     /// * `templates` - Parsed IPFIX template message containing template definitions
-    fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
+    fn insert_temporary_template(&mut self, msg_key: &str, templates: Message) {
+        let msg_key = Arc::<str>::from(msg_key);
         templates.iter_template_records().for_each(|record| {
             self.temporary_templates_map
                 .insert(record.template_id, msg_key.clone());
@@ -546,10 +551,7 @@ impl IpfixActor {
     /// Returns true if the template is still known (temporary or applied).
     fn is_template_known(&self, template_id: u16) -> bool {
         self.temporary_templates_map.contains_key(&template_id)
-            || self
-                .applied_templates_map
-                .values()
-                .any(|ids| ids.contains(&template_id))
+            || self.applied_template_key_map.contains_key(&template_id)
     }
 
     /// Moves a template from temporary to applied state when it's used in data records.
@@ -574,16 +576,17 @@ impl IpfixActor {
                 template_ids.push(k);
             });
         self.temporary_templates_map.retain(|_, v| *v != msg_key);
+        for template_id in &template_ids {
+            self.applied_template_key_map
+                .insert(*template_id, msg_key.clone());
+        }
         self.applied_templates_map.insert(msg_key, template_ids);
     }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
-        })
+    fn get_template_key(&self, template_id: u16) -> Option<&Arc<str>> {
+        self.temporary_templates_map
+            .get(&template_id)
+            .or_else(|| self.applied_template_key_map.get(&template_id))
     }
 
     /// Processes IPFIX template messages and stores them for later use.
@@ -722,13 +725,16 @@ impl IpfixActor {
             // Remove from temporary templates map
             for template_id in &template_ids {
                 self.temporary_templates_map.remove(template_id);
+                self.applied_template_key_map.remove(template_id);
             }
             debug!("Removed {} templates for key: {}", template_ids.len(), key);
         }
 
         // Also check and remove any remaining entries in temporary_templates_map
         self.temporary_templates_map
-            .retain(|_, msg_key| msg_key != key);
+            .retain(|_, msg_key| msg_key.as_ref() != key);
+        self.applied_template_key_map
+            .retain(|_, msg_key| msg_key.as_ref() != key);
 
         // Remove object metadata for this key
         self.object_id_name_map.remove(key);
@@ -745,11 +751,11 @@ impl IpfixActor {
     /// # Returns
     ///
     /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
+    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<AggregatedStatsMessage> {
         let cache_ref = Self::get_cache();
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
-        let mut messages: Vec<SAIStatsMessage> = Vec::new();
+        let mut messages: Vec<AggregatedStatsMessage> = Vec::new();
 
         debug!("Processing IPFIX records of length: {}", records.len());
 
@@ -820,9 +826,10 @@ impl IpfixActor {
                     _ => continue,
                 };
 
-                let object_name_lookup = self
-                    .get_template_key(template_id)
-                    .and_then(|key| self.object_id_name_map.get(key));
+                let template_key = self.get_template_key(template_id);
+                let object_name_lookup =
+                    template_key.and_then(|key| self.object_id_name_map.get(key.as_ref()));
+                let template_key = template_key.cloned();
 
                 let mut observation_time: Option<u64>;
 
@@ -917,8 +924,8 @@ impl IpfixActor {
                         stats: final_stats,
                     });
 
-                    messages.push(saistats.clone());
                     debug!("Record parsed {:?}", saistats);
+                    messages.push(AggregatedStatsMessage::new(template_key.clone(), saistats));
                 }
             }
             read_size += len as usize;
@@ -964,9 +971,23 @@ impl IpfixActor {
                                 actor.record_recipient.len(),
                             );
                             let messages = actor.handle_record(record);
-                            for recipient in &actor.saistats_recipients {
-                                for message in &messages {
-                                    let _ = recipient.send(message.clone()).await;
+                            if actor.saistats_recipients.len() == 1 {
+                                let recipient = actor
+                                    .saistats_recipients
+                                    .front()
+                                    .expect("single recipient should exist");
+                                for message in messages {
+                                    if recipient.send(message).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            } else {
+                                for recipient in &actor.saistats_recipients {
+                                    for message in &messages {
+                                        if recipient.send(message.clone()).await.is_err() {
+                                            return;
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -1254,7 +1275,7 @@ mod test {
         let stats = actor.handle_record(Arc::new(Vec::from(valid_records_bytes)));
         let stats: Vec<_> = stats
             .into_iter()
-            .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
+            .map(|msg| Arc::try_unwrap(msg.stats).expect("single-owner test stats"))
             .collect();
 
         let session_a_names = ["Ethernet0", "Ethernet1"];
@@ -1310,10 +1331,7 @@ mod test {
         let mut expected = HashMap::new();
         expected.insert(1u16, "Ethernet0".to_string());
         expected.insert(2u16, "Ethernet1".to_string());
-        assert_eq!(
-            actor.object_id_name_map.get("session_a"),
-            Some(&expected)
-        );
+        assert_eq!(actor.object_id_name_map.get("session_a"), Some(&expected));
 
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
@@ -1538,7 +1556,7 @@ mod test {
             // receive here. Clone the inner value instead of requiring exclusive
             // ownership (Arc::try_unwrap), which races on slow/emulated runners
             // such as armhf under QEMU.
-            let unwrapped_stats = (*stats).clone();
+            let unwrapped_stats = (*stats.stats).clone();
             received_stats.push(unwrapped_stats);
             if received_stats.len() == expected_stats.len() {
                 break;

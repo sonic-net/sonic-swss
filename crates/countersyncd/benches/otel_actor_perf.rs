@@ -10,6 +10,7 @@ use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
+use countersyncd::message::aggregator::AggregatedStatsMessage;
 use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
 
 mod ipfix_bench_data;
@@ -103,7 +104,9 @@ async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::
     for tmpl in prepared.templates.iter() {
         for msg_idx in 0..tmpl.records {
             let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            tx.send(msg).await.expect("send stats");
+            tx.send(AggregatedStatsMessage::from(msg))
+                .await
+                .expect("send stats");
         }
     }
 
