@@ -1,4 +1,7 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 
 use super::saistats::SAIStatsMessage;
 use crate::sai::{
@@ -6,6 +9,11 @@ use crate::sai::{
 };
 
 pub const MAX_EXACT_OTLP_BOUNDARY: u64 = 1 << 53;
+static EMPTY_HEATMAPS: OnceLock<Arc<[Heatmap]>> = OnceLock::new();
+
+fn empty_heatmaps() -> Arc<[Heatmap]> {
+    EMPTY_HEATMAPS.get_or_init(|| Arc::from([])).clone()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CounterSelector {
@@ -148,7 +156,7 @@ pub struct StatsMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Heatmap {
-    pub object_name: String,
+    pub object_name: Arc<str>,
     pub type_id: u32,
     pub stat_id: u32,
     pub start_time_unix_nano: u64,
@@ -157,12 +165,11 @@ pub struct Heatmap {
     pub sum: f64,
     pub min: u64,
     pub max: u64,
-    pub explicit_bounds: Vec<f64>,
+    pub explicit_bounds: Arc<[f64]>,
     pub bucket_counts: Vec<u64>,
 }
 
 /// Common message format for every actor downstream of the aggregator.
-pub type AggregatorStatsMessage = StatsMessage;
 pub type AggregatedStatsMessage = StatsMessage;
 
 impl StatsMessage {
@@ -170,7 +177,7 @@ impl StatsMessage {
         Self {
             key,
             stats,
-            heatmaps: Arc::from([]),
+            heatmaps: empty_heatmaps(),
         }
     }
 
@@ -179,10 +186,15 @@ impl StatsMessage {
         stats: SAIStatsMessage,
         heatmaps: Vec<Heatmap>,
     ) -> Self {
+        let heatmaps = if heatmaps.is_empty() {
+            empty_heatmaps()
+        } else {
+            heatmaps.into()
+        };
         Self {
             key,
             stats,
-            heatmaps: heatmaps.into(),
+            heatmaps,
         }
     }
 }
@@ -202,14 +214,26 @@ impl AggregatorConfig {
             return Err("heatmap_interval must be greater than zero".to_string());
         }
 
-        let heatmap_configured = self.heatmap_interval.is_some();
-        if heatmap_configured != !self.heatmap_counters.is_empty()
-            || heatmap_configured != !self.heatmap_bucket_boundaries.is_empty()
+        let heatmap_fields = [
+            ("heatmap_interval", self.heatmap_interval.is_some()),
+            ("heatmap_counters", !self.heatmap_counters.is_empty()),
+            (
+                "heatmap_bucket_boundaries",
+                !self.heatmap_bucket_boundaries.is_empty(),
+            ),
+        ];
+        if heatmap_fields.iter().any(|(_, configured)| *configured)
+            && !heatmap_fields.iter().all(|(_, configured)| *configured)
         {
-            return Err(
-                "heatmap_interval, heatmap_counters, and heatmap_bucket_boundaries must be configured together"
-                    .to_string(),
-            );
+            let missing = heatmap_fields
+                .iter()
+                .filter_map(|(name, configured)| (!configured).then_some(*name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "incomplete heatmap configuration; missing {}",
+                missing
+            ));
         }
 
         for boundaries in self.heatmap_bucket_boundaries.windows(2) {
@@ -312,6 +336,12 @@ mod tests {
         zero_interval.heatmap_interval = Some(0);
         assert!(zero_interval.validate().is_err());
 
+        let zero_reporting = AggregatorConfig {
+            reporting_rate: Some(0),
+            ..Default::default()
+        };
+        assert!(zero_reporting.validate().is_err());
+
         let mut unordered = valid;
         unordered.heatmap_bucket_boundaries = vec![0, 4096, 1024];
         assert!(unordered.validate().is_err());
@@ -323,5 +353,49 @@ mod tests {
             ..Default::default()
         };
         assert!(too_large.validate().is_err());
+    }
+
+    #[test]
+    fn reuses_empty_heatmap_storage() {
+        let stats = Arc::new(super::super::saistats::SAIStats::new(1, Vec::new()));
+        let first = StatsMessage::new(None, stats.clone());
+        let second = StatsMessage::with_heatmaps(None, stats, Vec::new());
+
+        assert!(Arc::ptr_eq(&first.heatmaps, &second.heatmaps));
+    }
+
+    #[test]
+    fn reports_missing_heatmap_fields() {
+        let selector = CounterSelector::new(1, 2);
+        let cases = [
+            (
+                AggregatorConfig {
+                    heatmap_counters: HashSet::from([selector]),
+                    heatmap_bucket_boundaries: vec![1],
+                    ..Default::default()
+                },
+                "heatmap_interval",
+            ),
+            (
+                AggregatorConfig {
+                    heatmap_interval: Some(10),
+                    heatmap_bucket_boundaries: vec![1],
+                    ..Default::default()
+                },
+                "heatmap_counters",
+            ),
+            (
+                AggregatorConfig {
+                    heatmap_interval: Some(10),
+                    heatmap_counters: HashSet::from([selector]),
+                    ..Default::default()
+                },
+                "heatmap_bucket_boundaries",
+            ),
+        ];
+
+        for (config, missing) in cases {
+            assert!(config.validate().unwrap_err().contains(missing));
+        }
     }
 }

@@ -167,10 +167,10 @@ fn run_scenario(
     mut messages: Vec<AggregatedStatsMessage>,
 ) -> BenchmarkOutput {
     for sample in samples {
-        messages.extend(aggregator.process(Some(SESSION_KEY), sample));
+        messages.extend(aggregator.process(Some(Arc::from(SESSION_KEY)), sample));
     }
     for sample in closing_samples {
-        messages.extend(aggregator.process(Some(SESSION_KEY), sample));
+        messages.extend(aggregator.process(Some(Arc::from(SESSION_KEY)), sample));
     }
 
     BenchmarkOutput {

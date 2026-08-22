@@ -16,8 +16,8 @@ use ipfixrw::{
 };
 
 use super::super::message::{
+    aggregator::AggregatedStatsMessage,
     buffer::SocketBufferMessage,
-    aggregator::AggregatorStatsMessage,
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
@@ -484,7 +484,7 @@ type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
 /// - Distributing parsed statistics to multiple recipients
 pub struct IpfixActor {
     /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<AggregatorStatsMessage>>,
+    saistats_recipients: LinkedList<Sender<AggregatedStatsMessage>>,
     /// Channel for receiving IPFIX template messages
     template_recipient: Receiver<IPFixTemplatesMessage>,
     /// Channel for receiving IPFIX data records
@@ -530,7 +530,7 @@ impl IpfixActor {
     /// # Arguments
     ///
     /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<AggregatorStatsMessage>) {
+    pub fn add_recipient(&mut self, recipient: Sender<AggregatedStatsMessage>) {
         self.saistats_recipients.push_back(recipient);
     }
 
@@ -751,11 +751,11 @@ impl IpfixActor {
     /// # Returns
     ///
     /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<AggregatorStatsMessage> {
+    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<AggregatedStatsMessage> {
         let cache_ref = Self::get_cache();
         let mut cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
-        let mut messages: Vec<AggregatorStatsMessage> = Vec::new();
+        let mut messages: Vec<AggregatedStatsMessage> = Vec::new();
 
         debug!("Processing IPFIX records of length: {}", records.len());
 
@@ -827,8 +827,8 @@ impl IpfixActor {
                 };
 
                 let template_key = self.get_template_key(template_id);
-                let object_name_lookup = template_key
-                    .and_then(|key| self.object_id_name_map.get(key.as_ref()));
+                let object_name_lookup =
+                    template_key.and_then(|key| self.object_id_name_map.get(key.as_ref()));
                 let template_key = template_key.cloned();
 
                 let mut observation_time: Option<u64>;
@@ -924,8 +924,8 @@ impl IpfixActor {
                         stats: final_stats,
                     });
 
-                    messages.push(AggregatorStatsMessage::new(template_key.clone(), saistats.clone()));
                     debug!("Record parsed {:?}", saistats);
+                    messages.push(AggregatedStatsMessage::new(template_key.clone(), saistats));
                 }
             }
             read_size += len as usize;
@@ -971,9 +971,23 @@ impl IpfixActor {
                                 actor.record_recipient.len(),
                             );
                             let messages = actor.handle_record(record);
-                            for recipient in &actor.saistats_recipients {
-                                for message in &messages {
-                                    let _ = recipient.send(message.clone()).await;
+                            if actor.saistats_recipients.len() == 1 {
+                                let recipient = actor
+                                    .saistats_recipients
+                                    .front()
+                                    .expect("single recipient should exist");
+                                for message in messages {
+                                    if recipient.send(message).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            } else {
+                                for recipient in &actor.saistats_recipients {
+                                    for message in &messages {
+                                        if recipient.send(message.clone()).await.is_err() {
+                                            return;
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -1317,10 +1331,7 @@ mod test {
         let mut expected = HashMap::new();
         expected.insert(1u16, "Ethernet0".to_string());
         expected.insert(2u16, "Ethernet1".to_string());
-        assert_eq!(
-            actor.object_id_name_map.get("session_a"),
-            Some(&expected)
-        );
+        assert_eq!(actor.object_id_name_map.get("session_a"), Some(&expected));
 
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),

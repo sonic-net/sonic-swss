@@ -239,7 +239,7 @@ impl OtelActor {
             stats.observation_time
         );
 
-        let was_empty = self.buffer.is_empty();
+        let was_empty = self.buffer.is_empty() && self.heatmaps.is_empty();
 
         // Convert to OTel format using message types and buffer
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
@@ -250,10 +250,11 @@ impl OtelActor {
         }
 
         self.buffer.push(otel_metrics);
-        if !message.heatmaps.is_empty() {
+        let heatmaps_in_message = message.heatmaps.len();
+        if heatmaps_in_message != 0 {
             self.heatmaps.push((message.key, message.heatmaps));
         }
-        self.buffered_counters += counters_in_message;
+        self.buffered_counters += counters_in_message + heatmaps_in_message;
 
         // Start timeout when buffer transitions from empty to non-empty
         if was_empty {
@@ -368,7 +369,7 @@ impl OtelActor {
 
     // Export buffered metrics to OpenTelemetry collector 
     async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
+        if self.buffer.is_empty() && self.heatmaps.is_empty() {
             return Ok(());
         }
 
@@ -421,6 +422,7 @@ impl OtelActor {
 
         if proto_metrics.is_empty() {
             self.buffer.clear();
+            self.heatmaps.clear();
             self.buffered_counters = 0;
             return Ok(());
         }

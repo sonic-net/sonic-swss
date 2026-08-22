@@ -8,8 +8,7 @@ use tokio::time::{sleep, timeout, Duration};
 use countersyncd::actor::{aggregator::AggregatorActor, ipfix::IpfixActor};
 use countersyncd::message::{
     aggregator::{
-        AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage, AggregatorStatsMessage,
-        CounterSelector,
+        AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage, CounterSelector,
     },
     buffer::SocketBufferMessage,
     ipfix::IPFixTemplatesMessage,
@@ -30,7 +29,7 @@ async fn start_ipfix_aggregator_pipeline(
     let (template_sender, template_receiver) = channel(template_capacity);
     let (aggregator_config_sender, aggregator_config_receiver) = channel(config_capacity);
     let (aggregator_stats_sender, aggregator_stats_receiver) =
-        channel::<AggregatorStatsMessage>(stats_capacity);
+        channel::<AggregatedStatsMessage>(stats_capacity);
     let (saistats_sender, saistats_receiver) = channel::<AggregatedStatsMessage>(stats_capacity);
 
     let mut ipfix = IpfixActor::new(template_receiver, buffer_receiver);
@@ -263,7 +262,7 @@ async fn aggregator_delete_while_streaming_forwards_later_samples() {
 async fn ipfix_templates_delete_and_readd_schema_change() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel::<AggregatorStatsMessage>(10);
+    let (saistats_sender, mut saistats_receiver) = channel::<AggregatedStatsMessage>(10);
 
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
@@ -337,7 +336,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     for _ in 0..expected_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
         {
-            let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
+            let stats = (*stats_msg.stats).clone();
             received.push(stats);
         } else {
             break;
@@ -460,7 +459,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     for _ in 0..expected_readd_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
         {
-            let stats = Arc::try_unwrap(stats_msg.stats).expect("unwrap stats Arc");
+            let stats = (*stats_msg.stats).clone();
             readd_received.push(stats);
         } else {
             break;

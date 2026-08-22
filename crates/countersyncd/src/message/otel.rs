@@ -58,7 +58,7 @@ impl Heatmap {
         session_key: Option<&str>,
     ) -> opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
         let mut attributes = vec![
-            OtelAttribute::new("object_name", &self.object_name).to_proto(),
+            OtelAttribute::new("object_name", self.object_name.as_ref()).to_proto(),
             OtelAttribute::new("sai_type_id", self.type_id.to_string()).to_proto(),
             OtelAttribute::new("sai_stat_id", self.stat_id.to_string()).to_proto(),
         ];
@@ -73,7 +73,7 @@ impl Heatmap {
             count: self.count,
             sum: Some(self.sum),
             bucket_counts: self.bucket_counts.clone(),
-            explicit_bounds: self.explicit_bounds.clone(),
+            explicit_bounds: self.explicit_bounds.to_vec(),
             min: Some(self.min as f64),
             max: Some(self.max as f64),
             ..Default::default()
@@ -119,11 +119,10 @@ impl OtelDataPoint {
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
     pub fn to_proto(&self) -> NumberDataPoint {
-        let value = if self.value <= i64::MAX as u64 {
-            number_data_point::Value::AsInt(self.value as i64)
-        } else {
-            number_data_point::Value::AsDouble(self.value as f64)
-        };
+        // Keep one numeric representation for a metric across its lifetime.
+        // OTLP doubles cannot exactly represent every u64 above 2^53, but they
+        // avoid signed wraparound and backend type changes at i64::MAX.
+        let value = number_data_point::Value::AsDouble(self.value as f64);
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
             value: Some(value),
@@ -372,8 +371,8 @@ mod tests {
 
         assert_eq!(proto_point.time_unix_nano, 123456789);
         match proto_point.value.unwrap() {
-            number_data_point::Value::AsInt(val) => assert_eq!(val, 777),
-            _ => panic!("Expected integer value"),
+            number_data_point::Value::AsDouble(val) => assert_eq!(val, 777.0),
+            _ => panic!("Expected double value"),
         }
         assert_eq!(proto_point.attributes.len(), 3);
 
@@ -452,7 +451,7 @@ fn test_sai_to_otel_gauge_conversion() {
     #[test]
     fn converts_heatmap_to_otel_histogram() {
         let heatmap = Heatmap {
-            object_name: "Ethernet0".to_string(),
+            object_name: Arc::from("Ethernet0"),
             type_id: 1,
             stat_id: 2,
             start_time_unix_nano: 1_000,
@@ -461,7 +460,7 @@ fn test_sai_to_otel_gauge_conversion() {
             sum: 11.0,
             min: 1,
             max: 8,
-            explicit_bounds: vec![1.0, 2.0, 8.0],
+            explicit_bounds: Arc::from([1.0, 2.0, 8.0]),
             bucket_counts: vec![1, 1, 1, 0],
         };
 
@@ -487,16 +486,16 @@ fn test_sai_to_otel_gauge_conversion() {
     }
 
     #[test]
-    fn preserves_large_u64_gauge_as_nonnegative_double() {
-        let stat = SAIStat {
-            object_name: "Ethernet0".to_string(),
-            type_id: 1,
-            stat_id: 2,
-            counter: i64::MAX as u64 + 1,
-        };
-
-        let point = OtelDataPoint::from_sai_stat(&stat, 1).to_proto();
-
-        assert_eq!(point.value, Some(number_data_point::Value::AsDouble((i64::MAX as u64 + 1) as f64)));
+    fn encodes_gauges_consistently_as_double() {
+        for counter in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+            let stat = SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 1,
+                stat_id: 2,
+                counter,
+            };
+            let point = OtelDataPoint::from_sai_stat(&stat, 1).to_proto();
+            assert_eq!(point.value, Some(number_data_point::Value::AsDouble(counter as f64)));
+        }
     }
 }
