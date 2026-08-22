@@ -172,7 +172,9 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
