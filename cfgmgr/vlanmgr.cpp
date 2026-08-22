@@ -1,4 +1,5 @@
 #include <string.h>
+#include <limits>
 #include "logger.h"
 #include "producerstatetable.h"
 #include "macaddress.h"
@@ -398,12 +399,6 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 else if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
-                    /*
-                     * TODO: support host VLAN mtu setting.
-                     * Host VLAN mtu should be set only after member configured
-                     * and VLAN state is not UNKNOWN.
-                     */
-                    SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
@@ -425,8 +420,46 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 fvVector.push_back(a);
             }
 
-            FieldValueTuple m("mtu", mtu);
-            fvVector.push_back(m);
+            /*
+             * Apply MTU to the host Vlan<id> netdev. addHostVlan above
+             * (for new VLANs) or the warm-restart skip earlier guarantee
+             * the netdev exists. A VLAN sub-interface's MTU is independent
+             * of its bridge members (unlike team/bond), so no member-gating
+             * is needed. Only push the value to APPL_DB if the kernel
+             * accepted it, to keep kernel / APPL_DB / SAI in sync; mirrors
+             * how PortMgr::setPortMtu only writes APPL_DB on success.
+             */
+            uint32_t mtu_val = 0;
+            bool mtu_valid = false;
+            try
+            {
+                unsigned long long parsed = std::stoull(mtu);
+                if (parsed > std::numeric_limits<uint32_t>::max())
+                {
+                    throw std::out_of_range("mtu exceeds uint32_t range");
+                }
+                mtu_val = static_cast<uint32_t>(parsed);
+                mtu_valid = true;
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Invalid MTU '%s' for %s: %s",
+                               mtu.c_str(), key.c_str(), e.what());
+            }
+
+            if (mtu_valid)
+            {
+                if (setHostVlanMtu(vlan_id, mtu_val))
+                {
+                    FieldValueTuple m("mtu", mtu);
+                    fvVector.push_back(m);
+                }
+                else
+                {
+                    SWSS_LOG_WARN("Failed to set MTU %u on %s; check bridge/member MTUs",
+                                  mtu_val, key.c_str());
+                }
+            }
 
             FieldValueTuple mc("mac", mac);
             fvVector.push_back(mc);
