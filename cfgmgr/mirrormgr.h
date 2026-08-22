@@ -39,6 +39,11 @@
 #define MIRROR_SESSION_TYPE_SPAN           "SPAN"
 #define MIRROR_SESSION_TYPE_ERSPAN         "ERSPAN"
 
+/* Mirror direction values (normalized; upstream SONiC uses RX/TX/BOTH) */
+#define MIRROR_RX_DIRECTION     "RX"
+#define MIRROR_TX_DIRECTION     "TX"
+#define MIRROR_BOTH_DIRECTION   "BOTH"
+
 namespace swss {
 
 /*
@@ -75,14 +80,23 @@ private:
     /* Kernel programming helpers */
     bool addSpanSession(const std::string &srcPort,
                         const std::string &dstPort,
+                        const std::string &direction,
                         uint32_t prio);
     bool addErspanSession(const std::string &srcPort,
                           const std::string &srcIp,
                           const std::string &dstIp,
                           const std::string &dstPort,
+                          const std::string &direction,
                           uint32_t prio);
     bool removeMirrorSession(const std::string &srcPort,
                              uint32_t prio);
+
+    /* Low-level tc helpers */
+    void ensureClsact(const std::string &srcPort);
+    bool addTcMirrorFilter(const std::string &srcPort, const std::string &hook,
+                           uint32_t prio, const std::string &actionTail);
+    bool removeTcMirrorFilter(const std::string &srcPort, const std::string &hook,
+                              uint32_t prio);
 };
 
 } // namespace swss

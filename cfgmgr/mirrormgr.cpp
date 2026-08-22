@@ -25,6 +25,26 @@ static string resolveInterface(const string &sonicName)
     return sonicName;
 }
 
+/*
+ * normalizeDirection — map the MIRROR_SESSION direction field to the canonical
+ * RX/TX/BOTH values. Accepts upstream RX/TX/BOTH and the legacy ingress/egress/
+ * both spellings, defaulting to RX (ingress) when absent or unknown.
+ */
+static string normalizeDirection(const string &dir)
+{
+    if (dir == "RX" || dir == "rx" || dir == "INGRESS" || dir == "ingress")
+        return MIRROR_RX_DIRECTION;
+    if (dir == "TX" || dir == "tx" || dir == "EGRESS" || dir == "egress")
+        return MIRROR_TX_DIRECTION;
+    if (dir == "BOTH" || dir == "both")
+        return MIRROR_BOTH_DIRECTION;
+    if (dir.empty())
+        return MIRROR_RX_DIRECTION;
+
+    SWSS_LOG_WARN("Unknown mirror direction '%s', defaulting to RX", dir.c_str());
+    return MIRROR_RX_DIRECTION;
+}
+
 MirrorMgr::MirrorMgr(DBConnector *cfgDb, DBConnector *stateDb,
                      const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
@@ -79,6 +99,8 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
                 else if (field == MIRROR_SESSION_FIELD_DIRECTION) direction = value;
             }
 
+            direction = normalizeDirection(direction);
+
             SWSS_LOG_NOTICE("MIRROR_SESSION SET: %s type=%s src=%s dst=%s src_ip=%s dst_ip=%s dir=%s",
                             session_name.c_str(), type.c_str(), src_port.c_str(),
                             dst_port.c_str(), src_ip.c_str(), dst_ip.c_str(), direction.c_str());
@@ -113,9 +135,9 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
                 string iface = resolveInterface(sp);
                 bool ret;
                 if (type == MIRROR_SESSION_TYPE_ERSPAN)
-                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port, prio);
+                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port, direction, prio);
                 else
-                    ret = addSpanSession(iface, dst_port, prio);
+                    ret = addSpanSession(iface, dst_port, direction, prio);
 
                 if (!ret)
                 {
@@ -170,7 +192,8 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
  * addSpanSession — local (SPAN) port mirroring via tc mirred.
  *   tc filter add dev <src> ingress matchall action mirred egress mirror dev <dst>
  */
-bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort, uint32_t prio)
+bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort,
+                               const string &direction, uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -182,33 +205,18 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort, uin
 
     string dstIface = resolveInterface(dstPort);
 
-    /* Ensure ingress qdisc exists (idempotent). */
-    ostringstream qdisc_cmd;
-    qdisc_cmd << TC_CMD << " qdisc add dev " << srcPort << " ingress";
-    string ignored;
-    swss::exec(qdisc_cmd.str(), ignored);
+    ensureClsact(srcPort);
 
-    /* Remove any existing filter at this prio before re-adding, so a
-     * re-applied session does not accumulate duplicate matchall filters. */
-    ostringstream del_cmd;
-    del_cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
-    swss::exec(del_cmd.str(), ignored);
+    ostringstream actionTail;
+    actionTail << "action mirred egress mirror dev " << dstIface;
 
-    ostringstream cmd;
-    cmd << TC_CMD << " filter add dev " << srcPort << " ingress prio " << prio
-        << " matchall action mirred egress mirror dev " << dstIface;
+    bool ok = true;
+    if (direction == MIRROR_RX_DIRECTION || direction == MIRROR_BOTH_DIRECTION)
+        ok &= addTcMirrorFilter(srcPort, "ingress", prio, actionTail.str());
+    if (direction == MIRROR_TX_DIRECTION || direction == MIRROR_BOTH_DIRECTION)
+        ok &= addTcMirrorFilter(srcPort, "egress", prio, actionTail.str());
 
-    SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-
-    string res;
-    int ret = swss::exec(cmd.str(), res);
-    if (ret != 0)
-    {
-        SWSS_LOG_ERROR("tc mirror add failed on %s (ret=%d): %s", srcPort.c_str(), ret, res.c_str());
-        return false;
-    }
-
-    return true;
+    return ok;
 }
 
 /*
@@ -222,7 +230,7 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort, uin
  */
 bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
                                  const string &dstIp, const string &dstPort,
-                                 uint32_t prio)
+                                 const string &direction, uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -234,23 +242,51 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
 
     string dstIface = dstPort.empty() ? srcPort : resolveInterface(dstPort);
 
+    ensureClsact(srcPort);
+
+    ostringstream actionTail;
+    actionTail << "action tunnel_key set src_ip " << srcIp
+               << " dst_ip " << dstIp
+               << " id 100"
+               << " action mirred egress mirror tunnel_key dev " << dstIface;
+
+    bool ok = true;
+    if (direction == MIRROR_RX_DIRECTION || direction == MIRROR_BOTH_DIRECTION)
+        ok &= addTcMirrorFilter(srcPort, "ingress", prio, actionTail.str());
+    if (direction == MIRROR_TX_DIRECTION || direction == MIRROR_BOTH_DIRECTION)
+        ok &= addTcMirrorFilter(srcPort, "egress", prio, actionTail.str());
+
+    return ok;
+}
+
+/*
+ * ensureClsact — attach the clsact qdisc (ingress + egress hooks). Idempotent;
+ * tc returns EEXIST if already present, which we ignore.
+ */
+void MirrorMgr::ensureClsact(const string &srcPort)
+{
     ostringstream qdisc_cmd;
-    qdisc_cmd << TC_CMD << " qdisc add dev " << srcPort << " ingress";
+    qdisc_cmd << TC_CMD << " qdisc add dev " << srcPort << " clsact";
     string ignored;
     swss::exec(qdisc_cmd.str(), ignored);
+}
 
-    /* Remove any existing filter at this prio before re-adding (idempotent). */
+/*
+ * addTcMirrorFilter — (re)program one matchall mirror filter on a given hook.
+ * Deletes any existing filter at the same prio first, so re-applying a session
+ * is idempotent.
+ */
+bool MirrorMgr::addTcMirrorFilter(const string &srcPort, const string &hook,
+                                  uint32_t prio, const string &actionTail)
+{
     ostringstream del_cmd;
-    del_cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
+    del_cmd << TC_CMD << " filter del dev " << srcPort << " " << hook << " prio " << prio;
+    string ignored;
     swss::exec(del_cmd.str(), ignored);
 
     ostringstream cmd;
-    cmd << TC_CMD << " filter add dev " << srcPort << " ingress prio " << prio
-        << " matchall"
-        << " action tunnel_key set src_ip " << srcIp
-        << " dst_ip " << dstIp
-        << " id 100"
-        << " action mirred egress mirror tunnel_key dev " << dstIface;
+    cmd << TC_CMD << " filter add dev " << srcPort << " " << hook << " prio " << prio
+        << " matchall " << actionTail;
 
     SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
 
@@ -258,8 +294,8 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
     int ret = swss::exec(cmd.str(), res);
     if (ret != 0)
     {
-        SWSS_LOG_ERROR("tc erspan mirror add failed on %s (ret=%d): %s",
-                       srcPort.c_str(), ret, res.c_str());
+        SWSS_LOG_ERROR("tc mirror add failed on %s (%s) (ret=%d): %s",
+                       srcPort.c_str(), hook.c_str(), ret, res.c_str());
         return false;
     }
 
@@ -267,16 +303,13 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
 }
 
 /*
- * removeMirrorSession — remove the matchall mirror filter from a source port.
+ * removeTcMirrorFilter — remove a matchall mirror filter from a given hook.
  */
-bool MirrorMgr::removeMirrorSession(const string &srcPort, uint32_t prio)
+bool MirrorMgr::removeTcMirrorFilter(const string &srcPort, const string &hook,
+                                     uint32_t prio)
 {
-    SWSS_LOG_ENTER();
-
     ostringstream cmd;
-    /* Delete by the session's tracked priority (tc rejects `del ... matchall`
-     * as a malformed bulk-flush). */
-    cmd << TC_CMD << " filter del dev " << srcPort << " ingress prio " << prio;
+    cmd << TC_CMD << " filter del dev " << srcPort << " " << hook << " prio " << prio;
 
     SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
 
@@ -285,7 +318,21 @@ bool MirrorMgr::removeMirrorSession(const string &srcPort, uint32_t prio)
 
     /* Not found is fine — the filter may already be gone. */
     if (ret != 0)
-        SWSS_LOG_WARN("tc filter del on %s (ret=%d): %s", srcPort.c_str(), ret, res.c_str());
+        SWSS_LOG_WARN("tc filter del on %s (%s) (ret=%d): %s",
+                      srcPort.c_str(), hook.c_str(), ret, res.c_str());
 
     return true;
+}
+
+bool MirrorMgr::removeMirrorSession(const string &srcPort, uint32_t prio)
+{
+    SWSS_LOG_ENTER();
+
+    /* Delete from both hooks regardless of direction; removing a filter that
+     * was never programmed is harmless. */
+    bool ok = true;
+    ok &= removeTcMirrorFilter(srcPort, "ingress", prio);
+    ok &= removeTcMirrorFilter(srcPort, "egress", prio);
+
+    return ok;
 }
