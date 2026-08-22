@@ -11,7 +11,7 @@ CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+check_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 

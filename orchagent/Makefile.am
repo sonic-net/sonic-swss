@@ -9,6 +9,14 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I nhg
 
 SUBDIRS = p4orch/tests
+include $(top_srcdir)/orchagent/p4orch/shared_sources.mk
+
+EXTRA_DIST = p4orch/shared_sources.mk
+
+P4ORCH_SHARED_LIB = p4orch/tests/libp4orchshared.a
+
+$(P4ORCH_SHARED_LIB): $(P4ORCH_SHARED_SOURCES)
+	$(MAKE) -C p4orch/tests libp4orchshared.a
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -51,11 +59,8 @@ orchagent_SOURCES = \
             main.cpp \
             $(top_srcdir)/lib/gearboxutils.cpp \
             $(top_srcdir)/lib/subintf.cpp \
-            $(top_srcdir)/lib/recorder.cpp \
             $(top_srcdir)/lib/orch_zmq_config.cpp \
             orchdaemon.cpp \
-            orch.cpp \
-            notifications.cpp \
             nhgorch.cpp \
             nhgbase.cpp \
             cbf/cbfnhgorch.cpp  \
@@ -66,12 +71,9 @@ orchagent_SOURCES = \
             intfsorch.cpp \
             evpnmhorch.cpp \
             l2nhgorch.cpp \
-            port/port_capabilities.cpp \
-            port/porthlpr.cpp \
             portsorch.cpp \
             fabricportsorch.cpp \
             fgnhgorch.cpp \
-            copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
             buffer/bufferhelper.cpp \
@@ -87,19 +89,11 @@ orchagent_SOURCES = \
             pbhorch.cpp \
             saihelper.cpp \
             saiattr.cpp \
-            switch/switch_capabilities.cpp \
-            switch/switch_helper.cpp \
-            switch/trimming/capabilities.cpp \
-            switch/trimming/helper.cpp \
-            switchorch.cpp \
             pfcwdorch.cpp \
             pfcwdsworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
-            request_parser.cpp \
-            vrforch.cpp \
             countercheckorch.cpp \
-            vxlanorch.cpp \
             tunneltermhelper.cpp \
             vnetorch.cpp \
             dtelorch.cpp \
@@ -107,7 +101,6 @@ orchagent_SOURCES = \
             watermarkorch.cpp \
             notificationconsumerstatsorch.cpp \
             policerorch.cpp \
-            namelabelmapper.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
@@ -122,7 +115,6 @@ orchagent_SOURCES = \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
-            zmqorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
             dash/dashcounter.cpp \
@@ -151,31 +143,13 @@ orchagent_SOURCES = \
             shlorch.cpp
 
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
+orchagent_SOURCES += flex_counter/flex_counter_stat_manager.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
-orchagent_SOURCES += p4orch/p4orch.cpp \
-		     p4orch/p4orch_util.cpp \
-		     p4orch/p4oidmapper.cpp \
- 		     p4orch/tables_definition_manager.cpp \
-		     p4orch/router_interface_manager.cpp \
-		     p4orch/gre_tunnel_manager.cpp \
-		     p4orch/neighbor_manager.cpp \
-		     p4orch/next_hop_manager.cpp \
-		     p4orch/route_manager.cpp \
-		     p4orch/acl_util.cpp \
-		     p4orch/acl_table_manager.cpp \
-		     p4orch/acl_rule_manager.cpp \
-		     p4orch/wcmp_manager.cpp \
-		     p4orch/mirror_session_manager.cpp \
-                     p4orch/tunnel_decap_group_manager.cpp \
-		     p4orch/l3_admit_manager.cpp \
-		     p4orch/l3_multicast_manager.cpp \
-		     p4orch/ip_multicast_manager.cpp \
- 		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
+orchagent_DEPENDENCIES = $(P4ORCH_SHARED_LIB)
+orchagent_LDADD = $(P4ORCH_SHARED_LIB) $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
 routeresync_SOURCES = routeresync.cpp \
              $(top_srcdir)/lib/orch_zmq_config.cpp
@@ -198,4 +172,3 @@ orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
-

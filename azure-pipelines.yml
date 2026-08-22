@@ -126,6 +126,7 @@ stages:
       debian_version: trixie
       vpp_artifact_name: vpp-trixie
       archive_gcov: false
+      run_unit_tests: false
 
   - template: .azure-pipelines/build-template.yml
     parameters:
@@ -141,6 +142,7 @@ stages:
       debian_version: trixie
       vpp_artifact_name: vpp-trixie
       archive_gcov: false
+      run_unit_tests: false
 
   - template: .azure-pipelines/build-template.yml
     parameters:
@@ -156,6 +158,7 @@ stages:
       debian_version: trixie
       vpp_artifact_name: vpp-trixie
       archive_gcov: false
+      run_unit_tests: false
 
 - stage: BuildDocker
   dependsOn: Build

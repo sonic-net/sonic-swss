@@ -8,7 +8,7 @@ if !HAVE_SAI
 SUBDIRS = mock_tests
 endif
 
-noinst_PROGRAMS = tests
+check_PROGRAMS = tests
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
