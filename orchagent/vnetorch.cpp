@@ -374,8 +374,9 @@ std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, const VNetInf
     return vnet_obj;
 }
 
-VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
-         : Orch2(db, tableName, request_)
+VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, DBConnector *stateDb, VNET_EXEC op)
+         : Orch2(db, tableName, request_),
+           m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME)
 {
     vnet_exec_ = op;
 
@@ -518,6 +519,15 @@ bool VNetOrch::addOperation(const Request& request)
                 }
 
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
+
+                /*
+                 * Publish to STATE_VRF_OBJECT_TABLE so vrfmgrd knows the SAI
+                 * VNet object exists and can defer kernel delLink() on a
+                 * subsequent VNET delete until VNetOrch finishes cleanup.
+                 * Mirrors VRFOrch::doTask() behavior; see VrfMgr::doTask()
+                 * polling on isVrfObjExist() for the consumer side.
+                 */
+                m_stateVrfObjectTable.hset(vnet_name, "state", "ok");
             }
             else
             {
@@ -599,6 +609,21 @@ bool VNetOrch::delOperation(const Request& request)
     }
 
     vnet_table_.erase(vnet_name);
+
+    /*
+     * Placement is load-bearing: this del() must remain on the success path
+     * (after vnet_table_.erase, after the SAI VNet object has been freed and
+     * any per-VNET cleanup above has succeeded). vrfmgrd polls this row in
+     * its VNET delete path and defers delLink() until the row disappears.
+     * If a partial cleanup failure above caused us to return false earlier
+     * (e.g. getRouteCount() != 0 or removeVxlanTunnelMap() returned false),
+     * the row is intentionally kept so the framework retries without
+     * prematurely allowing the kernel device to be removed. Do not lift
+     * this del() into an earlier branch or wrap it in cleanup-failure paths.
+     */
+    m_stateVrfObjectTable.del(vnet_name);
+
+    SWSS_LOG_NOTICE("VNET '%s' was removed", vnet_name.c_str());
 
     return true;
 }
