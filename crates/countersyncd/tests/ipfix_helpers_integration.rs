@@ -336,6 +336,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     for _ in 0..expected_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
         {
+            assert_eq!(Arc::strong_count(&stats_msg.stats), 1);
             let stats = (*stats_msg.stats).clone();
             received.push(stats);
         } else {
@@ -459,6 +460,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     for _ in 0..expected_readd_counts.len() {
         if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await
         {
+            assert_eq!(Arc::strong_count(&stats_msg.stats), 1);
             let stats = (*stats_msg.stats).clone();
             readd_received.push(stats);
         } else {
