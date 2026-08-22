@@ -14,21 +14,14 @@ using namespace swss;
 #define TC_CMD "/sbin/tc"
 
 /*
- * resolveInterface — translate SONiC port name to kernel interface name.
- * In sonic-vs the kernel veth names (eth1, eth2) differ from SONiC front-panel
- * names (Ethernet0, Ethernet4). In production switchdev they are the same.
+ * resolveInterface — return the kernel interface name for a SONiC port name.
+ * In switchdev mode the docker-sonic-vs container renames the front-panel veths
+ * (eth1 -> Ethernet0, eth2 -> Ethernet4, ...) at startup, so the kernel
+ * interface names already match the SONiC names used in CONFIG_DB. No
+ * translation is needed.
  */
 static string resolveInterface(const string &sonicName)
 {
-    static const map<string, string> mapping = {
-        {"Ethernet0", "eth1"},
-        {"Ethernet4", "eth2"},
-    };
-
-    auto it = mapping.find(sonicName);
-    if (it != mapping.end())
-        return it->second;
-
     return sonicName;
 }
 
