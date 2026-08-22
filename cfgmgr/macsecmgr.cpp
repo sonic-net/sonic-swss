@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <sstream>
 #include <cctype>
+#include <thread>
+#include <chrono>
 
 
 using namespace std;
@@ -357,7 +359,11 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
 {
     SWSS_LOG_ENTER();
 
-    // The following fields are optional
+    // The following fields are optional. Clear them first: update() mutates the
+    // stored profile in place, so an entry that no longer carries them (an
+    // operator HDEL of fallback_cak/fallback_ckn) must not retain the old key.
+    fallback_cak.clear();
+    fallback_ckn.clear();
     if (GetValue(ta, fallback_cak) && !GetValue(ta, fallback_ckn))
     {
         return false;
@@ -399,32 +405,70 @@ task_process_status MACsecMgr::loadProfile(
 {
     SWSS_LOG_ENTER();
 
-    auto profile = m_profiles.emplace(
-        std::piecewise_construct,
-        std::make_tuple(profile_name),
-        std::make_tuple());
+    // Validate into a local profile so an invalid update leaves the profile
+    // currently applied to the ports untouched.
+    MACsecProfile new_profile;
     try
     {
-        if (profile.first->second.update(profile_attr))
+        if (!new_profile.update(profile_attr))
         {
-            SWSS_LOG_NOTICE(
-                "The MACsec profile '%s' is loaded",
+            SWSS_LOG_WARN(
+                "The MACsec profile '%s' is incomplete; rejecting the profile",
                 profile_name.c_str());
+            return task_invalid_entry;
         }
-        // If the profile has been used
-        if (profile.second)
+        SWSS_LOG_NOTICE(
+            "The MACsec profile '%s' is loaded",
+            profile_name.c_str());
+
+        // The YANG model rejects this too; guard direct CONFIG_DB writes that bypass it.
+        if (!new_profile.fallback_ckn.empty()
+            && boost::iequals(new_profile.fallback_ckn, new_profile.primary_ckn))
         {
-            for (auto & port : m_macsec_ports)
+            SWSS_LOG_WARN(
+                "The MACsec profile '%s' has a fallback CKN equal to its "
+                "primary CKN; rejecting the profile",
+                profile_name.c_str());
+            return task_failed;
+        }
+
+        // decodeKey() is the only check on the CAK length and reports a bad key
+        // by throwing. Run it here so a malformed key is rejected before the
+        // profile is committed or any live MKA session is touched below.
+        decodeKey(new_profile.primary_cak, new_profile.cipher_suite);
+        if (!new_profile.fallback_ckn.empty())
+        {
+            decodeKey(new_profile.fallback_cak, new_profile.cipher_suite);
+        }
+
+        m_profiles[profile_name] = new_profile;
+
+        // Drive the change onto every port already running this profile at run
+        // time instead of restarting its MKA session.
+        task_process_status status = task_success;
+        for (auto & port : m_macsec_ports)
+        {
+            if (port.second.profile_name != profile_name)
             {
-                if (port.second.profile_name == profile_name)
-                {
-                    // Hot update
-                    SWSS_LOG_DEBUG("Hot update");
-                }
+                continue;
+            }
+            SWSS_LOG_NOTICE(
+                "Hot-updating MACsec profile '%s' on port '%s'",
+                profile_name.c_str(),
+                port.first.c_str());
+            if (!hotUpdateProfile(port.first, port.second, new_profile))
+            {
+                SWSS_LOG_WARN(
+                    "Hot-update of MACsec profile '%s' on port '%s' failed",
+                    profile_name.c_str(),
+                    port.first.c_str());
+                status = task_need_retry;
             }
         }
-        return task_success;
+        return status;
     }
+    // The CAKs are validated above before anything is committed, so this only
+    // backstops the decodeKey() calls made while applying the profile.
     catch(const std::invalid_argument & e)
     {
         SWSS_LOG_WARN("%s", e.what());
@@ -566,6 +610,11 @@ task_process_status MACsecMgr::enableMACsec(
             port_name.c_str());
         return disableMACsec(port_name, port_attr);
     }
+    // Record what is now programmed on the port; hot updates diff against it.
+    session.primary_cak = profile.primary_cak;
+    session.primary_ckn = profile.primary_ckn;
+    session.fallback_cak = profile.fallback_cak;
+    session.fallback_ckn = profile.fallback_ckn;
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
         profile_name.c_str(),
         port_name.c_str());
@@ -832,6 +881,21 @@ bool MACsecMgr::configureMACsec(
             "",
             "enable_network",
             network_id);
+
+        // The primary CA is loaded through the network block above. A fallback CA
+        // is added over the ctrl socket so it can later be rotated or removed
+        // without restarting wpa_supplicant.
+        if (!profile.fallback_ckn.empty()
+            && !addMKA(
+                    session.sock,
+                    port_name,
+                    profile.fallback_ckn,
+                    decodeKey(profile.fallback_cak, profile.cipher_suite),
+                    true))
+        {
+            throw std::runtime_error(
+                "Cannot add fallback MKA participant for CKN " + profile.fallback_ckn);
+        }
     }
     catch(const std::runtime_error & e)
     {
@@ -920,4 +984,288 @@ bool MACsecMgr::unconfigureMACsec(
         }
     }
     return true;
+}
+
+std::vector<MACsecMgr::MKAParticipant> MACsecMgr::getMKAParticipants(
+    const std::string & sock,
+    const std::string & port_name) const
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<MKAParticipant> participants;
+
+    std::string output;
+    try
+    {
+        output = wpa_cli_exec(sock, port_name, "", "macsec_mka_list");
+    }
+    catch(const std::runtime_error & e)
+    {
+        SWSS_LOG_WARN(
+            "Cannot query MKA participants on port '%s' : %s",
+            port_name.c_str(),
+            e.what());
+        return participants;
+    }
+
+    // macsec_mka_list emits top-level 'key=value' fields followed by one block
+    // per participant, each starting at 'participant_idx'. Fields before the
+    // first block belong to the KaY and are ignored here.
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
+        {
+            line.pop_back();
+        }
+        auto pos = line.find('=');
+        if (pos == std::string::npos)
+        {
+            continue;
+        }
+        const std::string key = line.substr(0, pos);
+        const std::string value = line.substr(pos + 1);
+        if (key == "participant_idx")
+        {
+            participants.emplace_back();
+        }
+        else if (participants.empty())
+        {
+            continue;
+        }
+        else if (key == "ckn")
+        {
+            participants.back().ckn = value;
+        }
+        else if (key == "is_primary")
+        {
+            participants.back().fallback = !boost::iequals(value, "yes");
+        }
+    }
+
+    return participants;
+}
+
+const MACsecMgr::MKAParticipant * MACsecMgr::findParticipant(
+    const std::vector<MKAParticipant> & participants,
+    const std::string & ckn)
+{
+    // wpa_supplicant reports the CKN as lower-case hex, CONFIG_DB may hold either case.
+    auto itr = std::find_if(
+        participants.begin(),
+        participants.end(),
+        [&](const MKAParticipant & participant)
+        {
+            return boost::iequals(participant.ckn, ckn);
+        });
+    return itr != participants.end() ? &(*itr) : nullptr;
+}
+
+bool MACsecMgr::addMKA(
+    const std::string & sock,
+    const std::string & port_name,
+    const std::string & ckn,
+    const std::string & cak,
+    bool fallback) const
+{
+    SWSS_LOG_ENTER();
+
+    const auto * present = findParticipant(getMKAParticipants(sock, port_name), ckn);
+    if (present != nullptr)
+    {
+        // Already in the requested role, so there is nothing to do. In the other
+        // role it has to be recreated, because the role is fixed at creation.
+        if (present->fallback == fallback)
+        {
+            SWSS_LOG_NOTICE(
+                "MKA participant CKN '%s' already present on port '%s'",
+                ckn.c_str(),
+                port_name.c_str());
+            return true;
+        }
+        SWSS_LOG_WARN(
+            "MKA participant CKN '%s' on port '%s' is being recreated to change "
+            "role; the port is unprotected until it converges again",
+            ckn.c_str(),
+            port_name.c_str());
+        if (!delMKA(sock, port_name, ckn))
+        {
+            return false;
+        }
+    }
+
+    try
+    {
+        wpa_cli_exec_and_check(
+            sock,
+            port_name,
+            "",
+            "macsec_add_mka",
+            "ckn=" + ckn,
+            "cak=" + cak,
+            std::string("fallback=") + (fallback ? "1" : "0"));
+    }
+    catch(const std::runtime_error &)
+    {
+        // The exception carries the whole command line, including the CAK, so it
+        // is deliberately not logged.
+        SWSS_LOG_WARN(
+            "Cannot add MKA participant CKN '%s' on port '%s'",
+            ckn.c_str(),
+            port_name.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool MACsecMgr::delMKA(
+    const std::string & sock,
+    const std::string & port_name,
+    const std::string & ckn) const
+{
+    SWSS_LOG_ENTER();
+
+    if (findParticipant(getMKAParticipants(sock, port_name), ckn) == nullptr)
+    {
+        SWSS_LOG_NOTICE(
+            "MKA participant CKN '%s' not present on port '%s'; nothing to delete",
+            ckn.c_str(),
+            port_name.c_str());
+        return true;
+    }
+
+    try
+    {
+        wpa_cli_exec_and_check(
+            sock,
+            port_name,
+            "",
+            "macsec_del_mka",
+            "ckn=" + ckn);
+    }
+    catch(const std::runtime_error & e)
+    {
+        SWSS_LOG_WARN(
+            "Cannot delete MKA participant CKN '%s' on port '%s' : %s",
+            ckn.c_str(),
+            port_name.c_str(),
+            e.what());
+        return false;
+    }
+    return true;
+}
+
+bool MACsecMgr::hotUpdateProfile(
+    const std::string & port_name,
+    MKASession & session,
+    const MACsecProfile & profile) const
+{
+    SWSS_LOG_ENTER();
+
+    const std::string & sock = session.sock;
+
+    // Rotate the primary CA. wpa_supplicant falls back to the standby CA for as
+    // long as the port has no live primary, so the old primary is retired before
+    // the new one is added and no third CA is ever staged.
+    if (!boost::iequals(session.primary_ckn, profile.primary_ckn))
+    {
+        if (session.fallback_ckn.empty())
+        {
+            SWSS_LOG_ERROR(
+                "Refusing to rotate the primary MACsec CAK on port '%s': no "
+                "fallback CA is established to carry traffic during the rotation",
+                port_name.c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE(
+            "Rotating the primary MACsec CAK on port '%s' (CKN '%s' -> '%s')",
+            port_name.c_str(),
+            session.primary_ckn.c_str(),
+            profile.primary_ckn.c_str());
+
+        // Stop before touching the fallback below: leaving the old primary in
+        // place and then retiring the standby would strand the port.
+        if (!delMKA(sock, port_name, session.primary_ckn))
+        {
+            return false;
+        }
+        session.primary_ckn.clear();
+        session.primary_cak.clear();
+
+        if (!addMKA(
+                sock,
+                port_name,
+                profile.primary_ckn,
+                decodeKey(profile.primary_cak, profile.cipher_suite),
+                false))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to add the new primary CKN '%s' on port '%s'; the port "
+                "is running on the fallback CA only",
+                profile.primary_ckn.c_str(),
+                port_name.c_str());
+            return false;
+        }
+        session.primary_ckn = profile.primary_ckn;
+        session.primary_cak = profile.primary_cak;
+        // The new primary may have taken over the CKN the fallback was holding,
+        // in which case the port no longer has a standby CA to reconcile below.
+        if (boost::iequals(session.fallback_ckn, profile.primary_ckn))
+        {
+            session.fallback_ckn.clear();
+            session.fallback_cak.clear();
+        }
+    }
+    else if (session.primary_cak != profile.primary_cak)
+    {
+        // A participant is keyed by CKN, so the same CKN cannot hold two CAs and
+        // there is nothing to rotate through. Leave the live CA alone; the new
+        // key is picked up from CONFIG_DB on the next wpa_supplicant restart.
+        SWSS_LOG_WARN(
+            "The primary MACsec CAK changed on port '%s' without a CKN change; "
+            "the new key applies on the next wpa_supplicant restart",
+            port_name.c_str());
+    }
+
+    // Reconcile the fallback CA.
+    const bool fallback_changed =
+        !boost::iequals(session.fallback_ckn, profile.fallback_ckn)
+        || session.fallback_cak != profile.fallback_cak;
+    if (!fallback_changed)
+    {
+        return true;
+    }
+
+    bool ok = true;
+    // Always retire the old participant: a CAK-only change still needs it
+    // recreated, because the key is fixed at creation.
+    if (!session.fallback_ckn.empty()
+        && !delMKA(sock, port_name, session.fallback_ckn))
+    {
+        ok = false;
+    }
+    session.fallback_ckn.clear();
+    session.fallback_cak.clear();
+
+    if (!profile.fallback_ckn.empty())
+    {
+        if (addMKA(
+                sock,
+                port_name,
+                profile.fallback_ckn,
+                decodeKey(profile.fallback_cak, profile.cipher_suite),
+                true))
+        {
+            session.fallback_ckn = profile.fallback_ckn;
+            session.fallback_cak = profile.fallback_cak;
+        }
+        else
+        {
+            ok = false;
+        }
+    }
+
+    return ok;
 }
