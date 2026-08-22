@@ -369,18 +369,13 @@ create_tunnel(
         tunnel_attrs.push_back(attr);
     }
 
-    if (decap_ttl_mode == VxlanTunnelTTLMode::PIPE)
-    {
-        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
-        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
-        tunnel_attrs.push_back(attr);
-    }
-    else if (decap_ttl_mode == VxlanTunnelTTLMode::UNIFORM)
-    {
-        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
-        attr.value.s32 = SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL;
-        tunnel_attrs.push_back(attr);
-    }
+    // Set the default VXLAN decapsulation mode to pipe to match the encapsulation mode.
+    // Uniform mode remains available through explicit configuration.
+    attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+    attr.value.s32 = decap_ttl_mode == VxlanTunnelTTLMode::UNIFORM ?
+                         SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL :
+                         SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
 
     if (encap_ttl != 0)
     {
