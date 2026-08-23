@@ -79,9 +79,10 @@ string packetActionToTc(const string &action)
  */
 static string policeActionControl(const string &action)
 {
-    if (action == "drop")
+    if (action == "drop" || action == "deny" || action == "copy_cancel")
         return "drop";
-    if (action == "forward" || action == "copy" || action.empty())
+    if (action == "forward" || action == "copy" || action == "trap" ||
+        action == "log" || action == "transit" || action.empty())
         return "pipe";
 
     SWSS_LOG_WARN("Unknown policer action '%s', defaulting to pipe", action.c_str());
@@ -95,11 +96,17 @@ string policerToTcPolice(const map<string, string> &policer)
     if (cir.empty() || cbs.empty())
         return "";
 
-    ostringstream os;
-    os << "action police rate " << cir << " burst " << cbs;
+    bool packets = (getField(policer, "meter_type") == "packets");
 
-    /* Two-rate (tr_tcm) policers add a peak rate + peak burst (mtu). */
-    if (getField(policer, "mode") == "tr_tcm")
+    ostringstream os;
+    if (packets)
+        os << "action police pkts_rate " << cir << " pkts_burst " << cbs;
+    else
+        os << "action police rate " << cir << " burst " << cbs;
+
+    /* Two-rate (tr_tcm) policers add a peak rate + peak burst (mtu). The tc
+     * police peakrate/mtu are byte-meter only, so skip for packets meter. */
+    if (!packets && getField(policer, "mode") == "tr_tcm")
     {
         string pir = getField(policer, "pir");
         string pbs = getField(policer, "pbs");
@@ -112,8 +119,8 @@ string policerToTcPolice(const map<string, string> &policer)
     string red = policeActionControl(getField(policer, "red_packet_action"));
     string green = policeActionControl(getField(policer, "green_packet_action"));
 
-    /* policeActionControl returns "pipe" for empty, but empty green means the
-     * default (pipe) and empty red means the default (drop) — fix red's default. */
+    /* policeActionControl returns "pipe" for empty, but empty red means the
+     * default (drop) — fix red's default. */
     if (getField(policer, "red_packet_action").empty())
         red = "drop";
 
