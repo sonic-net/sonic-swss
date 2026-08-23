@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <sstream>
 
@@ -5,8 +6,13 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "exec.h"
+#include "dbconnector.h"
+#include "table.h"
+#include "converter.h"
+#include "schema.h"
 
 using namespace std;
+using namespace swss;
 
 #define IP_CMD "/sbin/ip"
 
@@ -179,6 +185,80 @@ string resolveNextHopInterface(const string &dstIp)
             iss >> iface;
             return iface;
         }
+    }
+
+    return "";
+}
+
+string maskToPrefixLen(const string &mask)
+{
+    if (mask.empty())
+        return "";
+
+    struct in_addr addr;
+    if (inet_pton(AF_INET, mask.c_str(), &addr) != 1)
+    {
+        SWSS_LOG_WARN("Invalid IPv4 netmask '%s'", mask.c_str());
+        return "";
+    }
+
+    uint32_t m = ntohl(addr.s_addr);
+    uint32_t bits = 0;
+    while (m & 0x80000000)
+    {
+        bits++;
+        m <<= 1;
+    }
+
+    return "/" + to_string(bits);
+}
+
+string matchIpTypeToTc(const string &ipType)
+{
+    if (ipType == "IP" || ipType == "IPV4ANY")
+        return "0x0800";
+    if (ipType == "IPV6ANY")
+        return "0x86dd";
+    if (ipType == "ARP")
+        return "0x0806";
+    if (ipType == "ANY" || ipType.empty())
+        return "";
+
+    SWSS_LOG_WARN("Unsupported IP_TYPE '%s', ignoring", ipType.c_str());
+    return "";
+}
+
+string peditSetDscpToTc(const string &dscp)
+{
+    string tos = dscpToTos(dscp);
+    if (tos.empty())
+        return "";
+
+    return "action pedit ex munge ip tos set " + tos;
+}
+
+string resolveMirrorMonitorPort(DBConnector *cfgDb, DBConnector *stateDb,
+                                const string &sessionName)
+{
+    vector<FieldValueTuple> fvs;
+
+    /* STATE_DB MIRROR_SESSION_TABLE monitor_port (resolved by mirrormgrd). */
+    Table stateTable(stateDb, "MIRROR_SESSION_TABLE");
+    if (stateTable.get(sessionName, fvs))
+    {
+        for (auto &fv : fvs)
+            if (fvField(fv) == "monitor_port" && !fvValue(fv).empty())
+                return fvValue(fv);
+    }
+
+    /* Fall back to CONFIG_DB MIRROR_SESSION dst_port (SPAN). */
+    fvs.clear();
+    Table cfgTable(cfgDb, "MIRROR_SESSION");
+    if (cfgTable.get(sessionName, fvs))
+    {
+        for (auto &fv : fvs)
+            if (fvField(fv) == "dst_port" && !fvValue(fv).empty())
+                return fvValue(fv);
     }
 
     return "";

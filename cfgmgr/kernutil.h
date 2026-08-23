@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
+namespace swss {
+class DBConnector;
+}
+
 /*
  * kernutil — shared kernel (tc/ip) helpers for the switchdev cfgmgr daemons
  * (mirrormgrd, aclmgrd, policermgrd). Each daemon programs the kernel directly
@@ -68,6 +72,34 @@ bool resolveSrcPorts(const std::string &srcPortList, std::vector<std::string> &i
  * "ip route get <dstIp>". Returns "" on failure.
  */
 std::string resolveNextHopInterface(const std::string &dstIp);
+
+/*
+ * maskToPrefixLen — convert a dotted-quad IPv4 netmask (e.g. 255.255.255.0)
+ * to a prefix-length string "/24". Returns "" for empty/invalid.
+ */
+std::string maskToPrefixLen(const std::string &mask);
+
+/*
+ * matchIpTypeToTc — map an ACL IP_TYPE (ANY/IP/IPV4ANY/IPV6ANY/ARP/...) to a
+ * tc flower ether_type token (e.g. "0x0800"). Returns "" when no match is
+ * needed (ANY) or the type is unsupported.
+ */
+std::string matchIpTypeToTc(const std::string &ipType);
+
+/*
+ * peditSetDscpToTc — build a tc pedit action that rewrites the IPv4 TOS byte
+ * to the given DSCP value. Returns "" for empty/invalid DSCP.
+ */
+std::string peditSetDscpToTc(const std::string &dscp);
+
+/*
+ * resolveMirrorMonitorPort — resolve a mirror session's monitor interface for
+ * an ACL MIRROR_ACTION. Reads STATE_DB MIRROR_SESSION_TABLE monitor_port first,
+ * then falls back to CONFIG_DB MIRROR_SESSION dst_port. Returns "" if unknown.
+ */
+std::string resolveMirrorMonitorPort(swss::DBConnector *cfgDb,
+                                     swss::DBConnector *stateDb,
+                                     const std::string &sessionName);
 
 } // namespace kernutil
 
