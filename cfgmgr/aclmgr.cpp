@@ -8,6 +8,7 @@
 #include "warm_restart.h"
 #include "schema.h"
 #include "aclmgr.h"
+#include "kernutil.h"
 
 using namespace std;
 using namespace swss;
@@ -240,13 +241,7 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
             }
 
             /* Map PACKET_ACTION to tc flower action */
-            string tc_action = "drop";  /* Default: drop */
-            if (packet_action == "FORWARD")
-                tc_action = "ok";
-            else if (packet_action == "DROP")
-                tc_action = "drop";
-            else if (!packet_action.empty())
-                SWSS_LOG_WARN("Unknown PACKET_ACTION '%s', defaulting to drop", packet_action.c_str());
+            string tc_action = kernutil::packetActionToTc(packet_action);
 
             SWSS_LOG_NOTICE("ACL_RULE SET: table=%s rule=%s src_ip=%s dst_ip=%s "
                             "l4_sport=%s l4_dport=%s ip_proto=%s tcp_flags=%s dscp=%s "
@@ -290,7 +285,7 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
 
             for (auto &iface : interfaces_to_program)
             {
-                if (!addTcFlowerFilter(iface, priority,
+                if (!addTcFlowerFilter(kernutil::resolveInterface(iface), priority,
                                        src_ip, dst_ip,
                                        l4_src_port, l4_dst_port,
                                        ip_proto, tcp_flags, dscp,
@@ -345,7 +340,7 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
 
             for (auto &iface : interfaces_to_clean)
             {
-                removeTcFlowerFilter(iface, prio);
+                removeTcFlowerFilter(kernutil::resolveInterface(iface), prio);
             }
 
             /* Remove from STATE_DB */
@@ -440,22 +435,9 @@ bool AclMgr::addTcFlowerFilter(const string &iface, uint32_t prio,
         else
             cmd << " tcp_flags 0x" << tcpFlags;
     }
-    if (!dscp.empty())
-    {
-        /* DSCP → TOS: DSCP value is upper 6 bits of TOS byte.
-         * tc flower ip_tos matches on the full TOS byte (8 bits).
-         * Shift DSCP left by 2 to get TOS value. */
-        try
-        {
-            uint8_t dscp_val = (uint8_t)stoi(dscp);
-            uint32_t tos_val = dscp_val << 2;
-            cmd << " ip_tos " << tos_val;
-        }
-        catch (...)
-        {
-            SWSS_LOG_WARN("Invalid DSCP value: %s, skipping ip_tos match", dscp.c_str());
-        }
-    }
+    string tos = kernutil::dscpToTos(dscp);
+    if (!tos.empty())
+        cmd << " ip_tos " << tos;
 
     /* skip_sw: offload to HW only via switchdev.
      * In non-switchdev containers, skip_sw fails with "Operation not supported".

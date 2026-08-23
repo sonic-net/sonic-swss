@@ -107,12 +107,12 @@ stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAG
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-aclmgrd_SOURCES = aclmgrd.cpp aclmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+aclmgrd_SOURCES = aclmgrd.cpp aclmgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 aclmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 aclmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 aclmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-mirrormgrd_SOURCES = mirrormgrd.cpp mirrormgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+mirrormgrd_SOURCES = mirrormgrd.cpp mirrormgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 mirrormgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 mirrormgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 mirrormgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)

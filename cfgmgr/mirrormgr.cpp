@@ -6,6 +6,7 @@
 #include "shellcmd.h"
 #include "schema.h"
 #include "mirrormgr.h"
+#include "kernutil.h"
 
 using namespace std;
 using namespace swss;
@@ -13,42 +14,12 @@ using namespace swss;
 /* TC command path */
 #define TC_CMD "/sbin/tc"
 
-/*
- * resolveInterface — return the kernel interface name for a SONiC port name.
- * In switchdev mode the docker-sonic-vs container renames the front-panel veths
- * (eth1 -> Ethernet0, eth2 -> Ethernet4, ...) at startup, so the kernel
- * interface names already match the SONiC names used in CONFIG_DB. No
- * translation is needed.
- */
-static string resolveInterface(const string &sonicName)
-{
-    return sonicName;
-}
-
-/*
- * normalizeDirection — map the MIRROR_SESSION direction field to the canonical
- * RX/TX/BOTH values. Accepts upstream RX/TX/BOTH and the legacy ingress/egress/
- * both spellings, defaulting to RX (ingress) when absent or unknown.
- */
-static string normalizeDirection(const string &dir)
-{
-    if (dir == "RX" || dir == "rx" || dir == "INGRESS" || dir == "ingress")
-        return MIRROR_RX_DIRECTION;
-    if (dir == "TX" || dir == "tx" || dir == "EGRESS" || dir == "egress")
-        return MIRROR_TX_DIRECTION;
-    if (dir == "BOTH" || dir == "both")
-        return MIRROR_BOTH_DIRECTION;
-    if (dir.empty())
-        return MIRROR_RX_DIRECTION;
-
-    SWSS_LOG_WARN("Unknown mirror direction '%s', defaulting to RX", dir.c_str());
-    return MIRROR_RX_DIRECTION;
-}
-
 MirrorMgr::MirrorMgr(DBConnector *cfgDb, DBConnector *stateDb,
                      const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
-    m_stateMirrorSessionTable(stateDb, STATE_MIRROR_SESSION_TABLE_NAME)
+    m_stateMirrorSessionTable(stateDb, STATE_MIRROR_SESSION_TABLE_NAME),
+    m_cfgPolicerTable(cfgDb, CFG_POLICER_TABLE_NAME),
+    m_statePolicerTable(stateDb, STATE_POLICER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("MirrorMgr initialized, subscribed to %zu CONFIG_DB tables", tableNames.size());
@@ -69,6 +40,47 @@ void MirrorMgr::doTask(Consumer &consumer)
     }
 }
 
+/*
+ * getPolicerPoliceAction — resolve a referenced policer into a tc
+ * "action police ..." string. The policer must be registered active by
+ * policermgrd (STATE_DB POLICER_TABLE) and have a valid CONFIG_DB POLICER
+ * entry. Returns false otherwise.
+ */
+bool MirrorMgr::getPolicerPoliceAction(const string &policerName, string &policeAction)
+{
+    vector<FieldValueTuple> stateFvs;
+    string status;
+    if (m_statePolicerTable.get(policerName, stateFvs))
+    {
+        for (auto &fv : stateFvs)
+        {
+            if (fvField(fv) == "status")
+                status = fvValue(fv);
+        }
+    }
+
+    if (status != "active")
+    {
+        SWSS_LOG_WARN("POLICER %s not active in STATE_DB (status='%s')",
+                      policerName.c_str(), status.c_str());
+        return false;
+    }
+
+    vector<FieldValueTuple> cfgFvs;
+    if (!m_cfgPolicerTable.get(policerName, cfgFvs))
+    {
+        SWSS_LOG_WARN("POLICER %s not found in CONFIG_DB", policerName.c_str());
+        return false;
+    }
+
+    map<string, string> fields;
+    for (auto &fv : cfgFvs)
+        fields[fvField(fv)] = fvValue(fv);
+
+    policeAction = kernutil::policerToTcPolice(fields);
+    return !policeAction.empty();
+}
+
 void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -85,6 +97,7 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             string type, src_ip, dst_ip, src_port, dst_port, direction;
+            string gre_type, dscp, ttl, policer, sample_rate;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -97,17 +110,65 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
                 else if (field == MIRROR_SESSION_FIELD_SRC_PORT) src_port = value;
                 else if (field == MIRROR_SESSION_FIELD_DST_PORT) dst_port = value;
                 else if (field == MIRROR_SESSION_FIELD_DIRECTION) direction = value;
+                else if (field == MIRROR_SESSION_FIELD_GRE_TYPE) gre_type = value;
+                else if (field == MIRROR_SESSION_FIELD_DSCP)     dscp = value;
+                else if (field == MIRROR_SESSION_FIELD_TTL)      ttl = value;
+                else if (field == MIRROR_SESSION_FIELD_POLICER)  policer = value;
+                else if (field == MIRROR_SESSION_FIELD_SAMPLE_RATE) sample_rate = value;
             }
 
-            direction = normalizeDirection(direction);
+            direction = kernutil::normalizeDirection(direction);
 
-            SWSS_LOG_NOTICE("MIRROR_SESSION SET: %s type=%s src=%s dst=%s src_ip=%s dst_ip=%s dir=%s",
+            SWSS_LOG_NOTICE("MIRROR_SESSION SET: %s type=%s src=%s dst=%s src_ip=%s dst_ip=%s gre=%s dscp=%s ttl=%s policer=%s sample_rate=%s dir=%s",
                             session_name.c_str(), type.c_str(), src_port.c_str(),
-                            dst_port.c_str(), src_ip.c_str(), dst_ip.c_str(), direction.c_str());
+                            dst_port.c_str(), src_ip.c_str(), dst_ip.c_str(),
+                            gre_type.c_str(), dscp.c_str(), ttl.c_str(),
+                            policer.c_str(), sample_rate.c_str(), direction.c_str());
+
+            /* Sampled mirroring (sample_rate) is not supported in tc/switchdev. */
+            if (!sample_rate.empty() && sample_rate != "0")
+            {
+                SWSS_LOG_ERROR("MIRROR_SESSION %s: sampled mirroring (sample_rate=%s) not supported, marking inactive",
+                               session_name.c_str(), sample_rate.c_str());
+                vector<FieldValueTuple> fvs;
+                fvs.emplace_back("status", "inactive");
+                m_stateMirrorSessionTable.set(session_name, fvs);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (src_port.empty())
             {
                 SWSS_LOG_WARN("MIRROR_SESSION %s: no src_port specified, skipping", session_name.c_str());
+                vector<FieldValueTuple> fvs;
+                fvs.emplace_back("status", "inactive");
+                m_stateMirrorSessionTable.set(session_name, fvs);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Resolve the referenced policer (if any) into a tc police action. */
+            string police_action;
+            if (!policer.empty())
+            {
+                if (!getPolicerPoliceAction(policer, police_action))
+                {
+                    SWSS_LOG_ERROR("MIRROR_SESSION %s: policer %s missing/inactive, marking inactive",
+                                   session_name.c_str(), policer.c_str());
+                    vector<FieldValueTuple> fvs;
+                    fvs.emplace_back("status", "inactive");
+                    m_stateMirrorSessionTable.set(session_name, fvs);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+
+            /* Expand LAG source ports to member interfaces. */
+            vector<string> ifaces;
+            if (!kernutil::resolveSrcPorts(src_port, ifaces))
+            {
+                SWSS_LOG_ERROR("MIRROR_SESSION %s: invalid/empty LAG in src_port '%s', marking inactive",
+                               session_name.c_str(), src_port.c_str());
                 vector<FieldValueTuple> fvs;
                 fvs.emplace_back("status", "inactive");
                 m_stateMirrorSessionTable.set(session_name, fvs);
@@ -130,19 +191,20 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
             }
 
             bool ok = true;
-            for (auto &sp : tokenize(src_port, ','))
+            for (auto &iface : ifaces)
             {
-                string iface = resolveInterface(sp);
                 bool ret;
                 if (type == MIRROR_SESSION_TYPE_ERSPAN)
-                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port, direction, prio);
+                    ret = addErspanSession(iface, src_ip, dst_ip, dst_port,
+                                           gre_type, dscp, ttl, direction,
+                                           police_action, prio);
                 else
-                    ret = addSpanSession(iface, dst_port, direction, prio);
+                    ret = addSpanSession(iface, dst_port, direction, police_action, prio);
 
                 if (!ret)
                 {
                     SWSS_LOG_ERROR("Failed to program mirror on %s for session %s",
-                                   sp.c_str(), session_name.c_str());
+                                   iface.c_str(), session_name.c_str());
                     ok = false;
                 }
             }
@@ -150,6 +212,7 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
             if (ok)
                 m_programmedSessions.insert(session_name);
             m_sessionSrcPort[session_name] = src_port;
+            m_sessionIfaces[session_name] = ifaces;
 
             vector<FieldValueTuple> fvs;
             fvs.emplace_back("status", ok ? "active" : "inactive");
@@ -161,19 +224,20 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
         {
             SWSS_LOG_NOTICE("MIRROR_SESSION DEL: %s", session_name.c_str());
 
-            auto portIt = m_sessionSrcPort.find(session_name);
-            if (portIt != m_sessionSrcPort.end())
+            auto ifacesIt = m_sessionIfaces.find(session_name);
+            if (ifacesIt != m_sessionIfaces.end())
             {
                 uint32_t prio = 0;
                 auto prioIt = m_sessionPrio.find(session_name);
                 if (prioIt != m_sessionPrio.end())
                     prio = prioIt->second;
 
-                for (auto &sp : tokenize(portIt->second, ','))
-                    removeMirrorSession(resolveInterface(sp), prio);
-                m_sessionSrcPort.erase(portIt);
+                for (auto &iface : ifacesIt->second)
+                    removeMirrorSession(iface, prio);
+                m_sessionIfaces.erase(ifacesIt);
             }
 
+            m_sessionSrcPort.erase(session_name);
             m_sessionPrio.erase(session_name);
             m_programmedSessions.erase(session_name);
             m_stateMirrorSessionTable.del(session_name);
@@ -193,7 +257,8 @@ void MirrorMgr::doMirrorSessionTask(Consumer &consumer)
  *   tc filter add dev <src> ingress matchall action mirred egress mirror dev <dst>
  */
 bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort,
-                               const string &direction, uint32_t prio)
+                               const string &direction, const string &policeAction,
+                               uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -203,11 +268,13 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort,
         return false;
     }
 
-    string dstIface = resolveInterface(dstPort);
+    string dstIface = kernutil::resolveInterface(dstPort);
 
     ensureClsact(srcPort);
 
     ostringstream actionTail;
+    if (!policeAction.empty())
+        actionTail << policeAction << " ";
     actionTail << "action mirred egress mirror dev " << dstIface;
 
     bool ok = true;
@@ -225,12 +292,16 @@ bool MirrorMgr::addSpanSession(const string &srcPort, const string &dstPort,
  *       action tunnel_key set src_ip <src_ip> dst_ip <dst_ip> id <gre_key>
  *       action mirred egress mirror tunnel_key dev <monitor>
  *
- * Phase 1: the GRE key defaults to 100; dst_port (if set) is used as the
- * monitor/egress port toward the ERSPAN destination.
+ * gre_type is used as the GRE key (tunnel_key "id"); dscp/ttl cannot be
+ * expressed by the tc tunnel_key action and are logged-ignored. The monitor
+ * interface is the explicit dst_port when set, otherwise the egress interface
+ * toward dst_ip resolved via "ip route get".
  */
 bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
                                  const string &dstIp, const string &dstPort,
-                                 const string &direction, uint32_t prio)
+                                 const string &greType, const string &dscp,
+                                 const string &ttl, const string &direction,
+                                 const string &policeAction, uint32_t prio)
 {
     SWSS_LOG_ENTER();
 
@@ -240,14 +311,37 @@ bool MirrorMgr::addErspanSession(const string &srcPort, const string &srcIp,
         return false;
     }
 
-    string dstIface = dstPort.empty() ? srcPort : resolveInterface(dstPort);
+    if (!dscp.empty())
+        SWSS_LOG_WARN("ERSPAN session: dscp=%s not expressible via tc tunnel_key, ignoring", dscp.c_str());
+    if (!ttl.empty())
+        SWSS_LOG_WARN("ERSPAN session: ttl=%s not expressible via tc tunnel_key, ignoring", ttl.c_str());
+
+    string greKey = greType.empty() ? MIRROR_SESSION_DEFAULT_GRE_TYPE : greType;
+
+    string dstIface;
+    if (!dstPort.empty())
+    {
+        dstIface = kernutil::resolveInterface(dstPort);
+    }
+    else
+    {
+        /* Resolve the egress interface toward the ERSPAN destination IP. */
+        dstIface = kernutil::resolveNextHopInterface(dstIp);
+        if (dstIface.empty())
+        {
+            SWSS_LOG_ERROR("ERSPAN session: failed to resolve egress interface for dst_ip %s", dstIp.c_str());
+            return false;
+        }
+    }
 
     ensureClsact(srcPort);
 
     ostringstream actionTail;
+    if (!policeAction.empty())
+        actionTail << policeAction << " ";
     actionTail << "action tunnel_key set src_ip " << srcIp
                << " dst_ip " << dstIp
-               << " id 100"
+               << " id " << greKey
                << " action mirred egress mirror tunnel_key dev " << dstIface;
 
     bool ok = true;
