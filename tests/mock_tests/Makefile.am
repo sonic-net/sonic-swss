@@ -109,6 +109,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 icmporch_ut.cpp \
                 mock_sai_capability_wrap.cpp \
                 notifications_ut.cpp \
+                asan_ut.cpp \
+                $(top_srcdir)/lib/asan.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -154,6 +156,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/switch/trimming/helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
+                $(top_srcdir)/orchagent/pfcwdsworch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
                 $(top_srcdir)/orchagent/policerorch.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \

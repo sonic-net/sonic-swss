@@ -17,6 +17,7 @@
 #include "mock_sai_serialize.h"
 #include "mock_sai_switch.h"
 #include "mock_sai_udf.h"
+#include "namelabelmapper.h"
 #include "p4orch.h"
 #include "portsorch.h"
 #include "return_code.h"
@@ -54,6 +55,7 @@ extern sai_object_id_t kMirrorSessionOid1;
 extern char *gMirrorSession2;
 extern sai_object_id_t kMirrorSessionOid2;
 extern bool gIsNatSupported;
+extern NameLabelMapper *gLabelMapper;
 
 namespace p4orch
 {
@@ -87,6 +89,8 @@ constexpr sai_object_id_t kUdfGroupOid1 = 4001;
 constexpr sai_object_id_t kUdfMatchOid1 = 5001;
 constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
+std::string kUdfGroupMapperKey = "P4RT_TABLE:ACL_PUNT_TABLE-udf2-0";
+std::string kUdfGroupMapperLabel = "1706901078193258";
 
 // Matches the policer sai_attribute_t[] argument.
 bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
@@ -942,6 +946,8 @@ class AclManagerTest : public ::testing::Test
         sai_udf_api->create_udf_group = create_udf_group;
         sai_udf_api->remove_udf_match = remove_udf_match;
         sai_udf_api->create_udf_match = create_udf_match;
+
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey, kUdfGroupMapperLabel);
     }
 
     void setUpCoppOrch()
@@ -1195,6 +1201,8 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
+    EXPECT_EQ(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP,
+                                        kUdfGroupMapperKey), true);
 
     // Drain table tuples to process DEL request
     EXPECT_CALL(mock_sai_acl_, remove_acl_table(Eq(kAclTableIngressOid))).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -1210,6 +1218,8 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
+    EXPECT_EQ(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP,
+                                        kUdfGroupMapperKey), false);
 }
 
 TEST_F(AclManagerTest, UpdateAclRuleWithAclMetadataChange)
@@ -5693,7 +5703,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
     table.set("SAI_OBJECT_TYPE_UDF_GROUP:oid:0xfa1",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_UDF_ATTR_GROUP_ID", "oid:0xfa1"},
                                                  swss::FieldValueTuple{"SAI_UDF_ATTR_MATCH_ID", "oid:0x1389"},
@@ -6307,7 +6318,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
     table.set("SAI_OBJECT_TYPE_UDF_GROUP:oid:0xfa1",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_UDF_ATTR_GROUP_ID", "oid:0xfa1"},
                                                  swss::FieldValueTuple{"SAI_UDF_ATTR_MATCH_ID", "oid:0x1389"},
@@ -6379,7 +6391,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
     table.set("SAI_OBJECT_TYPE_UDF_GROUP:oid:0xfa1",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
 
     // Verification should fail if udf mismatch.
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
