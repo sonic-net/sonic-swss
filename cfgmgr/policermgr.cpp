@@ -24,6 +24,7 @@ static bool validPolicerAction(const string &action)
 PolicerMgr::PolicerMgr(DBConnector *cfgDb, DBConnector *stateDb,
                        const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
+    m_cfgDb(cfgDb),
     m_statePolicerTable(stateDb, STATE_POLICER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
@@ -55,6 +56,41 @@ bool PolicerMgr::decreaseRefCount(const string &name)
     }
     --m_policerRefCounts[name];
     return true;
+}
+
+bool PolicerMgr::isPolicerReferenced(const string &name)
+{
+    /* A MIRROR_SESSION references a policer via its "policer" field. */
+    Table mirrorTable(m_cfgDb, "MIRROR_SESSION");
+    vector<string> mirrorKeys;
+    mirrorTable.getKeys(mirrorKeys);
+    for (auto &key : mirrorKeys)
+    {
+        vector<FieldValueTuple> fvs;
+        if (mirrorTable.get(key, fvs))
+        {
+            for (auto &fv : fvs)
+                if (fvField(fv) == "policer" && fvValue(fv) == name)
+                    return true;
+        }
+    }
+
+    /* An ACL_RULE references a policer via its POLICER_ACTION field. */
+    Table aclRuleTable(m_cfgDb, "ACL_RULE");
+    vector<string> ruleKeys;
+    aclRuleTable.getKeys(ruleKeys);
+    for (auto &key : ruleKeys)
+    {
+        vector<FieldValueTuple> fvs;
+        if (aclRuleTable.get(key, fvs))
+        {
+            for (auto &fv : fvs)
+                if (fvField(fv) == "POLICER_ACTION" && fvValue(fv) == name)
+                    return true;
+        }
+    }
+
+    return false;
 }
 
 void PolicerMgr::doTask(Consumer &consumer)
@@ -137,7 +173,7 @@ void PolicerMgr::doPolicerTask(Consumer &consumer)
                 ok = false;
                 reason = "invalid meter_type";
             }
-            else if (mode != "sr_tcm" && mode != "tr_tcm" && mode != "storm_control")
+            else if (mode != "sr_tcm" && mode != "tr_tcm" && mode != "storm")
             {
                 ok = false;
                 reason = "invalid mode";
@@ -178,10 +214,13 @@ void PolicerMgr::doPolicerTask(Consumer &consumer)
             SWSS_LOG_NOTICE("POLICER DEL: %s", policer_name.c_str());
 
             auto rit = m_policerRefCounts.find(policer_name);
-            if (rit != m_policerRefCounts.end() && rit->second > 0)
+            bool referenced = (rit != m_policerRefCounts.end() && rit->second > 0) ||
+                              isPolicerReferenced(policer_name);
+
+            if (referenced)
             {
-                SWSS_LOG_WARN("POLICER %s still referenced (refcount %d), deferring deletion",
-                              policer_name.c_str(), rit->second);
+                SWSS_LOG_WARN("POLICER %s still referenced, deferring deletion",
+                              policer_name.c_str());
                 it++;
                 continue;
             }

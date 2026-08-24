@@ -56,10 +56,13 @@ public:
     bool decreaseRefCount(const std::string &name);
 
 private:
+    DBConnector *m_cfgDb;
     Table m_statePolicerTable;
     std::map<std::string, int> m_policerRefCounts;   // policer name -> refcount
     std::map<std::string, uint32_t> m_stormPrio;     // port|storm_type -> tc prio
     uint32_t m_nextStormPrio = 200;
+
+    bool isPolicerReferenced(const std::string &name);
 
     void doTask(Consumer &consumer);
     void doPolicerTask(Consumer &consumer);
