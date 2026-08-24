@@ -7,6 +7,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "subscriberstatetable.h"
 #include "orch.h"
 #include "netmsg.h"
 
@@ -30,9 +31,12 @@ private:
     vector<string> parseAliasIp(const string &app_db_nbr_tbl_key, const char *delimiter);
 
     void doResolveNeighTask(Consumer &consumer);
+    void doResolveFailedNeighTask(Consumer &consumer);
     void doSetNeighTask(Consumer &consumer);
     void doTask(Consumer &consumer);
     void doStateSystemNeighTask(Consumer &consumer);
+    bool setNeighborIncomplete(const std::string& alias, const IpAddress& ip);
+    bool sendNeighborSolicitation(const std::string& alias, const IpAddress& ip);
     bool getVoqInbandInterfaceName(string &nbr_odev, string &ibiftype);
     bool addKernelRoute(string odev, IpAddress ip_addr);
     bool delKernelRoute(IpAddress ip_addr);
@@ -43,6 +47,7 @@ private:
 
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable, m_stateNeighRestoreTable;
     struct nl_sock *m_nl_sock;
+    bool m_isDualTor = false;
 };
 
 }

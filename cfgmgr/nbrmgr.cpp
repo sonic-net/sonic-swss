@@ -3,6 +3,7 @@
 #include <net/if.h>
 #include <unistd.h>
 #include <netlink/cache.h>
+#include <linux/neighbour.h>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -69,8 +70,21 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     /* Reconcile any pending entries in NEIGH_RESOLVE_TABLE from before restart */
     reconcileNeighResolveTable(appDb);
 
-    string swtype;
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+
+    /* Detect dual-ToR topology and subscribe to APP_NEIGH_TABLE for zero-MAC resolution */
+    string subtype;
+    if (cfgDeviceMetaDataTable.hget("localhost", "subtype", subtype) && subtype == "DualToR")
+    {
+        m_isDualTor = true;
+        auto neighTable = new swss::SubscriberStateTable(appDb, APP_NEIGH_TABLE_NAME,
+                              TableConsumable::DEFAULT_POP_BATCH_SIZE, 0);
+        auto neighConsumer = new Consumer(neighTable, this, APP_NEIGH_TABLE_NAME);
+        Orch::addExecutor(neighConsumer);
+        SWSS_LOG_NOTICE("Dual-ToR detected, subscribing to APP_NEIGH_TABLE for zero-MAC resolution");
+    }
+
+    string swtype;
     if(cfgDeviceMetaDataTable.hget("localhost", "switch_type", swtype))
     {
         //If this is voq system, let the neighbor manager subscribe to state of SYSTEM_NEIGH
@@ -393,6 +407,9 @@ void NbrMgr::doTask(Consumer &consumer)
     } else if (table_name == APP_NEIGH_RESOLVE_TABLE_NAME)
     {
         doResolveNeighTask(consumer);
+    } else if (table_name == APP_NEIGH_TABLE_NAME)
+    {
+        doResolveFailedNeighTask(consumer);
     } else if(table_name == STATE_SYSTEM_NEIGH_TABLE_NAME)
     {
         doStateSystemNeighTask(consumer);
@@ -680,4 +697,158 @@ bool NbrMgr::delKernelNeigh(string odev, IpAddress ip_addr)
 
     SWSS_LOG_INFO("Deleted Nbr for %s on interface %s", ip_str.c_str(), odev.c_str());
     return true;
+}
+
+void NbrMgr::doResolveFailedNeighTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        if (kfvOp(t) != SET_COMMAND)
+        {
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        string key = kfvKey(t);
+        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator());
+        if (found == string::npos)
+        {
+            SWSS_LOG_ERROR("Failed to parse APP_NEIGH_TABLE key '%s'", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        string alias = key.substr(0, found);
+        string ip_str = key.substr(found + 1);
+        MacAddress mac;
+
+        for (auto i = kfvFieldsValues(t).begin(); i != kfvFieldsValues(t).end(); i++)
+        {
+            if (fvField(*i) == "neigh")
+                mac = MacAddress(fvValue(*i));
+        }
+
+        if (!mac)
+        {
+            IpAddress ip(ip_str);
+            SWSS_LOG_NOTICE("Zero-MAC neighbor detected for %s, triggering resolution", key.c_str());
+
+            if (setNeighborIncomplete(alias, ip))
+            {
+                sendNeighborSolicitation(alias, ip);
+            }
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+bool NbrMgr::setNeighborIncomplete(const string& alias, const IpAddress& ip)
+{
+    SWSS_LOG_ENTER();
+
+    struct nl_msg *msg = nlmsg_alloc();
+    if (!msg)
+    {
+        SWSS_LOG_ERROR("Netlink message alloc failed for '%s'", ip.to_string().c_str());
+        return false;
+    }
+
+    auto flags = (NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE);
+
+    struct nlmsghdr *hdr = nlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, RTM_NEWNEIGH, 0, flags);
+    if (!hdr)
+    {
+        SWSS_LOG_ERROR("Netlink message header alloc failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    struct ndmsg *nd_msg = static_cast<struct ndmsg *>
+                           (nlmsg_reserve(msg, sizeof(struct ndmsg), NLMSG_ALIGNTO));
+    if (!nd_msg)
+    {
+        SWSS_LOG_ERROR("Netlink ndmsg reserve failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    memset(nd_msg, 0, sizeof(struct ndmsg));
+    nd_msg->ndm_ifindex = if_nametoindex(alias.c_str());
+    nd_msg->ndm_state = NUD_INCOMPLETE;
+    nd_msg->ndm_type = RTN_UNICAST;
+
+    auto ip_addr = ip.getIp();
+    auto addr_len = ip.isV4() ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+
+    struct rtattr *rta = static_cast<struct rtattr *>
+                         (nlmsg_reserve(msg, sizeof(struct rtattr) + addr_len, NLMSG_ALIGNTO));
+    if (!rta)
+    {
+        SWSS_LOG_ERROR("Netlink rtattr failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    rta->rta_type = NDA_DST;
+    rta->rta_len = static_cast<short>(RTA_LENGTH(addr_len));
+
+    if (ip.isV4())
+    {
+        nd_msg->ndm_family = AF_INET;
+        memcpy(RTA_DATA(rta), &ip_addr.ip_addr.ipv4_addr, addr_len);
+    }
+    else
+    {
+        nd_msg->ndm_family = AF_INET6;
+        memcpy(RTA_DATA(rta), &ip_addr.ip_addr.ipv6_addr, addr_len);
+    }
+
+    SWSS_LOG_INFO("Setting neighbor '%s' on '%s' to INCOMPLETE", ip.to_string().c_str(), alias.c_str());
+
+    bool rc = false;
+    int err = nl_send_auto(m_nl_sock, msg);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Netlink send failed for '%s', error '%s'", ip.to_string().c_str(), nl_geterror(err));
+    }
+    else
+    {
+        rc = true;
+    }
+
+    nlmsg_free(msg);
+    return rc;
+}
+
+bool NbrMgr::sendNeighborSolicitation(const string& alias, const IpAddress& ip)
+{
+    SWSS_LOG_ENTER();
+
+    string cmd, res;
+    string ip_str = ip.to_string();
+
+    if (ip.isV4())
+    {
+        cmd = string("timeout 1 arping -q -c 1 -w 0 -I ") + alias + " " + ip_str;
+    }
+    else
+    {
+        cmd = string("timeout 1 ndisc6 -q -r 1 -w 0 ") + ip_str + " " + alias;
+    }
+
+    SWSS_LOG_INFO("Sending neighbor probe for '%s' on '%s'", ip_str.c_str(), alias.c_str());
+
+    int32_t ret = swss::exec(cmd, res);
+    if (ret)
+    {
+        SWSS_LOG_DEBUG("Neighbor probe for '%s' returned %d (expected if VM not ready)", ip_str.c_str(), ret);
+    }
+
+    return (ret == 0);
 }

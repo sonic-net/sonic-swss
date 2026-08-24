@@ -201,4 +201,221 @@ namespace nbrmgr_ut
         /* Should not crash; failures are logged as warnings */
         swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
     }
+
+    /*
+     * Test that NbrMgr subscribes to APP_NEIGH_TABLE on dual-ToR.
+     */
+    TEST_F(NbrMgrTest, DualTorSubscribesToNeighTable)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        /* Configure as dual-ToR */
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        ASSERT_TRUE(nbrmgr.m_isDualTor);
+    }
+
+    /*
+     * Test that NbrMgr does NOT subscribe to APP_NEIGH_TABLE on single ToR.
+     */
+    TEST_F(NbrMgrTest, SingleTorDoesNotSubscribe)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        /* No DualToR subtype configured */
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        ASSERT_FALSE(nbrmgr.m_isDualTor);
+    }
+
+    /*
+     * Test that zero-MAC neighbor entries trigger resolution on dual-ToR.
+     */
+    TEST_F(NbrMgrTest, ZeroMacTriggersResolution)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        /* Configure as dual-ToR */
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        /* Simulate zero-MAC neighbor entry in APP_NEIGH_TABLE */
+        auto consumer = dynamic_cast<swss::Consumer *>(nbrmgr.getExecutor(APP_NEIGH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        std::vector<swss::FieldValueTuple> fvs;
+        fvs.emplace_back("neigh", "00:00:00:00:00:00");
+        fvs.emplace_back("family", "IPv6");
+        entries.push_back({"Vlan1000:fc02:1000::2", SET_COMMAND, fvs});
+        consumer->addToSync(entries);
+
+        mockCallArgs.clear();
+        nbrmgr.doTask(*consumer);
+
+        /* Verify ndisc6/arping was called for the neighbor */
+        bool nsProbeFound = false;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("ndisc6") != std::string::npos &&
+                cmd.find("fc02:1000::2") != std::string::npos &&
+                cmd.find("Vlan1000") != std::string::npos)
+            {
+                nsProbeFound = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(nsProbeFound);
+    }
+
+    /*
+     * Test that non-zero MAC entries are ignored (no resolution triggered).
+     */
+    TEST_F(NbrMgrTest, NonZeroMacIgnored)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto consumer = dynamic_cast<swss::Consumer *>(nbrmgr.getExecutor(APP_NEIGH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        std::vector<swss::FieldValueTuple> fvs;
+        fvs.emplace_back("neigh", "aa:bb:cc:dd:ee:ff");
+        fvs.emplace_back("family", "IPv6");
+        entries.push_back({"Vlan1000:fc02:1000::2", SET_COMMAND, fvs});
+        consumer->addToSync(entries);
+
+        mockCallArgs.clear();
+        nbrmgr.doTask(*consumer);
+
+        /* No NS probe should be sent for non-zero MAC */
+        for (const auto &cmd : mockCallArgs)
+        {
+            EXPECT_EQ(cmd.find("ndisc6"), std::string::npos);
+            EXPECT_EQ(cmd.find("arping"), std::string::npos);
+        }
+    }
+
+    /*
+     * Test that DEL operations are consumed without action.
+     */
+    TEST_F(NbrMgrTest, DelOperationConsumed)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto consumer = dynamic_cast<swss::Consumer *>(nbrmgr.getExecutor(APP_NEIGH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        std::vector<swss::FieldValueTuple> fvs;
+        fvs.emplace_back("neigh", "00:00:00:00:00:00");
+        entries.push_back({"Vlan1000:fc02:1000::2", DEL_COMMAND, fvs});
+        consumer->addToSync(entries);
+
+        nbrmgr.doTask(*consumer);
+
+        /* m_toSync should be drained */
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
+
+    /*
+     * Test zero-MAC resolution for IPv4 neighbor.
+     */
+    TEST_F(NbrMgrTest, ZeroMacIPv4TriggersArping)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto consumer = dynamic_cast<swss::Consumer *>(nbrmgr.getExecutor(APP_NEIGH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        std::vector<swss::FieldValueTuple> fvs;
+        fvs.emplace_back("neigh", "00:00:00:00:00:00");
+        fvs.emplace_back("family", "IPv4");
+        entries.push_back({"Vlan1000:10.0.0.2", SET_COMMAND, fvs});
+        consumer->addToSync(entries);
+
+        mockCallArgs.clear();
+        nbrmgr.doTask(*consumer);
+
+        /* Verify arping was called for IPv4 */
+        bool arpProbeFound = false;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("arping") != std::string::npos &&
+                cmd.find("10.0.0.2") != std::string::npos)
+            {
+                arpProbeFound = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(arpProbeFound);
+    }
+
+    /*
+     * Test that setNeighborIncomplete failure doesn't crash
+     * and NS probe is not sent.
+     */
+    TEST_F(NbrMgrTest, SetIncompleteFailureSkipsProbe)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table deviceMeta(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> metaFvs;
+        metaFvs.emplace_back("subtype", "DualToR");
+        deviceMeta.set("localhost", metaFvs);
+
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto consumer = dynamic_cast<swss::Consumer *>(nbrmgr.getExecutor(APP_NEIGH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        /* Force nlmsg_alloc to fail */
+        mock_nlmsg_alloc_fail = true;
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        std::vector<swss::FieldValueTuple> fvs;
+        fvs.emplace_back("neigh", "00:00:00:00:00:00");
+        entries.push_back({"Vlan1000:fc02:1000::2", SET_COMMAND, fvs});
+        consumer->addToSync(entries);
+
+        mockCallArgs.clear();
+        nbrmgr.doTask(*consumer);
+
+        /* No NS probe should be sent when setIncomplete fails */
+        for (const auto &cmd : mockCallArgs)
+        {
+            EXPECT_EQ(cmd.find("ndisc6"), std::string::npos);
+        }
+    }
 }
