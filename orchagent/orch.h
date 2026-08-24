@@ -50,6 +50,7 @@ const char state_db_key_delimiter  = '|';
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
