@@ -1,4 +1,5 @@
 #include <sstream>
+#include <cstdio>
 #include "logger.h"
 #include "exec.h"
 #include "shellcmd.h"
@@ -8,16 +9,31 @@
 using namespace std;
 using namespace swss;
 
-#define NVGRE_DEFAULT_TTL   "64"
-#define NVGRE_DEFAULT_BRIDGE "Bridge"
+#define NVGRE_DEFAULT_TTL     "64"
+#define NVGRE_DEFAULT_BRIDGE  "Bridge"
 
-/* One gretap device per (tunnel, vsid). IFNAMSIZ is 16 (15 chars + NUL). */
-static string mapDeviceName(const string &tunnel, const string &vsid)
+/* FNV-1a 32-bit hash — deterministic, collision-resistant for our scale. */
+static uint32_t fnv1a(const string &s)
 {
-    string dev = tunnel + "_" + vsid;
-    if (dev.size() > 15)
-        dev.resize(15);
-    return dev;
+    uint32_t h = 2166136261u;
+    for (char c : s)
+    {
+        h ^= (unsigned char)c;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/*
+ * Device name is derived from the full composite key via a hash so it is always
+ * <= IFNAMSIZ (15 chars) and never silently truncates/collides (Fix 5). "ng" +
+ * 8 hex chars of FNV-1a("<tunnel>|<map>") = 10 chars.
+ */
+static string mapDeviceName(const string &tunnel, const string &mapName)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "ng%08x", static_cast<unsigned int>(fnv1a(tunnel + "|" + mapName)));
+    return string(buf);
 }
 
 /* Parse a VSID string to a uint64_t; reject empty / non-numeric / oversized input. */
@@ -39,12 +55,40 @@ static bool parseVsid(const string &vsid, uint64_t &out)
     return true;
 }
 
+/*
+ * Strict name allowlist (Fix 7). tunnel_name/map_name flow into shell commands and
+ * (historically) device names, so restrict to [A-Za-z0-9_-] to remove the injection
+ * surface. A full netlink rewrite would relax this; this is the documented stopgap.
+ */
+static bool validName(const string &name)
+{
+    if (name.empty())
+        return false;
+    for (char c : name)
+    {
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+/* Best-effort rollback of a partially-created link. */
+static void rollbackDevice(const string &dev)
+{
+    string cmd = string(IP_CMD) + " link del " + dev;
+    string ignored;
+    swss::exec(cmd, ignored);
+}
+
 NvgreTunnelMgr::NvgreTunnelMgr(DBConnector *cfgDb, DBConnector *stateDb,
                                const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
     m_stateNvgreTunnelTable(stateDb, STATE_NVGRE_TUNNEL_TABLE_NAME),
     m_stateNvgreTunnelMapTable(stateDb, STATE_NVGRE_TUNNEL_MAP_TABLE_NAME),
-    m_cfgVlanTable(cfgDb, "VLAN")
+    m_cfgVlanTable(cfgDb, "VLAN"),
+    m_cfgMapTable(cfgDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("NvgreTunnelMgr initialized, subscribed to %zu CONFIG_DB tables", tableNames.size());
@@ -80,6 +124,22 @@ bool NvgreTunnelMgr::vlanExists(const string &vlanId)
     return m_cfgVlanTable.get("Vlan" + vlanId, fvs);
 }
 
+bool NvgreTunnelMgr::bridgeExists()
+{
+    return interfaceExists(NVGRE_DEFAULT_BRIDGE);
+}
+
+bool NvgreTunnelMgr::tunnelHasMaps(const string &tunnel)
+{
+    vector<string> keys;
+    m_cfgMapTable.getKeys(keys);
+    string prefix = tunnel + "|";
+    for (auto &k : keys)
+        if (k.compare(0, prefix.size(), prefix) == 0)
+            return true;
+    return false;
+}
+
 void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -113,7 +173,12 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
             bool ok = true;
             string reason;
 
-            if (!unknown_fields.empty())
+            if (!validName(tunnel_name))
+            {
+                ok = false;
+                reason = "invalid tunnel_name (allow [A-Za-z0-9_-])";
+            }
+            else if (!unknown_fields.empty())
             {
                 ok = false;
                 for (auto &uf : unknown_fields)
@@ -174,7 +239,16 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
         {
             SWSS_LOG_NOTICE("NVGRE_TUNNEL DEL: %s", tunnel_name.c_str());
 
-            removeTunnelCascade(tunnel_name);
+            /* HLD: deleting a tunnel does NOT remove its maps automatically — the
+             * user must delete the dependent maps first. Defer until none remain. */
+            if (tunnelHasMaps(tunnel_name))
+            {
+                SWSS_LOG_WARN("NVGRE_TUNNEL %s still has dependent maps, deferring deletion (remove maps first)",
+                              tunnel_name.c_str());
+                it++;
+                continue;
+            }
+
             m_tunnelSrcIp.erase(tunnel_name);
             m_stateNvgreTunnelTable.del(tunnel_name);
 
@@ -240,7 +314,12 @@ void NvgreTunnelMgr::doNvgreTunnelMapTask(Consumer &consumer)
             bool ok = true;
             string reason;
 
-            if (!unknown_fields.empty())
+            if (!validName(tunnel) || !validName(map_name))
+            {
+                ok = false;
+                reason = "invalid tunnel/map name (allow [A-Za-z0-9_-])";
+            }
+            else if (!unknown_fields.empty())
             {
                 ok = false;
                 for (auto &uf : unknown_fields)
@@ -255,7 +334,10 @@ void NvgreTunnelMgr::doNvgreTunnelMapTask(Consumer &consumer)
             else
             {
                 uint64_t vsidVal = 0;
-                if (!parseVsid(vsid, vsidVal) || vsidVal == 0 || vsidVal > NVGRE_VSID_MAX_VALUE)
+                /* YANG range is 0..16777214; VSID 0 is allowed (RFC 7637 reserves
+                 * 0-0xFFF but the YANG does not exclude 0, and the legacy orch
+                 * accepts it too). */
+                if (!parseVsid(vsid, vsidVal) || vsidVal > NVGRE_VSID_MAX_VALUE)
                 {
                     ok = false;
                     reason = "invalid vsid";
@@ -287,10 +369,21 @@ void NvgreTunnelMgr::doNvgreTunnelMapTask(Consumer &consumer)
                 continue;
             }
 
+            if (!bridgeExists())
+            {
+                /* Bridge not up yet — defer like the tunnel-not-configured case. */
+                SWSS_LOG_WARN("NVGRE_TUNNEL_MAP %s: bridge %s not up, deferring",
+                              key.c_str(), NVGRE_DEFAULT_BRIDGE);
+                it++;
+                continue;
+            }
+
             bool programmed = programMap(key, vsid, vlan_id, srcIt->second);
 
             vector<FieldValueTuple> fvs;
             fvs.emplace_back("status", programmed ? "active" : "inactive");
+            if (programmed)
+                fvs.emplace_back(NVGRE_STATE_FIELD_DEV, m_mapDev[key].dev);
             m_stateNvgreTunnelMapTable.set(key, fvs);
 
             it = consumer.m_toSync.erase(it);
@@ -315,39 +408,79 @@ bool NvgreTunnelMgr::programMap(const string &key, const string &vsid,
     SWSS_LOG_ENTER();
 
     string tunnel = key.substr(0, key.find('|'));
-    string dev = mapDeviceName(tunnel, vsid);
+    string mapName = key.substr(key.find('|') + 1);
+    string dev = mapDeviceName(tunnel, mapName);
+
+    /* IPv4 -> gretap, IPv6 -> ip6gretap (Fix 4). */
+    string linkType, remote, ttlOpt;
+    try
+    {
+        IpAddress ip(srcIp);
+        if (ip.isV4())
+        {
+            linkType = "gretap";
+            remote = "0.0.0.0";
+            ttlOpt = "ttl";
+        }
+        else
+        {
+            linkType = "ip6gretap";
+            remote = "::";
+            ttlOpt = "hoplimit";
+        }
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("NVGRE_TUNNEL_MAP %s: invalid src_ip '%s'", key.c_str(), srcIp.c_str());
+        return false;
+    }
+
+    /* RFC 7637 (Fix 1): GRE Key = VSID (high 24 bits) | FlowID (low 8 bits, =0). */
+    uint64_t vsidVal = stoull(vsid);
+    uint32_t greKey = static_cast<uint32_t>(vsidVal << 8);
 
     /* Delete-before-add for idempotency (re-SET / src_ip change). */
     if (interfaceExists(dev))
-    {
-        string del_cmd = string(IP_CMD) + " link del " + dev;
-        string ignored;
-        swss::exec(del_cmd, ignored);
-    }
+        rollbackDevice(dev);
 
-    /* NVGRE decap: gretap (GRE/TEB) with the VSID as the GRE key. remote 0.0.0.0
-     * = decap-any (P2MP termination, matches SAI tunnel termination). */
+    /* NVGRE decap: gretap (GRE/TEB) with the VSID in the high 24 bits of the key.
+     * remote any = decap-any (P2MP termination, matches SAI tunnel termination). */
     ostringstream add_cmd;
-    add_cmd << IP_CMD << " link add " << dev << " type gretap local " << srcIp
-            << " remote 0.0.0.0 key " << vsid << " ttl " << NVGRE_DEFAULT_TTL;
+    add_cmd << IP_CMD << " link add " << dev << " type " << linkType
+            << " local " << srcIp << " remote " << remote
+            << " key " << greKey << " " << ttlOpt << " " << NVGRE_DEFAULT_TTL;
     SWSS_LOG_NOTICE("Executing: %s", add_cmd.str().c_str());
 
     string res;
     int ret = swss::exec(add_cmd.str(), res);
     if (ret != 0)
     {
-        SWSS_LOG_ERROR("ip link add gretap failed on %s (ret=%d): %s",
-                       dev.c_str(), ret, res.c_str());
+        SWSS_LOG_ERROR("ip link add %s failed on %s (ret=%d): %s",
+                       linkType.c_str(), dev.c_str(), ret, res.c_str());
         return false;
     }
 
     ostringstream up_cmd;
     up_cmd << IP_CMD << " link set " << dev << " up";
-    swss::exec(up_cmd.str(), res);
+    SWSS_LOG_NOTICE("Executing: %s", up_cmd.str().c_str());
+    ret = swss::exec(up_cmd.str(), res);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("ip link set up failed on %s (ret=%d): %s", dev.c_str(), ret, res.c_str());
+        rollbackDevice(dev);
+        return false;
+    }
 
     ostringstream master_cmd;
     master_cmd << IP_CMD << " link set " << dev << " master " << NVGRE_DEFAULT_BRIDGE;
-    swss::exec(master_cmd.str(), res);
+    SWSS_LOG_NOTICE("Executing: %s", master_cmd.str().c_str());
+    ret = swss::exec(master_cmd.str(), res);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("ip link set master failed on %s (ret=%d): %s", dev.c_str(), ret, res.c_str());
+        rollbackDevice(dev);
+        return false;
+    }
 
     /* VSID -> VLAN: the gretap is an untagged access port on the mapped VLAN. */
     ostringstream vlan_cmd;
@@ -360,9 +493,7 @@ bool NvgreTunnelMgr::programMap(const string &key, const string &vsid,
     {
         SWSS_LOG_ERROR("bridge vlan add failed on %s vid %s (ret=%d): %s",
                        dev.c_str(), vlanId.c_str(), ret, res.c_str());
-        string del_cmd = string(IP_CMD) + " link del " + dev;
-        string ignored;
-        swss::exec(del_cmd, ignored);
+        rollbackDevice(dev);
         return false;
     }
 
@@ -392,18 +523,4 @@ void NvgreTunnelMgr::removeMap(const string &key)
 
     m_mapDev.erase(mit);
     m_stateNvgreTunnelMapTable.del(key);
-}
-
-void NvgreTunnelMgr::removeTunnelCascade(const string &tunnel)
-{
-    SWSS_LOG_ENTER();
-
-    string prefix = tunnel + "|";
-    vector<string> toRemove;
-    for (auto &entry : m_mapDev)
-        if (entry.first.compare(0, prefix.size(), prefix) == 0)
-            toRemove.push_back(entry.first);
-
-    for (auto &key : toRemove)
-        removeMap(key);
 }
