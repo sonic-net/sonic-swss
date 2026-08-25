@@ -106,9 +106,7 @@ struct RouteTypeTransitionInfo
     bool is_fg_route = false;
     bool was_fg = false;
     bool is_type_transition = false;
-    bool collision = false;
     NextHopGroupKey old_nhg_key;
-    NextHopGroupInfo saved_old_nhg_info;
 };
 
 class VNetObject
@@ -484,6 +482,7 @@ struct VNetLocEpAclRule
 };
 
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
+typedef std::map<IpPrefix, NextHopGroupInfo> VNetFgNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
@@ -541,6 +540,7 @@ private:
 
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
+    bool hasFgNextHopGroup(const string&, const IpPrefix&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
@@ -554,7 +554,7 @@ private:
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
                             const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state={});
-    bool selectFgNextHopGroup(const string&, NextHopGroupKey&, IpPrefix&, VNetVrfObject *vrf_obj, const uint16_t consistent_hashing_buckets, bool &isNextHopIdChanged);
+    bool selectFgNextHopGroup(const string&, NextHopGroupKey&, IpPrefix&, VNetVrfObject *vrf_obj, const uint16_t consistent_hashing_buckets, bool is_type_transition, bool &isNextHopIdChanged);
 
     RouteTypeTransitionInfo detectRouteTypeTransition(const string& vnet, const IpPrefix& ipPrefix,
                             const NextHopGroupKey& nexthops, VNetVrfObject* vrf_obj,
@@ -564,7 +564,6 @@ private:
                             NextHopGroupKey& nexthops,
                             NextHopGroupKey& nexthops_secondary,
                             const string& monitoring, VNetVrfObject* vrf_obj,
-                            const NextHopGroupKey& active_nhg,
                             RouteTypeTransitionInfo& transition_info,
                             bool custom_monitor_ep_updated,
                             const std::map<NextHopKey, IpAddress>& origin_primary_monitors,
@@ -596,7 +595,7 @@ private:
                                   const std::map<NextHopKey, IpAddress>& monitors);
     void getCustomMonitors(const string& vnet, const IpPrefix& ipPrefix, const NextHopGroupKey& nexthops, std::map<NextHopKey, IpAddress>& monitors);
 
-    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
+    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile, bool is_fg = false);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
     void removeRouteAdvertisement(IpPrefix& ipPrefix);
@@ -631,6 +630,7 @@ private:
     VNetRouteTable syncd_routes_;
     VNetNextHopObserverTable next_hop_observers_;
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
+    std::map<std::string, VNetFgNextHopGroupInfoTable> syncd_fg_nexthop_groups_;
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
     std::map<std::string, bool> vnet_tunnel_route_check_directly_connected;
     BfdSessionTable bfd_sessions_;

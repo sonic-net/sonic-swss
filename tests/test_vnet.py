@@ -4173,6 +4173,65 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, [transition_prefix])
         check_remove_state_db_routes(dvs, vnet_name, transition_prefix)
 
+        # Regular -> FG transition for NHG shared by multiple prefixes (ref_count > 1)
+        shared_prefix_1 = "100.100.37.30/32"
+        shared_prefix_2 = "100.100.37.31/32"
+        shared_endpoints = ['37.0.0.1', '37.0.0.2', '37.0.0.3']
+        shared_endpoints_csv = '37.0.0.1,37.0.0.2,37.0.0.3'
+        shared_macs_csv = '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C'
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, shared_prefix_1, vnet_name, shared_endpoints_csv, shared_macs_csv)
+        route_shared_1, nhg_shared = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, shared_endpoints, tunnel_name)
+        check_state_db_routes(dvs, vnet_name, shared_prefix_1, shared_endpoints)
+
+        create_vnet_routes(dvs, shared_prefix_2, vnet_name, shared_endpoints_csv, shared_macs_csv)
+        route_shared_2, nhg_shared_2 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, shared_endpoints, tunnel_name)
+        check_state_db_routes(dvs, vnet_name, shared_prefix_2, shared_endpoints)
+
+        # Both prefixes must share same NHG
+        assert nhg_shared == nhg_shared_2
+
+        # Transition shared_prefix_1 to FG
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, shared_prefix_1, vnet_name, shared_endpoints_csv, shared_macs_csv,
+                          consistent_hashing_buckets=bucket_size)
+        time.sleep(2)
+
+        nhgid_shared = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, shared_prefix_1, bucket_size, vr_id)
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+        check_state_db_routes(dvs, vnet_name, shared_prefix_1, shared_endpoints)
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'37.0.0.1': 20, '37.0.0.2': 20, '37.0.0.3': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, shared_prefix_1, nh_memb_exp_count, nh_oid_map, nhgid_shared, bucket_size, vnet_name)
+
+        # Regular prefix and NHG must remain intact
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg_shared in vnet_obj.nhgs
+        route_shared_2_after, nhg_shared_2_after = vnet_obj.check_vnet_ecmp_routes(
+            dvs, vnet_name, shared_endpoints, tunnel_name, route_ids=route_shared_2, nhg=nhg_shared)
+        assert nhg_shared_2_after == nhg_shared
+        assert route_shared_2_after == route_shared_2
+        check_state_db_routes(dvs, vnet_name, shared_prefix_2, shared_endpoints)
+
+        vnet_obj.fetch_exist_entries(dvs)
+        delete_vnet_routes(dvs, shared_prefix_2, vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [shared_prefix_2])
+        check_remove_state_db_routes(dvs, vnet_name, shared_prefix_2)
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg_shared not in vnet_obj.nhgs
+
+        asic_rt_key_shared_1 = test_fgnhg.get_asic_route_key(asic_db, shared_prefix_1, vr_id)
+        delete_vnet_routes(dvs, shared_prefix_1, vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [shared_prefix_1])
+        check_remove_state_db_routes(dvs, vnet_name, shared_prefix_1)
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_shared_1)
+
         # FG route with more distinct next hops than configured buckets must be rejected
         oversized_prefix = "100.100.37.20/32"
         vnet_obj.fetch_exist_entries(dvs)
