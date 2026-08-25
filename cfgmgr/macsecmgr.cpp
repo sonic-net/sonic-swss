@@ -124,13 +124,17 @@ static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MAC
         (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_128))
     {
         if (cipher_str.length() != AES_LEN_128_BYTE)
-            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+            throw std::invalid_argument(
+                "Invalid MACsec key length : " + std::to_string(cipher_str.length())
+                + ", expected " + std::to_string(AES_LEN_128_BYTE));
     }
     else if ((cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_256) ||
              (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_256))
     {
         if (cipher_str.length() != AES_LEN_256_BYTE)
-            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+            throw std::invalid_argument(
+                "Invalid MACsec key length : " + std::to_string(cipher_str.length())
+                + ", expected " + std::to_string(AES_LEN_256_BYTE));
     }
 
     // Get the salt index from the cipher_str
@@ -266,6 +270,27 @@ static void wpa_cli_exec_and_check(
         throw std::runtime_error(
             "Wpa_cli command : " + ostream.str() + " -> " +res);
     }
+}
+
+// Wpa_cli failures quote the whole command line, so any CAK handed to
+// wpa_supplicant has to be scrubbed out before the reason is logged.
+static std::string redactSecret(std::string message, const std::string & secret)
+{
+    static const std::string mask = "<redacted>";
+
+    if (secret.empty())
+    {
+        return message;
+    }
+
+    for (auto pos = message.find(secret);
+         pos != std::string::npos;
+         pos = message.find(secret, pos + mask.length()))
+    {
+        message.replace(pos, secret.length(), mask);
+    }
+
+    return message;
 }
 
 MACsecMgr::MACsecMgr(
@@ -753,6 +778,9 @@ bool MACsecMgr::configureMACsec(
 {
     SWSS_LOG_ENTER();
 
+    const std::string primary_cak =
+        decodeKey(profile.primary_cak, profile.cipher_suite);
+
     try
     {
         wpa_cli_exec_and_check(
@@ -818,7 +846,7 @@ bool MACsecMgr::configureMACsec(
             port_name,
             network_id,
             "mka_cak",
-            decodeKey(profile.primary_cak, profile.cipher_suite));
+            primary_cak);
 
         wpa_cli_exec_and_check(
             session.sock,
@@ -899,7 +927,8 @@ bool MACsecMgr::configureMACsec(
     }
     catch(const std::runtime_error & e)
     {
-        SWSS_LOG_WARN("Enable MACsec fail : %s", e.what());
+        SWSS_LOG_WARN("Enable MACsec fail : %s",
+            redactSecret(e.what(), primary_cak).c_str());
         return false;
     }
     return true;
@@ -1106,14 +1135,13 @@ bool MACsecMgr::addMKA(
             "cak=" + cak,
             std::string("fallback=") + (fallback ? "1" : "0"));
     }
-    catch(const std::runtime_error &)
+    catch(const std::runtime_error & e)
     {
-        // The exception carries the whole command line, including the CAK, so it
-        // is deliberately not logged.
         SWSS_LOG_WARN(
-            "Cannot add MKA participant CKN '%s' on port '%s'",
+            "Cannot add MKA participant CKN '%s' on port '%s' : %s",
             ckn.c_str(),
-            port_name.c_str());
+            port_name.c_str(),
+            redactSecret(e.what(), cak).c_str());
         return false;
     }
     return true;
