@@ -34,6 +34,7 @@ extern sai_my_mac_api_t *sai_my_mac_api;
 extern MockSaiMyMac *mock_sai_my_mac;
 
 namespace
+
 {
 // A physical port set up in test_main.cpp
 constexpr char *kPortName1 = "Ethernet1";
@@ -170,6 +171,7 @@ bool MatchCreateL3AdmitArgAttrList(const sai_attribute_t *attr_list,
 
     return true;
 }
+
 } // namespace
 
 class L3AdmitManagerTest : public ::testing::Test
