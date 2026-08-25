@@ -788,6 +788,19 @@ class L3MulticastManagerTest : public ::testing::Test {
     EXPECT_EQ(x.controller_metadata, y.controller_metadata);
   }
 
+  void SetMyMacOid() {
+    swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
+    std::vector<swss::FieldValueTuple> values;
+    values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMac1});
+    table.set("switch", values);
+    gSwitchOrch->addExistingData(&table);
+    EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                        Return(SAI_STATUS_SUCCESS)));
+    Orch* switch_orch = gSwitchOrch;
+    switch_orch->doTask();
+  }
+
   void SetUp() override {
     mock_sai_router_intf = &mock_sai_router_intf_;
     sai_router_intfs_api->create_router_interface =
@@ -1712,7 +1725,7 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
-            CreateRouterInterface(entry, &rif_oid));
+      CreateRouterInterface(entry, &rif_oid));
 }
 
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceAttributeFailures) {
