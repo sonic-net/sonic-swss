@@ -84,7 +84,7 @@ private:
     bool isPortStateOk(const std::string & port_name);
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
-    bool configureMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;
+    bool configureMACsec(const std::string & port_name, MKASession & session, const MACsecProfile & profile) const;
     bool unconfigureMACsec(const std::string & port_name, const MKASession & session) const;
 
     // One MKA participant reported by macsec_mka_list.

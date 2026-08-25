@@ -203,14 +203,22 @@ namespace macsecmgr_ut
             return 0;
         }
 
-        // The primary CA is loaded through the network block, so an
-        // enable_network commits whatever mka_ckn/mka_cak were staged.
+        // The CAs are loaded through the network block, so an enable_network
+        // commits whatever mka_ckn/mka_cak and their fallback counterparts were
+        // staged. A rejected set_network stages nothing.
         if (cmd.find("enable_network") != std::string::npos)
         {
             std::string ckn;
             std::string cak;
+            std::string fallback_ckn;
+            std::string fallback_cak;
             for (const auto & prev : g_commands)
             {
+                if (!g_failing_command.empty()
+                    && prev.find(g_failing_command) != std::string::npos)
+                {
+                    continue;
+                }
                 if (prev.find(" mka_ckn ") != std::string::npos)
                 {
                     ckn = setNetworkValue(prev, "mka_ckn");
@@ -219,10 +227,23 @@ namespace macsecmgr_ut
                 {
                     cak = setNetworkValue(prev, "mka_cak");
                 }
+                if (prev.find(" mka_ckn_fallback ") != std::string::npos)
+                {
+                    fallback_ckn = setNetworkValue(prev, "mka_ckn_fallback");
+                }
+                if (prev.find(" mka_cak_fallback ") != std::string::npos)
+                {
+                    fallback_cak = setNetworkValue(prev, "mka_cak_fallback");
+                }
             }
             if (!ckn.empty())
             {
                 g_participants.push_back({ ckn, cak, false });
+            }
+            // wpa_supplicant ignores the fallback unless both halves are set.
+            if (!fallback_ckn.empty() && !fallback_cak.empty())
+            {
+                g_participants.push_back({ fallback_ckn, fallback_cak, true });
             }
             stdout_content = "OK\n";
             return 0;
@@ -823,6 +844,80 @@ namespace macsecmgr_ut
 
         EXPECT_EQ(countCommands("macsec_add_mka"), 1);
         EXPECT_EQ(findFakeParticipant(CKN_FALLBACK_A), nullptr);
+        ASSERT_EQ(g_participants.size(), 1);
+        EXPECT_EQ(g_participants.front().ckn, CKN_PRIMARY_A);
+    }
+
+    // A fallback CA is only a standby, so failing to install it at enable time
+    // must leave the port protected by the primary rather than rolling MACsec
+    // back and leaving the port unprotected.
+    TEST_F(MACsecMgrTest, fallbackSetFailureKeepsPrimaryProtected)
+    {
+        swss::MACsecMgr macsecmgr(
+            m_config_db.get(), m_state_db.get(), cfg_macsec_tables);
+        setPortStateOk(PORT_NAME);
+        setProfile(CAK_PRIMARY_A, CKN_PRIMARY_A, CAK_FALLBACK_A, CKN_FALLBACK_A);
+        bindPort(PORT_NAME);
+
+        g_failing_command = "mka_cak_fallback";
+        swss::Table profile_table(
+            m_config_db.get(), CFG_MACSEC_PROFILE_TABLE_NAME);
+        swss::Table port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        macsecmgr.addExistingData(&profile_table);
+        macsecmgr.addExistingData(&port_table);
+        macsecmgr.doTask();
+
+        // The primary is live and the session was not torn back down.
+        ASSERT_EQ(g_participants.size(), 1);
+        EXPECT_EQ(g_participants.front().ckn, CKN_PRIMARY_A);
+        EXPECT_FALSE(g_participants.front().fallback);
+        EXPECT_EQ(countCommands("interface_remove"), 0);
+    }
+
+    // The fallback that failed to install must not be recorded as applied, so a
+    // later profile update reconciles it instead of diffing it away.
+    TEST_F(MACsecMgrTest, fallbackSetFailureIsRepairedByProfileUpdate)
+    {
+        swss::MACsecMgr macsecmgr(
+            m_config_db.get(), m_state_db.get(), cfg_macsec_tables);
+        setPortStateOk(PORT_NAME);
+        setProfile(CAK_PRIMARY_A, CKN_PRIMARY_A, CAK_FALLBACK_A, CKN_FALLBACK_A);
+        bindPort(PORT_NAME);
+
+        g_failing_command = "mka_cak_fallback";
+        enablePort(macsecmgr);
+        ASSERT_EQ(findFakeParticipant(CKN_FALLBACK_A), nullptr);
+
+        // Re-applying the same profile is enough to install the missing standby.
+        g_failing_command.clear();
+        setProfile(CAK_PRIMARY_A, CKN_PRIMARY_A, CAK_FALLBACK_A, CKN_FALLBACK_A);
+        updateProfile(macsecmgr);
+
+        const auto * fallback = findFakeParticipant(CKN_FALLBACK_A);
+        ASSERT_NE(fallback, nullptr);
+        EXPECT_TRUE(fallback->fallback);
+        EXPECT_NE(findFakeParticipant(CKN_PRIMARY_A), nullptr);
+    }
+
+    // Because the failed fallback is not recorded, the rotation guard still sees
+    // a port with no standby and refuses, rather than retiring the live primary
+    // in favour of a CA that was never installed.
+    TEST_F(MACsecMgrTest, fallbackSetFailureRefusesPrimaryRotation)
+    {
+        swss::MACsecMgr macsecmgr(
+            m_config_db.get(), m_state_db.get(), cfg_macsec_tables);
+        setPortStateOk(PORT_NAME);
+        setProfile(CAK_PRIMARY_A, CKN_PRIMARY_A, CAK_FALLBACK_A, CKN_FALLBACK_A);
+        bindPort(PORT_NAME);
+
+        g_failing_command = "mka_cak_fallback";
+        enablePort(macsecmgr);
+
+        g_failing_command.clear();
+        setProfile(CAK_PRIMARY_B, CKN_PRIMARY_B, CAK_FALLBACK_A, CKN_FALLBACK_A);
+        updateProfile(macsecmgr);
+
+        EXPECT_EQ(countCommands("macsec_del_mka"), 0);
         ASSERT_EQ(g_participants.size(), 1);
         EXPECT_EQ(g_participants.front().ckn, CKN_PRIMARY_A);
     }

@@ -635,11 +635,6 @@ task_process_status MACsecMgr::enableMACsec(
             port_name.c_str());
         return disableMACsec(port_name, port_attr);
     }
-    // Record what is now programmed on the port; hot updates diff against it.
-    session.primary_cak = profile.primary_cak;
-    session.primary_ckn = profile.primary_ckn;
-    session.fallback_cak = profile.fallback_cak;
-    session.fallback_ckn = profile.fallback_ckn;
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
         profile_name.c_str(),
         port_name.c_str());
@@ -773,7 +768,7 @@ bool MACsecMgr::stopWPASupplicant(pid_t pid) const
 
 bool MACsecMgr::configureMACsec(
     const std::string & port_name,
-    const MKASession & session,
+    MKASession & session,
     const MACsecProfile & profile) const
 {
     SWSS_LOG_ENTER();
@@ -855,6 +850,41 @@ bool MACsecMgr::configureMACsec(
             "mka_ckn",
             profile.primary_ckn);
 
+        bool fallback_configured = false;
+
+        if (!profile.fallback_ckn.empty())
+        {
+            const std::string fallback_cak =
+                decodeKey(profile.fallback_cak, profile.cipher_suite);
+
+            try
+            {
+                wpa_cli_exec_and_check(
+                    session.sock,
+                    port_name,
+                    network_id,
+                    "mka_cak_fallback",
+                    fallback_cak);
+
+                wpa_cli_exec_and_check(
+                    session.sock,
+                    port_name,
+                    network_id,
+                    "mka_ckn_fallback",
+                    profile.fallback_ckn);
+
+                fallback_configured = true;
+            }
+            catch(const std::runtime_error & e)
+            {
+                SWSS_LOG_WARN(
+                    "Cannot set the fallback CA on port '%s', the port stays "
+                    "protected by the primary CA alone : %s",
+                    port_name.c_str(),
+                    redactSecret(e.what(), fallback_cak).c_str());
+            }
+        }
+
         wpa_cli_exec_and_check(
             session.sock,
             port_name,
@@ -910,19 +940,14 @@ bool MACsecMgr::configureMACsec(
             "enable_network",
             network_id);
 
-        // The primary CA is loaded through the network block above. A fallback CA
-        // is added over the ctrl socket so it can later be rotated or removed
-        // without restarting wpa_supplicant.
-        if (!profile.fallback_ckn.empty()
-            && !addMKA(
-                    session.sock,
-                    port_name,
-                    profile.fallback_ckn,
-                    decodeKey(profile.fallback_cak, profile.cipher_suite),
-                    true))
+        // Record only what was actually applied to the port.
+        session.primary_cak = profile.primary_cak;
+        session.primary_ckn = profile.primary_ckn;
+
+        if (fallback_configured)
         {
-            throw std::runtime_error(
-                "Cannot add fallback MKA participant for CKN " + profile.fallback_ckn);
+            session.fallback_cak = profile.fallback_cak;
+            session.fallback_ckn = profile.fallback_ckn;
         }
     }
     catch(const std::runtime_error & e)
