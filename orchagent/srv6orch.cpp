@@ -1712,24 +1712,122 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
             attributes.push_back(makeOidAttr(SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, counter_oid));
         }
 
+        auto cleanupCreatedResources = [&]()
+        {
+            removeMySidCounter(my_sid_entry, counter_oid);
+            if (created_tunnel_term)
+            {
+                removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
+            }
+            if (acquired_tunnel)
+            {
+                removeMySidIpInIpTunnel(dscp_mode.get());
+            }
+        };
+
         auto status = sai_srv6_api->create_my_sid_entry(&my_sid_entry, (uint32_t) attributes.size(), attributes.data());
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            vector<sai_attribute_t> desired_attributes = {
+                makeOidAttr(SAI_MY_SID_ENTRY_ATTR_VRF,
+                            mySidVrfRequired(end_behavior) ? vrf_oid : SAI_NULL_OBJECT_ID),
+                makeOidAttr(SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID,
+                            mySidNextHopRequired(end_behavior) ? next_hop_oid : SAI_NULL_OBJECT_ID),
+                makeOidAttr(SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID,
+                            tunnel_required ? tunnel_oid : SAI_NULL_OBJECT_ID),
+                makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, end_behavior),
+                makeS32Attr(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR, end_flavor),
+            };
+            if (getMySidCountersSupported())
+            {
+                desired_attributes.push_back(
+                    makeOidAttr(SAI_MY_SID_ENTRY_ATTR_COUNTER_ID, counter_oid));
+            }
+
+            vector<sai_attribute_t> current_attributes = desired_attributes;
+            auto get_status = sai_srv6_api->get_my_sid_entry_attribute(
+                &my_sid_entry, (uint32_t) current_attributes.size(), current_attributes.data());
+            if (get_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Failed to read existing my_sid entry %s, rv %d",
+                              key_string.c_str(), get_status);
+                cleanupCreatedResources();
+                return task_need_retry;
+            }
+
+            auto hasResourceConflict = [](const sai_attribute_t& current,
+                                          const sai_attribute_t& desired)
+            {
+                return current.value.oid != SAI_NULL_OBJECT_ID &&
+                       current.value.oid != desired.value.oid;
+            };
+            if (hasResourceConflict(current_attributes[2], desired_attributes[2]) ||
+                (current_attributes.size() > 5 &&
+                 hasResourceConflict(current_attributes[5], desired_attributes[5])))
+            {
+                SWSS_LOG_WARN("Existing my_sid entry %s references resources not owned by this process",
+                              key_string.c_str());
+                cleanupCreatedResources();
+                return task_need_retry;
+            }
+
+            auto attributesEqual = [](const sai_attribute_t& left,
+                                      const sai_attribute_t& right)
+            {
+                if (left.id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR ||
+                    left.id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+                {
+                    return left.value.s32 == right.value.s32;
+                }
+                return left.value.oid == right.value.oid;
+            };
+
+            vector<size_t> applied_attributes;
+            for (size_t index = 0; index < desired_attributes.size(); ++index)
+            {
+                if (attributesEqual(current_attributes[index], desired_attributes[index]))
+                {
+                    continue;
+                }
+
+                auto set_status = sai_srv6_api->set_my_sid_entry_attribute(
+                    &my_sid_entry, &desired_attributes[index]);
+                if (set_status != SAI_STATUS_SUCCESS)
+                {
+                    bool rollback_succeeded = true;
+                    while (!applied_attributes.empty())
+                    {
+                        auto applied_index = applied_attributes.back();
+                        applied_attributes.pop_back();
+                        auto rollback_status = sai_srv6_api->set_my_sid_entry_attribute(
+                            &my_sid_entry, &current_attributes[applied_index]);
+                        if (rollback_status != SAI_STATUS_SUCCESS)
+                        {
+                            rollback_succeeded = false;
+                            SWSS_LOG_ERROR("Failed to roll back existing my_sid entry %s attribute %d, rv %d",
+                                           key_string.c_str(), current_attributes[applied_index].id,
+                                           rollback_status);
+                        }
+                    }
+                    if (rollback_succeeded)
+                    {
+                        cleanupCreatedResources();
+                    }
+                    auto handle_status = handleSaiSetStatus(SAI_API_SRV6, set_status);
+                    return handle_status == task_success ? task_need_retry : handle_status;
+                }
+                applied_attributes.push_back(index);
+            }
+
+            SWSS_LOG_NOTICE("Reconciled existing my_sid entry %s in place", key_string.c_str());
+            status = SAI_STATUS_SUCCESS;
+        }
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create my_sid entry %s, rv %d", key_string.c_str(), status);
             auto handle_status = handleSaiCreateStatus(SAI_API_SRV6, status);
-            if (handle_status != task_success)
-            {
-                removeMySidCounter(my_sid_entry, counter_oid);
-                if (created_tunnel_term)
-                {
-                    removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
-                }
-                if (acquired_tunnel)
-                {
-                    removeMySidIpInIpTunnel(dscp_mode.get());
-                }
-                return handle_status;
-            }
+            cleanupCreatedResources();
+            return handle_status == task_success ? task_need_retry : handle_status;
         }
 
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);

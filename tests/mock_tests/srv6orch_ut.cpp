@@ -346,6 +346,78 @@ TEST_F(Srv6OrchMySidTest, SaiCreateFailureRollsBackTunnelAndRemainsPending)
     EXPECT_FALSE(pending.empty());
 }
 
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsPreservesEntryAndRollsBackResources)
+{
+    const string locator = "loc1";
+    const string key = "32:16:16:0:fc00:0:1:23::1";
+
+    addLocatorConfig(locator);
+    runCfgMySidTask(locator + "|fc00:0:1:23::1/64", {{"decap_dscp_mode", "uniform"}});
+
+    EXPECT_CALL(*mock_sai_tunnel_api, create_tunnel(_, _, _, _)).Times(1);
+    EXPECT_CALL(*mock_sai_tunnel_api, remove_tunnel(_)).Times(1);
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        for (uint32_t index = 0; index < attr_count; ++index)
+        {
+            attrs[index].value.oid = attrs[index].id == SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID
+                                        ? 0xdead
+                                        : SAI_NULL_OBJECT_ID;
+        }
+        return SAI_STATUS_SUCCESS;
+    };
+
+    runAppMySidTask(key, "un", "default", "");
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_FALSE(pending.empty());
+}
+
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
+{
+    const string key = "32:16:16:0:fc00:0:1:24::";
+
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        for (uint32_t index = 0; index < attr_count; ++index)
+        {
+            if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E;
+            }
+            else if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+            }
+            else
+            {
+                attrs[index].value.oid = SAI_NULL_OBJECT_ID;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    };
+
+    runAppMySidTask(key, "end", "", "");
+    runAppMySidTask(key, "end", "", "");
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+}
+
 TEST_F(Srv6OrchMySidTest, SaiSetFailureKeepsOldReferenceUntilRetry)
 {
     const string key = "32:16:16:0:fc00:0:1:21::";
