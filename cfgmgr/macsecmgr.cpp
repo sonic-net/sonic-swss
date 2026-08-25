@@ -633,7 +633,9 @@ task_process_status MACsecMgr::enableMACsec(
         SWSS_LOG_WARN("The MACsec profile '%s' on the port '%s' loading fail",
             profile_name.c_str(),
             port_name.c_str());
-        return disableMACsec(port_name, port_attr);
+        // Report the load failure, not whether the rollback succeeded.
+        disableMACsec(port_name, port_attr);
+        return task_failed;
     }
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
         profile_name.c_str(),
