@@ -6,7 +6,9 @@
 #include "../mock_table.h"
 #include "warm_restart.h"
 #define private public
+#define protected public
 #include "nbrmgr.h"
+#undef protected
 #undef private
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
