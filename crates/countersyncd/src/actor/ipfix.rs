@@ -16,7 +16,7 @@ use ipfixrw::{
 };
 
 use super::super::message::{
-    aggregator::AggregatedStatsMessage,
+    aggregator::{AggregatedStatsMessage, AggregatorConfigMessage},
     buffer::SocketBufferMessage,
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
@@ -594,11 +594,19 @@ impl IpfixActor {
     /// # Arguments
     ///
     /// * `templates` - IPFixTemplatesMessage containing template data and metadata
-    fn handle_template(&mut self, templates: IPFixTemplatesMessage) {
+    fn handle_template(
+        &mut self,
+        mut templates: IPFixTemplatesMessage,
+    ) -> Option<AggregatorConfigMessage> {
+        let aggregator_config = templates.aggregator_config.take();
         if templates.is_delete {
             // Handle template deletion
             self.handle_template_deletion(&templates.key);
-            return;
+            return aggregator_config;
+        }
+
+        if templates.templates.is_none() && aggregator_config.is_some() {
+            return aggregator_config;
         }
 
         let templates_data = match templates.templates {
@@ -608,9 +616,14 @@ impl IpfixActor {
                     "Received template message without template data for key: {}",
                     templates.key
                 );
-                return;
+                return aggregator_config;
             }
         };
+
+        // A replacement retires every old template ID for this session before
+        // publishing the reset. Records using retired IDs are ignored even if
+        // they were still queued when the replacement arrived.
+        self.handle_template_deletion(&templates.key);
 
         debug!(
             "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
@@ -671,12 +684,14 @@ impl IpfixActor {
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
+        let mut valid = true;
 
         while read_size < templates_data.len() {
             let len = match get_ipfix_message_length(&templates_data[read_size..]) {
                 Ok(len) => len,
                 Err(e) => {
                     warn!("Failed to parse IPFIX message length: {}", e);
+                    valid = false;
                     break;
                 }
             };
@@ -685,6 +700,7 @@ impl IpfixActor {
             if read_size + len as usize > templates_data.len() {
                 warn!("IPFIX template header length {} exceeds remaining data size {} at offset {}, skipping this template group", 
                       len, templates_data.len() - read_size, read_size);
+                valid = false;
                 break;
             }
 
@@ -701,15 +717,19 @@ impl IpfixActor {
                         "Failed to parse IPFIX template message for key {}: {}",
                         templates.key, e
                     );
-                    read_size += len as usize;
-                    continue;
+                    valid = false;
+                    break;
                 }
             };
 
             self.insert_temporary_template(&templates.key, new_templates);
             read_size += len as usize;
         }
+        if !valid {
+            self.handle_template_deletion(&templates.key);
+        }
         debug!("Template handled successfully for key: {}", templates.key);
+        aggregator_config
     }
 
     /// Handles template deletion for a given key.
@@ -740,6 +760,25 @@ impl IpfixActor {
         self.object_id_name_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
+    }
+
+    async fn send_messages(&self, messages: Vec<AggregatedStatsMessage>) -> Result<(), ()> {
+        if self.saistats_recipients.len() == 1 {
+            let recipient = self
+                .saistats_recipients
+                .front()
+                .expect("single recipient should exist");
+            for message in messages {
+                recipient.send(message).await.map_err(|_| ())?;
+            }
+        } else {
+            for recipient in &self.saistats_recipients {
+                for message in &messages {
+                    recipient.send(message.clone()).await.map_err(|_| ())?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Processes IPFIX data records and converts them to SAI statistics.
@@ -956,7 +995,13 @@ impl IpfixActor {
                                 ChannelLabel::SwssToIpfixTemplates,
                                 actor.template_recipient.len(),
                             );
-                            actor.handle_template(templates);
+
+                            if let Some(config) = actor.handle_template(templates) {
+                                let message = AggregatedStatsMessage::config(config);
+                                if actor.send_messages(vec![message]).await.is_err() {
+                                    return;
+                                }
+                            }
                         },
                         None => {
                             break;
@@ -971,24 +1016,8 @@ impl IpfixActor {
                                 actor.record_recipient.len(),
                             );
                             let messages = actor.handle_record(record);
-                            if actor.saistats_recipients.len() == 1 {
-                                let recipient = actor
-                                    .saistats_recipients
-                                    .front()
-                                    .expect("single recipient should exist");
-                                for message in messages {
-                                    if recipient.send(message).await.is_err() {
-                                        return;
-                                    }
-                                }
-                            } else {
-                                for recipient in &actor.saistats_recipients {
-                                    for message in &messages {
-                                        if recipient.send(message.clone()).await.is_err() {
-                                            return;
-                                        }
-                                    }
-                                }
+                            if actor.send_messages(messages).await.is_err() {
+                                return;
                             }
                         },
                         None => {
@@ -1245,13 +1274,13 @@ mod test {
             0x80, 0x04,
         ];
 
-        actor.handle_template(IPFixTemplatesMessage::new(
+        let _ = actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_256_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
         ));
-        actor.handle_template(IPFixTemplatesMessage::new(
+        let _ = actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_b"),
             Arc::new(Vec::from(template_257_bytes)),
             Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
@@ -1322,7 +1351,7 @@ mod test {
             0x80, 0x04,
         ];
 
-        actor.handle_template(IPFixTemplatesMessage::new(
+        let _ = actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
@@ -1333,7 +1362,7 @@ mod test {
         expected.insert(2u16, "Ethernet1".to_string());
         assert_eq!(actor.object_id_name_map.get("session_a"), Some(&expected));
 
-        actor.handle_template(IPFixTemplatesMessage::new(
+        let _ = actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
             None,
@@ -1573,5 +1602,34 @@ mod test {
             .await
             .expect("Actor task should complete successfully");
         // Note: Log assertions removed due to env_logger initialization conflicts in test suite
+    }
+
+    #[tokio::test]
+    async fn template_forwards_aggregator_control_on_stats_channel() {
+        let (buffer_sender, buffer_receiver) = channel(1);
+        let (template_sender, template_receiver) = channel(1);
+        let (stats_sender, mut stats_receiver) = channel(1);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+        actor.add_recipient(stats_sender);
+        let actor_handle = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Runtime::new().expect("ipfix test runtime");
+            runtime.block_on(IpfixActor::run(actor));
+        });
+
+        template_sender
+            .send(IPFixTemplatesMessage::config(
+                AggregatorConfigMessage::replacement(
+                "session|PORT".to_string(),
+                None,
+            )))
+            .await
+            .unwrap();
+
+        let control = stats_receiver.recv().await.expect("config control envelope");
+        assert!(control.config.is_some_and(|config| config.reset));
+
+        drop(template_sender);
+        drop(buffer_sender);
+        actor_handle.await.unwrap();
     }
 }

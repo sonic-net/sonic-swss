@@ -339,7 +339,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
     let (ipfix_record_sender, ipfix_record_receiver) = channel(args.data_netlink_capacity);
     let (ipfix_template_sender, ipfix_template_receiver) = channel(10); // Fixed capacity for templates
-    let (aggregator_config_sender, aggregator_config_receiver) = channel(10);
     let (aggregator_stats_sender, aggregator_stats_receiver) = channel(args.data_netlink_capacity);
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
@@ -372,10 +371,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
     ipfix.add_recipient(aggregator_stats_sender);
 
-    let mut aggregator = AggregatorActor::new(aggregator_config_receiver, aggregator_stats_receiver);
+    let mut aggregator = AggregatorActor::new_without_config(aggregator_stats_receiver);
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
-    let swss = match SwssActor::new(ipfix_template_sender, aggregator_config_sender) {
+    let swss = match SwssActor::new(ipfix_template_sender) {
         Ok(actor) => actor,
         Err(e) => {
             error!("Failed to initialize SwssActor: {}", e);

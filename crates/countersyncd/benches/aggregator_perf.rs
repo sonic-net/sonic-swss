@@ -1,4 +1,8 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use criterion::{
     criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput,
@@ -7,7 +11,10 @@ use criterion::{
 use countersyncd::{
     actor::aggregator::Aggregator,
     message::{
-        aggregator::{AggregatedStatsMessage, AggregatorConfig, CounterSelector},
+        aggregator::{
+            default_heatmap_layout, AggregatedStatsMessage, AggregatorConfig, CounterSelector,
+            DEFAULT_HEATMAP_BUCKET_COUNT,
+        },
         saistats::{SAIStat, SAIStats, SAIStatsMessage},
     },
 };
@@ -20,77 +27,111 @@ const HEATMAP_INTERVAL_US: u32 = 1_000_000;
 const HEATMAP_BUCKET_BOUNDARIES: [u64; 7] = [0, 64, 256, 1_024, 4_096, 16_384, 65_536];
 
 #[derive(Clone, Copy)]
+enum HeatmapLayoutKind {
+    Custom,
+    Default256,
+}
+
+#[derive(Clone, Copy)]
 struct Scenario {
     name: &'static str,
     configured: bool,
     reporting_rate: bool,
     rollover: bool,
-    heatmap: bool,
+    heatmap_layout: Option<HeatmapLayoutKind>,
 }
 
-const SCENARIOS: [Scenario; 9] = [
+const SCENARIOS: [Scenario; 13] = [
     Scenario {
         name: "unconfigured_passthrough",
         configured: false,
         reporting_rate: false,
         rollover: false,
-        heatmap: false,
+        heatmap_layout: None,
     },
     Scenario {
         name: "configured_passthrough",
         configured: true,
         reporting_rate: false,
         rollover: false,
-        heatmap: false,
+        heatmap_layout: None,
     },
     Scenario {
         name: "reporting",
         configured: true,
         reporting_rate: true,
         rollover: false,
-        heatmap: false,
+        heatmap_layout: None,
     },
     Scenario {
         name: "rollover",
         configured: true,
         reporting_rate: false,
         rollover: true,
-        heatmap: false,
+        heatmap_layout: None,
     },
     Scenario {
-        name: "heatmap",
+        name: "heatmap_custom_8_buckets",
         configured: true,
         reporting_rate: false,
         rollover: false,
-        heatmap: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Custom),
+    },
+    Scenario {
+        name: "heatmap_default_256_buckets",
+        configured: true,
+        reporting_rate: false,
+        rollover: false,
+        heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
     Scenario {
         name: "reporting_rollover",
         configured: true,
         reporting_rate: true,
         rollover: true,
-        heatmap: false,
+        heatmap_layout: None,
     },
     Scenario {
-        name: "reporting_heatmap",
+        name: "reporting_heatmap_custom_8_buckets",
         configured: true,
         reporting_rate: true,
         rollover: false,
-        heatmap: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
-        name: "rollover_heatmap",
+        name: "reporting_heatmap_default_256_buckets",
+        configured: true,
+        reporting_rate: true,
+        rollover: false,
+        heatmap_layout: Some(HeatmapLayoutKind::Default256),
+    },
+    Scenario {
+        name: "rollover_heatmap_custom_8_buckets",
         configured: true,
         reporting_rate: false,
         rollover: true,
-        heatmap: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
-        name: "all_methods",
+        name: "rollover_heatmap_default_256_buckets",
+        configured: true,
+        reporting_rate: false,
+        rollover: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Default256),
+    },
+    Scenario {
+        name: "all_methods_custom_8_buckets",
         configured: true,
         reporting_rate: true,
         rollover: true,
-        heatmap: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Custom),
+    },
+    Scenario {
+        name: "all_methods_default_256_buckets",
+        configured: true,
+        reporting_rate: true,
+        rollover: true,
+        heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
 ];
 
@@ -121,6 +162,9 @@ fn configured_aggregator(scenario: Scenario) -> Aggregator {
     }
 
     let selector = CounterSelector::new(1, 1);
+    let heatmap = scenario.heatmap_layout.is_some();
+    // Eight custom buckets versus the 256-bucket fallback is the intentional
+    // practical cardinality comparison for every heatmap scenario.
     aggregator.set_config(
         SESSION_KEY.to_string(),
         Some(AggregatorConfig {
@@ -129,15 +173,17 @@ fn configured_aggregator(scenario: Scenario) -> Aggregator {
                 .rollover
                 .then(|| HashSet::from([selector]))
                 .unwrap_or_default(),
-            heatmap_interval: scenario.heatmap.then_some(HEATMAP_INTERVAL_US),
-            heatmap_counters: scenario
-                .heatmap
+            heatmap_interval: heatmap.then_some(HEATMAP_INTERVAL_US),
+            heatmap_counters: heatmap
                 .then(|| HashSet::from([selector]))
                 .unwrap_or_default(),
-            heatmap_bucket_boundaries: scenario
-                .heatmap
-                .then(|| HEATMAP_BUCKET_BOUNDARIES.to_vec())
-                .unwrap_or_default(),
+            heatmap_default_bucket_count: DEFAULT_HEATMAP_BUCKET_COUNT,
+            heatmap_explicit_bounds: match scenario.heatmap_layout {
+                Some(HeatmapLayoutKind::Custom) => {
+                    BTreeMap::from([(selector, HEATMAP_BUCKET_BOUNDARIES.to_vec())])
+                }
+                _ => BTreeMap::new(),
+            },
         }),
     );
     aggregator
@@ -201,13 +247,36 @@ fn expected_counters(object_count: usize, object_index: usize, rollover: bool) -
         .collect()
 }
 
-fn expected_bucket_counts(values: impl IntoIterator<Item = u64>) -> Vec<u64> {
-    let mut counts = vec![0; HEATMAP_BUCKET_BOUNDARIES.len() + 1];
+fn expected_heatmap_values(counters: &[u64], reporting_rate: bool) -> Vec<u64> {
+    let accepted = if reporting_rate {
+        counters
+            .iter()
+            .skip(samples_per_reporting_window() - 1)
+            .step_by(samples_per_reporting_window())
+            .copied()
+            .collect::<Vec<_>>()
+    } else {
+        counters.to_vec()
+    };
+    let mut baseline = None;
+    let mut values = Vec::with_capacity(accepted.len().saturating_sub(1));
+    for value in accepted {
+        if let Some(previous) = baseline.replace(value) {
+            if let Some(delta) = value.checked_sub(previous) {
+                values.push(delta);
+            }
+        }
+    }
+    values
+}
+
+fn expected_bucket_counts(bounds: &[u64], values: impl IntoIterator<Item = u64>) -> Vec<u64> {
+    let mut counts = vec![0; bounds.len() + 1];
     for value in values {
-        let bucket = HEATMAP_BUCKET_BOUNDARIES
+        let bucket = bounds
             .iter()
             .position(|bound| value <= *bound)
-            .unwrap_or(HEATMAP_BUCKET_BOUNDARIES.len());
+            .unwrap_or(bounds.len());
         counts[bucket] += 1;
     }
     counts
@@ -253,7 +322,11 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
         );
     }
 
-    let expected_heatmaps = if scenario.heatmap { object_count } else { 0 };
+    let expected_heatmaps = if scenario.heatmap_layout.is_some() {
+        object_count
+    } else {
+        0
+    };
     assert_eq!(
         result
             .messages
@@ -263,51 +336,35 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
         expected_heatmaps
     );
 
-    if scenario.heatmap {
+    if let Some(layout_kind) = scenario.heatmap_layout {
         let heatmap_message = result
             .messages
             .iter()
             .find(|message| !message.heatmaps.is_empty())
             .expect("completed heatmap window");
-        if scenario.reporting_rate {
-            let samples_per_reporting_window = samples_per_reporting_window();
-            for heatmap in heatmap_message.heatmaps.iter() {
-                let object_index = heatmap
-                    .object_name
-                    .strip_prefix("Ethernet")
-                    .expect("benchmark object name")
-                    .parse::<usize>()
-                    .expect("benchmark object index")
-                    / 8;
-                let counters = &expected_counters[object_index];
-                let reporting_values = counters
-                    .iter()
-                    .skip(samples_per_reporting_window - 1)
-                    .step_by(samples_per_reporting_window)
-                    .copied()
-                    .collect::<Vec<_>>();
-                assert_eq!(heatmap.count, reporting_values.len() as u64);
-                assert_eq!(
-                    heatmap.bucket_counts,
-                    expected_bucket_counts(reporting_values)
-                );
-            }
-        } else {
-            for heatmap in heatmap_message.heatmaps.iter() {
-                let object_index = heatmap
-                    .object_name
-                    .strip_prefix("Ethernet")
-                    .expect("benchmark object name")
-                    .parse::<usize>()
-                    .expect("benchmark object index")
-                    / 8;
-                let counters = &expected_counters[object_index];
-                assert_eq!(heatmap.count, SAMPLES_PER_ITERATION as u64);
-                assert_eq!(
-                    heatmap.bucket_counts,
-                    expected_bucket_counts(counters.iter().copied())
-                );
-            }
+        let expected_bounds = match layout_kind {
+            HeatmapLayoutKind::Custom => HEATMAP_BUCKET_BOUNDARIES.to_vec(),
+            HeatmapLayoutKind::Default256 => default_heatmap_layout(256)
+                .expect("default benchmark layout")
+                .explicit_bounds_u64()
+                .to_vec(),
+        };
+        for heatmap in heatmap_message.heatmaps.iter() {
+            let object_index = heatmap
+                .object_name
+                .strip_prefix("Ethernet")
+                .expect("benchmark object name")
+                .parse::<usize>()
+                .expect("benchmark object index")
+                / 8;
+            let values =
+                expected_heatmap_values(&expected_counters[object_index], scenario.reporting_rate);
+            assert_eq!(heatmap.count, values.len() as u64);
+            assert_eq!(heatmap.explicit_bounds.len(), expected_bounds.len());
+            assert_eq!(
+                heatmap.bucket_counts,
+                expected_bucket_counts(&expected_bounds, values)
+            );
         }
     } else {
         assert!(result

@@ -61,6 +61,8 @@ impl Heatmap {
             OtelAttribute::new("object_name", self.object_name.as_ref()).to_proto(),
             OtelAttribute::new("sai_type_id", self.type_id.to_string()).to_proto(),
             OtelAttribute::new("sai_stat_id", self.stat_id.to_string()).to_proto(),
+            OtelAttribute::new("heatmap_value_kind", self.value_kind.as_str()).to_proto(),
+            OtelAttribute::new("heatmap_schema", self.schema.as_ref()).to_proto(),
         ];
         if let Some(session_key) = session_key {
             attributes.push(OtelAttribute::new("hft_session", session_key).to_proto());
@@ -462,6 +464,11 @@ fn test_sai_to_otel_gauge_conversion() {
             max: 8,
             explicit_bounds: Arc::from([1.0, 2.0, 8.0]),
             bucket_counts: vec![1, 1, 1, 0],
+            value_kind: crate::message::aggregator::HeatmapValueKind::Delta,
+            schema: crate::message::aggregator::heatmap_schema(
+                crate::message::aggregator::HeatmapValueKind::Delta,
+                &[1, 2, 8],
+            ),
         };
 
         let point = heatmap.to_proto(Some("profile|PORT"));
@@ -474,7 +481,7 @@ fn test_sai_to_otel_gauge_conversion() {
         assert_eq!(point.max, Some(8.0));
         assert_eq!(point.explicit_bounds, vec![1.0, 2.0, 8.0]);
         assert_eq!(point.bucket_counts, vec![1, 1, 1, 0]);
-        assert_eq!(point.attributes.len(), 4);
+        assert_eq!(point.attributes.len(), 6);
         assert!(point.attributes.iter().any(|attribute| {
             attribute.key == "hft_session"
                 && attribute
@@ -483,6 +490,19 @@ fn test_sai_to_otel_gauge_conversion() {
                     .and_then(|value| value.value.as_ref())
                     == Some(&Value::StringValue("profile|PORT".to_string()))
         }));
+        for (key, expected) in [
+            ("heatmap_value_kind", "delta"),
+            ("heatmap_schema", heatmap.schema.as_ref()),
+        ] {
+            assert!(point.attributes.iter().any(|attribute| {
+                attribute.key == key
+                    && attribute
+                        .value
+                        .as_ref()
+                        .and_then(|value| value.value.as_ref())
+                        == Some(&Value::StringValue(expected.to_string()))
+            }));
+        }
     }
 
     #[test]

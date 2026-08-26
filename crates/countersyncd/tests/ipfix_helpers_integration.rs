@@ -172,7 +172,8 @@ async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
                 rollover_counters: std::collections::HashSet::from([selector]),
                 heatmap_interval: Some(1_000),
                 heatmap_counters: std::collections::HashSet::from([selector]),
-                heatmap_bucket_boundaries: vec![100, 500, 1_000],
+                heatmap_default_bucket_count: 4,
+                ..Default::default()
             }),
         ))
         .await
@@ -208,8 +209,13 @@ async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
         .iter()
         .find_map(|output| output.heatmaps.first())
         .expect("completed heatmap should arrive");
-    assert_eq!(heatmap.count, 10);
-    assert_eq!(heatmap.bucket_counts, vec![1, 4, 5, 0]);
+    assert_eq!(heatmap.count, 9);
+    assert_eq!(heatmap.sum, 900.0);
+    assert_eq!(heatmap.bucket_counts, vec![0, 0, 9, 0]);
+    assert_eq!(
+        heatmap.explicit_bounds.as_ref(),
+        &[0.0, 1.0, (1u64 << 53) as f64]
+    );
     assert_eq!(heatmap.start_time_unix_nano, 0);
     assert_eq!(heatmap.time_unix_nano, 1_000_000);
 }

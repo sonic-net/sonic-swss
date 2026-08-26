@@ -44,6 +44,12 @@ const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;
 const MAX_EXPORT_RETRIES: u64 = 30;
 
+fn heatmap_payload_units(heatmap: &Heatmap) -> usize {
+    1usize
+        .saturating_add(heatmap.explicit_bounds.len())
+        .saturating_add(heatmap.bucket_counts.len())
+}
+
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
 pub struct OtelActorConfig {
@@ -250,18 +256,26 @@ impl OtelActor {
         }
 
         self.buffer.push(otel_metrics);
-        let heatmaps_in_message = message.heatmaps.len();
-        if heatmaps_in_message != 0 {
+        let heatmap_payload = message
+            .heatmaps
+            .iter()
+            .map(heatmap_payload_units)
+            .fold(0usize, usize::saturating_add);
+        if heatmap_payload != 0 {
             self.heatmaps.push((message.key, message.heatmaps));
         }
-        self.buffered_counters += counters_in_message + heatmaps_in_message;
+        self.buffered_counters = self
+            .buffered_counters
+            .saturating_add(counters_in_message)
+            .saturating_add(heatmap_payload);
 
         // Start timeout when buffer transitions from empty to non-empty
         if was_empty {
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
         }
 
-        // Force flush when counter threshold is reached
+        // The threshold triggers a flush; it is accounting guidance, not a
+        // hard request-size cap, so a single message is never split.
         if self.buffered_counters >= self.config.max_counters_per_export {
             self.flush_buffer().await?;
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
@@ -485,5 +499,32 @@ impl OtelActor {
             "OtelActor shutdown complete. {} messages, {} exports, {} failures",
             self.messages_received, self.exports_performed, self.export_failures
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::aggregator::{heatmap_schema, HeatmapValueKind};
+
+    #[test]
+    fn heatmap_flush_accounting_tracks_bounds_and_counts() {
+        let heatmap = Heatmap {
+            object_name: Arc::from("Ethernet0"),
+            type_id: 1,
+            stat_id: 2,
+            start_time_unix_nano: 0,
+            time_unix_nano: 1,
+            count: 1,
+            sum: 1.0,
+            min: 1,
+            max: 1,
+            explicit_bounds: Arc::from([1.0, 2.0, 8.0]),
+            bucket_counts: vec![1, 0, 0, 0],
+            value_kind: HeatmapValueKind::Delta,
+            schema: heatmap_schema(HeatmapValueKind::Delta, &[1, 2, 8]),
+        };
+
+        assert_eq!(heatmap_payload_units(&heatmap), 8);
     }
 }

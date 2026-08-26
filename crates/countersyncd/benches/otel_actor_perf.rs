@@ -2,7 +2,9 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::Duration;
 use std::{net::SocketAddr, thread};
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -10,7 +12,10 @@ use tonic::{Request, Response, Status};
 use tonic::transport::Server;
 
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
-use countersyncd::message::aggregator::AggregatedStatsMessage;
+use countersyncd::message::aggregator::{
+    default_heatmap_layout, heatmap_schema, AggregatedStatsMessage, Heatmap, HeatmapLayout,
+    HeatmapValueKind,
+};
 use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
 
 mod ipfix_bench_data;
@@ -118,6 +123,26 @@ async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::
     (elapsed, total_counters)
 }
 
+fn build_heatmap(layout: Arc<HeatmapLayout>) -> Heatmap {
+    let mut bucket_counts = vec![0; layout.bucket_count()];
+    bucket_counts[layout.bucket_count() / 2] = 64;
+    Heatmap {
+        object_name: Arc::from("obj_0"),
+        type_id: 1,
+        stat_id: 100,
+        start_time_unix_nano: 1_000_000,
+        time_unix_nano: 2_000_000,
+        count: 64,
+        sum: 65_536.0,
+        min: 0,
+        max: 65_536,
+        explicit_bounds: layout.explicit_bounds(),
+        bucket_counts,
+        value_kind: HeatmapValueKind::Delta,
+        schema: heatmap_schema(HeatmapValueKind::Delta, layout.explicit_bounds_u64()),
+    }
+}
+
 fn counters_per_second(elapsed: std::time::Duration, counters: usize) -> f64 {
     if elapsed.as_secs_f64() > 0.0 {
         counters as f64 / elapsed.as_secs_f64()
@@ -183,6 +208,30 @@ fn bench_otel_actor(c: &mut Criterion) {
     }
 
     group.finish();
+
+    let mut heatmap_group = c.benchmark_group("heatmap_to_proto_serialization");
+    // Throughput is histogram series/s. The 8-vs-256 cardinality comparison
+    // intentionally measures the protobuf cost of practical payload sizes.
+    for (name, layout) in [
+        (
+            "explicit_8_buckets",
+            HeatmapLayout::from_explicit_bounds(vec![0, 64, 256, 1_024, 4_096, 16_384, 65_536])
+                .expect("custom benchmark layout"),
+        ),
+        (
+            "default_256_buckets",
+            default_heatmap_layout(256).expect("default benchmark layout"),
+        ),
+    ] {
+        heatmap_group.throughput(Throughput::Elements(1));
+        let heatmap = build_heatmap(layout);
+        heatmap_group.bench_function(name, move |b| {
+            b.iter(|| {
+                black_box(black_box(&heatmap).to_proto(black_box(Some("benchmark|PORT"))))
+            });
+        });
+    }
+    heatmap_group.finish();
 
     // Shut down mock collector
     let _ = collector_shutdown.send(());
