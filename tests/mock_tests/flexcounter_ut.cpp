@@ -1310,6 +1310,16 @@ namespace flexcounter_test
             pol.policer_id = policer_oid;
             orch.m_trap_group_policer_map[tg_oid] = pol;
         }
+
+        // Helper: registration is deferred until the policer's VID->RID mapping
+        // exists — seed the mapping and fire the pending-registration timer.
+        void flushPendingPolicerRegistrations(CoppOrch& orch, sai_object_id_t policer_oid)
+        {
+            swss::DBConnector asic_db("ASIC_DB", 0);
+            swss::Table vidToRid(&asic_db, "VIDTORID");
+            vidToRid.hset("", sai_serialize_object_id(policer_oid), "oid:0x0");
+            orch.doTask(*orch.m_FlexCounterUpdTimer);
+        }
     }
 
     TEST_F(StandaloneFCTest, TestCoppPolicerStatsStatusUpdate)
@@ -1333,6 +1343,7 @@ namespace flexcounter_test
         // enable by flipping the user-intent flag directly.
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
         ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
                                      policer_id, POLICER_COUNTER_ID_LIST));
 
@@ -1410,6 +1421,7 @@ namespace flexcounter_test
 
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
         // FLEX_COUNTER_TABLE entry exists; the bound stat set is the
         // intersection (PACKETS + BYTES only). checkFlexCounter asserts
         // existence rather than the specific stat list — verifying just the
