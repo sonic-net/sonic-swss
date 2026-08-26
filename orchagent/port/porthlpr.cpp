@@ -1404,6 +1404,12 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == "dhcp_rate_limit")
+        {
+            /* Placeholder to prevent warning. Handled by dhcp container,
+             * not needed to be parsed here.
+             */
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
