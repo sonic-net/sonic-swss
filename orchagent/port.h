@@ -294,7 +294,7 @@ public:
     uint32_t m_reuse_threshold = 0;
     uint32_t m_flap_penalty = 0;
 
-    Role m_role;
+    Role m_role = Ext;
 };
 
 }

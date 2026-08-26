@@ -234,7 +234,7 @@ public:
     } serdes_settings_sync_status;
 
     struct {
-        swss::Port::Role value;
+        swss::Port::Role value = swss::Port::Role::Ext;
         bool is_set = false;
     } role; // Port role
 

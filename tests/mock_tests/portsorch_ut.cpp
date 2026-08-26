@@ -2692,6 +2692,31 @@ namespace portsorch_test
         cleanupPorts(gPortsOrch);
     }
 
+    /*
+     * SI gate: a front-panel port with no explicit 'role' defaults to Ext and is gated.
+     * Regression guard for the indeterminate-role bug (m_role must not be read uninitialized).
+     */
+    TEST_F(PortsOrchTest, PortSiGateDefaultRoleGated)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);          // defaultPortList entries have no 'role'
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_EQ(p.m_role, Port::Role::Ext);            // absent role normalized to Ext
+        ASSERT_FALSE(p.m_admin_state_up);                // admin-up held (gated)
+        ASSERT_TRUE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+        cleanupPorts(gPortsOrch);
+    }
+
     /**
      * Test that verifies PortsOrch::getPort() on a port that has been deleted
      */
