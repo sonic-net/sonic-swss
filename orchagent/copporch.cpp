@@ -1755,7 +1755,9 @@ bool CoppOrch::isPolicerStatSupported(sai_policer_stat_t stat)
 
     return std::any_of(m_policer_stats_caps.cbegin(), m_policer_stats_caps.cend(),
         [stat](const sai_stat_capability_t& c) {
-            return static_cast<sai_policer_stat_t>(c.stat_enum) == stat;
+            // Counter group polls in READ mode; ignore READ_AND_CLEAR-only stats
+            return static_cast<sai_policer_stat_t>(c.stat_enum) == stat &&
+                   (c.stat_modes & SAI_STATS_MODE_READ);
         });
 }
 
