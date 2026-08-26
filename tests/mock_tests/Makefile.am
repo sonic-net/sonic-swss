@@ -356,6 +356,7 @@ tests_fdbsyncd_SOURCES = fdbsyncd/fdbsyncd_ut.cpp \
                          mock_table.cpp \
                          mock_hiredis.cpp \
                          mock_redisreply.cpp \
+                         common/mock_shell_command.cpp \
                          $(top_srcdir)/fdbsyncd/fdbsync.cpp
 
 tests_fdbsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fdbsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
