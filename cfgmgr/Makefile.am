@@ -6,6 +6,7 @@ SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
 bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+noinst_LIBRARIES = libcfgmgrcommon.a
 
 cfgmgrdir = $(datadir)/swss
 
@@ -31,81 +32,84 @@ COMMON_ORCH_SOURCE = $(top_srcdir)/orchagent/orch.cpp \
 				$(top_srcdir)/orchagent/response_publisher.cpp \
 				$(top_srcdir)/lib/recorder.cpp
 
-vlanmgrd_SOURCES = vlanmgrd.cpp vlanmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+libcfgmgrcommon_a_SOURCES = $(COMMON_ORCH_SOURCE)
+libcfgmgrcommon_a_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+
+vlanmgrd_SOURCES = vlanmgrd.cpp vlanmgr.cpp shellcmd.h
 vlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 vlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-vlanmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+vlanmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-teammgrd_SOURCES = teammgrd.cpp teammgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+teammgrd_SOURCES = teammgrd.cpp teammgr.cpp shellcmd.h
 teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-teammgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+teammgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-portmgrd_SOURCES = portmgrd.cpp portmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+portmgrd_SOURCES = portmgrd.cpp portmgr.cpp shellcmd.h
 portmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 portmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-portmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+portmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-fabricmgrd_SOURCES = fabricmgrd.cpp fabricmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+fabricmgrd_SOURCES = fabricmgrd.cpp fabricmgr.cpp shellcmd.h
 fabricmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 fabricmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-fabricmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+fabricmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-intfmgrd_SOURCES = intfmgrd.cpp intfmgr.cpp $(top_srcdir)/lib/subintf.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+intfmgrd_SOURCES = intfmgrd.cpp intfmgr.cpp $(top_srcdir)/lib/subintf.cpp shellcmd.h
 intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-intfmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+intfmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-buffermgrd_SOURCES = buffermgrd.cpp buffermgr.cpp buffermgrdyn.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+buffermgrd_SOURCES = buffermgrd.cpp buffermgr.cpp buffermgrdyn.cpp shellcmd.h
 buffermgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 buffermgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-buffermgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+buffermgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-vrfmgrd_SOURCES = vrfmgrd.cpp vrfmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+vrfmgrd_SOURCES = vrfmgrd.cpp vrfmgr.cpp shellcmd.h
 vrfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 vrfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-vrfmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+vrfmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-nbrmgrd_SOURCES = nbrmgrd.cpp nbrmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+nbrmgrd_SOURCES = nbrmgrd.cpp nbrmgr.cpp shellcmd.h
 nbrmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(LIBNL_CFLAGS) $(CFLAGS_ASAN)
 nbrmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(LIBNL_CPPFLAGS) $(CFLAGS_ASAN)
-nbrmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS) $(LIBNL_LIBS)
+nbrmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS) $(LIBNL_LIBS)
 
-vxlanmgrd_SOURCES = vxlanmgrd.cpp vxlanmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+vxlanmgrd_SOURCES = vxlanmgrd.cpp vxlanmgr.cpp shellcmd.h
 vxlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 vxlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-vxlanmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+vxlanmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-sflowmgrd_SOURCES = sflowmgrd.cpp sflowmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+sflowmgrd_SOURCES = sflowmgrd.cpp sflowmgr.cpp shellcmd.h
 sflowmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 sflowmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-sflowmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+sflowmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-natmgrd_SOURCES = natmgrd.cpp natmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+natmgrd_SOURCES = natmgrd.cpp natmgr.cpp shellcmd.h
 natmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 natmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-natmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+natmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-coppmgrd_SOURCES = coppmgrd.cpp coppmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+coppmgrd_SOURCES = coppmgrd.cpp coppmgr.cpp shellcmd.h
 coppmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 coppmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-coppmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+coppmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-tunnelmgrd_SOURCES = tunnelmgrd.cpp tunnelmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+tunnelmgrd_SOURCES = tunnelmgrd.cpp tunnelmgr.cpp shellcmd.h
 tunnelmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 tunnelmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-tunnelmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+tunnelmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h $(top_srcdir)/orchagent/macsecpost.cpp
+macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp shellcmd.h $(top_srcdir)/orchagent/macsecpost.cpp
 macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+macsecmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 
-stpmgrd_SOURCES = stpmgrd.cpp stpmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+stpmgrd_SOURCES = stpmgrd.cpp stpmgr.cpp shellcmd.h
 stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-stpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+stpmgrd_LDADD = $(LDFLAGS_ASAN) libcfgmgrcommon.a $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 if GCOV_ENABLED
 vlanmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
@@ -143,4 +147,3 @@ macsecmgrd_SOURCES += $(ASAN_SOURCES)
 fabricmgrd_SOURCES += $(ASAN_SOURCES)
 stpmgrd_SOURCES += $(ASAN_SOURCES)
 endif
-

@@ -1,12 +1,15 @@
 ORCHAGENT_DIR = $(top_srcdir)/orchagent
 P4ORCH_DIR = $(ORCHAGENT_DIR)/p4orch
+include $(top_srcdir)/orchagent/p4orch/shared_sources.mk
+
 INCLUDES = -I $(top_srcdir) -I $(ORCHAGENT_DIR) -I $(P4ORCH_DIR) -I $(top_srcdir)/lib -I $(ORCHAGENT_DIR)/flex_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = p4orch_tests
 
-noinst_PROGRAMS = p4orch_tests
+check_PROGRAMS = p4orch_tests
+noinst_LIBRARIES = libp4orchshared.a
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -17,44 +20,10 @@ endif
 CFLAGS_GTEST =
 LDADD_GTEST = -lgtest -lgtest_main -lgmock -lgmock_main
 
-p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
-		       $(ORCHAGENT_DIR)/vrforch.cpp \
-		       $(ORCHAGENT_DIR)/vxlanorch.cpp \
-		       $(ORCHAGENT_DIR)/copporch.cpp \
-		       $(ORCHAGENT_DIR)/switch/switch_capabilities.cpp \
-		       $(ORCHAGENT_DIR)/switch/switch_helper.cpp \
-		       $(ORCHAGENT_DIR)/switch/trimming/capabilities.cpp \
-		       $(ORCHAGENT_DIR)/switch/trimming/helper.cpp \
-		       $(ORCHAGENT_DIR)/switchorch.cpp \
-		       $(ORCHAGENT_DIR)/request_parser.cpp \
-		       $(top_srcdir)/lib/recorder.cpp \
-		       $(ORCHAGENT_DIR)/zmqorch.cpp \
-		       $(ORCHAGENT_DIR)/namelabelmapper.cpp \
-		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
-		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
-		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
-		       $(ORCHAGENT_DIR)/port/porthlpr.cpp \
-		       $(ORCHAGENT_DIR)/notifications.cpp \
-		       $(P4ORCH_DIR)/p4oidmapper.cpp \
-		       $(P4ORCH_DIR)/p4orch.cpp \
-		       $(P4ORCH_DIR)/p4orch_util.cpp \
-		       $(P4ORCH_DIR)/tables_definition_manager.cpp \
-		       $(P4ORCH_DIR)/router_interface_manager.cpp \
-		       $(P4ORCH_DIR)/gre_tunnel_manager.cpp \
-		       $(P4ORCH_DIR)/neighbor_manager.cpp \
-		       $(P4ORCH_DIR)/next_hop_manager.cpp \
-		       $(P4ORCH_DIR)/route_manager.cpp \
-		       $(P4ORCH_DIR)/acl_util.cpp \
-		       $(P4ORCH_DIR)/acl_table_manager.cpp \
-		       $(P4ORCH_DIR)/acl_rule_manager.cpp \
-		       $(P4ORCH_DIR)/wcmp_manager.cpp \
-		       $(P4ORCH_DIR)/mirror_session_manager.cpp \
-		       $(P4ORCH_DIR)/l3_admit_manager.cpp \
-		       $(P4ORCH_DIR)/l3_multicast_manager.cpp \
-                       $(P4ORCH_DIR)/tunnel_decap_group_manager.cpp \
-		       $(P4ORCH_DIR)/ip_multicast_manager.cpp \
-		       $(P4ORCH_DIR)/ext_tables_manager.cpp \
-		       $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
+libp4orchshared_a_SOURCES = $(P4ORCH_SHARED_SOURCES)
+libp4orchshared_a_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+
+p4orch_tests_SOURCES = $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
 		       fake_portorch.cpp \
 		       fake_crmorch.cpp \
 		       fake_flexcounterorch.cpp \
@@ -108,6 +77,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-p4orch_tests_LDADD = $(LDADD_GTEST) $(LDFLAGS_ASAN) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
+p4orch_tests_LDADD = libp4orchshared.a $(LDADD_GTEST) $(LDFLAGS_ASAN) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
+
+$(p4orch_tests_OBJECTS): CXXFLAGS := $(filter-out -O%,$(CXXFLAGS)) -O0
 
 LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py

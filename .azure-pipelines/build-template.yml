@@ -63,6 +63,10 @@ parameters:
   type: boolean
   default: false
 
+- name: run_unit_tests
+  type: boolean
+  default: true
+
 - name: common_lib_artifact_name
   type: string
 
@@ -257,6 +261,9 @@ jobs:
       if [ '${{ parameters.asan }}' == True ]; then
          export ENABLE_ASAN=y
       fi
+      if [ '${{ parameters.run_unit_tests }}' != True ]; then
+         export DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:+$DEB_BUILD_OPTIONS }nocheck"
+      fi
       ./autogen.sh
       RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
@@ -267,7 +274,7 @@ jobs:
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: gtest
-    condition: and(succeededOrFailed(), eq('${{ parameters.asan }}', false))
+    condition: and(succeededOrFailed(), eq('${{ parameters.asan }}', false), eq('${{ parameters.run_unit_tests }}', true))
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
