@@ -106,6 +106,10 @@ protected:
     TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
     TrapObjectTrapNameMap m_trap_obj_name_map;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
+    // Policer OID -> trap group name for bound policer counters; process-local
+    // dedup so a warm-reboot replay (new VID, stale name map) still rebinds.
+    std::map<sai_object_id_t, std::string> m_policer_obj_name_map;
+    std::map<sai_object_id_t, std::string> m_pendingPolicerAddToFlexCntr;
 
     std::shared_ptr<DBConnector> m_counter_db;
     std::shared_ptr<DBConnector> m_asic_db;
