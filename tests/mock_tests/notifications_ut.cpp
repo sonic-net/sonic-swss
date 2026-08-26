@@ -7,6 +7,7 @@
 #include "orch.h"
 #include "sai_serialize.h"
 #include "saiextensions.h"
+#include "sainotificationorch.h"
 #include "sairedis.h"
 #include "swss/table.h"
 
@@ -34,14 +35,54 @@ public:
     }
 };
 
-static void drainSaiNotificationQueue()
+static void ensureSaiNotificationOrch()
 {
-    auto queue = getSaiNotificationQueue();
+    if (gSaiNotificationOrch == nullptr)
+    {
+        gSaiNotificationOrch = new SaiNotificationOrch();
+    }
+}
+
+static void drainQueue(SaiNotificationQueue *queue)
+{
+    if (queue == nullptr)
+    {
+        return;
+    }
+
     std::deque<KeyOpFieldsValuesTuple> entries;
     while (queue->hasData())
     {
         queue->pops(entries);
         entries.clear();
+    }
+}
+
+static void drainAllSaiNotificationQueues()
+{
+    if (gSaiNotificationOrch == nullptr)
+    {
+        return;
+    }
+
+    static const char *ops[] = {
+        "fdb_event",
+        "port_state_change",
+        "port_host_tx_ready",
+        "bfd_session_state_change",
+        "icmp_echo_session_state_change",
+        "twamp_session_event",
+        SAI_SWITCH_NOTIFICATION_NAME_SWITCH_MACSEC_POST_STATUS,
+        SAI_SWITCH_NOTIFICATION_NAME_MACSEC_POST_STATUS,
+        SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT,
+        SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT,
+        SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT,
+        SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE,
+    };
+
+    for (const auto *op : ops)
+    {
+        drainQueue(gSaiNotificationOrch->getSaiNotificationQueue(op));
     }
 }
 
@@ -54,12 +95,13 @@ protected:
     {
         m_oldMode = gRedisCommunicationMode;
         gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
-        drainSaiNotificationQueue();
+        ensureSaiNotificationOrch();
+        drainAllSaiNotificationQueues();
     }
 
     void TearDown() override
     {
-        drainSaiNotificationQueue();
+        drainAllSaiNotificationQueues();
         gRedisCommunicationMode = m_oldMode;
     }
 };
@@ -70,15 +112,20 @@ TEST_F(SaiNotificationZmqTest, EnqueueDroppedDuringShutdown)
 
     enqueueSaiNotification("fdb_event", "data", std::vector<FieldValueTuple>());
 
-    EXPECT_EQ(getSaiNotificationQueue()->size(), 0u);
+    EXPECT_EQ(gSaiNotificationOrch->getSaiNotificationQueue("fdb_event")->size(), 0u);
 
     gOrchShutdownRequested = 0;
 }
 
 TEST(SaiNotificationQueueTest, EnqueueAndPop)
 {
-    SaiNotificationQueue queue(100, 2);
+    SaiNotificationQueue queue("PortsOrch:port_state_change",
+                               NotificationQueuePolicy::LruDedup,
+                               100,
+                               2);
     std::vector<FieldValueTuple> values;
+
+    queue.registerReadiness(nullptr);
 
     ASSERT_FALSE(queue.hasData());
 
@@ -131,7 +178,7 @@ TEST(SaiNotificationQueueTest, DispatcherInvokesRegisteredHandler)
 
 TEST_F(SaiNotificationZmqTest, PortStateChangeCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("port_state_change");
 
     sai_port_oper_status_notification_t port_oper_status;
     memset(&port_oper_status, 0, sizeof(port_oper_status));
@@ -163,7 +210,7 @@ TEST_F(SaiNotificationZmqTest, PortStateChangeCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, FdbEventCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("fdb_event");
 
     sai_fdb_event_notification_data_t fdb_data;
     memset(&fdb_data, 0, sizeof(fdb_data));
@@ -200,7 +247,10 @@ TEST_F(SaiNotificationZmqTest, FdbEventCallbackEnqueuesInZmqMode)
 
 TEST(SaiNotificationQueueTest, PeekFrontOp)
 {
-    SaiNotificationQueue queue(100, 1);
+    SaiNotificationQueue queue("TestConsumer",
+                               NotificationQueuePolicy::LruDedup,
+                               100,
+                               1);
     std::vector<FieldValueTuple> values;
     std::string op;
 
@@ -222,30 +272,22 @@ TEST(SaiNotificationQueueTest, PeekFrontOp)
 
 TEST(SaiNotificationQueueTest, ReadinessPredicateReportsNotReady)
 {
-    SaiNotificationDispatcher dispatcher;
+    SaiNotificationQueue queue("PortsOrch:port_state_change",
+                               NotificationQueuePolicy::LruDedup);
 
-    dispatcher.registerHandler(
-        "port_state_change",
-        [](KeyOpFieldsValuesTuple &)
-        {
-        },
-        []() { return false; });
+    queue.registerReadiness([]() { return false; });
+    EXPECT_FALSE(queue.isReady());
 
-    EXPECT_FALSE(dispatcher.isReady("port_state_change"));
-
-    dispatcher.registerHandler(
-        "port_state_change",
-        [](KeyOpFieldsValuesTuple &)
-        {
-        },
-        []() { return true; });
-
-    EXPECT_TRUE(dispatcher.isReady("port_state_change"));
+    queue.registerReadiness([]() { return true; });
+    EXPECT_TRUE(queue.isReady());
 }
 
 TEST(SaiNotificationQueueExecutorTest, SaiNotificationQueueExecutor)
 {
-    SaiNotificationQueue queue(100, 10);
+    SaiNotificationQueue queue("BfdOrch:bfd_session_state_change",
+                               NotificationQueuePolicy::Fifo,
+                               100,
+                               10);
     SaiNotificationDispatcher dispatcher;
     TestNotificationOrch orch;
     std::vector<FieldValueTuple> values;
@@ -258,6 +300,7 @@ TEST(SaiNotificationQueueExecutorTest, SaiNotificationQueueExecutor)
             called = true;
         });
 
+    queue.registerReadiness(nullptr);
     queue.enqueue("bfd_session_state_change", "bfd", values);
 
     std::unique_ptr<Executor> executor(
@@ -270,56 +313,58 @@ TEST(SaiNotificationQueueExecutorTest, SaiNotificationQueueExecutor)
     EXPECT_FALSE(queue.hasData());
 }
 
-TEST(SaiNotificationQueueExecutorTest, SaiNotificationQueueExecutorHeadOfLineBlocksUntilReady)
+TEST(SaiNotificationQueueExecutorTest, PerConsumerQueuesDoNotHeadOfLineBlock)
 {
-    SaiNotificationQueue queue(100, 10);
+    SaiNotificationQueue fdbQueue("FdbOrch:fdb_event", NotificationQueuePolicy::LruDedup, 100, 10);
+    SaiNotificationQueue bfdQueue("BfdOrch:bfd_session_state_change",
+                                  NotificationQueuePolicy::Fifo,
+                                  100,
+                                  10);
     SaiNotificationDispatcher dispatcher;
     TestNotificationOrch orch;
     std::vector<FieldValueTuple> values;
     bool portsReady = false;
     int fdbCalls = 0;
     int bfdCalls = 0;
-    std::deque<std::string> dispatchOrder;
 
     dispatcher.registerHandler(
         "fdb_event",
         [&](KeyOpFieldsValuesTuple &)
         {
             fdbCalls++;
-            dispatchOrder.push_back("fdb_event");
-        },
-        [&]() { return portsReady; });
+        });
 
     dispatcher.registerHandler(
         "bfd_session_state_change",
         [&](KeyOpFieldsValuesTuple &)
         {
             bfdCalls++;
-            dispatchOrder.push_back("bfd_session_state_change");
         });
 
-    queue.enqueue("fdb_event", "fdb", values);
-    queue.enqueue("bfd_session_state_change", "bfd", values);
+    fdbQueue.registerReadiness([&]() { return portsReady; });
+    bfdQueue.registerReadiness(nullptr);
 
-    std::unique_ptr<Executor> executor(
-        createSaiNotificationQueueExecutor(&queue, &orch, &dispatcher, "TEST_EXECUTOR"));
+    fdbQueue.enqueue("fdb_event", "fdb", values);
+    bfdQueue.enqueue("bfd_session_state_change", "bfd", values);
 
-    executor->execute();
+    std::unique_ptr<Executor> fdbExecutor(
+        createSaiNotificationQueueExecutor(&fdbQueue, &orch, &dispatcher, "FDB_EXECUTOR"));
+    std::unique_ptr<Executor> bfdExecutor(
+        createSaiNotificationQueueExecutor(&bfdQueue, &orch, &dispatcher, "BFD_EXECUTOR"));
+
+    fdbExecutor->execute();
+    bfdExecutor->execute();
 
     EXPECT_EQ(fdbCalls, 0);
-    EXPECT_EQ(bfdCalls, 0);
-    EXPECT_EQ(queue.size(), 2u);
-    EXPECT_TRUE(dispatchOrder.empty());
+    EXPECT_EQ(bfdCalls, 1);
+    EXPECT_EQ(fdbQueue.size(), 1u);
+    EXPECT_FALSE(bfdQueue.hasData());
 
     portsReady = true;
-    executor->execute();
+    fdbExecutor->execute();
 
     EXPECT_EQ(fdbCalls, 1);
-    EXPECT_EQ(bfdCalls, 1);
-    EXPECT_FALSE(queue.hasData());
-    ASSERT_EQ(dispatchOrder.size(), 2u);
-    EXPECT_EQ(dispatchOrder[0], "fdb_event");
-    EXPECT_EQ(dispatchOrder[1], "bfd_session_state_change");
+    EXPECT_FALSE(fdbQueue.hasData());
 }
 
 TEST(SaiNotificationQueueTest, MissingHandlerLogsWarning)
@@ -334,7 +379,7 @@ TEST(SaiNotificationQueueTest, MissingHandlerLogsWarning)
 
 TEST_F(SaiNotificationZmqTest, PortHostTxReadyCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("port_host_tx_ready");
 
     on_port_host_tx_ready(0x1000000000001, 0x1000000000019, SAI_PORT_HOST_TX_READY_STATUS_READY);
 
@@ -358,7 +403,7 @@ TEST_F(SaiNotificationZmqTest, PortHostTxReadyCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, BfdSessionStateChangeCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("bfd_session_state_change");
 
     sai_bfd_session_state_notification_t bfd_session_state;
     memset(&bfd_session_state, 0, sizeof(bfd_session_state));
@@ -388,7 +433,7 @@ TEST_F(SaiNotificationZmqTest, BfdSessionStateChangeCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, IcmpEchoSessionStateChangeCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("icmp_echo_session_state_change");
 
     sai_icmp_echo_session_state_notification_t icmp_session_state;
     memset(&icmp_session_state, 0, sizeof(icmp_session_state));
@@ -418,7 +463,7 @@ TEST_F(SaiNotificationZmqTest, IcmpEchoSessionStateChangeCallbackEnqueuesInZmqMo
 
 TEST_F(SaiNotificationZmqTest, TwampSessionEventCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue("twamp_session_event");
 
     sai_twamp_session_event_notification_data_t twamp_session;
     memset(&twamp_session, 0, sizeof(twamp_session));
@@ -448,7 +493,7 @@ TEST_F(SaiNotificationZmqTest, TwampSessionEventCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, HaSetEventCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT);
 
     sai_ha_set_event_data_t ha_set_event;
     memset(&ha_set_event, 0, sizeof(ha_set_event));
@@ -478,7 +523,7 @@ TEST_F(SaiNotificationZmqTest, HaSetEventCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, HaScopeEventCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT);
 
     sai_ha_scope_event_data_t ha_scope_event;
     memset(&ha_scope_event, 0, sizeof(ha_scope_event));
@@ -509,7 +554,8 @@ TEST_F(SaiNotificationZmqTest, HaScopeEventCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, FlowBulkGetSessionEventCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT);
 
     sai_flow_bulk_get_session_event_data_t flow_event;
     memset(&flow_event, 0, sizeof(flow_event));
@@ -539,7 +585,8 @@ TEST_F(SaiNotificationZmqTest, FlowBulkGetSessionEventCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, SwitchMacsecPostStatusCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_SWITCH_MACSEC_POST_STATUS);
 
     on_switch_macsec_post_status_notify(gSwitchId, SAI_SWITCH_MACSEC_POST_STATUS_PASS);
 
@@ -561,7 +608,8 @@ TEST_F(SaiNotificationZmqTest, SwitchMacsecPostStatusCallbackEnqueuesInZmqMode)
 
 TEST_F(SaiNotificationZmqTest, MacsecPostStatusCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_MACSEC_POST_STATUS);
 
     sai_object_id_t macsec_id = 0x1000000000033;
 
@@ -583,9 +631,20 @@ TEST_F(SaiNotificationZmqTest, MacsecPostStatusCallbackEnqueuesInZmqMode)
     ASSERT_FALSE(queue->hasData());
 }
 
+TEST_F(SaiNotificationZmqTest, MacsecOpsShareOneQueue)
+{
+    auto *switchQueue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_SWITCH_MACSEC_POST_STATUS);
+    auto *macsecQueue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_MACSEC_POST_STATUS);
+
+    EXPECT_EQ(switchQueue, macsecQueue);
+}
+
 TEST_F(SaiNotificationZmqTest, TamTelTypeConfigChangeCallbackEnqueuesInZmqMode)
 {
-    auto queue = getSaiNotificationQueue();
+    auto *queue = gSaiNotificationOrch->getSaiNotificationQueue(
+        SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE);
 
     sai_object_id_t tam_tel_id = 0x1000000000034;
 
@@ -609,7 +668,8 @@ TEST(NotificationsNonZmqTest, PortStateChangeNoEnqueueInRedisMode)
 {
     sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
     gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-    drainSaiNotificationQueue();
+    ensureSaiNotificationOrch();
+    drainAllSaiNotificationQueues();
 
     sai_port_oper_status_notification_t port_oper_status;
     memset(&port_oper_status, 0, sizeof(port_oper_status));
@@ -618,7 +678,7 @@ TEST(NotificationsNonZmqTest, PortStateChangeNoEnqueueInRedisMode)
 
     on_port_state_change(1, &port_oper_status);
 
-    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+    EXPECT_FALSE(gSaiNotificationOrch->getSaiNotificationQueue("port_state_change")->hasData());
 
     gRedisCommunicationMode = oldMode;
 }
@@ -627,11 +687,14 @@ TEST(NotificationsNonZmqTest, TamTelTypeConfigChangeNoEnqueueInRedisMode)
 {
     sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
     gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-    drainSaiNotificationQueue();
+    ensureSaiNotificationOrch();
+    drainAllSaiNotificationQueues();
 
     on_tam_tel_type_config_change(0x500);
 
-    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+    EXPECT_FALSE(gSaiNotificationOrch->getSaiNotificationQueue(
+                     SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
+                     ->hasData());
 
     gRedisCommunicationMode = oldMode;
 }
@@ -640,7 +703,8 @@ TEST(NotificationsNonZmqTest, FdbEventNoEnqueueInRedisMode)
 {
     sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
     gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-    drainSaiNotificationQueue();
+    ensureSaiNotificationOrch();
+    drainAllSaiNotificationQueues();
 
     sai_fdb_event_notification_data_t fdb_data;
     memset(&fdb_data, 0, sizeof(fdb_data));
@@ -651,7 +715,7 @@ TEST(NotificationsNonZmqTest, FdbEventNoEnqueueInRedisMode)
 
     on_fdb_event(1, &fdb_data);
 
-    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+    EXPECT_FALSE(gSaiNotificationOrch->getSaiNotificationQueue("fdb_event")->hasData());
 
     gRedisCommunicationMode = oldMode;
 }
@@ -660,7 +724,8 @@ TEST(NotificationsNonZmqTest, BfdSessionStateChangeNoEnqueueInRedisMode)
 {
     sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
     gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-    drainSaiNotificationQueue();
+    ensureSaiNotificationOrch();
+    drainAllSaiNotificationQueues();
 
     sai_bfd_session_state_notification_t bfd_session_state;
     memset(&bfd_session_state, 0, sizeof(bfd_session_state));
@@ -669,7 +734,7 @@ TEST(NotificationsNonZmqTest, BfdSessionStateChangeNoEnqueueInRedisMode)
 
     on_bfd_session_state_change(1, &bfd_session_state);
 
-    EXPECT_FALSE(getSaiNotificationQueue()->hasData());
+    EXPECT_FALSE(gSaiNotificationOrch->getSaiNotificationQueue("bfd_session_state_change")->hasData());
 
     gRedisCommunicationMode = oldMode;
 }

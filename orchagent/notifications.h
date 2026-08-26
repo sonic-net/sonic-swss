@@ -1,10 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -14,6 +15,7 @@ extern "C" {
 #include "saiextensions.h"
 }
 
+#include "notificationconsumer.h"
 #include "selectableevent.h"
 #include "table.h"
 
@@ -23,7 +25,19 @@ class Executor;
 class SaiNotificationQueue : public swss::Selectable
 {
 public:
-    SaiNotificationQueue(int pri = 100, size_t popBatchSize = 128);
+    using ReadinessPredicate = std::function<bool()>;
+
+    struct Stats
+    {
+        uint64_t received = 0;
+        uint64_t dropped_allowlist = 0;
+        uint64_t dropped_overflow = 0;
+    };
+
+    SaiNotificationQueue(const std::string &consumerName,
+                         swss::NotificationQueuePolicy policy,
+                         int pri = 100,
+                         size_t popBatchSize = swss::DEFAULT_NC_POP_BATCH_SIZE);
 
     void enqueue(const std::string &op, std::string data, std::vector<swss::FieldValueTuple> values);
     bool peekFrontOp(std::string &op) const;
@@ -31,37 +45,60 @@ public:
     size_t size() const;
     size_t highWatermark() const;
 
+    void registerReadiness(ReadinessPredicate ready = nullptr);
+    bool isReady() const;
+    bool isHandlerRegistered() const;
+
+    int getPri() const;
     int getFd() override;
     uint64_t readData() override;
     bool hasData() override;
     bool hasCachedData() override;
 
+    const std::string &getConsumerName() const;
+    const std::string &getChannel() const;
+    swss::NotificationQueuePolicy getPolicy() const;
+    Stats getStats() const;
+    swss::LruDedupNotificationQueue *getLruDedupQueue() const;
+
+    void notifyPending();
+
 private:
+    std::string buildWireMessage(const std::string &op,
+                                 const std::string &data,
+                                 const std::vector<swss::FieldValueTuple> &values) const;
+
+    void wireToEntry(const std::string &wire, swss::KeyOpFieldsValuesTuple &entry) const;
+
     mutable std::mutex m_mutex;
-    std::queue<swss::KeyOpFieldsValuesTuple> m_queue;
+    std::string m_consumerName;
+    swss::NotificationQueuePolicy m_policy;
+    std::unique_ptr<swss::NotificationQueueBase> m_queue;
     swss::SelectableEvent m_selectableEvent;
+    int m_pri;
     size_t m_popBatchSize;
     size_t m_highWatermark = 0;
+    size_t m_fifoMaxDepth;
+    ReadinessPredicate m_ready;
+    bool m_handlerRegistered = false;
+
+    std::atomic<uint64_t> m_received{0};
+    std::atomic<uint64_t> m_droppedOverflow{0};
 };
 
 class SaiNotificationDispatcher
 {
 public:
     using Handler = std::function<void(swss::KeyOpFieldsValuesTuple &)>;
-    using ReadinessPredicate = std::function<bool()>;
 
-    void registerHandler(const std::string &op, Handler handler,
-                         ReadinessPredicate ready = nullptr);
-    bool isReady(const std::string &op) const;
+    void registerHandler(const std::string &op, Handler handler);
     void dispatch(swss::KeyOpFieldsValuesTuple &entry);
 
 private:
     mutable std::mutex m_mutex;
     std::unordered_map<std::string, Handler> m_handlers;
-    std::unordered_map<std::string, ReadinessPredicate> m_readiness;
 };
 
-SaiNotificationQueue *getSaiNotificationQueue();
 SaiNotificationDispatcher *getSaiNotificationDispatcher();
 void enqueueSaiNotification(const std::string &op, std::string data, std::vector<swss::FieldValueTuple> values);
 Executor *createSaiNotificationQueueExecutor(SaiNotificationQueue *queue,

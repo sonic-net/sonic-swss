@@ -4,13 +4,15 @@
 #include "notifications.h"
 
 #include <functional>
+#include <memory>
 #include <string>
+#include <unordered_map>
 
 /*
  * SaiNotificationOrch
  *
- * Drains the in-process SaiNotificationQueue on the orchagent main loop and
- * dispatches entries to handlers registered by feature orchs.
+ * Drains per-consumer in-process SaiNotificationQueues on the orchagent main
+ * loop and dispatches entries to handlers registered by feature orchs.
  *
  * Lifecycle:
  *
@@ -28,11 +30,30 @@ public:
 
     void registerHandler(const std::string &op,
                          SaiNotificationDispatcher::Handler handler,
-                         SaiNotificationDispatcher::ReadinessPredicate ready = nullptr);
+                         SaiNotificationQueue::ReadinessPredicate ready = nullptr);
+
+    SaiNotificationQueue *getSaiNotificationQueue(const std::string &op);
 
 private:
-    SaiNotificationQueue *m_queue;
-    SaiNotificationDispatcher *m_dispatcher;
+    struct ConsumerMetadata
+    {
+        std::string consumerName;
+        swss::NotificationQueuePolicy policy;
+    };
+
+    struct ConsumerEntry
+    {
+        std::unique_ptr<SaiNotificationQueue> queue;
+        std::unique_ptr<Executor> executor;
+    };
+
+    void initMetadata();
+
+    SaiNotificationQueue *getOrCreateQueueForOp(const std::string &op);
+
+    std::unordered_map<std::string, ConsumerEntry> m_consumersByName;
+    std::unordered_map<std::string, ConsumerMetadata> m_metadataByOp;
+    SaiNotificationDispatcher m_dispatcher;
 };
 
 extern SaiNotificationOrch *gSaiNotificationOrch;
