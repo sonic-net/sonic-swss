@@ -63,6 +63,32 @@ namespace protnhg_test
         gNeighOrch->m_syncdNextHops.erase(nh);
     }
 
+    /*
+     * A real port OID from the mock switch. attachProtNhgMonitoredObject()
+     * resolves an object's type with sai_object_type_query(), so tests must
+     * use OIDs the SAI library actually issued rather than fabricated ones:
+     * the type is encoded in the OID, and the encoding is library-specific.
+     * SAI_OBJECT_TYPE_PORT is what PostSetUp() advertises as attachable.
+     */
+    static sai_object_id_t monitoredOid()
+    {
+        sai_attribute_t attr;
+        vector<sai_object_id_t> ports(256);
+
+        attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+        attr.value.objlist.count = static_cast<uint32_t>(ports.size());
+        attr.value.objlist.list = ports.data();
+
+        if (sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr) !=
+                SAI_STATUS_SUCCESS ||
+            attr.value.objlist.count == 0)
+        {
+            return SAI_NULL_OBJECT_ID;
+        }
+
+        return attr.value.objlist.list[0];
+    }
+
     /* Sum the CRM "used" counter across all keys for a resource type. */
     static uint32_t crmUsed(CrmResourceType type)
     {
@@ -145,12 +171,13 @@ namespace protnhg_test
                     });
 
             /* Force protection-capability support by default so tests don't
-             * depend on the real SAI metadata capability query, which isn't
+             * depend on the real SAI capability queries, which aren't
              * meaningful against a mock switch. Tests exercising the probe
-             * or the unsupported-type path override this explicitly. */
+             * or an unsupported capability override this explicitly. */
             gNhgOrch->m_protCapChecked = true;
-            gNhgOrch->m_hwProtectionSupported = true;
-            gNhgOrch->m_swProtectionSupported = true;
+            gNhgOrch->m_protectionSupported = true;
+            gNhgOrch->m_backupGroupHintSupported = true;
+            gNhgOrch->m_monitoredObjectTypes = { SAI_OBJECT_TYPE_PORT };
         }
 
         void PreTearDown() override
@@ -260,13 +287,19 @@ namespace protnhg_test
 
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
+        /* The admin role only exists as an override of a hardware decision,
+         * so the group has to be HW-autonomous first. The attach itself
+         * clears any standing SET_SWITCHOVER, which is the first group write. */
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_attribute(_, _))
-            .Times(1)
-            .WillOnce(Return(SAI_STATUS_SUCCESS));
+            .Times(2)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        ASSERT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
 
         EXPECT_TRUE(gNhgOrch->setProtNhgAdminRole(
-            key, SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
+            key, SAI_NEXT_HOP_GROUP_ADMIN_ROLE_PRIMARY));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -276,7 +309,7 @@ namespace protnhg_test
     TEST_F(ProtNhgTest, SetAdminRoleNonExistentFails)
     {
         EXPECT_FALSE(gNhgOrch->setProtNhgAdminRole(
-            "no_such_key", SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
+            "no_such_key", SAI_NEXT_HOP_GROUP_ADMIN_ROLE_PRIMARY));
     }
 
     TEST_F(ProtNhgTest, SetAdminRoleSaiFailure)
@@ -288,6 +321,8 @@ namespace protnhg_test
         registerNextHop(standby_nh);
 
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        ASSERT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_attribute(_, _))
@@ -295,38 +330,115 @@ namespace protnhg_test
             .WillOnce(Return(SAI_STATUS_FAILURE));
 
         EXPECT_FALSE(gNhgOrch->setProtNhgAdminRole(
-            key, SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
+            key, SAI_NEXT_HOP_GROUP_ADMIN_ROLE_PRIMARY));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, SetMonitoredObjectOnStandbyMember)
+    /* --- Monitored object attach / detach and the switchover mode --- */
+
+    TEST_F(ProtNhgTest, AttachMonitoredObjectPromotesToHwAutonomous)
     {
         string key = "prot_nhg_monitor";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        sai_object_id_t session_oid = 0xABCD;
 
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
-        EXPECT_TRUE(gNhgOrch->setProtNhgMonitoredObject(key, standby_nh, session_oid));
+
+        /* A group starts SW-driven; the attach is what hands the switchover
+         * decision to the hardware. */
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_FALSE(nhg.isHwAutonomous());
+
+        EXPECT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
+        EXPECT_TRUE(nhg.isHwAutonomous());
+
+        EXPECT_TRUE(gNhgOrch->detachProtNhgMonitoredObject(key, primary_nh));
+        EXPECT_FALSE(nhg.isHwAutonomous());
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, SetMonitoredObjectNonExistentNhgFails)
+    TEST_F(ProtNhgTest, AttachMonitoredObjectOnStandbyMember)
     {
-        NextHopKey nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        EXPECT_FALSE(gNhgOrch->setProtNhgMonitoredObject("no_such_key", nh, 0xABCD));
+        string key = "prot_nhg_monitor_standby";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        EXPECT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, standby_nh, monitoredOid()));
+
+        /* Only the primary member's monitored object decides the mode. */
+        EXPECT_FALSE(gNhgOrch->getProtNhg(key).isHwAutonomous());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, SetMonitoredObjectNonExistentMemberFails)
+    TEST_F(ProtNhgTest, AttachUnsupportedMonitoredObjectTypeFails)
+    {
+        string key = "prot_nhg_monitor_bad_type";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+
+        /* The advertised type list is authoritative, so a type outside it --
+         * here the switch object itself -- is refused before any SAI call and
+         * the group stays SW-driven. */
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    set_next_hop_group_member_attribute(_, _)).Times(0);
+
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, gSwitchId));
+        EXPECT_FALSE(gNhgOrch->getProtNhg(key).isHwAutonomous());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, AttachNullMonitoredObjectFails)
+    {
+        string key = "prot_nhg_monitor_null";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, SAI_NULL_OBJECT_ID));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, AttachMonitoredObjectNonExistentNhgFails)
+    {
+        NextHopKey nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            "no_such_key", nh, monitoredOid()));
+        EXPECT_FALSE(gNhgOrch->detachProtNhgMonitoredObject("no_such_key", nh));
+    }
+
+    TEST_F(ProtNhgTest, AttachMonitoredObjectNonExistentMemberFails)
     {
         string key = "prot_nhg_monitor_bad_mbr";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
@@ -336,7 +448,8 @@ namespace protnhg_test
         registerNextHop(standby_nh);
 
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
-        EXPECT_FALSE(gNhgOrch->setProtNhgMonitoredObject(key, unknown_nh, 0xABCD));
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, unknown_nh, monitoredOid()));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -558,8 +671,23 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         ProtNhg nhg("unsynced_nhg", primary_nh, standby_nh);
-        EXPECT_FALSE(nhg.setAdminRole(
-            SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
+
+        /* Attaching before sync only records the intent, so the group counts
+         * as HW-autonomous and the write is rejected by the sync guard. */
+        ASSERT_TRUE(nhg.updateMemberMonitoredObject(primary_nh, monitoredOid()));
+        ASSERT_TRUE(nhg.isHwAutonomous());
+
+        EXPECT_FALSE(nhg.setAdminRole(SAI_NEXT_HOP_GROUP_ADMIN_ROLE_PRIMARY));
+    }
+
+    TEST_F(ProtNhgTest, SetAdminRoleOnSwDrivenNhgFails)
+    {
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        ProtNhg nhg("sw_driven_nhg", primary_nh, standby_nh);
+
+        ASSERT_FALSE(nhg.isHwAutonomous());
+        EXPECT_FALSE(nhg.setAdminRole(SAI_NEXT_HOP_GROUP_ADMIN_ROLE_PRIMARY));
     }
 
     TEST_F(ProtNhgTest, UpdateMonitoredObjectUnsynced)
@@ -567,7 +695,7 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         ProtNhg nhg("unsynced_mon", primary_nh, standby_nh);
-        EXPECT_TRUE(nhg.updateMemberMonitoredObject(standby_nh, 0xABCD));
+        EXPECT_TRUE(nhg.updateMemberMonitoredObject(standby_nh, monitoredOid()));
     }
 
     TEST_F(ProtNhgTest, UpdateMonitoredObjectSaiFailure)
@@ -584,7 +712,8 @@ namespace protnhg_test
                     set_next_hop_group_member_attribute(_, _))
             .WillOnce(Return(SAI_STATUS_FAILURE));
 
-        EXPECT_FALSE(gNhgOrch->setProtNhgMonitoredObject(key, standby_nh, 0xABCD));
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, standby_nh, monitoredOid()));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -978,9 +1107,11 @@ namespace protnhg_test
         removeEcmpNhg(standby_nhg_key.to_string());
     }
 
-    TEST_F(ProtNhgTest, CreateNonHwProtectionNhg)
+    /* Every protection NHG is created with the one protection type; there is
+     * no separate HW-protection group type. */
+    TEST_F(ProtNhgTest, CreateUsesProtectionGroupType)
     {
-        string key = "prot_nhg_sw";
+        string key = "prot_nhg_type";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         registerNextHop(primary_nh);
@@ -1003,28 +1134,8 @@ namespace protnhg_test
                     return SAI_STATUS_SUCCESS;
                 });
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
-                                             false));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
-
-        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        unregisterNextHop(primary_nh);
-        unregisterNextHop(standby_nh);
-    }
-
-    TEST_F(ProtNhgTest, SetAdminRoleOnProtectionNhgFails)
-    {
-        string key = "prot_nhg_admin_prot";
-        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        registerNextHop(primary_nh);
-        registerNextHop(standby_nh);
-
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
-                                             false));
-
-        EXPECT_FALSE(gNhgOrch->setProtNhgAdminRole(
-            key, SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -1039,8 +1150,7 @@ namespace protnhg_test
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
-                                             false));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_attribute(_, _))
@@ -1054,7 +1164,7 @@ namespace protnhg_test
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, SetSwitchoverOnHwProtectionFails)
+    TEST_F(ProtNhgTest, SetSwitchoverOnHwAutonomousNhgFails)
     {
         string key = "prot_nhg_switchover_hw";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
@@ -1062,10 +1172,17 @@ namespace protnhg_test
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
-                                             true));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        ASSERT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
 
+        /* The hardware owns the decision now, so software must not trigger
+         * a switchover behind its back. */
         EXPECT_FALSE(gNhgOrch->setProtNhgSwitchover(key, true));
+
+        /* Detaching hands the trigger back. */
+        ASSERT_TRUE(gNhgOrch->detachProtNhgMonitoredObject(key, primary_nh));
+        EXPECT_TRUE(gNhgOrch->setProtNhgSwitchover(key, true));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
@@ -1132,53 +1249,55 @@ namespace protnhg_test
         EXPECT_NE(key_ab, key_ba);
     }
 
-    /* --- Protection NHG key prefix tests --- */
+    /* --- Protection NHG key format --- */
 
-    TEST_F(ProtNhgTest, BuildProtNhgKeyHwPrefix)
+    TEST_F(ProtNhgTest, BuildProtNhgKeyFromNextHops)
     {
         NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
 
-        string key = NhgOrch::buildProtNhgKey(primary, standby, true);
-        EXPECT_EQ(key.substr(0, 8), "prot:hw:");
-        EXPECT_NE(key.find("10.0.0.1@Ethernet0"), string::npos);
+        string key = NhgOrch::buildProtNhgKey(primary, standby);
+        EXPECT_EQ(key, "prot:10.0.0.1@Ethernet0|10.0.0.100@Ethernet4");
     }
 
-    TEST_F(ProtNhgTest, BuildProtNhgKeySwPrefix)
-    {
-        NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
-
-        string key = NhgOrch::buildProtNhgKey(primary, standby, false);
-        EXPECT_EQ(key.substr(0, 8), "prot:sw:");
-    }
-
-    TEST_F(ProtNhgTest, BuildProtNhgKeyNhgHwPrefix)
+    TEST_F(ProtNhgTest, BuildProtNhgKeyFromNhgKeys)
     {
         NextHopGroupKey primary("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
         NextHopGroupKey standby("10.0.0.100@Ethernet4");
 
-        string key = NhgOrch::buildProtNhgKey(primary, standby, true);
-        EXPECT_EQ(key.substr(0, 8), "prot:hw:");
+        string key = NhgOrch::buildProtNhgKey(primary, standby);
+        EXPECT_EQ(key.substr(0, 5), "prot:");
+        EXPECT_NE(key.find(primary.to_string()), string::npos);
+        EXPECT_NE(key.find(standby.to_string()), string::npos);
     }
 
-    TEST_F(ProtNhgTest, BuildProtNhgKeyNhgSwPrefix)
+    /* Membership alone identifies a group, so the key must not move when the
+     * switchover mode does. */
+    TEST_F(ProtNhgTest, KeyIsStableAcrossModeChanges)
     {
-        NextHopGroupKey primary("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
-        NextHopGroupKey standby("10.0.0.100@Ethernet4");
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
 
-        string key = NhgOrch::buildProtNhgKey(primary, standby, false);
-        EXPECT_EQ(key.substr(0, 8), "prot:sw:");
-    }
+        string key = NhgOrch::buildProtNhgKey(primary_nh, standby_nh);
+        ASSERT_TRUE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(key));
 
-    TEST_F(ProtNhgTest, HwAndSwKeysAreDifferent)
-    {
-        NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
+        sai_object_id_t nhg_id = gNhgOrch->getProtNhgId(key);
 
-        string hw_key = NhgOrch::buildProtNhgKey(primary, standby, true);
-        string sw_key = NhgOrch::buildProtNhgKey(primary, standby, false);
-        EXPECT_NE(hw_key, sw_key);
+        ASSERT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+        EXPECT_EQ(gNhgOrch->getProtNhgId(key), nhg_id);
+
+        ASSERT_TRUE(gNhgOrch->detachProtNhgMonitoredObject(key, primary_nh));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+        EXPECT_EQ(gNhgOrch->getProtNhgId(key), nhg_id);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
     }
 
     TEST_F(ProtNhgTest, RecursiveMemberResolvesViaNhgOrch)
@@ -1216,30 +1335,45 @@ namespace protnhg_test
          * the real probe; it only cares about publish behavior, not the
          * specific values a mock switch reports. */
         gNhgOrch->m_protCapChecked = false;
+        gNhgOrch->m_protectionSupported = false;
+        gNhgOrch->m_backupGroupHintSupported = false;
+        gNhgOrch->m_monitoredObjectTypes.clear();
 
-        /* Probing either capability must publish both SW and HW protection
-         * capability fields to the standard switch capability row,
-         * regardless of whether the platform supports them. */
-        bool hw_supported = gNhgOrch->isHwProtectionSupported();
-        bool sw_supported = gNhgOrch->isSwProtectionSupported();
+        /* One probe must publish all four capability fields to the standard
+         * switch capability row, whatever the platform reports. */
+        bool protection = gNhgOrch->isProtectionSupported();
+        bool hw_switchover = gNhgOrch->isHwSwitchoverSupported();
+        bool hint = gNhgOrch->isBackupGroupHintSupported();
 
-        string hw_val;
-        gSwitchOrch->get_switch_capability(
-            SWITCH_CAPABILITY_TABLE_HW_NHG_PROTECTION_CAPABLE, hw_val);
-        EXPECT_FALSE(hw_val.empty());
-        EXPECT_EQ(hw_val, hw_supported ? "true" : "false");
+        /* get_switch_capability() leaves val untouched when the field is
+         * absent, so start each read from a known sentinel. */
+        auto readCapability = [](const string &field) {
+            string val = "<unset>";
+            gSwitchOrch->get_switch_capability(field, val);
+            return val;
+        };
 
-        string sw_val;
-        gSwitchOrch->get_switch_capability(
-            SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE, sw_val);
-        EXPECT_FALSE(sw_val.empty());
-        EXPECT_EQ(sw_val, sw_supported ? "true" : "false");
+        EXPECT_EQ(readCapability(SWITCH_CAPABILITY_TABLE_NHG_PROTECTION_CAPABLE),
+                  protection ? "true" : "false");
+        EXPECT_EQ(readCapability(SWITCH_CAPABILITY_TABLE_NHG_HW_SWITCHOVER_CAPABLE),
+                  hw_switchover ? "true" : "false");
+        EXPECT_EQ(readCapability(SWITCH_CAPABILITY_TABLE_NHG_BACKUP_GROUP_HINT_CAPABLE),
+                  hint ? "true" : "false");
+
+        /* Hardware switchover support is derived from the monitored object
+         * type list, so the two must always agree. */
+        EXPECT_EQ(readCapability(SWITCH_CAPABILITY_TABLE_NHG_MONITORED_OBJECT_TYPES).empty(),
+                  !hw_switchover);
+
+        /* The retired per-type fields must not be written. */
+        EXPECT_EQ(readCapability("SW_NHG_PROTECTION_CAPABLE"), "<unset>");
+        EXPECT_EQ(readCapability("HW_NHG_PROTECTION_CAPABLE"), "<unset>");
     }
 
-    TEST_F(ProtNhgTest, CreateFailsWhenHwProtectionUnsupported)
+    TEST_F(ProtNhgTest, CreateFailsWhenProtectionUnsupported)
     {
-        /* Simulate an ASIC that doesn't support SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION. */
-        gNhgOrch->m_hwProtectionSupported = false;
+        /* Simulate an ASIC that doesn't support SAI_NEXT_HOP_GROUP_TYPE_PROTECTION. */
+        gNhgOrch->m_protectionSupported = false;
 
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
@@ -1249,30 +1383,38 @@ namespace protnhg_test
         /* createProtNhg() must reject the request before ever touching SAI. */
         EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
 
-        string key = "prot_nhg_hw_unsupported";
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh, /*hw_protection=*/true));
+        string key = "prot_nhg_unsupported";
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
 
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, CreateFailsWhenSwProtectionUnsupported)
+    /* A platform with no monitored object support still gets working
+     * protection NHGs; they just stay SW-driven. */
+    TEST_F(ProtNhgTest, ProtectionWorksWithoutHwSwitchoverSupport)
     {
-        /* Simulate an ASIC that doesn't support SAI_NEXT_HOP_GROUP_TYPE_PROTECTION. */
-        gNhgOrch->m_swProtectionSupported = false;
+        gNhgOrch->m_monitoredObjectTypes.clear();
+        EXPECT_FALSE(gNhgOrch->isHwSwitchoverSupported());
 
+        string key = "prot_nhg_no_hw_switchover";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
-        string key = "prot_nhg_sw_unsupported";
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh, /*hw_protection=*/false));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+        /* No type is attachable, so every attach is refused ... */
+        EXPECT_FALSE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, primary_nh, monitoredOid()));
 
+        /* ... and the group keeps failing over under software control. */
+        EXPECT_FALSE(gNhgOrch->getProtNhg(key).isHwAutonomous());
+        EXPECT_TRUE(gNhgOrch->setProtNhgSwitchover(key, true));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }

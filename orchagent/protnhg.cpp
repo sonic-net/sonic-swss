@@ -159,10 +159,8 @@ string ProtNhgMember::to_string() const
 
 ProtNhg::ProtNhg(const string &key,
                   const NextHopKey &primary_nh,
-                  const NextHopKey &standby_nh,
-                  bool hw_protection) :
-    NhgCommon(key),
-    m_hw_protection(hw_protection)
+                  const NextHopKey &standby_nh) :
+    NhgCommon(key)
 {
     SWSS_LOG_ENTER();
 
@@ -174,10 +172,8 @@ ProtNhg::ProtNhg(const string &key,
 
 ProtNhg::ProtNhg(const string &key,
                   const NextHopGroupKey &primary_nhg_key,
-                  const NextHopGroupKey &standby_nhg_key,
-                  bool hw_protection) :
-    NhgCommon(key),
-    m_hw_protection(hw_protection)
+                  const NextHopGroupKey &standby_nhg_key) :
+    NhgCommon(key)
 {
     SWSS_LOG_ENTER();
 
@@ -193,8 +189,7 @@ ProtNhg::ProtNhg(const string &key,
 }
 
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
-    NhgCommon(move(nhg)),
-    m_hw_protection(nhg.m_hw_protection)
+    NhgCommon(move(nhg))
 {
     SWSS_LOG_ENTER();
 }
@@ -239,9 +234,7 @@ bool ProtNhg::sync()
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = m_hw_protection
-        ? SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION
-        : SAI_NEXT_HOP_GROUP_TYPE_PROTECTION;
+    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_PROTECTION;
     nhg_attrs.push_back(nhg_attr);
 
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
@@ -325,14 +318,25 @@ bool ProtNhg::invalidateNextHop(const NextHopKey &nh_key)
     return removeMembers({nh_key});
 }
 
-bool ProtNhg::setAdminRole(sai_int32_t admin_role)
+bool ProtNhg::isHwAutonomous() const
 {
     SWSS_LOG_ENTER();
 
-    if (!m_hw_protection)
+    const ProtNhgMember *primary = getPrimaryMember();
+
+    return primary != nullptr &&
+           primary->getMonitoredObject() != SAI_NULL_OBJECT_ID;
+}
+
+bool ProtNhg::setAdminRole(sai_next_hop_group_admin_role_t admin_role)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isHwAutonomous())
     {
-        SWSS_LOG_ERROR("Admin role is only supported on HW_PROTECTION NHGs, "
-                       "use setSwitchover() for PROTECTION NHG %s",
+        SWSS_LOG_ERROR("Protection NHG %s is SW-driven (no monitored object "
+                       "attached); use setSwitchover() instead of the admin "
+                       "role override",
                        m_key.c_str());
         return false;
     }
@@ -368,10 +372,11 @@ bool ProtNhg::setSwitchover(bool enable)
 {
     SWSS_LOG_ENTER();
 
-    if (m_hw_protection)
+    if (isHwAutonomous())
     {
-        SWSS_LOG_ERROR("Switchover is only supported on PROTECTION NHGs, "
-                       "use setAdminRole() for HW_PROTECTION NHG %s",
+        SWSS_LOG_ERROR("Protection NHG %s is HW-autonomous (monitored object "
+                       "attached); the hardware owns the switchover, use "
+                       "setAdminRole() to override it",
                        m_key.c_str());
         return false;
     }

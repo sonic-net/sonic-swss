@@ -130,18 +130,29 @@ public:
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
-    /* Check if the ASIC supports the SW protection NHG type
+    /* Check if the ASIC supports protection NHGs
      * (SAI_NEXT_HOP_GROUP_TYPE_PROTECTION). */
-    bool isSwProtectionSupported();
+    bool isProtectionSupported();
 
-    /* Check if the ASIC supports the HW protection NHG type
-     * (SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION). */
-    bool isHwProtectionSupported();
+    /* Check if the ASIC can switch over autonomously, i.e. whether it accepts
+     * any object as a SAI_NEXT_HOP_GROUP_MEMBER_ATTR_MONITORED_OBJECT. */
+    bool isHwSwitchoverSupported();
+
+    /* The object types the ASIC accepts as a monitored object. This list is
+     * authoritative: a type absent from it is rejected without a SAI call.
+     * Empty means the ASIC cannot switch over on its own. */
+    const set<sai_object_type_t>& getSupportedMonitoredObjectTypes();
+
+    /* Check if the ASIC accepts SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION for the
+     * standby leg's recursive NHG. This is a backup-group hint only: it says
+     * nothing about protection or switchover support, and no protection NHG is
+     * ever created with that type. */
+    bool isBackupGroupHintSupported();
 
     /*
      * Protection NHG APIs.
-     * MuxOrch is the primary consumer of these for dual-ToR hardware
-     * protection switching. Capacity accounting is shared with ECMP NHGs.
+     * MuxOrch is the primary consumer of these for dual-ToR protection
+     * switching. Capacity accounting is shared with ECMP NHGs.
      *
      * All createProtNhg overloads are idempotent: re-creating with an
      * existing canonical key is a no-op that returns true. Membership
@@ -153,9 +164,10 @@ public:
      * validateNextHop(); query member state directly (e.g. getProtNhg())
      * if that distinction matters to the caller.
      *
-     * Each overload rejects creation up front if the ASIC doesn't support
-     * the requested hw_protection type (see isHwProtectionSupported() /
-     * isSwProtectionSupported()).
+     * Every group is created as SAI_NEXT_HOP_GROUP_TYPE_PROTECTION and starts
+     * out SW-driven; attachProtNhgMonitoredObject() hands switchover control
+     * to the hardware later. Each overload rejects creation up front if the
+     * ASIC does not support protection NHGs (see isProtectionSupported()).
      */
 
     /* Create a protection NHG as a strict pair: one primary and one standby
@@ -164,34 +176,30 @@ public:
      */
     bool createProtNhg(const string &key,
                        const NextHopKey &primary_nh,
-                       const NextHopKey &standby_nh,
-                       bool hw_protection = true);
+                       const NextHopKey &standby_nh);
 
     /* Auto-keyed convenience overload -- key is derived from the members. */
     bool createProtNhg(const NextHopKey &primary_nh,
-                       const NextHopKey &standby_nh,
-                       bool hw_protection = true);
+                       const NextHopKey &standby_nh);
 
     /* Create a protection NHG where each role is an existing ECMP NHG.
      * NHG OIDs are dynamically resolved via NhgOrch at sync time.
      */
     bool createProtNhg(const string &key,
                        const NextHopGroupKey &primary_nhg_key,
-                       const NextHopGroupKey &standby_nhg_key,
-                       bool hw_protection = true);
+                       const NextHopGroupKey &standby_nhg_key);
 
     /* Auto-keyed convenience overload -- key is derived from the group keys. */
     bool createProtNhg(const NextHopGroupKey &primary_nhg_key,
-                       const NextHopGroupKey &standby_nhg_key,
-                       bool hw_protection = true);
+                       const NextHopGroupKey &standby_nhg_key);
 
-    /* Build the deterministic key for a protection NHG from its members. */
+    /* Build the deterministic key for a protection NHG from its members.
+     * Membership alone identifies the group: the key carries no type or mode
+     * discriminator, so it survives attach/detach of the monitored object. */
     static string buildProtNhgKey(const NextHopKey &primary_nh,
-                                  const NextHopKey &standby_nh,
-                                  bool hw_protection = true);
+                                  const NextHopKey &standby_nh);
     static string buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
-                                  const NextHopGroupKey &standby_nhg_key,
-                                  bool hw_protection = true);
+                                  const NextHopGroupKey &standby_nhg_key);
 
     /* Remove a protection NHG by key. */
     bool removeProtNhg(const string &key);
@@ -205,16 +213,26 @@ public:
     /* Get the SAI object ID of a protection NHG. */
     sai_object_id_t getProtNhgId(const string &key) const;
 
-    /* Toggle admin role -- HW_PROTECTION groups only. */
-    bool setProtNhgAdminRole(const string &key, sai_int32_t admin_role);
+    /* Override the leg the hardware picked -- HW-autonomous groups only. */
+    bool setProtNhgAdminRole(const string &key,
+                             sai_next_hop_group_admin_role_t admin_role);
 
-    /* Trigger switchover from primary to backup -- PROTECTION groups only. */
+    /* Trigger switchover from primary to standby -- SW-driven groups only. */
     bool setProtNhgSwitchover(const string &key, bool enable);
 
-    /* Update the monitored object on a protection NHG member. */
-    bool setProtNhgMonitoredObject(const string &key,
-                                   const NextHopKey &nh_key,
-                                   sai_object_id_t monitored_oid);
+    /*
+     * Attach a monitored object to a protection NHG member, promoting the
+     * group from SW-driven to HW-autonomous. Rejected if the object's type is
+     * not in getSupportedMonitoredObjectTypes(); the group is left SW-driven
+     * and forwarding is unaffected, since both legs are already programmed.
+     */
+    bool attachProtNhgMonitoredObject(const string &key,
+                                      const NextHopKey &nh_key,
+                                      sai_object_id_t monitored_oid);
+
+    /* Detach the monitored object, demoting the group back to SW-driven. */
+    bool detachProtNhgMonitoredObject(const string &key,
+                                      const NextHopKey &nh_key);
 
     /* Query the hardware-observed role (active/inactive) of a protection NHG member. */
     bool getProtNhgMemberObservedRole(const string &key,
@@ -233,14 +251,22 @@ public:
 private:
     void doTask(Consumer& consumer) override;
 
-    /* Probe the ASIC once for SW/HW protection NHG support and publish the
-     * result to STATE_DB|SWITCH_CAPABILITY. Subsequent calls are no-ops. */
+    /* Probe the ASIC once for protection-NHG support, hardware switchover
+     * support, and the backup-group hint, then publish the results to
+     * STATE_DB|SWITCH_CAPABILITY. Subsequent calls are no-ops. */
     void probeProtectionCapabilities();
+
+    /* Read the object types the ASIC accepts as a monitored object. */
+    void probeMonitoredObjectTypes();
+
+    /* Serialize m_monitoredObjectTypes for STATE_DB. */
+    string monitoredObjectTypesToString() const;
 
     /* Cached protection-capability probe results. */
     bool m_protCapChecked = false;
-    bool m_swProtectionSupported = false;
-    bool m_hwProtectionSupported = false;
+    bool m_protectionSupported = false;
+    bool m_backupGroupHintSupported = false;
+    set<sai_object_type_t> m_monitoredObjectTypes;
 
     /* Storage for protection NHGs, keyed by a string identifier (e.g., port name). */
     unordered_map<string, NhgEntry<ProtNhg>> m_protNhgs;

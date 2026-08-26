@@ -8,6 +8,7 @@
 #include "bulker.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "sai_serialize.h"
 
 extern sai_object_id_t gSwitchId;
 
@@ -22,6 +23,7 @@ extern size_t gMaxBulkSize;
 
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
+extern sai_switch_api_t*           sai_switch_api;
 
 NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
@@ -1223,6 +1225,12 @@ void NhgOrch::probeProtectionCapabilities()
 
     m_protCapChecked = true;
 
+    /*
+     * Protection support, and separately the backup-group hint. The hint is
+     * the only use of SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION: it marks the
+     * standby leg's recursive NHG as a backup group and carries no protection
+     * or switchover semantics of its own.
+     */
     const auto *meta = sai_metadata_get_attr_metadata(
                            SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
                            SAI_NEXT_HOP_GROUP_ATTR_TYPE);
@@ -1252,49 +1260,128 @@ void NhgOrch::probeProtectionCapabilities()
             {
                 if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_PROTECTION)
                 {
-                    m_swProtectionSupported = true;
+                    m_protectionSupported = true;
                 }
                 else if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION)
                 {
-                    m_hwProtectionSupported = true;
+                    m_backupGroupHintSupported = true;
                 }
             }
         }
     }
 
-    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_PROTECTION is %s; "
-                    "SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION is %s",
-                    m_swProtectionSupported ? "supported" : "not supported",
-                    m_hwProtectionSupported ? "supported" : "not supported");
+    probeMonitoredObjectTypes();
 
-    /* Publish both capabilities to STATE_DB|SWITCH_CAPABILITY so consumers and
-     * CLI can discover which protection NHG types are available. */
+    SWSS_LOG_NOTICE("Protection NHG support: protection %s, HW switchover %s "
+                    "(%zu monitored object type(s)), backup-group hint %s",
+                    m_protectionSupported ? "yes" : "no",
+                    m_monitoredObjectTypes.empty() ? "no" : "yes",
+                    m_monitoredObjectTypes.size(),
+                    m_backupGroupHintSupported ? "yes" : "no");
+
+    /* Publish to STATE_DB|SWITCH_CAPABILITY so consumers and CLI can discover
+     * what is available before creating NHGs or building monitored objects. */
     if (gSwitchOrch)
     {
         gSwitchOrch->set_switch_capability(
-            { swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE,
-                                    m_swProtectionSupported ? "true" : "false"),
-              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_HW_NHG_PROTECTION_CAPABLE,
-                                    m_hwProtectionSupported ? "true" : "false") });
+            { swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_PROTECTION_CAPABLE,
+                                    m_protectionSupported ? "true" : "false"),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_HW_SWITCHOVER_CAPABLE,
+                                    m_monitoredObjectTypes.empty() ? "false" : "true"),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_MONITORED_OBJECT_TYPES,
+                                    monitoredObjectTypesToString()),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_BACKUP_GROUP_HINT_CAPABLE,
+                                    m_backupGroupHintSupported ? "true" : "false") });
     }
 }
 
-bool NhgOrch::isSwProtectionSupported()
+/*
+ * Hardware switchover support is a property of the monitored object, not of a
+ * next hop group type: read the object types SAI accepts as a
+ * SAI_NEXT_HOP_GROUP_MEMBER_ATTR_MONITORED_OBJECT. A non-empty list means the
+ * hardware can switch over on its own, and the list is the accepted type set.
+ * Empty, unimplemented, or errored all leave every protection NHG SW-driven.
+ */
+void NhgOrch::probeMonitoredObjectTypes()
 {
-    probeProtectionCapabilities();
-    return m_swProtectionSupported;
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<int32_t> types(SAI_OBJECT_TYPE_MAX);
+
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_PROTECTED_OBJECT_TYPE;
+    attr.value.s32list.count = static_cast<uint32_t>(types.size());
+    attr.value.s32list.list = types.data();
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+            status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            SWSS_LOG_NOTICE("Monitored objects not supported by the platform; "
+                            "protection NHGs will be software driven");
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to query supported protected object types, "
+                          "rv: %d; protection NHGs will be software driven",
+                          status);
+        }
+        return;
+    }
+
+    for (uint32_t i = 0; i < attr.value.s32list.count; i++)
+    {
+        m_monitoredObjectTypes.insert(
+            static_cast<sai_object_type_t>(attr.value.s32list.list[i]));
+    }
 }
 
-bool NhgOrch::isHwProtectionSupported()
+string NhgOrch::monitoredObjectTypesToString() const
+{
+    string types;
+
+    for (const auto &type : m_monitoredObjectTypes)
+    {
+        if (!types.empty())
+        {
+            types += ",";
+        }
+        types += sai_serialize_object_type(type);
+    }
+
+    return types;
+}
+
+bool NhgOrch::isProtectionSupported()
 {
     probeProtectionCapabilities();
-    return m_hwProtectionSupported;
+    return m_protectionSupported;
+}
+
+bool NhgOrch::isHwSwitchoverSupported()
+{
+    probeProtectionCapabilities();
+    return !m_monitoredObjectTypes.empty();
+}
+
+const set<sai_object_type_t>& NhgOrch::getSupportedMonitoredObjectTypes()
+{
+    probeProtectionCapabilities();
+    return m_monitoredObjectTypes;
+}
+
+bool NhgOrch::isBackupGroupHintSupported()
+{
+    probeProtectionCapabilities();
+    return m_backupGroupHintSupported;
 }
 
 bool NhgOrch::createProtNhg(const string &key,
                              const NextHopKey &primary_nh,
-                             const NextHopKey &standby_nh,
-                             bool hw_protection)
+                             const NextHopKey &standby_nh)
 {
     SWSS_LOG_ENTER();
 
@@ -1304,11 +1391,10 @@ bool NhgOrch::createProtNhg(const string &key,
         return true;
     }
 
-    if (!(hw_protection ? isHwProtectionSupported() : isSwProtectionSupported()))
+    if (!isProtectionSupported())
     {
-        SWSS_LOG_ERROR("%s NHG protection not supported by ASIC, cannot create "
-                       "protection NHG %s",
-                       hw_protection ? "Hardware" : "Software", key.c_str());
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
         return false;
     }
 
@@ -1320,7 +1406,7 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nh, standby_nh, hw_protection);
+    auto nhg = make_unique<ProtNhg>(key, primary_nh, standby_nh);
 
     bool synced = nhg->sync();
 
@@ -1351,41 +1437,34 @@ bool NhgOrch::createProtNhg(const string &key,
 }
 
 string NhgOrch::buildProtNhgKey(const NextHopKey &primary_nh,
-                                 const NextHopKey &standby_nh,
-                                 bool hw_protection)
+                                 const NextHopKey &standby_nh)
 {
-    string prefix = hw_protection ? "prot:hw:" : "prot:sw:";
-    return prefix + primary_nh.to_string() + "|" + standby_nh.to_string();
+    return "prot:" + primary_nh.to_string() + "|" + standby_nh.to_string();
 }
 
 string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
-                                 const NextHopGroupKey &standby_nhg_key,
-                                 bool hw_protection)
+                                 const NextHopGroupKey &standby_nhg_key)
 {
-    string prefix = hw_protection ? "prot:hw:" : "prot:sw:";
-    return prefix + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
+    return "prot:" + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
 }
 
 bool NhgOrch::createProtNhg(const NextHopKey &primary_nh,
-                             const NextHopKey &standby_nh,
-                             bool hw_protection)
+                             const NextHopKey &standby_nh)
 {
-    return createProtNhg(buildProtNhgKey(primary_nh, standby_nh, hw_protection),
-                         primary_nh, standby_nh, hw_protection);
+    return createProtNhg(buildProtNhgKey(primary_nh, standby_nh),
+                         primary_nh, standby_nh);
 }
 
 bool NhgOrch::createProtNhg(const NextHopGroupKey &primary_nhg_key,
-                             const NextHopGroupKey &standby_nhg_key,
-                             bool hw_protection)
+                             const NextHopGroupKey &standby_nhg_key)
 {
-    return createProtNhg(buildProtNhgKey(primary_nhg_key, standby_nhg_key, hw_protection),
-                         primary_nhg_key, standby_nhg_key, hw_protection);
+    return createProtNhg(buildProtNhgKey(primary_nhg_key, standby_nhg_key),
+                         primary_nhg_key, standby_nhg_key);
 }
 
 bool NhgOrch::createProtNhg(const string &key,
                              const NextHopGroupKey &primary_nhg_key,
-                             const NextHopGroupKey &standby_nhg_key,
-                             bool hw_protection)
+                             const NextHopGroupKey &standby_nhg_key)
 {
     SWSS_LOG_ENTER();
 
@@ -1410,11 +1489,10 @@ bool NhgOrch::createProtNhg(const string &key,
         return true;
     }
 
-    if (!(hw_protection ? isHwProtectionSupported() : isSwProtectionSupported()))
+    if (!isProtectionSupported())
     {
-        SWSS_LOG_ERROR("%s NHG protection not supported by ASIC, cannot create "
-                       "protection NHG %s",
-                       hw_protection ? "Hardware" : "Software", key.c_str());
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
         return false;
     }
 
@@ -1443,8 +1521,7 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, standby_nhg_key,
-                                    hw_protection);
+    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, standby_nhg_key);
 
     bool synced = nhg->sync();
 
@@ -1528,7 +1605,8 @@ sai_object_id_t NhgOrch::getProtNhgId(const string &key) const
     return it->second.nhg->getId();
 }
 
-bool NhgOrch::setProtNhgAdminRole(const string &key, sai_int32_t admin_role)
+bool NhgOrch::setProtNhgAdminRole(const string &key,
+                                   sai_next_hop_group_admin_role_t admin_role)
 {
     SWSS_LOG_ENTER();
 
@@ -1556,9 +1634,9 @@ bool NhgOrch::setProtNhgSwitchover(const string &key, bool enable)
     return it->second.nhg->setSwitchover(enable);
 }
 
-bool NhgOrch::setProtNhgMonitoredObject(const string &key,
-                                         const NextHopKey &nh_key,
-                                         sai_object_id_t monitored_oid)
+bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key,
+                                            sai_object_id_t monitored_oid)
 {
     SWSS_LOG_ENTER();
 
@@ -1569,7 +1647,88 @@ bool NhgOrch::setProtNhgMonitoredObject(const string &key,
         return false;
     }
 
-    return it->second.nhg->updateMemberMonitoredObject(nh_key, monitored_oid);
+    if (monitored_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Cannot attach a null monitored object to protection "
+                       "NHG %s; use detachProtNhgMonitoredObject()", key.c_str());
+        return false;
+    }
+
+    /* The advertised type list is authoritative, so an unsupported object is
+     * refused here rather than by a failing SAI call. */
+    sai_object_type_t obj_type = sai_object_type_query(monitored_oid);
+
+    if (getSupportedMonitoredObjectTypes().count(obj_type) == 0)
+    {
+        SWSS_LOG_ERROR("Object type %s is not supported as a monitored object, "
+                       "cannot attach it to protection NHG %s",
+                       sai_serialize_object_type(obj_type).c_str(), key.c_str());
+        return false;
+    }
+
+    /*
+     * Clear any standing software switchover first: once the monitored object
+     * is attached the hardware owns the choice of active leg, and a leftover
+     * SET_SWITCHOVER would fight it.
+     */
+    ProtNhg &nhg = *it->second.nhg;
+
+    if (!nhg.isHwAutonomous() && !nhg.setSwitchover(false))
+    {
+        SWSS_LOG_ERROR("Failed to clear switchover on protection NHG %s before "
+                       "attaching monitored object", key.c_str());
+        return false;
+    }
+
+    if (!nhg.updateMemberMonitoredObject(nh_key, monitored_oid))
+    {
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Attached monitored object %s to member %s of protection "
+                    "NHG %s; switchover is now HW-autonomous",
+                    sai_serialize_object_id(monitored_oid).c_str(),
+                    nh_key.to_string().c_str(), key.c_str());
+
+    return true;
+}
+
+bool NhgOrch::detachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    /*
+     * Drop the admin-role override while it is still writable, so the group
+     * does not carry a stale override into SW-driven mode.
+     */
+    ProtNhg &nhg = *it->second.nhg;
+
+    if (nhg.isHwAutonomous() &&
+        !nhg.setAdminRole(SAI_NEXT_HOP_GROUP_ADMIN_ROLE_AUTO))
+    {
+        SWSS_LOG_ERROR("Failed to clear the admin role on protection NHG %s "
+                       "before detaching its monitored object", key.c_str());
+        return false;
+    }
+
+    if (!nhg.updateMemberMonitoredObject(nh_key, SAI_NULL_OBJECT_ID))
+    {
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Detached monitored object from member %s of protection "
+                    "NHG %s; switchover is now SW-driven",
+                    nh_key.to_string().c_str(), key.c_str());
+
+    return true;
 }
 
 bool NhgOrch::getProtNhgMemberObservedRole(
