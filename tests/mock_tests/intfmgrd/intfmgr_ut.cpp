@@ -101,6 +101,38 @@ namespace intfmgr_ut
         return false;
     }
 
+    TEST_F(IntfMgrTest, testInvalidInterfaceKeyIsRejected)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        mockCallArgs.clear();
+
+        EXPECT_TRUE(intfmgr.doIntfGeneralTask({"Ethernet0/1"}, {}, SET_COMMAND));
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(IntfMgrTest, testInvalidInterfacePrefixIsRejected)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        mockCallArgs.clear();
+
+        EXPECT_TRUE(intfmgr.doIntfAddrTask({"Ethernet0", "not-a-prefix"}, {}, SET_COMMAND));
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(IntfMgrTest, testLinkLocalNeighborKeyValidation)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.m_neighTable.set("Ethernet0:fe80::1", {});
+        intfmgr.m_neighTable.set("Ethernet00:fe80::2", {});
+        intfmgr.m_neighTable.set("Ethernet0:not-an-address", {});
+        mockCallArgs.clear();
+
+        intfmgr.delIpv6LinkLocalNeigh("Ethernet0");
+
+        ASSERT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(mockCallArgs[0], "/sbin/ip neigh del dev \"Ethernet0\" \"fe80::1\"");
+    }
+
     TEST_F(IntfMgrTest, testSettingIpv6Flag){
         Ethernet0IPv6Set = false;
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
