@@ -1295,16 +1295,32 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+
+    if (&consumer == m_fdbNotificationConsumer && entries.size() > 1000)
+    {
+        SWSS_LOG_WARN("FDB notification batch: %zu entries drained", entries.size());
+    }
+
+    for (auto& entry : entries)
+    {
+        handleNotification(consumer, entry);
+    }
+}
+
+void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFieldsValuesTuple& entry)
+{
+    SWSS_LOG_ENTER();
+
+    const auto& op = kfvOp(entry);
+    const auto& data = kfvKey(entry);
+
     sai_status_t status;
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
     string alias;
     string vlan;
     Port port;
     Port vlanPort;
-
-    consumer.pop(op, data, values);
 
     if (&consumer == m_flushNotificationsConsumer)
     {

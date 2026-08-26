@@ -28,6 +28,7 @@ local cable_length = tonumber(string.sub(ARGV[2], 1, -2))
 local port_mtu = tonumber(ARGV[3])
 local gearbox_delay = tonumber(ARGV[4])
 local is_8lane = (ARGV[5] == "8")
+local spectrum6_headroom_compensation = 18 * 1024
 
 local appl_db = "0"
 local config_db = "4"
@@ -60,6 +61,7 @@ end
 -- Fetch ASIC info from ASIC table in STATE_DB
 redis.call('SELECT', state_db)
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
+local is_spectrum6 = asic_keys[1]:sub(-1) == '6'
 
 -- Only one key should exist
 local asic_table_content = redis.call('HGETALL', asic_keys[1])
@@ -164,6 +166,11 @@ propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_d
 -- Calculate the xoff and xon and then round up at 1024 bytes
 xoff_value = lossless_mtu + propagation_delay * cell_occupancy
 xoff_value = math.ceil(xoff_value / 1024) * 1024
+
+-- Spectrum-6 requires additional headroom for ASIC packet-buffer accounting.
+if is_spectrum6 then
+    xoff_value = xoff_value + spectrum6_headroom_compensation
+end
 
 -- When SHP is disabled, compensate headroom calculated with a reduced small-
 -- packet percentage if it remains more than 2 kB below the worst case.

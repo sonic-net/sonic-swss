@@ -94,6 +94,7 @@ orchagent_SOURCES = \
             switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
+            pfcwdsworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
             request_parser.cpp \
@@ -194,8 +195,8 @@ orchagent_restart_check_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp
-routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp
-orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp
+orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 

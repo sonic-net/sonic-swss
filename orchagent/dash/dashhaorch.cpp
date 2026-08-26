@@ -14,6 +14,8 @@
 #include "converter.h"
 #include "sainotificationorch.h"
 
+#include <google/protobuf/util/message_differencer.h>
+
 #include "chrono"
 
 using namespace std;
@@ -261,13 +263,21 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
 {
     SWSS_LOG_ENTER();
 
-    if (entry.owner() != m_ha_set_entries[key].metadata.owner())
+    auto &metadata = m_ha_set_entries[key].metadata;
+
+    if (entry.owner() != metadata.owner())
     {
         SWSS_LOG_NOTICE("HA Set owner updated for %s from %s to %s",
                         key.c_str(),
-                        dash::types::HaOwner_Name(m_ha_set_entries[key].metadata.owner()).c_str(),
+                        dash::types::HaOwner_Name(metadata.owner()).c_str(),
                         dash::types::HaOwner_Name(entry.owner()).c_str());
-        m_ha_set_entries[key].metadata.set_owner(entry.owner());
+        metadata.set_owner(entry.owner());
+    }
+
+    if (google::protobuf::util::MessageDifferencer::Equals(entry.peer_ip(), metadata.peer_ip()))
+    {
+        SWSS_LOG_DEBUG("HA Set peer IP is unchanged for %s", key.c_str());
+        return true;
     }
 
     sai_status_t status;
@@ -298,7 +308,7 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
                     key.c_str(),
                     to_string(entry.peer_ip()).c_str());
 
-    *m_ha_set_entries[key].metadata.mutable_peer_ip() = entry.peer_ip();
+    *metadata.mutable_peer_ip() = entry.peer_ip();
 
     return true;
 }
@@ -777,7 +787,8 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
             ha_state = SAI_DASH_HA_STATE_DEAD;
             break;
         case dash::types::HA_ROLE_SWITCHING_TO_ACTIVE:
-            return;
+            ha_state = SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE;
+            break;
         default:
             ha_state = SAI_DASH_HA_STATE_DEAD;
     }
