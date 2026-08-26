@@ -2497,6 +2497,68 @@ namespace portsorch_test
     }
 
     /*
+     * SI gate: if the replayed admin-up fails, the deferral must be RETAINED so the retried
+     * task replays it again - the port must not be stranded down while ConfigDB says up.
+     */
+    TEST_F(PortsOrchTest, PortSiGateReplayRetriesOnAdminUpFailure)
+    {
+        gPortsOrch->m_xcvrdSiSyncExpected = true;   // enable the SI-settings admin gate
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        _setupBasePorts(portTable, gPortsOrch);
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // admin-up arrives before any SI notification -> held down (deferred)
+        std::deque<KeyOpFieldsValuesTuple> kfvAdmin = {{
+            "Ethernet0", SET_COMMAND, { { "admin_status", "up" } }
+        }};
+        consumer->addToSync(kfvAdmin);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_FALSE(p.m_admin_state_up);
+        ASSERT_TRUE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        // Make the replayed admin-up fail on the first SI NOTIFIED pass. The port is down, so
+        // the only admin SAI set on this pass is the replayed admin-up.
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+        set_admin_status_fail = true;
+        uint32_t failures_before = set_admin_status_failures;
+
+        std::deque<KeyOpFieldsValuesTuple> kfvNotified = {{
+            "Ethernet0", SET_COMMAND, { { "si_settings_notification", "SI_SETTINGS_NOTIFIED:1" } }
+        }};
+        consumer->addToSync(kfvNotified);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // admin-up failed -> port still down, task pending retry, and the deferral is RETAINED
+        // (the pre-fix bug cleared it during replay, stranding the port down on retry).
+        ASSERT_GT(set_admin_status_failures, failures_before);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_FALSE(p.m_admin_state_up);
+        ASSERT_TRUE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        // Recover: admin-up succeeds on retry -> port comes up and the deferral is cleared.
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;   // don't leak the failure count into later tests
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+        ASSERT_FALSE(gPortsOrch->m_portAdminSiGate["Ethernet0"].admin_up_deferred);
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /*
      * SI gate: SI_SETTINGS_UNAVAIL (no SI for this port) releases the gate and brings the
      * port up without programming serdes.
      */

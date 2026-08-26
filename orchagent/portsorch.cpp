@@ -5804,7 +5804,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     // Keep the raw config string in sync so getAdminStatusStr() (used for
                     // logging) reflects the replayed admin-up instead of an empty value.
                     pCfg.fieldValueMap[PORT_ADMIN_STATUS] = "up";
-                    siGate.admin_up_deferred = false;
+                    // NB: admin_up_deferred is cleared only after setPortAdminStatus(up) actually
+                    // succeeds (below); a serdes-apply or admin-up failure retries with the intent
+                    // still set, so the port is never left down while ConfigDB says up.
                 }
 
                 /* Apply serdes settings (and write the SI_SYNC_DONE/UNAVAIL/DEFAULT ack) when
@@ -5852,6 +5854,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s admin status to %s",
                             p.m_alias.c_str(), m_portHlpr.getAdminStatusStr(pCfg).c_str()
                         );
+                    }
+
+                    /* A deferred admin-up is only satisfied once the MAC is actually up. Clear the
+                     * gate here (setPortAdminStatus succeeded above, or the MAC was already up) so
+                     * that a preceding serdes-apply or admin-up failure - which retries this task -
+                     * keeps replaying the deferred admin-up instead of stranding the port down. */
+                    if (pCfg.admin_status.value)
+                    {
+                        siGate.admin_up_deferred = false;
                     }
                 }
 
