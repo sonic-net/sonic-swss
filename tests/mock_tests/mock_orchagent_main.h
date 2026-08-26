@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "switchorch.h"
 #include "crmorch.h"
+#include "namelabelmapper.h"
 #include "portsorch.h"
 #include "debugcounterorch.h"
 #include "routeorch.h"
@@ -21,6 +22,7 @@
 #include "qosorch.h"
 #define protected public
 #include "pfcwdorch.h"
+#include "pfcwdsworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"

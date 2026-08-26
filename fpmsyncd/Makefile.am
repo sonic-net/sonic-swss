@@ -20,6 +20,6 @@ fpmsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-fpmsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+fpmsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 
