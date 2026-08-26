@@ -513,6 +513,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -543,6 +544,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -666,6 +668,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -696,6 +699,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (
                 self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
                 "SAI_PACKET_ACTION_TRAP",
@@ -862,6 +866,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -894,6 +899,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1048,6 +1054,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1153,6 +1160,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1310,6 +1318,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (
                 self._p4rt_acl_meter_obj.SAI_ATTR_GREEN_PACKET_ACTION,
                 "SAI_PACKET_ACTION_FORWARD",
@@ -1430,6 +1439,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
