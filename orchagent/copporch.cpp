@@ -985,7 +985,23 @@ void CoppOrch::doTask(SelectableTimer &timer)
         }
     }
 
-    if (m_pendingAddToFlexCntr.empty())
+    for (auto it = m_pendingPolicerAddToFlexCntr.begin(); it != m_pendingPolicerAddToFlexCntr.end(); )
+    {
+        const auto id = sai_serialize_object_id(it->first);
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering policer counter for trap group %s, id %s", it->second.c_str(), id.c_str());
+
+            m_policer_counter_manager.setCounterIdList(it->first, CounterType::POLICER, getSupportedPolicerStatIds());
+            it = m_pendingPolicerAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_pendingAddToFlexCntr.empty() && m_pendingPolicerAddToFlexCntr.empty())
     {
         m_FlexCounterUpdTimer->stop();
     }
@@ -1642,20 +1658,27 @@ bool CoppOrch::bindPolicerCounter(sai_object_id_t policer_id, const std::string 
     }
 
     // Check if already bound (avoid duplicate binding)
-    std::string existing_oid;
-    if (m_policerCounterTable->hget("", trap_group_name, existing_oid))
+    if (m_policer_obj_name_map.count(policer_id) > 0)
     {
         SWSS_LOG_DEBUG("Policer counter already bound for trap group %s", trap_group_name.c_str());
         return true;
     }
 
-    // Update COUNTERS_POLICER_NAME_MAP
+    // Update COUNTERS_POLICER_NAME_MAP (overwrite any stale OID from warm reboot)
     vector<FieldValueTuple> nameMapFvs;
     nameMapFvs.emplace_back(trap_group_name, sai_serialize_object_id(policer_id));
     m_policerCounterTable->set("", nameMapFvs);
 
-    // Register policer with FlexCounter — only the SAI-reported subset
-    m_policer_counter_manager.setCounterIdList(policer_id, CounterType::POLICER, supported_stats);
+    // Defer FlexCounter registration until the policer's VID->RID mapping exists
+    auto was_empty = m_pendingPolicerAddToFlexCntr.empty();
+    m_pendingPolicerAddToFlexCntr[policer_id] = trap_group_name;
+
+    if (was_empty)
+    {
+        m_FlexCounterUpdTimer->start();
+    }
+
+    m_policer_obj_name_map.emplace(policer_id, trap_group_name);
 
     SWSS_LOG_INFO("Bound policer counter for trap group %s, policer OID %" PRIx64 " (%zu stats)",
                   trap_group_name.c_str(), policer_id, supported_stats.size());
@@ -1673,27 +1696,28 @@ void CoppOrch::unbindPolicerCounter(sai_object_id_t policer_id)
         return;
     }
 
-    m_policer_counter_manager.clearCounterIdList(policer_id);
-
-    // Remove from COUNTERS_POLICER_NAME_MAP
-    for (const auto& kv : m_trap_group_policer_map)
+    auto iter = m_policer_obj_name_map.find(policer_id);
+    if (iter == m_policer_obj_name_map.end())
     {
-        if (kv.second.policer_id == policer_id)
-        {
-            // Find trap group name
-            for (const auto& tg : m_trap_group_map)
-            {
-                if (tg.second == kv.first)
-                {
-                    m_policerCounterTable->hdel("", tg.first);
-                    SWSS_LOG_INFO("Unbound policer counter for trap group %s", tg.first.c_str());
-                    return;
-                }
-            }
-        }
+        return;
     }
 
-    SWSS_LOG_WARN("Policer %" PRIx64 " not found in trap group map during unbind", policer_id);
+    // Clear FLEX_COUNTER table, or drop the not-yet-registered pending entry
+    auto pending_iter = m_pendingPolicerAddToFlexCntr.find(policer_id);
+    if (pending_iter == m_pendingPolicerAddToFlexCntr.end())
+    {
+        m_policer_counter_manager.clearCounterIdList(policer_id);
+    }
+    else
+    {
+        m_pendingPolicerAddToFlexCntr.erase(pending_iter);
+    }
+
+    // Remove from COUNTERS_POLICER_NAME_MAP
+    m_policerCounterTable->hdel("", iter->second);
+    SWSS_LOG_INFO("Unbound policer counter for trap group %s", iter->second.c_str());
+
+    m_policer_obj_name_map.erase(iter);
 }
 
 // SAI policer-stats capability probe. Two-call pattern (sizing + fetch) cached
