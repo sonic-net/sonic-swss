@@ -4,7 +4,6 @@
 #include "pfcwdorch.h"
 #include "timer.h"
 #include "dbconnector.h"
-#include "flex_counter/flex_counter_manager.h"
 
 extern "C" {
 #include "sai.h"
@@ -92,9 +91,6 @@ private:
                             uint32_t restorationTime, PfcWdAction action);
     bool disableHwWatchdog(const Port& port);
 
-    // Determine the timer granularity that supports the given time value
-    bool determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, uint32_t hwMax, uint32_t& granularity);
-
     // Member variables
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
@@ -110,9 +106,6 @@ private:
     shared_ptr<DBConnector> m_stateDb;
     shared_ptr<Table> m_pfcWdHwStateTable;
 
-    // Round up user value to nearest valid interval
-    uint32_t roundUpToValidInterval(uint32_t requestedTime, const vector<uint32_t>& validIntervals);
-
     // Write failure status to STATE_DB
     void writeFailureStatus(const Port& port);
 
@@ -124,8 +117,6 @@ private:
                            const set<uint8_t>& losslessTc, uint32_t expected,
                            uint32_t& actual, const string& timerName);
 
-    // Initialization functions
-    void initializeCapabilities();
     void initializeTimerRanges();
     void registerCallbacks();
     void recoverWarmReboot(DBConnector *db);
@@ -133,9 +124,6 @@ private:
     // Configuration functions
     bool configureSwitchAction(const Port& port, PfcWdAction action,
                                const function<bool(const string&)>& handleFailure);
-    bool configureTimerGranularity(const Port& port, uint32_t detectionTime,
-                                   uint32_t& timerGranularity,
-                                   const function<bool(const string&)>& handleFailure);
     bool configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
                                  uint32_t detectionTime, uint32_t restorationTime,
                                  const function<bool(const string&)>& handleFailure);
@@ -143,9 +131,6 @@ private:
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
     void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
-
-    // Platform capabilities
-    bool m_portLevelGranularitySupported;
 
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;
