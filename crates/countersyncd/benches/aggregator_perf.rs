@@ -13,7 +13,7 @@ use countersyncd::{
     message::{
         aggregator::{
             default_heatmap_layout, AggregatedStatsMessage, AggregatorConfig, CounterSelector,
-            DEFAULT_HEATMAP_BUCKET_COUNT,
+            DEFAULT_HEATMAP_BUCKET_COUNT, DEFAULT_ROLLOVER_BIT_WIDTH,
         },
         saistats::{SAIStat, SAIStats, SAIStatsMessage},
     },
@@ -38,15 +38,17 @@ struct Scenario {
     configured: bool,
     reporting_rate: bool,
     rollover: bool,
+    rollover_override: Option<u8>,
     heatmap_layout: Option<HeatmapLayoutKind>,
 }
 
-const SCENARIOS: [Scenario; 13] = [
+const SCENARIOS: [Scenario; 14] = [
     Scenario {
         name: "unconfigured_passthrough",
         configured: false,
         reporting_rate: false,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -54,6 +56,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -61,6 +64,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -68,6 +72,15 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: true,
+        rollover_override: None,
+        heatmap_layout: None,
+    },
+    Scenario {
+        name: "rollover_override_24",
+        configured: true,
+        reporting_rate: false,
+        rollover: true,
+        rollover_override: Some(24),
         heatmap_layout: None,
     },
     Scenario {
@@ -75,6 +88,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
@@ -82,6 +96,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
     Scenario {
@@ -89,6 +104,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: true,
+        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -96,6 +112,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
@@ -103,6 +120,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: false,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
     Scenario {
@@ -110,6 +128,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: true,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
@@ -117,6 +136,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: false,
         rollover: true,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
     Scenario {
@@ -124,6 +144,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: true,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
@@ -131,6 +152,7 @@ const SCENARIOS: [Scenario; 13] = [
         configured: true,
         reporting_rate: true,
         rollover: true,
+        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Default256),
     },
 ];
@@ -172,6 +194,10 @@ fn configured_aggregator(scenario: Scenario) -> Aggregator {
             rollover_counters: scenario
                 .rollover
                 .then(|| HashSet::from([selector]))
+                .unwrap_or_default(),
+            rollover_bit_width_overrides: scenario
+                .rollover_override
+                .map(|bit_width| BTreeMap::from([(selector, bit_width)]))
                 .unwrap_or_default(),
             heatmap_interval: heatmap.then_some(HEATMAP_INTERVAL_US),
             heatmap_counters: heatmap
@@ -229,20 +255,27 @@ fn raw_counter(sample_index: usize, object_count: usize, object_index: usize) ->
     ((sample_index % 250) * object_count + object_index) as u64
 }
 
-fn expected_counters(object_count: usize, object_index: usize, rollover: bool) -> Vec<u64> {
+fn expected_counters(
+    object_count: usize,
+    object_index: usize,
+    rollover_bit_width: Option<u8>,
+) -> Vec<u64> {
     let mut last_raw = 0u64;
-    let mut offset = 0u64;
-    let mut corrected = 0u64;
+    let mut wrap_base = 0u64;
+    let modulus = rollover_bit_width.map(|bit_width| 1u64 << bit_width);
 
     (0..SAMPLES_PER_ITERATION)
         .map(|sample_index| {
             let raw = raw_counter(sample_index, object_count, object_index);
-            if rollover && sample_index > 0 && raw < last_raw {
-                offset = corrected;
+            if modulus.is_some() && sample_index > 0 && raw < last_raw {
+                wrap_base += modulus.expect("rollover modulus");
             }
-            corrected = if rollover { offset + raw } else { raw };
             last_raw = raw;
-            corrected
+            if modulus.is_some() {
+                wrap_base + raw
+            } else {
+                raw
+            }
         })
         .collect()
 }
@@ -283,6 +316,11 @@ fn expected_bucket_counts(bounds: &[u64], values: impl IntoIterator<Item = u64>)
 }
 
 fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SAIStats]) {
+    let rollover_bit_width = scenario.rollover.then_some(
+        scenario
+            .rollover_override
+            .unwrap_or(DEFAULT_ROLLOVER_BIT_WIDTH),
+    );
     let samples = base_samples
         .iter()
         .cloned()
@@ -307,7 +345,13 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
 
     assert_eq!(result.messages.len(), expected_message_count(scenario));
     let expected_counters = (0..object_count)
-        .map(|object_index| expected_counters(object_count, object_index, scenario.rollover))
+        .map(|object_index| {
+            expected_counters(
+                object_count,
+                object_index,
+                rollover_bit_width,
+            )
+        })
         .collect::<Vec<_>>();
     let data_message = if scenario.reporting_rate {
         &result.messages[result.messages.len() - 2]

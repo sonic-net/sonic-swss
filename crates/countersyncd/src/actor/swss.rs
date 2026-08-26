@@ -1,7 +1,8 @@
 use super::super::message::{
     aggregator::{
         AggregatorConfig, AggregatorConfigMessage, CounterSelector, HeatmapLayout,
-        DEFAULT_HEATMAP_BUCKET_COUNT,
+        DEFAULT_HEATMAP_BUCKET_COUNT, DEFAULT_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH,
+        MIN_ROLLOVER_BIT_WIDTH,
     },
     ipfix::IPFixTemplatesMessage,
 };
@@ -25,6 +26,8 @@ const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE: &str =
     "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR";
 const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM_TABLE: &str =
     "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 #[cfg(test)]
@@ -46,6 +49,7 @@ pub struct SwssActor {
     pub profile_table: SubscriberStateTable,
     pub aggregator_table: SubscriberStateTable,
     pub histogram_table: SubscriberStateTable,
+    pub rollover_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
 }
 
@@ -78,6 +82,15 @@ enum SwssEvent {
         explicit_bounds: Vec<u64>,
     },
     HistogramDelete {
+        aggregator: String,
+        selector: CounterSelector,
+    },
+    RolloverUpdate {
+        aggregator: String,
+        selector: CounterSelector,
+        bit_width: u8,
+    },
+    RolloverDelete {
         aggregator: String,
         selector: CounterSelector,
     },
@@ -131,11 +144,22 @@ impl SwssActor {
         )
         .map_err(|e| format!("Failed to create aggregator histogram table: {}", e))?;
 
+        let rollover_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB rollover connection: {}", e))?;
+        let rollover_table = SubscriberStateTable::new(
+            rollover_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create aggregator rollover table: {}", e))?;
+
         Ok(SwssActor {
             session_table,
             profile_table,
             aggregator_table,
             histogram_table,
+            rollover_table,
             template_recipient,
         })
     }
@@ -156,6 +180,7 @@ impl SwssActor {
             profile_table,
             aggregator_table,
             histogram_table,
+            rollover_table,
             template_recipient,
         } = actor;
         let mut aggregator_state = AggregatorConfigState::default();
@@ -164,6 +189,7 @@ impl SwssActor {
             Self::collect_profile_events(&profile_table),
             Self::collect_aggregator_events(&aggregator_table),
             Self::collect_histogram_events(&histogram_table),
+            Self::collect_rollover_events(&rollover_table),
             Self::collect_session_events(&session_table),
         ] {
             match events {
@@ -212,12 +238,24 @@ impl SwssActor {
         let _histogram_reader = match Self::spawn_reader_thread(
             "countersyncd-swss-aggregator-histogram",
             histogram_table,
-            event_sender,
+            event_sender.clone(),
             Self::collect_histogram_events,
         ) {
             Ok(handle) => handle,
             Err(e) => {
                 error!("Failed to spawn SWSS aggregator histogram reader: {}", e);
+                return;
+            }
+        };
+        let _rollover_reader = match Self::spawn_reader_thread(
+            "countersyncd-swss-aggregator-rollover",
+            rollover_table,
+            event_sender,
+            Self::collect_rollover_events,
+        ) {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to spawn SWSS aggregator rollover reader: {}", e);
                 return;
             }
         };
@@ -323,6 +361,35 @@ impl SwssActor {
                     let affected_sessions =
                         aggregator_state.session_keys_for_aggregator(&aggregator);
                     aggregator_state.remove_histogram_config(&aggregator, selector);
+                    Self::send_aggregator_configs_for_sessions(
+                        &template_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::RolloverUpdate {
+                    aggregator,
+                    selector,
+                    bit_width,
+                } => {
+                    let affected_sessions =
+                        aggregator_state.session_keys_for_aggregator(&aggregator);
+                    aggregator_state.set_rollover_config(aggregator, selector, bit_width);
+                    Self::send_aggregator_configs_for_sessions(
+                        &template_recipient,
+                        &aggregator_state,
+                        affected_sessions,
+                    )
+                    .await;
+                }
+                SwssEvent::RolloverDelete {
+                    aggregator,
+                    selector,
+                } => {
+                    let affected_sessions =
+                        aggregator_state.session_keys_for_aggregator(&aggregator);
+                    aggregator_state.remove_rollover_config(&aggregator, selector);
                     Self::send_aggregator_configs_for_sessions(
                         &template_recipient,
                         &aggregator_state,
@@ -519,6 +586,30 @@ impl SwssActor {
         Ok(events)
     }
 
+    fn collect_rollover_events(
+        rollover_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = rollover_table
+            .pops()
+            .map_err(|e| format!("Error popping items from aggregator rollover table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let key = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE,
+            );
+            match Self::parse_rollover_event(key.clone(), item.operation, &item.field_values) {
+                Ok(event) => events.push(event),
+                Err(reason) => {
+                    error!("Rejecting aggregator rollover update for {}: {}", key, reason)
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
     fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
         let mut session_data = SessionData::default();
 
@@ -611,6 +702,7 @@ impl SwssActor {
         let config = AggregatorConfig {
             reporting_rate,
             rollover_counters,
+            rollover_bit_width_overrides: Default::default(),
             heatmap_interval,
             heatmap_counters,
             heatmap_default_bucket_count,
@@ -621,6 +713,10 @@ impl SwssActor {
     }
 
     fn parse_histogram_key(key: &str) -> Result<(String, CounterSelector), String> {
+        Self::parse_child_key(key)
+    }
+
+    fn parse_child_key(key: &str) -> Result<(String, CounterSelector), String> {
         let mut components = key.split('|');
         let aggregator = components
             .next()
@@ -637,6 +733,45 @@ impl SwssActor {
         }
         let selector = CounterSelector::parse(&format!("{}|{}", group, counter))?;
         Ok((aggregator.to_string(), selector))
+    }
+
+    fn parse_rollover_bit_width(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<u8, String> {
+        let value = field_values
+            .get("bit_width")
+            .ok_or_else(|| "missing bit_width".to_string())?;
+        let value = value.to_string_lossy();
+        let bit_width = value
+            .trim()
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid bit_width '{}'", value))?;
+        if !(MIN_ROLLOVER_BIT_WIDTH..=MAX_ROLLOVER_BIT_WIDTH).contains(&bit_width) {
+            return Err(format!(
+                "bit_width must be in range {}..={}",
+                MIN_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH
+            ));
+        }
+        Ok(bit_width)
+    }
+
+    fn parse_rollover_event(
+        key: String,
+        operation: KeyOperation,
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<SwssEvent, String> {
+        let (aggregator, selector) = Self::parse_child_key(&key)?;
+        Ok(match operation {
+            KeyOperation::Set => SwssEvent::RolloverUpdate {
+                aggregator,
+                selector,
+                bit_width: Self::parse_rollover_bit_width(field_values)?,
+            },
+            KeyOperation::Del => SwssEvent::RolloverDelete {
+                aggregator,
+                selector,
+            },
+        })
     }
 
     fn parse_histogram_bounds(
@@ -676,12 +811,10 @@ impl SwssActor {
     }
 
     fn extract_config_key(full_key: &str, table_name: &str) -> String {
-        if let Some(pos) = full_key.find('|') {
-            if full_key.starts_with(table_name) {
-                return full_key[pos + 1..].to_string();
-            }
-        }
-        full_key.to_string()
+        full_key
+            .strip_prefix(&format!("{}|", table_name))
+            .unwrap_or(full_key)
+            .to_string()
     }
 
     fn extract_profile_from_session_key(session_key: &str) -> &str {
@@ -926,6 +1059,7 @@ struct AggregatorConfigState {
     profile_aggregators: HashMap<String, String>,
     aggregator_configs: HashMap<String, AggregatorConfig>,
     histogram_configs: HashMap<String, HashMap<CounterSelector, Vec<u64>>>,
+    rollover_configs: HashMap<String, HashMap<CounterSelector, u8>>,
     sessions: HashSet<String>,
 }
 
@@ -966,7 +1100,9 @@ impl AggregatorConfigState {
 
     fn remove_aggregator(&mut self, name: &str) {
         self.aggregator_configs.remove(name);
-        self.histogram_configs.remove(name);
+        // Child-table readers preserve their own ordering. Keep child rows
+        // cached but inert while the parent is absent so parent/child events
+        // converge correctly regardless of cross-table interleaving.
     }
 
     fn set_histogram_config(
@@ -990,6 +1126,27 @@ impl AggregatorConfigState {
         }
     }
 
+    fn set_rollover_config(
+        &mut self,
+        aggregator: String,
+        selector: CounterSelector,
+        bit_width: u8,
+    ) {
+        self.rollover_configs
+            .entry(aggregator)
+            .or_default()
+            .insert(selector, bit_width);
+    }
+
+    fn remove_rollover_config(&mut self, aggregator: &str, selector: CounterSelector) {
+        if let Some(configs) = self.rollover_configs.get_mut(aggregator) {
+            configs.remove(&selector);
+            if configs.is_empty() {
+                self.rollover_configs.remove(aggregator);
+            }
+        }
+    }
+
     fn config_for_session_key(&self, session_key: &str) -> Option<AggregatorConfig> {
         let profile = SwssActor::extract_profile_from_session_key(session_key);
         let aggregator = self.profile_aggregators.get(profile)?;
@@ -1000,6 +1157,17 @@ impl AggregatorConfigState {
                     .iter()
                     .filter(|(selector, _)| config.heatmap_counters.contains(selector))
                     .map(|(selector, bounds)| (*selector, bounds.clone())),
+            );
+        }
+        if let Some(rollovers) = self.rollover_configs.get(aggregator) {
+            config.rollover_bit_width_overrides.extend(
+                rollovers
+                    .iter()
+                    .filter(|(selector, bit_width)| {
+                        config.rollover_counters.contains(selector)
+                            && **bit_width != DEFAULT_ROLLOVER_BIT_WIDTH
+                    })
+                    .map(|(selector, bit_width)| (*selector, *bit_width)),
             );
         }
         Some(config)
@@ -1147,6 +1315,7 @@ mod tests {
             SwssActor::parse_aggregator_config(&aggregator_fields).expect("aggregator config");
         assert_eq!(config.reporting_rate, Some(100));
         assert_eq!(config.rollover_counters.len(), 1);
+        assert!(config.rollover_bit_width_overrides.is_empty());
         assert_eq!(config.heatmap_interval, Some(1000));
         assert_eq!(config.heatmap_counters.len(), 2);
         assert_eq!(config.heatmap_default_bucket_count, 64);
@@ -1271,6 +1440,114 @@ mod tests {
     }
 
     #[test]
+    fn test_rollover_parse_and_retained_state_merge() {
+        let selected = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let initially_unselected = CounterSelector::parse("PORT|IF_OUT_OCTETS").unwrap();
+        assert_eq!(
+            SwssActor::parse_child_key("harm0|PORT|IF_IN_OCTETS").unwrap(),
+            ("harm0".to_string(), selected)
+        );
+        assert!(SwssActor::parse_child_key("harm0|PORT").is_err());
+        assert!(SwssActor::parse_child_key("harm|0|PORT|IF_IN_OCTETS").is_err());
+
+        for bit_width in [1, 24, 32, 48, 63] {
+            let fields = HashMap::from([(
+                "bit_width".to_string(),
+                CxxString::from(bit_width.to_string()),
+            )]);
+            assert_eq!(SwssActor::parse_rollover_bit_width(&fields), Ok(bit_width));
+        }
+        for bit_width in [0, 64] {
+            let fields = HashMap::from([(
+                "bit_width".to_string(),
+                CxxString::from(bit_width.to_string()),
+            )]);
+            assert!(SwssActor::parse_rollover_bit_width(&fields).is_err());
+        }
+        assert!(SwssActor::parse_rollover_bit_width(&HashMap::new()).is_err());
+        assert!(SwssActor::parse_rollover_bit_width(&HashMap::from([(
+            "bit_width@".to_string(),
+            CxxString::from("8"),
+        )]))
+        .is_err());
+
+        let set = SwssActor::parse_rollover_event(
+            "harm0|PORT|IF_IN_OCTETS".to_string(),
+            KeyOperation::Set,
+            &HashMap::from([("bit_width".to_string(), CxxString::from("8"))]),
+        )
+        .unwrap();
+        assert!(matches!(
+            set,
+            SwssEvent::RolloverUpdate {
+                ref aggregator,
+                selector,
+                bit_width: 8,
+            } if aggregator == "harm0" && selector == selected
+        ));
+        let delete = SwssActor::parse_rollover_event(
+            "harm0|PORT|IF_IN_OCTETS".to_string(),
+            KeyOperation::Del,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(matches!(
+            delete,
+            SwssEvent::RolloverDelete {
+                ref aggregator,
+                selector,
+            } if aggregator == "harm0" && selector == selected
+        ));
+
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_rollover_config("harm0".to_string(), selected, 8);
+        state.set_rollover_config("harm0".to_string(), initially_unselected, 24);
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selected]),
+                ..Default::default()
+            }),
+        );
+        let custom = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(custom.rollover_bit_width_for(selected), 8);
+        assert!(!custom
+            .rollover_bit_width_overrides
+            .contains_key(&initially_unselected));
+
+        state.remove_rollover_config("harm0", selected);
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            fallback.rollover_bit_width_for(selected),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+
+        state.set_rollover_config("harm0".to_string(), selected, DEFAULT_ROLLOVER_BIT_WIDTH);
+        assert!(state
+            .config_for_session_key("profile0|PORT")
+            .unwrap()
+            .rollover_bit_width_overrides
+            .is_empty());
+
+        let mut parent = state
+            .config_for_session_key("profile0|PORT")
+            .expect("parent config");
+        parent.rollover_counters.insert(initially_unselected);
+        state.set_aggregator_config("harm0".to_string(), Some(parent));
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .unwrap()
+                .rollover_bit_width_for(initially_unselected),
+            24
+        );
+    }
+
+    #[test]
     fn test_parent_before_child_falls_back_then_switches_at_config_boundary() {
         let selector = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
         let mut state = AggregatorConfigState::default();
@@ -1305,18 +1582,53 @@ mod tests {
     }
 
     #[test]
-    fn test_parent_delete_removes_cached_children() {
+    fn test_rollover_parent_before_child_defaults_updates_and_falls_back() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            fallback.rollover_bit_width_for(selector),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+
+        state.set_rollover_config("harm0".to_string(), selector, 24);
+        let custom = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(custom.rollover_bit_width_for(selector), 24);
+
+        state.remove_rollover_config("harm0", selector);
+        let restored = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            restored.rollover_bit_width_for(selector),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+    }
+
+    #[test]
+    fn test_parent_delete_keeps_child_state_inert_until_recreated() {
         let selector = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let rollover = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
         let mut state = AggregatorConfigState::default();
         state.add_session("profile0|PORT".to_string());
         state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
         let parent = AggregatorConfig {
             heatmap_interval: Some(1_000),
             heatmap_counters: HashSet::from([selector]),
+            rollover_counters: HashSet::from([rollover]),
             ..Default::default()
         };
         state.set_aggregator_config("harm0".to_string(), Some(parent.clone()));
         state.set_histogram_config("harm0".to_string(), selector, vec![10, 20]);
+        state.set_rollover_config("harm0".to_string(), rollover, 8);
         assert!(state
             .config_for_session_key("profile0|PORT")
             .unwrap()
@@ -1324,13 +1636,31 @@ mod tests {
             .contains_key(&selector));
 
         state.remove_aggregator("harm0");
-        assert!(!state.histogram_configs.contains_key("harm0"));
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+        assert!(state.histogram_configs.contains_key("harm0"));
+        assert!(state.rollover_configs.contains_key("harm0"));
         state.set_aggregator_config("harm0".to_string(), Some(parent));
         assert!(state
             .config_for_session_key("profile0|PORT")
             .unwrap()
             .heatmap_explicit_bounds
-            .is_empty());
+            .contains_key(&selector));
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .unwrap()
+                .rollover_bit_width_for(rollover),
+            8
+        );
+
+        state.remove_histogram_config("harm0", selector);
+        state.remove_rollover_config("harm0", rollover);
+        let cleaned = state.config_for_session_key("profile0|PORT").unwrap();
+        assert!(cleaned.heatmap_explicit_bounds.is_empty());
+        assert_eq!(
+            cleaned.rollover_bit_width_for(rollover),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
     }
 
     #[tokio::test]
@@ -1370,6 +1700,41 @@ mod tests {
             .unwrap()
             .aggregator_config
             .is_some_and(|config| !config.reset));
+    }
+
+    #[tokio::test]
+    async fn test_rollover_child_update_uses_ordered_config_envelope() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        state.set_rollover_config("harm0".to_string(), selector, 8);
+        let (sender, mut receiver) = channel(1);
+
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        let message = receiver.recv().await.unwrap();
+        assert!(message.templates.is_none());
+        let config = message.aggregator_config.expect("config envelope");
+        assert!(!config.reset);
+        assert_eq!(
+            config
+                .config
+                .unwrap()
+                .rollover_bit_width_for(selector),
+            8
+        );
     }
 
     #[test]

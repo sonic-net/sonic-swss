@@ -1,6 +1,9 @@
 mod ipfix_test_helpers;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use tokio::sync::mpsc::channel;
 use tokio::time::{sleep, timeout, Duration};
@@ -170,6 +173,7 @@ async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
                 rollover_counters: std::collections::HashSet::from([selector]),
+                rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
                 heatmap_interval: Some(1_000),
                 heatmap_counters: std::collections::HashSet::from([selector]),
                 heatmap_default_bucket_count: 4,
@@ -203,14 +207,16 @@ async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
         .collect::<Vec<_>>();
     assert_eq!(
         reporting_points,
-        vec![100, 200, 300, 400, 500, 600, 700, 800, 900, 1_000]
+        vec![100, 200, 356, 456, 612, 712, 868, 968, 1_124, 1_224]
     );
     let heatmap = outputs
         .iter()
         .find_map(|output| output.heatmaps.first())
         .expect("completed heatmap should arrive");
     assert_eq!(heatmap.count, 9);
-    assert_eq!(heatmap.sum, 900.0);
+    assert_eq!(heatmap.sum, 1_124.0);
+    assert_eq!(heatmap.min, 100);
+    assert_eq!(heatmap.max, 156);
     assert_eq!(heatmap.bucket_counts, vec![0, 0, 9, 0]);
     assert_eq!(
         heatmap.explicit_bounds.as_ref(),

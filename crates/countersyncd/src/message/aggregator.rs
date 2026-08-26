@@ -12,6 +12,9 @@ pub const DEFAULT_HEATMAP_BUCKET_COUNT: u16 = 256;
 pub const MIN_HEATMAP_BUCKET_COUNT: u16 = 4;
 pub const MAX_HEATMAP_BUCKET_COUNT: u16 = 512;
 pub const MAX_EXACT_OTLP_BOUNDARY: u64 = 1 << 53;
+pub const DEFAULT_ROLLOVER_BIT_WIDTH: u8 = 32;
+pub const MIN_ROLLOVER_BIT_WIDTH: u8 = 1;
+pub const MAX_ROLLOVER_BIT_WIDTH: u8 = 63;
 static EMPTY_HEATMAPS: OnceLock<Arc<[Heatmap]>> = OnceLock::new();
 static DEFAULT_HEATMAP_LAYOUTS: OnceLock<Vec<OnceLock<Arc<HeatmapLayout>>>> = OnceLock::new();
 
@@ -349,6 +352,8 @@ pub struct AggregatorConfig {
     pub reporting_rate: Option<u32>,
     /// Counters corrected when a newly reported raw value is lower than the previous value.
     pub rollover_counters: HashSet<CounterSelector>,
+    /// Counter widths that differ from the default rollover width.
+    pub rollover_bit_width_overrides: BTreeMap<CounterSelector, u8>,
     /// Heatmap aggregation interval in microseconds.
     pub heatmap_interval: Option<u32>,
     /// Counters summarized as heatmaps after optional reporting-rate aggregation.
@@ -364,6 +369,7 @@ impl Default for AggregatorConfig {
         Self {
             reporting_rate: None,
             rollover_counters: HashSet::new(),
+            rollover_bit_width_overrides: BTreeMap::new(),
             heatmap_interval: None,
             heatmap_counters: HashSet::new(),
             heatmap_default_bucket_count: DEFAULT_HEATMAP_BUCKET_COUNT,
@@ -528,6 +534,21 @@ impl AggregatorConfig {
             validate_explicit_bounds(bounds)?;
         }
 
+        for (selector, bit_width) in &self.rollover_bit_width_overrides {
+            if !self.rollover_counters.contains(selector) {
+                return Err(format!(
+                    "bit_width override selector type {} stat {} is not selected by rollover_counters",
+                    selector.type_id, selector.stat_id
+                ));
+            }
+            if !(MIN_ROLLOVER_BIT_WIDTH..=MAX_ROLLOVER_BIT_WIDTH).contains(bit_width) {
+                return Err(format!(
+                    "rollover bit_width must be in range {}..={}",
+                    MIN_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH
+                ));
+            }
+        }
+
         for selector in &self.rollover_counters {
             let kind = selector.heatmap_value_kind();
             if kind != HeatmapValueKind::Delta {
@@ -541,6 +562,13 @@ impl AggregatorConfig {
         }
 
         Ok(())
+    }
+
+    pub fn rollover_bit_width_for(&self, selector: CounterSelector) -> u8 {
+        self.rollover_bit_width_overrides
+            .get(&selector)
+            .copied()
+            .unwrap_or(DEFAULT_ROLLOVER_BIT_WIDTH)
     }
 
     pub fn layout_for(&self, selector: CounterSelector) -> Result<Arc<HeatmapLayout>, String> {
@@ -922,6 +950,10 @@ mod tests {
             DEFAULT_HEATMAP_BUCKET_COUNT
         );
         assert!(default.validate().is_ok());
+        assert_eq!(
+            default.rollover_bit_width_for(CounterSelector::new(1, 1)),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
 
         let selector_a = CounterSelector::new(1, 1);
         let selector_b = CounterSelector::new(21, 1);
@@ -944,6 +976,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn validates_rollover_bit_width_overrides() {
+        let selected = CounterSelector::new(1, SaiPortStat::IfInOctets.to_u32());
+        for bit_width in [1, 24, 32, 48, 63] {
+            let config = AggregatorConfig {
+                rollover_counters: HashSet::from([selected]),
+                rollover_bit_width_overrides: BTreeMap::from([(selected, bit_width)]),
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok());
+            assert_eq!(config.rollover_bit_width_for(selected), bit_width);
+        }
+
+        for bit_width in [0, 64] {
+            let config = AggregatorConfig {
+                rollover_counters: HashSet::from([selected]),
+                rollover_bit_width_overrides: BTreeMap::from([(selected, bit_width)]),
+                ..Default::default()
+            };
+            assert!(config.validate().is_err());
+        }
+
+        let orphan = CounterSelector::new(1, SaiPortStat::IfOutOctets.to_u32());
+        let config = AggregatorConfig {
+            rollover_counters: HashSet::from([selected]),
+            rollover_bit_width_overrides: BTreeMap::from([(orphan, 24)]),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
     }
 
     #[test]

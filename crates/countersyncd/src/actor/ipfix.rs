@@ -1632,4 +1632,36 @@ mod test {
         drop(buffer_sender);
         actor_handle.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn template_controls_preserve_send_order_on_stats_channel() {
+        let (buffer_sender, buffer_receiver) = channel(1);
+        let (template_sender, template_receiver) = channel(2);
+        let (stats_sender, mut stats_receiver) = channel(2);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+        actor.add_recipient(stats_sender);
+        let actor_handle = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Runtime::new().expect("ipfix test runtime");
+            runtime.block_on(IpfixActor::run(actor));
+        });
+
+        for key in ["first|PORT", "second|PORT"] {
+            template_sender
+                .send(IPFixTemplatesMessage::config(AggregatorConfigMessage::new(
+                    key.to_string(),
+                    None,
+                )))
+                .await
+                .unwrap();
+        }
+
+        let first = stats_receiver.recv().await.unwrap().config.unwrap();
+        let second = stats_receiver.recv().await.unwrap().config.unwrap();
+        assert_eq!(first.key, "first|PORT");
+        assert_eq!(second.key, "second|PORT");
+
+        drop(template_sender);
+        drop(buffer_sender);
+        actor_handle.await.unwrap();
+    }
 }

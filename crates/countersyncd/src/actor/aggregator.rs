@@ -10,7 +10,7 @@ use tokio::{
 use crate::message::{
     aggregator::{
         heatmap_schema, AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage,
-        CounterSelector, Heatmap, HeatmapLayout, HeatmapValueKind,
+        CounterSelector, Heatmap, HeatmapLayout, HeatmapValueKind, DEFAULT_ROLLOVER_BIT_WIDTH,
     },
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
@@ -493,15 +493,15 @@ struct AggregatorState {
 
 #[derive(Debug)]
 struct RolloverState {
-    counters: HashSet<CounterSelector>,
+    moduli: HashMap<CounterSelector, u64>,
     series: HashMap<String, HashMap<(u32, u32), RolloverSeries>>,
+    invalid_raw_logged: HashMap<String, HashSet<(u32, u32)>>,
 }
 
 #[derive(Debug)]
 struct RolloverSeries {
     last_raw: u64,
-    offset: u64,
-    last_corrected: u64,
+    wrap_base: u64,
     last_observation_time: u64,
 }
 
@@ -509,50 +509,87 @@ impl RolloverSeries {
     fn new(value: u64, observation_time: u64) -> Self {
         Self {
             last_raw: value,
-            offset: 0,
-            last_corrected: value,
+            wrap_base: 0,
             last_observation_time: observation_time,
         }
     }
 
-    fn correct(&mut self, raw: u64, observation_time: u64) -> Option<u64> {
+    fn correct(&mut self, raw: u64, modulus: u64, observation_time: u64) -> Option<u64> {
         if observation_time < self.last_observation_time {
             return None;
         }
-        if raw < self.last_raw {
-            self.offset = self.last_corrected;
-        }
 
-        let corrected = match self.offset.checked_add(raw) {
-            Some(corrected) => corrected,
-            None => {
-                error!(
-                    "Rollover correction overflow: offset {} + raw {}; re-baselining series",
-                    self.offset, raw
-                );
-                *self = Self::new(raw, observation_time);
-                return Some(raw);
-            }
+        let wrap_base = if raw < self.last_raw {
+            // A decrease proves one wrap. Additional wraps between samples
+            // cannot be inferred from the raw counter values.
+            self.wrap_base.checked_add(modulus)
+        } else {
+            Some(self.wrap_base)
+        };
+        let corrected = wrap_base.and_then(|base| base.checked_add(raw));
+        let Some((wrap_base, corrected)) = wrap_base.zip(corrected) else {
+            error!(
+                "Rollover correction overflow: wrap_base {} modulus {} raw {}; re-baselining series",
+                self.wrap_base, modulus, raw
+            );
+            *self = Self::new(raw, observation_time);
+            return Some(raw);
         };
         self.last_raw = raw;
-        self.last_corrected = corrected;
+        self.wrap_base = wrap_base;
         self.last_observation_time = observation_time;
         Some(corrected)
     }
 }
 
 impl RolloverState {
-    fn new(counters: HashSet<CounterSelector>) -> Self {
+    fn new(config: &AggregatorConfig) -> Self {
         Self {
-            counters,
+            moduli: config
+                .rollover_counters
+                .iter()
+                .map(|selector| {
+                    (
+                        *selector,
+                        1u64 << config.rollover_bit_width_for(*selector),
+                    )
+                })
+                .collect(),
             series: HashMap::new(),
+            invalid_raw_logged: HashMap::new(),
         }
+    }
+
+    fn retain_compatible_series(&mut self, previous: RolloverState) {
+        if self.moduli == previous.moduli {
+            self.series = previous.series;
+            return;
+        }
+
+        let compatible = previous
+            .moduli
+            .iter()
+            .filter(|(selector, modulus)| self.moduli.get(selector) == Some(modulus))
+            .map(|(selector, _)| (selector.type_id, selector.stat_id))
+            .collect::<HashSet<_>>();
+        if compatible.is_empty() {
+            return;
+        }
+
+        self.series = previous
+            .series
+            .into_iter()
+            .filter_map(|(object_name, mut series)| {
+                series.retain(|selector, _| compatible.contains(selector));
+                (!series.is_empty()).then_some((object_name, series))
+            })
+            .collect();
     }
 
     fn process(&mut self, sample: SAIStatsMessage) -> SAIStatsMessage {
         if !sample.stats.iter().any(|stat| {
-            self.counters
-                .contains(&CounterSelector::new(stat.type_id, stat.stat_id))
+            self.moduli
+                .contains_key(&CounterSelector::new(stat.type_id, stat.stat_id))
         }) {
             return sample;
         }
@@ -562,11 +599,27 @@ impl RolloverState {
         {
             let corrected = Arc::make_mut(&mut corrected);
             corrected.stats.retain_mut(|stat| {
-                if !self
-                    .counters
-                    .contains(&CounterSelector::new(stat.type_id, stat.stat_id))
-                {
+                let selector = CounterSelector::new(stat.type_id, stat.stat_id);
+                let Some(modulus) = self.moduli.get(&selector).copied() else {
                     return true;
+                };
+                if stat.counter >= modulus {
+                    let first_invalid = self
+                        .invalid_raw_logged
+                        .entry(stat.object_name.clone())
+                        .or_default()
+                        .insert((stat.type_id, stat.stat_id));
+                    if first_invalid {
+                        error!(
+                            "Dropping rollover value {} for {} type {} stat {}: expected raw value below modulus {}; suppressing repeated errors for this series",
+                            stat.counter,
+                            stat.object_name,
+                            stat.type_id,
+                            stat.stat_id,
+                            modulus
+                        );
+                    }
+                    return false;
                 }
 
                 let key = (stat.type_id, stat.stat_id);
@@ -575,7 +628,7 @@ impl RolloverState {
                     .get_mut(stat.object_name.as_str())
                     .and_then(|states| states.get_mut(&key))
                 {
-                    let Some(value) = state.correct(stat.counter, observation_time) else {
+                    let Some(value) = state.correct(stat.counter, modulus, observation_time) else {
                         debug!(
                             "Ignoring late rollover sample for {} type {} stat {} at {}",
                             stat.object_name, stat.type_id, stat.stat_id, observation_time
@@ -606,7 +659,7 @@ impl RolloverState {
 impl AggregatorState {
     fn new(config: AggregatorConfig) -> Self {
         let rollover = (!config.rollover_counters.is_empty())
-            .then(|| Box::new(RolloverState::new(config.rollover_counters.clone())));
+            .then(|| Box::new(RolloverState::new(&config)));
         let watermark_counters = Arc::new(
             config
                 .heatmap_counters
@@ -669,7 +722,7 @@ impl Aggregator {
 
     fn update_config(&mut self, key: String, config: Option<AggregatorConfig>, reset: bool) {
         match config {
-            Some(config) => {
+            Some(mut config) => {
                 if let Err(reason) = config.validate() {
                     error!(
                         "Rejecting aggregator config for session {}: {}",
@@ -677,16 +730,21 @@ impl Aggregator {
                     );
                     return;
                 }
+                config
+                    .rollover_bit_width_overrides
+                    .retain(|_, bit_width| *bit_width != DEFAULT_ROLLOVER_BIT_WIDTH);
                 if let Some(state) = self.sessions.get_mut(&key) {
                     if !reset && state.config == config {
                         return;
                     }
 
-                    let preserve_rollover =
-                        !reset && state.config.rollover_counters == config.rollover_counters;
                     let mut replacement = AggregatorState::new(config);
-                    if preserve_rollover {
-                        replacement.rollover = state.rollover.take();
+                    if !reset {
+                        if let (Some(next), Some(previous)) =
+                            (replacement.rollover.as_mut(), state.rollover.take())
+                        {
+                            next.retain_compatible_series(*previous);
+                        }
                     }
                     // Partial reporting and heatmap windows are intentionally
                     // discarded when their configuration changes.
@@ -1129,7 +1187,10 @@ mod tests {
             sample(2_000, vec![stat("Ethernet0", 10)]),
         );
 
-        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", 210)]);
+        assert_eq!(
+            output[0].stats.stats,
+            vec![stat("Ethernet0", (1u64 << 32) + 10)]
+        );
     }
 
     fn stateful_config() -> AggregatorConfig {
@@ -1137,6 +1198,7 @@ mod tests {
         AggregatorConfig {
             reporting_rate: Some(10),
             rollover_counters: HashSet::from([selector]),
+            rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
             heatmap_interval: Some(20),
             heatmap_counters: HashSet::from([selector]),
             heatmap_explicit_bounds: BTreeMap::from([(selector, vec![5, 10])]),
@@ -1174,10 +1236,10 @@ mod tests {
             .expect("preserved reporting window");
         drop(config_sender);
 
-        assert_eq!(output.stats.stats[0].counter, 220);
+        assert_eq!(output.stats.stats[0].counter, 276);
         assert_eq!(output.heatmaps.len(), 1);
         assert_eq!(output.heatmaps[0].count, 1);
-        assert_eq!(output.heatmaps[0].sum, 10.0);
+        assert_eq!(output.heatmaps[0].sum, 66.0);
     }
 
     #[test]
@@ -1273,7 +1335,7 @@ mod tests {
             sample(3_000, vec![stat("Ethernet0", 20)]),
         );
 
-        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", 220)]);
+        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", (1u64 << 32) + 20)]);
     }
 
     #[test]
@@ -1315,15 +1377,32 @@ mod tests {
 
     #[test]
     fn rollover_overflow_rebaselines_and_recovers() {
-        let mut series = RolloverSeries::new(u64::MAX - 5, 1);
+        let modulus = 1u64 << 63;
+        let mut series = RolloverSeries {
+            last_raw: modulus - 1,
+            wrap_base: modulus,
+            last_observation_time: 1,
+        };
 
-        assert_eq!(series.correct(10, 2), Some(10));
-        assert_eq!(series.correct(20, 3), Some(20));
-        assert_eq!(series.correct(5, 4), Some(25));
+        assert_eq!(series.correct(0, modulus, 2), Some(0));
+        assert_eq!(series.correct(10, modulus, 3), Some(10));
+        assert_eq!(series.correct(5, modulus, 4), Some(modulus + 5));
     }
 
     #[test]
-    fn corrects_rollovers_without_reporting_rate() {
+    fn rollover_corrected_value_overflow_rebaselines_and_recovers() {
+        let mut series = RolloverSeries {
+            last_raw: 10,
+            wrap_base: u64::MAX - 5,
+            last_observation_time: 1,
+        };
+
+        assert_eq!(series.correct(11, 256, 2), Some(11));
+        assert_eq!(series.correct(20, 256, 3), Some(20));
+    }
+
+    #[test]
+    fn corrects_default_32_bit_rollovers_without_reporting_rate() {
         let mut aggregator = Aggregator::default();
         aggregator.set_config(
             "session".to_string(),
@@ -1334,10 +1413,11 @@ mod tests {
         );
 
         for (time, raw, expected) in [
-            (1_000, 100, 100),
-            (2_000, 200, 200),
-            (3_000, 10, 210),
-            (4_000, 20, 220),
+            (1_000, (1u64 << 32) - 2, (1u64 << 32) - 2),
+            (2_000, (1u64 << 32) - 1, (1u64 << 32) - 1),
+            (3_000, 0, 1u64 << 32),
+            (4_000, 7, (1u64 << 32) + 7),
+            (5_000, 1, (2u64 << 32) + 1),
         ] {
             let output = process(
                 &mut aggregator,
@@ -1347,6 +1427,238 @@ mod tests {
             assert_eq!(output.len(), 1);
             assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", expected)]);
         }
+    }
+
+    #[test]
+    fn corrects_supported_rollover_widths_with_exact_modulus() {
+        for bit_width in [1, 24, 32, 48, 63] {
+            let selector = CounterSelector::new(1, 2);
+            let modulus = 1u64 << bit_width;
+            let mut aggregator = Aggregator::default();
+            aggregator.set_config(
+                "session".to_string(),
+                Some(AggregatorConfig {
+                    rollover_counters: HashSet::from([selector]),
+                    rollover_bit_width_overrides: BTreeMap::from([(selector, bit_width)]),
+                    ..Default::default()
+                }),
+            );
+
+            for (time, raw, expected) in [
+                (1_000, modulus - 2, modulus - 2),
+                (2_000, modulus - 1, modulus - 1),
+                (3_000, 0, modulus),
+                (4_000, 1, modulus + 1),
+            ] {
+                let output = process(
+                    &mut aggregator,
+                    Some(Arc::from("session")),
+                    sample(time, vec![stat("Ethernet0", raw)]),
+                );
+                assert_eq!(output[0].stats.stats[0].counter, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn corrects_repeated_observed_wraps() {
+        let selector = CounterSelector::new(1, 2);
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
+                ..Default::default()
+            }),
+        );
+
+        for (time, raw, expected) in [
+            (1_000, 250, 250),
+            (2_000, 5, 261),
+            (3_000, 240, 496),
+            (4_000, 3, 515),
+        ] {
+            let output = process(
+                &mut aggregator,
+                Some(Arc::from("session")),
+                sample(time, vec![stat("Ethernet0", raw)]),
+            );
+            assert_eq!(output[0].stats.stats[0].counter, expected);
+        }
+    }
+
+    #[test]
+    fn invalid_raw_is_dropped_without_altering_rollover_series() {
+        let selector = CounterSelector::new(1, 2);
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
+                ..Default::default()
+            }),
+        );
+
+        process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(1_000, vec![stat("Ethernet0", 250)]),
+        );
+        let invalid = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(2_000, vec![stat("Ethernet0", 256)]),
+        );
+        let repeated_invalid = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(2_500, vec![stat("Ethernet0", 300)]),
+        );
+        let recovered = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(3_000, vec![stat("Ethernet0", 5)]),
+        );
+
+        assert!(invalid[0].stats.stats.is_empty());
+        assert!(repeated_invalid[0].stats.stats.is_empty());
+        assert_eq!(
+            aggregator.sessions["session"]
+                .rollover
+                .as_ref()
+                .unwrap()
+                .invalid_raw_logged["Ethernet0"]
+                .len(),
+            1
+        );
+        assert_eq!(recovered[0].stats.stats, vec![stat("Ethernet0", 261)]);
+    }
+
+    #[test]
+    fn config_update_preserves_only_unchanged_effective_widths() {
+        let first = CounterSelector::new(1, 2);
+        let second = CounterSelector::new(1, 3);
+        let added = CounterSelector::new(1, 4);
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([first, second]),
+                rollover_bit_width_overrides: BTreeMap::from([(first, 8), (second, 8)]),
+                ..Default::default()
+            }),
+        );
+        for (time, first_raw, second_raw) in [(1_000, 250, 250), (2_000, 5, 5)] {
+            process(
+                &mut aggregator,
+                Some(Arc::from("session")),
+                sample(
+                    time,
+                    vec![
+                        selected_stat("Ethernet0", first, first_raw),
+                        selected_stat("Ethernet0", second, second_raw),
+                    ],
+                ),
+            );
+        }
+
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([first, second, added]),
+                rollover_bit_width_overrides: BTreeMap::from([(first, 8), (second, 24)]),
+                ..Default::default()
+            }),
+        );
+        let output = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(
+                3_000,
+                vec![
+                    selected_stat("Ethernet0", first, 6),
+                    selected_stat("Ethernet0", second, 6),
+                    selected_stat("Ethernet0", added, 6),
+                ],
+            ),
+        );
+
+        assert_eq!(output[0].stats.stats[0].counter, 262);
+        assert_eq!(output[0].stats.stats[1].counter, 6);
+        assert_eq!(output[0].stats.stats[2].counter, 6);
+    }
+
+    #[test]
+    fn removed_then_readded_selector_is_rebaselined() {
+        let selector = CounterSelector::new(1, 2);
+        let config = AggregatorConfig {
+            rollover_counters: HashSet::from([selector]),
+            rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
+            ..Default::default()
+        };
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config("session".to_string(), Some(config.clone()));
+        process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(1_000, vec![stat("Ethernet0", 250)]),
+        );
+        process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(2_000, vec![stat("Ethernet0", 5)]),
+        );
+
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig::default()),
+        );
+        aggregator.set_config("session".to_string(), Some(config));
+        let output = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(3_000, vec![stat("Ethernet0", 6)]),
+        );
+
+        assert_eq!(output[0].stats.stats[0].counter, 6);
+    }
+
+    #[test]
+    fn explicit_default_width_add_and_delete_preserve_state() {
+        let selector = CounterSelector::new(1, 2);
+        let base = AggregatorConfig {
+            rollover_counters: HashSet::from([selector]),
+            ..Default::default()
+        };
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config("session".to_string(), Some(base.clone()));
+        process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(1_000, vec![stat("Ethernet0", (1u64 << 32) - 1)]),
+        );
+
+        let mut explicit = base.clone();
+        explicit
+            .rollover_bit_width_overrides
+            .insert(selector, DEFAULT_ROLLOVER_BIT_WIDTH);
+        aggregator.set_config("session".to_string(), Some(explicit));
+        let wrapped = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(2_000, vec![stat("Ethernet0", 0)]),
+        );
+        aggregator.set_config("session".to_string(), Some(base));
+        let continued = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(3_000, vec![stat("Ethernet0", 1)]),
+        );
+
+        assert_eq!(wrapped[0].stats.stats[0].counter, 1u64 << 32);
+        assert_eq!(continued[0].stats.stats[0].counter, (1u64 << 32) + 1);
     }
 
     #[test]
@@ -1377,7 +1689,10 @@ mod tests {
         );
 
         assert!(late[0].stats.stats.is_empty());
-        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", 210)]);
+        assert_eq!(
+            output[0].stats.stats,
+            vec![stat("Ethernet0", (1u64 << 32) + 10)]
+        );
     }
 
     #[test]
@@ -1420,7 +1735,7 @@ mod tests {
             ),
         );
 
-        assert_eq!(output[0].stats.stats[0].counter, 210);
+        assert_eq!(output[0].stats.stats[0].counter, (1u64 << 32) + 10);
         assert_eq!(output[0].stats.stats[1].counter, 10);
     }
 
@@ -1450,7 +1765,10 @@ mod tests {
             sample(10_001, vec![stat("Ethernet0", 20)]),
         );
 
-        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", 210)]);
+        assert_eq!(
+            output[0].stats.stats,
+            vec![stat("Ethernet0", (1u64 << 32) + 10)]
+        );
         assert!(output[0].heatmaps.is_empty());
     }
 
@@ -1557,6 +1875,7 @@ mod tests {
             "session".to_string(),
             Some(AggregatorConfig {
                 rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
                 ..heatmap_config([selector], [(selector, vec![10, 20])])
             }),
         );
@@ -1573,7 +1892,7 @@ mod tests {
             sample(10_001, Vec::new()),
         );
         assert_eq!(output[0].heatmaps[0].count, 2);
-        assert_eq!(output[0].heatmaps[0].bucket_counts, vec![2, 0, 0]);
+        assert_eq!(output[0].heatmaps[0].bucket_counts, vec![1, 0, 1]);
     }
 
     #[test]
@@ -1827,6 +2146,7 @@ mod tests {
             Some(AggregatorConfig {
                 reporting_rate: Some(100),
                 rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
                 heatmap_interval: Some(1_000),
                 heatmap_counters: HashSet::from([selector]),
                 heatmap_explicit_bounds: BTreeMap::from([(selector, vec![50, 100, 500])]),
@@ -1862,17 +2182,17 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             reporting_points,
-            vec![100, 200, 300, 400, 500, 600, 700, 800, 900, 1_000]
+            vec![100, 200, 356, 456, 612, 712, 868, 968, 1_124, 1_224]
         );
         let heatmap = messages
             .iter()
             .find_map(|message| message.heatmaps.first())
             .expect("completed heatmap window");
         assert_eq!(heatmap.count, 9);
-        assert_eq!(heatmap.sum, 900.0);
+        assert_eq!(heatmap.sum, 1_124.0);
         assert_eq!(heatmap.min, 100);
-        assert_eq!(heatmap.max, 100);
-        assert_eq!(heatmap.bucket_counts, vec![0, 9, 0, 0]);
+        assert_eq!(heatmap.max, 156);
+        assert_eq!(heatmap.bucket_counts, vec![0, 5, 4, 0]);
         assert_eq!(heatmap.start_time_unix_nano, 0);
         assert_eq!(heatmap.time_unix_nano, 1_000_000);
     }
