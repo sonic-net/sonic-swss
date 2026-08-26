@@ -1429,8 +1429,8 @@ void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFiel
     }
     else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
-        KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
-        handleNotification(entry);
+        KeyOpFieldsValuesTuple notificationEntry = entry;
+        handleNotification(notificationEntry);
     }
 }
 
