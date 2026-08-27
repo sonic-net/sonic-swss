@@ -13,7 +13,7 @@ use countersyncd::{
     message::{
         aggregator::{
             default_heatmap_layout, AggregatedStatsMessage, AggregatorConfig, CounterSelector,
-            DEFAULT_HEATMAP_BUCKET_COUNT, DEFAULT_ROLLOVER_BIT_WIDTH,
+            HeatmapQuantity, DEFAULT_ROLLOVER_BIT_WIDTH,
         },
         saistats::{SAIStat, SAIStats, SAIStatsMessage},
     },
@@ -29,7 +29,7 @@ const HEATMAP_BUCKET_BOUNDARIES: [u64; 7] = [0, 64, 256, 1_024, 4_096, 16_384, 6
 #[derive(Clone, Copy)]
 enum HeatmapLayoutKind {
     Custom,
-    Default256,
+    SemanticDeltaBytes,
 }
 
 #[derive(Clone, Copy)]
@@ -38,17 +38,15 @@ struct Scenario {
     configured: bool,
     reporting_rate: bool,
     rollover: bool,
-    rollover_override: Option<u8>,
     heatmap_layout: Option<HeatmapLayoutKind>,
 }
 
-const SCENARIOS: [Scenario; 14] = [
+const SCENARIOS: [Scenario; 6] = [
     Scenario {
         name: "unconfigured_passthrough",
         configured: false,
         reporting_rate: false,
         rollover: false,
-        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -56,7 +54,6 @@ const SCENARIOS: [Scenario; 14] = [
         configured: true,
         reporting_rate: false,
         rollover: false,
-        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -64,7 +61,6 @@ const SCENARIOS: [Scenario; 14] = [
         configured: true,
         reporting_rate: true,
         rollover: false,
-        rollover_override: None,
         heatmap_layout: None,
     },
     Scenario {
@@ -72,15 +68,6 @@ const SCENARIOS: [Scenario; 14] = [
         configured: true,
         reporting_rate: false,
         rollover: true,
-        rollover_override: None,
-        heatmap_layout: None,
-    },
-    Scenario {
-        name: "rollover_override_24",
-        configured: true,
-        reporting_rate: false,
-        rollover: true,
-        rollover_override: Some(24),
         heatmap_layout: None,
     },
     Scenario {
@@ -88,72 +75,14 @@ const SCENARIOS: [Scenario; 14] = [
         configured: true,
         reporting_rate: false,
         rollover: false,
-        rollover_override: None,
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
-        name: "heatmap_default_256_buckets",
+        name: "heatmap_semantic_delta_bytes_16_buckets",
         configured: true,
         reporting_rate: false,
         rollover: false,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Default256),
-    },
-    Scenario {
-        name: "reporting_rollover",
-        configured: true,
-        reporting_rate: true,
-        rollover: true,
-        rollover_override: None,
-        heatmap_layout: None,
-    },
-    Scenario {
-        name: "reporting_heatmap_custom_8_buckets",
-        configured: true,
-        reporting_rate: true,
-        rollover: false,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Custom),
-    },
-    Scenario {
-        name: "reporting_heatmap_default_256_buckets",
-        configured: true,
-        reporting_rate: true,
-        rollover: false,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Default256),
-    },
-    Scenario {
-        name: "rollover_heatmap_custom_8_buckets",
-        configured: true,
-        reporting_rate: false,
-        rollover: true,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Custom),
-    },
-    Scenario {
-        name: "rollover_heatmap_default_256_buckets",
-        configured: true,
-        reporting_rate: false,
-        rollover: true,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Default256),
-    },
-    Scenario {
-        name: "all_methods_custom_8_buckets",
-        configured: true,
-        reporting_rate: true,
-        rollover: true,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Custom),
-    },
-    Scenario {
-        name: "all_methods_default_256_buckets",
-        configured: true,
-        reporting_rate: true,
-        rollover: true,
-        rollover_override: None,
-        heatmap_layout: Some(HeatmapLayoutKind::Default256),
+        heatmap_layout: Some(HeatmapLayoutKind::SemanticDeltaBytes),
     },
 ];
 
@@ -165,7 +94,7 @@ fn build_samples(object_count: usize) -> Arc<Vec<SAIStats>> {
                     .map(|object_index| SAIStat {
                         object_name: format!("Ethernet{}", object_index * 8),
                         type_id: 1,
-                        stat_id: 1,
+                        stat_id: 0,
                         // Force a decrease every 250 samples so rollover scenarios
                         // exercise their correction path rather than only the steady state.
                         counter: raw_counter(sample_index, object_count, object_index),
@@ -183,35 +112,32 @@ fn configured_aggregator(scenario: Scenario) -> Aggregator {
         return aggregator;
     }
 
-    let selector = CounterSelector::new(1, 1);
+    let selector = CounterSelector::new(1, 0);
     let heatmap = scenario.heatmap_layout.is_some();
-    // Eight custom buckets versus the 256-bucket fallback is the intentional
-    // practical cardinality comparison for every heatmap scenario.
-    aggregator.set_config(
-        SESSION_KEY.to_string(),
-        Some(AggregatorConfig {
-            reporting_rate: scenario.reporting_rate.then_some(REPORTING_RATE_US),
-            rollover_counters: scenario
-                .rollover
-                .then(|| HashSet::from([selector]))
-                .unwrap_or_default(),
-            rollover_bit_width_overrides: scenario
-                .rollover_override
-                .map(|bit_width| BTreeMap::from([(selector, bit_width)]))
-                .unwrap_or_default(),
-            heatmap_interval: heatmap.then_some(HEATMAP_INTERVAL_US),
-            heatmap_counters: heatmap
-                .then(|| HashSet::from([selector]))
-                .unwrap_or_default(),
-            heatmap_default_bucket_count: DEFAULT_HEATMAP_BUCKET_COUNT,
-            heatmap_explicit_bounds: match scenario.heatmap_layout {
-                Some(HeatmapLayoutKind::Custom) => {
-                    BTreeMap::from([(selector, HEATMAP_BUCKET_BOUNDARIES.to_vec())])
-                }
-                _ => BTreeMap::new(),
-            },
-        }),
-    );
+    // Layout generation is deliberately outside the measured path. The custom
+    // eight-bucket layout is compared with the semantic 16-bucket byte default.
+    let mut config = AggregatorConfig {
+        reporting_rate: scenario.reporting_rate.then_some(REPORTING_RATE_US),
+        poll_interval_us: Some(1_000),
+        rollover_counters: scenario
+            .rollover
+            .then(|| HashSet::from([selector]))
+            .unwrap_or_default(),
+        rollover_bit_width_overrides: BTreeMap::new(),
+        heatmap_interval: heatmap.then_some(HEATMAP_INTERVAL_US),
+        heatmap_counters: heatmap
+            .then(|| HashSet::from([selector]))
+            .unwrap_or_default(),
+        heatmap_explicit_bounds: match scenario.heatmap_layout {
+            Some(HeatmapLayoutKind::Custom) => {
+                BTreeMap::from([(selector, HEATMAP_BUCKET_BOUNDARIES.to_vec())])
+            }
+            _ => BTreeMap::new(),
+        },
+        ..Default::default()
+    };
+    config.resolve_heatmap_layouts().expect("benchmark layout");
+    aggregator.set_config(SESSION_KEY.to_string(), Some(config));
     aggregator
 }
 
@@ -234,15 +160,16 @@ fn samples_per_reporting_window() -> usize {
 
 fn run_scenario(
     mut aggregator: Aggregator,
+    session_key: Arc<str>,
     samples: Vec<SAIStatsMessage>,
     closing_samples: [SAIStatsMessage; 2],
     mut messages: Vec<AggregatedStatsMessage>,
 ) -> BenchmarkOutput {
     for sample in samples {
-        messages.extend(aggregator.process(Some(Arc::from(SESSION_KEY)), sample));
+        messages.extend(aggregator.process(Some(session_key.clone()), sample));
     }
     for sample in closing_samples {
-        messages.extend(aggregator.process(Some(Arc::from(SESSION_KEY)), sample));
+        messages.extend(aggregator.process(Some(session_key.clone()), sample));
     }
 
     BenchmarkOutput {
@@ -316,11 +243,7 @@ fn expected_bucket_counts(bounds: &[u64], values: impl IntoIterator<Item = u64>)
 }
 
 fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SAIStats]) {
-    let rollover_bit_width = scenario.rollover.then_some(
-        scenario
-            .rollover_override
-            .unwrap_or(DEFAULT_ROLLOVER_BIT_WIDTH),
-    );
+    let rollover_bit_width = scenario.rollover.then_some(DEFAULT_ROLLOVER_BIT_WIDTH);
     let samples = base_samples
         .iter()
         .cloned()
@@ -338,6 +261,7 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
     ];
     let result = run_scenario(
         configured_aggregator(scenario),
+        Arc::from(SESSION_KEY),
         samples,
         closing_samples,
         Vec::with_capacity(expected_message_count(scenario)),
@@ -388,10 +312,17 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
             .expect("completed heatmap window");
         let expected_bounds = match layout_kind {
             HeatmapLayoutKind::Custom => HEATMAP_BUCKET_BOUNDARIES.to_vec(),
-            HeatmapLayoutKind::Default256 => default_heatmap_layout(256)
-                .expect("default benchmark layout")
-                .explicit_bounds_u64()
-                .to_vec(),
+            HeatmapLayoutKind::SemanticDeltaBytes => default_heatmap_layout(
+                HeatmapQuantity::DeltaBytes,
+                Some(if scenario.reporting_rate {
+                    REPORTING_RATE_US
+                } else {
+                    1_000
+                }),
+            )
+            .expect("default benchmark layout")
+            .explicit_bounds_u64()
+            .to_vec(),
         };
         for heatmap in heatmap_message.heatmaps.iter() {
             let object_index = heatmap
@@ -419,13 +350,13 @@ fn validate_scenario(scenario: Scenario, object_count: usize, base_samples: &[SA
 }
 
 fn benchmark_aggregator(c: &mut Criterion) {
-    let mut group = c.benchmark_group("aggregator_input_metrics_1ms_samples");
+    let mut group = c.benchmark_group("aggregator_input_metrics_per_second_1ms_samples");
     group.sample_size(10);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
-    for object_count in [1usize, 64] {
+    for object_count in [64usize, 512] {
         let base_samples = build_samples(object_count);
         // Criterion reports these elements as input metrics/s. The two empty
         // samples used to close windows are timed but intentionally not counted.
@@ -436,6 +367,7 @@ fn benchmark_aggregator(c: &mut Criterion) {
         for scenario in SCENARIOS {
             validate_scenario(scenario, object_count, base_samples.as_slice());
             let base_samples = Arc::clone(&base_samples);
+            let session_key: Arc<str> = Arc::from(SESSION_KEY);
             group.bench_with_input(
                 BenchmarkId::new(scenario.name, object_count),
                 &scenario,
@@ -461,13 +393,20 @@ fn benchmark_aggregator(c: &mut Criterion) {
                             ];
                             (
                                 configured_aggregator(*scenario),
+                                session_key.clone(),
                                 samples,
                                 closing_samples,
                                 Vec::with_capacity(expected_message_count(*scenario)),
                             )
                         },
-                        |(aggregator, samples, closing_samples, messages)| {
-                            run_scenario(aggregator, samples, closing_samples, messages)
+                        |(aggregator, session_key, samples, closing_samples, messages)| {
+                            run_scenario(
+                                aggregator,
+                                session_key,
+                                samples,
+                                closing_samples,
+                                messages,
+                            )
                         },
                         BatchSize::LargeInput,
                     );

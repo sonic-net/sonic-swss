@@ -155,6 +155,7 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     let otel_cfg = OtelActorConfig {
         collector_endpoint: endpoint.clone(),
         max_counters_per_export: 10_000,
+        max_export_bytes: countersyncd::actor::otel::DEFAULT_MAX_EXPORT_BYTES,
         flush_timeout: Duration::from_secs(1),
     };
     let otel_actor = OtelActor::new(otel_rx, otel_cfg, otel_done_tx)

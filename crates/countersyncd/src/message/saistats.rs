@@ -149,7 +149,7 @@ impl SAIStats {
 
     /// Returns an iterator over the statistics.
     #[allow(dead_code)]
-    pub fn iter(&self) -> std::slice::Iter<SAIStat> {
+    pub fn iter(&self) -> std::slice::Iter<'_, SAIStat> {
         self.stats.iter()
     }
 }

@@ -176,7 +176,7 @@ async fn ipfix_aggregator_composes_rollover_reporting_and_heatmap() {
                 rollover_bit_width_overrides: BTreeMap::from([(selector, 8)]),
                 heatmap_interval: Some(1_000),
                 heatmap_counters: std::collections::HashSet::from([selector]),
-                heatmap_default_bucket_count: 4,
+                heatmap_explicit_bounds: BTreeMap::from([(selector, vec![0, 1, 1u64 << 53])]),
                 ..Default::default()
             }),
         ))

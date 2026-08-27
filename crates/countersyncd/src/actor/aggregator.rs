@@ -10,7 +10,8 @@ use tokio::{
 use crate::message::{
     aggregator::{
         heatmap_schema, AggregatedStatsMessage, AggregatorConfig, AggregatorConfigMessage,
-        CounterSelector, Heatmap, HeatmapLayout, HeatmapValueKind, DEFAULT_ROLLOVER_BIT_WIDTH,
+        CounterSelector, Heatmap, HeatmapLayout, HeatmapQuantity, HeatmapValueKind,
+        DEFAULT_ROLLOVER_BIT_WIDTH,
     },
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
@@ -80,9 +81,8 @@ impl ReportingWindow {
                     .watermark_counters
                     .contains(&CounterSelector::new(stat.type_id, stat.stat_id));
                 if is_watermark && self.heatmap_values.is_none() {
-                    self.heatmap_values = Some(
-                        self.stats.iter().map(|existing| existing.counter).collect(),
-                    );
+                    self.heatmap_values =
+                        Some(self.stats.iter().map(|existing| existing.counter).collect());
                 }
                 if let Some(heatmap_values) = self.heatmap_values.as_mut() {
                     heatmap_values.push(stat.counter);
@@ -121,6 +121,7 @@ struct ReportedSample {
 struct HeatmapAccumulator {
     layout: Arc<HeatmapLayout>,
     value_kind: HeatmapValueKind,
+    quantity: HeatmapQuantity,
     schema: Arc<str>,
     bucket_counts: Vec<u64>,
     count: u64,
@@ -133,6 +134,7 @@ impl HeatmapAccumulator {
     fn new(
         layout: Arc<HeatmapLayout>,
         value_kind: HeatmapValueKind,
+        quantity: HeatmapQuantity,
         schema: Arc<str>,
         value: u64,
     ) -> Self {
@@ -140,6 +142,7 @@ impl HeatmapAccumulator {
             bucket_counts: vec![0; layout.bucket_count()],
             layout,
             value_kind,
+            quantity,
             schema,
             count: 0,
             sum: 0,
@@ -185,6 +188,8 @@ impl HeatmapAccumulator {
             explicit_bounds: self.layout.explicit_bounds(),
             bucket_counts: self.bucket_counts,
             value_kind: self.value_kind,
+            quantity: self.quantity,
+            unit: self.quantity.unit(),
             schema: self.schema,
         }
     }
@@ -264,6 +269,7 @@ struct HeatmapSeries {
 #[derive(Debug)]
 struct HeatmapSelector {
     value_kind: HeatmapValueKind,
+    quantity: HeatmapQuantity,
     layout: Arc<HeatmapLayout>,
     schema: Arc<str>,
 }
@@ -291,6 +297,7 @@ impl HeatmapWindow {
             accumulator: HeatmapAccumulator::new(
                 selector.layout.clone(),
                 selector.value_kind,
+                selector.quantity,
                 selector.schema.clone(),
                 value,
             ),
@@ -373,32 +380,31 @@ impl HeatmapValueSeries {
 }
 
 impl HeatmapState {
-    fn new(interval_us: u32, config: &AggregatorConfig) -> Self {
+    fn new(interval_us: u32, config: &AggregatorConfig) -> Result<Self, String> {
         let selectors = config
             .heatmap_counters
             .iter()
             .map(|selector| {
                 let value_kind = selector.heatmap_value_kind();
-                let layout = config
-                    .layout_for(*selector)
-                    .expect("validated heatmap layout");
-                let schema = heatmap_schema(value_kind, layout.explicit_bounds_u64());
-                (
+                let (quantity, layout) = config.quantity_and_layout_for(*selector)?;
+                let schema = heatmap_schema(value_kind, quantity, layout.explicit_bounds_u64());
+                Ok((
                     *selector,
                     HeatmapSelector {
                         value_kind,
+                        quantity,
                         layout,
                         schema,
                     },
-                )
+                ))
             })
-            .collect();
-        Self {
+            .collect::<Result<_, String>>()?;
+        Ok(Self {
             interval_ns: u64::from(interval_us) * NANOS_PER_MICROSECOND,
             selectors,
             series: HashMap::new(),
             current: None,
-        }
+        })
     }
 
     fn process(
@@ -548,12 +554,7 @@ impl RolloverState {
             moduli: config
                 .rollover_counters
                 .iter()
-                .map(|selector| {
-                    (
-                        *selector,
-                        1u64 << config.rollover_bit_width_for(*selector),
-                    )
-                })
+                .map(|selector| (*selector, 1u64 << config.rollover_bit_width_for(*selector)))
                 .collect(),
             series: HashMap::new(),
             invalid_raw_logged: HashMap::new(),
@@ -657,9 +658,9 @@ impl RolloverState {
 }
 
 impl AggregatorState {
-    fn new(config: AggregatorConfig) -> Self {
-        let rollover = (!config.rollover_counters.is_empty())
-            .then(|| Box::new(RolloverState::new(&config)));
+    fn new(config: AggregatorConfig) -> Result<Self, String> {
+        let rollover =
+            (!config.rollover_counters.is_empty()).then(|| Box::new(RolloverState::new(&config)));
         let watermark_counters = Arc::new(
             config
                 .heatmap_counters
@@ -673,14 +674,15 @@ impl AggregatorState {
             .map(|rate| ReportingState::new(rate, watermark_counters));
         let heatmap = config
             .heatmap_interval
-            .map(|interval| HeatmapState::new(interval, &config));
+            .map(|interval| HeatmapState::new(interval, &config))
+            .transpose()?;
 
-        Self {
+        Ok(Self {
             config,
             rollover,
             reporting,
             heatmap,
-        }
+        })
     }
 
     fn process(&mut self, sample: SAIStatsMessage) -> Option<AggregatedStatsMessage> {
@@ -723,7 +725,12 @@ impl Aggregator {
     fn update_config(&mut self, key: String, config: Option<AggregatorConfig>, reset: bool) {
         match config {
             Some(mut config) => {
-                if let Err(reason) = config.validate() {
+                let resolved = if config.layouts_are_resolved() {
+                    config.validate()
+                } else {
+                    config.resolve_heatmap_layouts()
+                };
+                if let Err(reason) = resolved {
                     error!(
                         "Rejecting aggregator config for session {}: {}",
                         key, reason
@@ -738,7 +745,16 @@ impl Aggregator {
                         return;
                     }
 
-                    let mut replacement = AggregatorState::new(config);
+                    let mut replacement = match AggregatorState::new(config) {
+                        Ok(replacement) => replacement,
+                        Err(reason) => {
+                            error!(
+                                "Rejecting aggregator config for session {}: {}",
+                                key, reason
+                            );
+                            return;
+                        }
+                    };
                     if !reset {
                         if let (Some(next), Some(previous)) =
                             (replacement.rollover.as_mut(), state.rollover.take())
@@ -750,7 +766,17 @@ impl Aggregator {
                     // discarded when their configuration changes.
                     *state = replacement;
                 } else {
-                    self.sessions.insert(key, AggregatorState::new(config));
+                    match AggregatorState::new(config) {
+                        Ok(state) => {
+                            self.sessions.insert(key, state);
+                        }
+                        Err(reason) => {
+                            error!(
+                                "Rejecting aggregator config for session {}: {}",
+                                key, reason
+                            );
+                        }
+                    }
                 }
             }
             None => {
@@ -933,8 +959,9 @@ mod tests {
         value: u64,
     ) -> HeatmapAccumulator {
         let layout = HeatmapLayout::from_explicit_bounds(bounds).unwrap();
-        let schema = heatmap_schema(value_kind, layout.explicit_bounds_u64());
-        HeatmapAccumulator::new(layout, value_kind, schema, value)
+        let quantity = HeatmapQuantity::DeltaCount;
+        let schema = heatmap_schema(value_kind, quantity, layout.explicit_bounds_u64());
+        HeatmapAccumulator::new(layout, value_kind, quantity, schema, value)
     }
 
     fn sample(observation_time: u64, stats: Vec<SAIStat>) -> SAIStatsMessage {
@@ -1335,7 +1362,10 @@ mod tests {
             sample(3_000, vec![stat("Ethernet0", 20)]),
         );
 
-        assert_eq!(output[0].stats.stats, vec![stat("Ethernet0", (1u64 << 32) + 20)]);
+        assert_eq!(
+            output[0].stats.stats,
+            vec![stat("Ethernet0", (1u64 << 32) + 20)]
+        );
     }
 
     #[test]
@@ -1611,10 +1641,7 @@ mod tests {
             sample(2_000, vec![stat("Ethernet0", 5)]),
         );
 
-        aggregator.set_config(
-            "session".to_string(),
-            Some(AggregatorConfig::default()),
-        );
+        aggregator.set_config("session".to_string(), Some(AggregatorConfig::default()));
         aggregator.set_config("session".to_string(), Some(config));
         let output = process(
             &mut aggregator,
@@ -1804,6 +1831,91 @@ mod tests {
         assert_eq!(heatmap.value_kind, HeatmapValueKind::Delta);
         assert_eq!(heatmap.start_time_unix_nano, 0);
         assert_eq!(heatmap.time_unix_nano, 10_000);
+    }
+
+    #[test]
+    fn semantic_default_keeps_raw_byte_deltas_and_uses_overflow_bucket() {
+        let selector = CounterSelector::new(1, crate::sai::SaiPortStat::IfInOctets.to_u32());
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(
+            "session".to_string(),
+            Some(AggregatorConfig {
+                poll_interval_us: Some(1_000),
+                heatmap_interval: Some(10),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        let last_bound = 1_600 * 125 * 1_000;
+        let values = [100, 100 + last_bound, 101 + last_bound * 2];
+        for (index, value) in values.into_iter().enumerate() {
+            process(
+                &mut aggregator,
+                Some(Arc::from("session")),
+                sample(
+                    (index as u64 + 1) * 1_000,
+                    vec![selected_stat("Ethernet0", selector, value)],
+                ),
+            );
+        }
+        let output = process(
+            &mut aggregator,
+            Some(Arc::from("session")),
+            sample(10_001, Vec::new()),
+        );
+        let heatmap = &output[0].heatmaps[0];
+        assert_eq!(heatmap.quantity, HeatmapQuantity::DeltaBytes);
+        assert_eq!(heatmap.unit, "By");
+        assert_eq!(heatmap.count, 2);
+        assert_eq!(heatmap.min, last_bound);
+        assert_eq!(heatmap.max, last_bound + 1);
+        assert_eq!(heatmap.sum, (last_bound * 2 + 1) as f64);
+        assert_eq!(heatmap.bucket_counts[14], 1);
+        assert_eq!(heatmap.bucket_counts[15], 1);
+    }
+
+    #[test]
+    fn semantic_defaults_keep_raw_absolute_values() {
+        for (selector, quantity, unit) in [
+            (
+                CounterSelector::new(21, crate::sai::SaiQueueStat::CurrOccupancyBytes.to_u32()),
+                HeatmapQuantity::AbsoluteBytes,
+                "By",
+            ),
+            (
+                CounterSelector::new(21, crate::sai::SaiQueueStat::WatermarkCells.to_u32()),
+                HeatmapQuantity::AbsoluteCells,
+                "{cell}",
+            ),
+        ] {
+            let mut aggregator = Aggregator::default();
+            aggregator.set_config(
+                "session".to_string(),
+                Some(AggregatorConfig {
+                    heatmap_interval: Some(10),
+                    heatmap_counters: HashSet::from([selector]),
+                    ..Default::default()
+                }),
+            );
+            for (time, value) in [(1_000, 123), (2_000, 456)] {
+                process(
+                    &mut aggregator,
+                    Some(Arc::from("session")),
+                    sample(time, vec![selected_stat("Queue0", selector, value)]),
+                );
+            }
+            let output = process(
+                &mut aggregator,
+                Some(Arc::from("session")),
+                sample(10_001, Vec::new()),
+            );
+            let heatmap = &output[0].heatmaps[0];
+            assert_eq!(heatmap.quantity, quantity);
+            assert_eq!(heatmap.unit, unit);
+            assert_eq!(heatmap.min, 123);
+            assert_eq!(heatmap.max, 456);
+            assert_eq!(heatmap.sum, 579.0);
+        }
     }
 
     #[test]
@@ -2057,8 +2169,7 @@ mod tests {
     fn custom_and_default_layouts_coexist_in_one_config() {
         let custom = CounterSelector::new(1, 2);
         let fallback = CounterSelector::new(1, 3);
-        let mut config = heatmap_config([custom, fallback], [(custom, vec![1, 2, 8])]);
-        config.heatmap_default_bucket_count = 4;
+        let config = heatmap_config([custom, fallback], [(custom, vec![1, 2, 8])]);
         let mut aggregator = Aggregator::default();
         aggregator.set_config("session".to_string(), Some(config));
         for (time, value) in [(1_000, 10), (2_000, 11)] {
@@ -2090,7 +2201,7 @@ mod tests {
             .find(|heatmap| heatmap.stat_id == fallback.stat_id)
             .unwrap();
         assert_eq!(custom_heatmap.explicit_bounds.as_ref(), &[1.0, 2.0, 8.0]);
-        assert_eq!(fallback_heatmap.explicit_bounds.len(), 3);
+        assert_eq!(fallback_heatmap.explicit_bounds.len(), 28);
         assert_ne!(custom_heatmap.schema, fallback_heatmap.schema);
     }
 

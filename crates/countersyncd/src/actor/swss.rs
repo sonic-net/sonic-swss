@@ -1,8 +1,7 @@
 use super::super::message::{
     aggregator::{
         AggregatorConfig, AggregatorConfigMessage, CounterSelector, HeatmapLayout,
-        DEFAULT_HEATMAP_BUCKET_COUNT, DEFAULT_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH,
-        MIN_ROLLOVER_BIT_WIDTH,
+        DEFAULT_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH, MIN_ROLLOVER_BIT_WIDTH,
     },
     ipfix::IPFixTemplatesMessage,
 };
@@ -65,6 +64,7 @@ enum SwssEvent {
     ProfileUpdate {
         profile: String,
         aggregator: Option<String>,
+        poll_interval_us: Option<u32>,
     },
     ProfileDelete {
         profile: String,
@@ -274,18 +274,31 @@ impl SwssActor {
             match event {
                 SwssEvent::SessionUpdate { key, session_data } => {
                     if Self::validate_session(&key, &session_data) {
-                        aggregator_state.add_session(key.clone());
-                        let config = AggregatorConfigMessage::replacement(
-                            key.clone(),
-                            aggregator_state.config_for_session_key(&key),
-                        );
-                        if let Err(e) =
-                            Self::send_session_update(&template_recipient, &key, &session_data, config)
+                        match aggregator_state.try_config_for_session_key(&key) {
+                            Ok(config) => {
+                                let config = AggregatorConfigMessage::replacement(
+                                    key.clone(),
+                                    config,
+                                );
+                                if let Err(e) = Self::send_session_update(
+                                    &template_recipient,
+                                    &key,
+                                    &session_data,
+                                    config,
+                                )
                                 .await
-                        {
-                            error!("Failed to process session {}: {}", key, e);
-                            aggregator_state.remove_session(&key);
-                            Self::process_session_delete(&template_recipient, &key).await;
+                                {
+                                    error!("Failed to process session {}: {}", key, e);
+                                    aggregator_state.remove_session(&key);
+                                    Self::process_session_delete(&template_recipient, &key).await;
+                                } else {
+                                    aggregator_state.add_session(key);
+                                }
+                            }
+                            Err(reason) => error!(
+                                "Rejecting effective aggregator config for session {}: {}; preserving existing session state",
+                                key, reason
+                            ),
                         }
                     } else {
                         aggregator_state.remove_session(&key);
@@ -299,9 +312,10 @@ impl SwssActor {
                 SwssEvent::ProfileUpdate {
                     profile,
                     aggregator,
+                    poll_interval_us,
                 } => {
                     let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
-                    aggregator_state.set_profile_aggregator(profile, aggregator);
+                    aggregator_state.set_profile(profile, aggregator, poll_interval_us);
                     Self::send_aggregator_configs_for_sessions(
                         &template_recipient,
                         &aggregator_state,
@@ -499,10 +513,14 @@ impl SwssActor {
             let profile =
                 Self::extract_config_key(&item.key, CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE);
             match item.operation {
-                KeyOperation::Set => events.push(SwssEvent::ProfileUpdate {
-                    profile,
-                    aggregator: Self::parse_profile_aggregator(&item.field_values),
-                }),
+                KeyOperation::Set => match Self::parse_profile(&item.field_values) {
+                    Ok((aggregator, poll_interval_us)) => events.push(SwssEvent::ProfileUpdate {
+                        profile,
+                        aggregator,
+                        poll_interval_us,
+                    }),
+                    Err(reason) => error!("Rejecting profile update for {}: {}", profile, reason),
+                },
                 KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
             }
         }
@@ -631,17 +649,34 @@ impl SwssActor {
         session_data
     }
 
-    fn parse_profile_aggregator(
+    fn parse_profile(
         field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> Option<String> {
-        field_values.get("aggregator").and_then(|value| {
+    ) -> Result<(Option<String>, Option<u32>), String> {
+        let aggregator = field_values.get("aggregator").and_then(|value| {
             let aggregator = value.to_string_lossy().trim().to_string();
             if aggregator.is_empty() {
                 None
             } else {
                 Some(aggregator)
             }
-        })
+        });
+        let poll_interval_us = field_values
+            .get("poll_interval")
+            .ok_or_else(|| "missing mandatory poll_interval".to_string())?;
+        let poll_interval_us = poll_interval_us
+            .to_string_lossy()
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| {
+                format!(
+                    "Invalid poll_interval '{}'",
+                    poll_interval_us.to_string_lossy()
+                )
+            })?;
+        if poll_interval_us == 0 {
+            return Err("poll_interval must be greater than zero".to_string());
+        }
+        Ok((aggregator, Some(poll_interval_us)))
     }
 
     fn parse_aggregator_config(
@@ -688,27 +723,16 @@ impl SwssActor {
             }
             None => HashSet::new(),
         };
-        let heatmap_default_bucket_count = match field_values.get("heatmap_default_bucket_count") {
-            Some(value) => {
-                let value = value.to_string_lossy();
-                value
-                    .trim()
-                    .parse::<u16>()
-                    .map_err(|_| format!("Invalid heatmap_default_bucket_count '{}'", value))?
-            }
-            None => DEFAULT_HEATMAP_BUCKET_COUNT,
-        };
-
         let config = AggregatorConfig {
             reporting_rate,
             rollover_counters,
             rollover_bit_width_overrides: Default::default(),
             heatmap_interval,
             heatmap_counters,
-            heatmap_default_bucket_count,
             heatmap_explicit_bounds: Default::default(),
+            ..Default::default()
         };
-        config.validate()?;
+        config.validate_structure()?;
         Ok(config)
     }
 
@@ -1005,18 +1029,27 @@ impl SwssActor {
         is_delete: bool,
         reset: bool,
     ) {
+        let config = if is_delete {
+            Ok(None)
+        } else {
+            aggregator_state.try_config_for_session_key(key)
+        };
+        let config = match config {
+            Ok(config) => config,
+            Err(reason) => {
+                error!(
+                    "Rejecting effective aggregator config for session {}: {}; preserving existing aggregator state",
+                    key, reason
+                );
+                return;
+            }
+        };
         let message = if is_delete {
             AggregatorConfigMessage::delete(key.to_string())
         } else if reset {
-            AggregatorConfigMessage::replacement(
-                key.to_string(),
-                aggregator_state.config_for_session_key(key),
-            )
+            AggregatorConfigMessage::replacement(key.to_string(), config)
         } else {
-            AggregatorConfigMessage::new(
-                key.to_string(),
-                aggregator_state.config_for_session_key(key),
-            )
+            AggregatorConfigMessage::new(key.to_string(), config)
         };
 
         if let Err(e) = template_recipient
@@ -1057,6 +1090,7 @@ impl SwssActor {
 #[derive(Default)]
 struct AggregatorConfigState {
     profile_aggregators: HashMap<String, String>,
+    profile_poll_intervals_us: HashMap<String, u32>,
     aggregator_configs: HashMap<String, AggregatorConfig>,
     histogram_configs: HashMap<String, HashMap<CounterSelector, Vec<u64>>>,
     rollover_configs: HashMap<String, HashMap<CounterSelector, u8>>,
@@ -1072,24 +1106,45 @@ impl AggregatorConfigState {
         self.sessions.remove(key);
     }
 
-    fn set_profile_aggregator(&mut self, profile: String, aggregator: Option<String>) {
+    fn set_profile(
+        &mut self,
+        profile: String,
+        aggregator: Option<String>,
+        poll_interval_us: Option<u32>,
+    ) {
         match aggregator {
             Some(aggregator) => {
-                self.profile_aggregators.insert(profile, aggregator);
+                self.profile_aggregators.insert(profile.clone(), aggregator);
             }
             None => {
                 self.profile_aggregators.remove(&profile);
             }
         }
+        match poll_interval_us {
+            Some(interval) => {
+                self.profile_poll_intervals_us.insert(profile, interval);
+            }
+            None => {
+                self.profile_poll_intervals_us.remove(&profile);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn set_profile_aggregator(&mut self, profile: String, aggregator: Option<String>) {
+        self.set_profile(profile, aggregator, Some(10_000));
     }
 
     fn remove_profile(&mut self, profile: &str) {
         self.profile_aggregators.remove(profile);
+        self.profile_poll_intervals_us.remove(profile);
     }
 
     fn set_aggregator_config(&mut self, name: String, config: Option<AggregatorConfig>) {
         match config {
-            Some(config) => {
+            Some(mut config) => {
+                config.poll_interval_us = None;
+                config.heatmap_layouts.clear();
                 self.aggregator_configs.insert(name, config);
             }
             None => {
@@ -1147,10 +1202,33 @@ impl AggregatorConfigState {
         }
     }
 
+    #[cfg(test)]
     fn config_for_session_key(&self, session_key: &str) -> Option<AggregatorConfig> {
+        match self.try_config_for_session_key(session_key) {
+            Ok(config) => config,
+            Err(reason) => {
+                error!(
+                    "Rejecting effective aggregator config for session {}: {}",
+                    session_key, reason
+                );
+                None
+            }
+        }
+    }
+
+    fn try_config_for_session_key(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<AggregatorConfig>, String> {
         let profile = SwssActor::extract_profile_from_session_key(session_key);
-        let aggregator = self.profile_aggregators.get(profile)?;
-        let mut config = self.aggregator_configs.get(aggregator)?.clone();
+        let Some(aggregator) = self.profile_aggregators.get(profile) else {
+            return Ok(None);
+        };
+        let Some(base_config) = self.aggregator_configs.get(aggregator) else {
+            return Ok(None);
+        };
+        let mut config = base_config.clone();
+        config.poll_interval_us = self.profile_poll_intervals_us.get(profile).copied();
         if let Some(histograms) = self.histogram_configs.get(aggregator) {
             config.heatmap_explicit_bounds.extend(
                 histograms
@@ -1170,7 +1248,8 @@ impl AggregatorConfigState {
                     .map(|(selector, bit_width)| (*selector, *bit_width)),
             );
         }
-        Some(config)
+        config.resolve_heatmap_layouts()?;
+        Ok(Some(config))
     }
 
     fn session_keys_for_profile(&self, profile: &str) -> Vec<String> {
@@ -1215,7 +1294,9 @@ struct SessionData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::aggregator::{default_heatmap_layout, MAX_EXACT_OTLP_BOUNDARY};
+    use crate::actor::aggregator::Aggregator;
+    use crate::message::aggregator::default_heatmap_layout;
+    use crate::message::saistats::{SAIStat, SAIStats};
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
@@ -1291,10 +1372,16 @@ mod tests {
     fn test_profile_and_aggregator_config_mapping() {
         let mut profile_fields = HashMap::new();
         profile_fields.insert("aggregator".to_string(), CxxString::from("harm0"));
+        profile_fields.insert("poll_interval".to_string(), CxxString::from("10000"));
         assert_eq!(
-            SwssActor::parse_profile_aggregator(&profile_fields),
-            Some("harm0".to_string())
+            SwssActor::parse_profile(&profile_fields),
+            Ok((Some("harm0".to_string()), Some(10_000)))
         );
+        assert!(SwssActor::parse_profile(&HashMap::new()).is_err());
+        profile_fields.insert("poll_interval".to_string(), CxxString::from("0"));
+        assert!(SwssActor::parse_profile(&profile_fields)
+            .unwrap_err()
+            .contains("greater than zero"));
 
         let mut aggregator_fields = HashMap::new();
         aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
@@ -1307,10 +1394,6 @@ mod tests {
             "heatmap_counters@".to_string(),
             CxxString::from("PORT|IF_IN_UCAST_PKTS,QUEUE|WATERMARK_BYTES"),
         );
-        aggregator_fields.insert(
-            "heatmap_default_bucket_count".to_string(),
-            CxxString::from("64"),
-        );
         let config =
             SwssActor::parse_aggregator_config(&aggregator_fields).expect("aggregator config");
         assert_eq!(config.reporting_rate, Some(100));
@@ -1318,17 +1401,13 @@ mod tests {
         assert!(config.rollover_bit_width_overrides.is_empty());
         assert_eq!(config.heatmap_interval, Some(1000));
         assert_eq!(config.heatmap_counters.len(), 2);
-        assert_eq!(config.heatmap_default_bucket_count, 64);
         assert!(config.heatmap_explicit_bounds.is_empty());
 
         let empty_aggregator_fields = HashMap::new();
         let empty_config = SwssActor::parse_aggregator_config(&empty_aggregator_fields)
             .expect("aggregator config");
         assert_eq!(empty_config.reporting_rate, None);
-        assert_eq!(
-            empty_config.heatmap_default_bucket_count,
-            DEFAULT_HEATMAP_BUCKET_COUNT
-        );
+        assert!(empty_config.heatmap_layouts.is_empty());
 
         let mut invalid_heatmap = HashMap::new();
         invalid_heatmap.insert(
@@ -1421,7 +1500,7 @@ mod tests {
         assert!(fallback.heatmap_explicit_bounds.is_empty());
         assert!(Arc::ptr_eq(
             &fallback.layout_for(custom).unwrap(),
-            &default_heatmap_layout(DEFAULT_HEATMAP_BUCKET_COUNT).unwrap()
+            &default_heatmap_layout(custom.heatmap_quantity(), None).unwrap()
         ));
 
         let mut parent = state
@@ -1558,7 +1637,6 @@ mod tests {
             Some(AggregatorConfig {
                 heatmap_interval: Some(1_000),
                 heatmap_counters: HashSet::from([selector]),
-                heatmap_default_bucket_count: 4,
                 ..Default::default()
             }),
         );
@@ -1567,7 +1645,9 @@ mod tests {
         assert!(fallback.heatmap_explicit_bounds.is_empty());
         assert_eq!(
             fallback.layout_for(selector).unwrap().explicit_bounds_u64(),
-            &[0, 1, MAX_EXACT_OTLP_BOUNDARY]
+            default_heatmap_layout(selector.heatmap_quantity(), None)
+                .unwrap()
+                .explicit_bounds_u64()
         );
 
         // The independent child event produces a new effective config. Runtime
@@ -1737,6 +1817,83 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn invalid_effective_update_preserves_existing_aggregator_state() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), Some(10));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(10),
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: std::collections::BTreeMap::from([(selector, 8)]),
+                ..Default::default()
+            }),
+        );
+        let (sender, mut receiver) = channel(1);
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        let control = receiver.recv().await.unwrap().aggregator_config.unwrap();
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(control.key, control.config);
+        let sample = |time, counter| {
+            Arc::new(SAIStats::new(
+                time,
+                vec![SAIStat {
+                    object_name: "Ethernet0".to_string(),
+                    type_id: selector.type_id,
+                    stat_id: selector.stat_id,
+                    counter,
+                }],
+            ))
+        };
+        assert!(aggregator
+            .process(Some(Arc::from("profile0|PORT")), sample(1_000, 250))
+            .is_none());
+        assert_eq!(
+            aggregator
+                .process(Some(Arc::from("profile0|PORT")), sample(10_001, 5))
+                .unwrap()
+                .stats
+                .stats[0]
+                .counter,
+            250
+        );
+
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: std::collections::BTreeMap::from([(selector, 8)]),
+                heatmap_interval: Some(100),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+
+        let output = aggregator
+            .process(Some(Arc::from("profile0|PORT")), sample(20_001, 10))
+            .expect("existing reporting window must remain active");
+        assert_eq!(output.stats.stats[0].counter, 261);
+    }
+
     #[test]
     fn test_multiple_profiles_can_share_aggregator_config() {
         let mut state = AggregatorConfigState::default();
@@ -1795,6 +1952,196 @@ mod tests {
                 .reporting_rate,
             Some(200)
         );
+    }
+
+    #[test]
+    fn profile_poll_intervals_resolve_distinct_shared_byte_layouts() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        for profile in ["profile0", "profile1"] {
+            state.add_session(format!("{profile}|PORT"));
+        }
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(1_000),
+        );
+        state.set_profile(
+            "profile1".to_string(),
+            Some("harm0".to_string()),
+            Some(10_000),
+        );
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(5_000),
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+
+        let first = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        let second = state
+            .try_config_for_session_key("profile1|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.poll_interval_us, Some(1_000));
+        assert_eq!(second.poll_interval_us, Some(10_000));
+        assert_eq!(
+            first.layout_for(selector).unwrap().explicit_bounds_u64()[1],
+            3_125_000
+        );
+        assert_eq!(
+            second.layout_for(selector).unwrap().explicit_bounds_u64()[1],
+            6_250_000
+        );
+        assert!(!Arc::ptr_eq(
+            &first.layout_for(selector).unwrap(),
+            &second.layout_for(selector).unwrap()
+        ));
+        let first_layout = first.layout_for(selector).unwrap();
+        let second_layout = second.layout_for(selector).unwrap();
+        assert_ne!(
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                first_layout.explicit_bounds_u64(),
+            ),
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                second_layout.explicit_bounds_u64(),
+            )
+        );
+
+        state.remove_profile("profile0");
+        assert!(!state.profile_poll_intervals_us.contains_key("profile0"));
+    }
+
+    #[test]
+    fn profile_poll_update_changes_effective_byte_layout() {
+        let selector = CounterSelector::parse("PORT|IF_OUT_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(1_000),
+        );
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        let before = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(10_000),
+        );
+        let after = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_ne!(before, after);
+        assert_ne!(
+            before.layout_for(selector).unwrap().explicit_bounds_u64(),
+            after.layout_for(selector).unwrap().explicit_bounds_u64()
+        );
+    }
+
+    #[test]
+    fn custom_byte_layout_does_not_require_profile_interval() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        state.set_histogram_config("harm0".to_string(), selector, vec![0, 100, 1_000]);
+
+        let config = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            config.layout_for(selector).unwrap().explicit_bounds_u64(),
+            &[0, 100, 1_000]
+        );
+
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(50_000),
+        );
+        let updated = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.layout_for(selector).unwrap().explicit_bounds_u64(),
+            &[0, 100, 1_000]
+        );
+        assert_eq!(
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                config.layout_for(selector).unwrap().explicit_bounds_u64(),
+            ),
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                updated.layout_for(selector).unwrap().explicit_bounds_u64(),
+            )
+        );
+    }
+
+    #[test]
+    fn missing_profile_interval_rejects_only_default_byte_counter() {
+        let bytes = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let count = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([count]),
+                ..Default::default()
+            }),
+        );
+        assert!(state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .is_some());
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([bytes]),
+                ..Default::default()
+            }),
+        );
+        assert!(state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap_err()
+            .contains("byte-delta"));
     }
 
     #[tokio::test]

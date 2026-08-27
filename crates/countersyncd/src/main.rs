@@ -147,6 +147,16 @@ fn classify_otel_join(
     }
 }
 
+fn parse_nonzero_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid positive integer '{value}'"))?;
+    if value == 0 {
+        return Err("value must be greater than zero".to_string());
+    }
+    Ok(value)
+}
+
 /// SONiC High Frequency Telemetry Counter Sync Daemon
 ///
 /// This application processes high-frequency telemetry data from SONiC switches,
@@ -281,6 +291,15 @@ struct Args {
     )]
     otel_max_counters_per_export: usize,
 
+    /// Maximum encoded bytes in one OTLP export request
+    #[arg(
+        long,
+        default_value = "3145728",
+        value_parser = parse_nonzero_usize,
+        help = "Maximum encoded bytes in one OTLP export request"
+    )]
+    otel_max_export_bytes: usize,
+
     /// Flush timeout for OTLP export in milliseconds
     #[arg(
         long,
@@ -316,8 +335,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.enable_otel {
         info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
         info!(
-            "OpenTelemetry batching: max_counters_per_export={}, flush_timeout_ms={}",
-            args.otel_max_counters_per_export, args.otel_flush_timeout_ms
+            "OpenTelemetry batching: max_counters_per_export={}, max_export_bytes={}, flush_timeout_ms={}",
+            args.otel_max_counters_per_export, args.otel_max_export_bytes, args.otel_flush_timeout_ms
         );
     }
     info!(
@@ -433,6 +452,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let otel_config = OtelActorConfig {
             collector_endpoint: args.otel_endpoint.clone(),
             max_counters_per_export: args.otel_max_counters_per_export,
+            max_export_bytes: args.otel_max_export_bytes,
             flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
         };
 
@@ -597,6 +617,7 @@ mod tests {
         assert_eq!(args.netlink_rcvbuf, 4194304);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
+        assert_eq!(args.otel_max_export_bytes, 3 * 1024 * 1024);
         assert!(!args.enable_stats);
         assert!(!args.enable_counter_db);
         assert!(!args.enable_otel);
@@ -628,5 +649,10 @@ mod tests {
     #[test]
     fn test_unknown_flag_rejected() {
         assert!(parse(&["countersyncd", "--unknown-flag"]).is_err());
+    }
+
+    #[test]
+    fn test_otel_max_export_bytes_zero_rejected() {
+        assert!(parse(&["countersyncd", "--otel-max-export-bytes", "0"]).is_err());
     }
 }
