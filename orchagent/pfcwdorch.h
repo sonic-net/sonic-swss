@@ -101,10 +101,7 @@ protected:
     void report_pfc_restored(sai_object_id_t queueId, sai_object_id_t portId,
                             uint8_t queueIndex, const string& portAlias);
 
-    string m_platform = "";
-    shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
-
-    // Convert counter IDs to string set for FlexCounter
+    // Helper to convert counter IDs to string set for FlexCounter
     template <typename T>
     static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T))
     {
@@ -115,6 +112,9 @@ protected:
         }
         return counterIdSet;
     }
+
+    string m_platform = "";
+    shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
 
 private:
 
