@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <signal.h>
 #include <vector>
 #include <mutex>
 #include "dbconnector.h"
@@ -16,6 +17,21 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
+static bool received_sigterm = false;
+static struct sigaction old_sigaction;
+
+static void sig_handler(int signo)
+{
+    SWSS_LOG_ENTER();
+
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
+
+    received_sigterm = true;
+    return;
+}
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vrfmgrd");
@@ -26,6 +42,13 @@ int main(int argc, char **argv)
 
     try
     {
+        struct sigaction sigact = {};
+        sigact.sa_handler = sig_handler;
+        if (sigaction(SIGTERM, &sigact, &old_sigaction))
+        {
+            SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
+            exit(EXIT_FAILURE);
+        }
         vector<string> cfg_vrf_tables = {
             CFG_VRF_TABLE_NAME,
             CFG_VNET_TABLE_NAME,
@@ -53,7 +76,7 @@ int main(int argc, char **argv)
         }
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!received_sigterm)
         {
             Selectable *sel;
             static bool firstReadTimeout = true;
