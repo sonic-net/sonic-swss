@@ -34,16 +34,17 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
 extern bool gRouteStateAsyncPublish;
+extern bool gEnableFibSuppress;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        ZmqRouteOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
+        ZmqRouteOrch(db, tableNames, zmqRouteServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -2091,6 +2092,17 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
                 return false;
             }
+
+            /* Verify RIF is not mid-VRF-migration.
+             * During VRF bind, the old RIF may still exist in the previous VRF
+             * if neighbor references prevent its removal. Retry until the RIF is
+             * recreated in the correct VRF. */
+            if (m_intfsOrch->isIntfChangeInProgress(nexthop.alias))
+            {
+                SWSS_LOG_INFO("Interface %s is being removed, retry route %s later",
+                        nexthop.alias.c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
         }
         else
         {
@@ -3201,6 +3213,11 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index, const std::string &
 void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
 {
     SWSS_LOG_ENTER();
+
+    if (!gEnableFibSuppress)
+    {
+        return;
+    }
 
     std::vector<FieldValueTuple> fvs;
 

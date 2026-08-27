@@ -76,6 +76,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
         m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
     }
 
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
@@ -192,6 +193,11 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
     m_syncdIntfses[alias].ref_count--;
     SWSS_LOG_INFO("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
+}
+
+bool IntfsOrch::isIntfChangeInProgress(const string &alias)
+{
+    return m_removingIntfses.find(alias) != m_removingIntfses.end();
 }
 
 bool IntfsOrch::setRouterIntfsMpls(const Port &port)
@@ -436,7 +442,7 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (!getSaiLoopbackAction(actionStr, action))
     {
-        return false;
+        return true;
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
@@ -1066,7 +1072,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     /* Set loopback action */
                     if (!loopbackAction.empty())
                     {
-                        setIntfLoopbackAction(port, loopbackAction);
+                        if (!setIntfLoopbackAction(port, loopbackAction))
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                 }
             }
@@ -1975,4 +1985,3 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
-
