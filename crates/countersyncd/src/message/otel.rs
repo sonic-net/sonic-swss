@@ -620,7 +620,7 @@ fn test_sai_to_otel_gauge_conversion() {
             encoded_heatmap_point(0, quantity, layout).encoded_len()
         });
 
-        assert_eq!(sizes, [595, 528, 802, 804, 1_250]);
+        assert_eq!(sizes, [1_028, 528, 802, 804, 1_250]);
         let old = encoded_heatmap_point(
             0,
             HeatmapQuantity::DeltaCount,
@@ -651,7 +651,7 @@ fn test_sai_to_otel_gauge_conversion() {
             .collect()
         };
         let compact = [64, 512, 4_096].map(|count| encoded_request_size(count, compact_layouts()));
-        assert_eq!(compact, [51_140, 409_858, 3_283_291]);
+        assert_eq!(compact, [56_769, 454_457, 3_638_351]);
         assert!(compact[2] > 3 * 1_024 * 1_024);
         assert!(compact.windows(2).all(|pair| pair[0] < pair[1]));
 
@@ -686,14 +686,14 @@ fn test_sai_to_otel_gauge_conversion() {
         });
         assert_eq!(
             per_quantity,
-            [2_460_725, 2_186_299, 3_308_607, 3_316_788, 5_143_594]
+            [4_234_293, 2_186_299, 3_308_607, 3_316_788, 5_143_594]
         );
-        assert!(per_quantity[..2]
-            .iter()
-            .all(|size| *size < 3 * 1_024 * 1_024));
+        let max_export_bytes = 3 * 1_024 * 1_024;
+        assert!(per_quantity[0] > max_export_bytes);
+        assert!(per_quantity[1] < max_export_bytes);
         assert!(per_quantity[2..]
             .iter()
-            .all(|size| *size > 3 * 1_024 * 1_024));
+            .all(|size| *size > max_export_bytes));
     }
 
     #[test]

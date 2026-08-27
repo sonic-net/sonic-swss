@@ -1993,11 +1993,11 @@ mod tests {
         assert_eq!(second.poll_interval_us, Some(10_000));
         assert_eq!(
             first.layout_for(selector).unwrap().explicit_bounds_u64()[1],
-            3_125_000
+            31_250_000
         );
         assert_eq!(
             second.layout_for(selector).unwrap().explicit_bounds_u64()[1],
-            6_250_000
+            62_500_000
         );
         assert!(!Arc::ptr_eq(
             &first.layout_for(selector).unwrap(),

@@ -78,7 +78,7 @@ const SCENARIOS: [Scenario; 6] = [
         heatmap_layout: Some(HeatmapLayoutKind::Custom),
     },
     Scenario {
-        name: "heatmap_semantic_delta_bytes_16_buckets",
+        name: "heatmap_semantic_delta_bytes_43_buckets",
         configured: true,
         reporting_rate: false,
         rollover: false,
@@ -115,7 +115,7 @@ fn configured_aggregator(scenario: Scenario) -> Aggregator {
     let selector = CounterSelector::new(1, 0);
     let heatmap = scenario.heatmap_layout.is_some();
     // Layout generation is deliberately outside the measured path. The custom
-    // eight-bucket layout is compared with the semantic 16-bucket byte default.
+    // eight-bucket layout is compared with the semantic 43-bucket byte default.
     let mut config = AggregatorConfig {
         reporting_rate: scenario.reporting_rate.then_some(REPORTING_RATE_US),
         poll_interval_us: Some(1_000),

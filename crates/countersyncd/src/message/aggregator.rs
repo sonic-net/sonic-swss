@@ -21,12 +21,11 @@ static ABSOLUTE_CELLS_LAYOUT: OnceLock<Arc<HeatmapLayout>> = OnceLock::new();
 static DELTA_COUNT_LAYOUT: OnceLock<Arc<HeatmapLayout>> = OnceLock::new();
 static NATIVE_LAYOUT: OnceLock<Arc<HeatmapLayout>> = OnceLock::new();
 
-// These are operational link-rate anchors, not runtime rate conversion. At
-// config time each Gbit/s anchor becomes the raw byte delta expected over one
-// nominal sample interval. A nominal interval makes defaults useful despite
-// jitter, while unusually delayed samples naturally land in overflow.
-const DELTA_BYTES_GBPS_ANCHORS: [u64; 15] = [
-    0, 5, 10, 20, 40, 50, 100, 150, 200, 300, 400, 600, 800, 1_200, 1_600,
+// Build raw byte-delta bounds from utilization bands for common link speeds.
+// This is config-time layout generation, not per-observation rate conversion.
+const DELTA_BYTES_LINK_SPEEDS_GBPS: [u64; 5] = [100, 200, 400, 800, 1_600];
+const DELTA_BYTES_UTILIZATION_BASIS_POINTS: [u64; 9] = [
+    5_000, 7_500, 9_000, 9_500, 9_800, 9_900, 9_950, 9_980, 10_000,
 ];
 const ABSOLUTE_BYTES_BOUNDS: [u64; 9] = [
     0,
@@ -476,31 +475,42 @@ pub fn default_heatmap_layout(
                 return Ok(layout.clone());
             }
 
-            let mut bounds = Vec::with_capacity(DELTA_BYTES_GBPS_ANCHORS.len());
-            for anchor_gbps in DELTA_BYTES_GBPS_ANCHORS {
-                let bound = u128::from(anchor_gbps)
-                    .checked_mul(125)
-                    .and_then(|value| value.checked_mul(u128::from(interval_us)))
-                    .ok_or_else(|| {
+            let mut bounds = Vec::with_capacity(
+                1 + DELTA_BYTES_LINK_SPEEDS_GBPS.len() * DELTA_BYTES_UTILIZATION_BASIS_POINTS.len(),
+            );
+            bounds.push(0);
+            for speed_gbps in DELTA_BYTES_LINK_SPEEDS_GBPS {
+                for utilization_basis_points in DELTA_BYTES_UTILIZATION_BASIS_POINTS {
+                    // Gbit/s * basis points * us / 80 yields bytes. Flooring is
+                    // exact for integer observations when the ideal threshold
+                    // lies between two whole-byte values.
+                    let bound = u128::from(speed_gbps)
+                        .checked_mul(u128::from(utilization_basis_points))
+                        .and_then(|value| value.checked_mul(u128::from(interval_us)))
+                        .ok_or_else(|| {
+                            format!(
+                                "DeltaBytes default boundary overflow for nominal interval {}us",
+                                interval_us
+                            )
+                        })?
+                        / 80;
+                    let bound = u64::try_from(bound).map_err(|_| {
                         format!(
-                            "DeltaBytes default boundary overflow for nominal interval {}us",
+                            "DeltaBytes default boundary exceeds u64 for nominal interval {}us",
                             interval_us
                         )
                     })?;
-                let bound = u64::try_from(bound).map_err(|_| {
-                    format!(
-                        "DeltaBytes default boundary exceeds u64 for nominal interval {}us",
-                        interval_us
-                    )
-                })?;
-                if bound > MAX_EXACT_OTLP_BOUNDARY {
-                    return Err(format!(
-                        "DeltaBytes default boundary {} exceeds exact OTLP limit {} for nominal interval {}us",
-                        bound, MAX_EXACT_OTLP_BOUNDARY, interval_us
-                    ));
+                    if bound > MAX_EXACT_OTLP_BOUNDARY {
+                        return Err(format!(
+                            "DeltaBytes default boundary {} exceeds exact OTLP limit {} for nominal interval {}us",
+                            bound, MAX_EXACT_OTLP_BOUNDARY, interval_us
+                        ));
+                    }
+                    bounds.push(bound);
                 }
-                bounds.push(bound);
             }
+            bounds.sort_unstable();
+            bounds.dedup();
             let layout = HeatmapLayout::from_bounds_unchecked(quantity, bounds);
             layouts.insert(interval_us, layout.clone());
             Ok(layout)
@@ -1117,75 +1127,72 @@ mod tests {
 
     #[test]
     fn delta_bytes_boundaries_use_exact_nominal_intervals() {
-        for (interval_us, expected, schema) in [
+        let expected_1ms = [
+            0,
+            6_250_000,
+            9_375_000,
+            11_250_000,
+            11_875_000,
+            12_250_000,
+            12_375_000,
+            12_437_500,
+            12_475_000,
+            12_500_000,
+            18_750_000,
+            22_500_000,
+            23_750_000,
+            24_500_000,
+            24_750_000,
+            24_875_000,
+            24_950_000,
+            25_000_000,
+            37_500_000,
+            45_000_000,
+            47_500_000,
+            49_000_000,
+            49_500_000,
+            49_750_000,
+            49_900_000,
+            50_000_000,
+            75_000_000,
+            90_000_000,
+            95_000_000,
+            98_000_000,
+            99_000_000,
+            99_500_000,
+            99_800_000,
+            100_000_000,
+            150_000_000,
+            180_000_000,
+            190_000_000,
+            196_000_000,
+            198_000_000,
+            199_000_000,
+            199_600_000,
+            200_000_000,
+        ];
+        for (interval_us, scale, schema) in [
             (
                 1_000,
-                [
-                    0,
-                    625_000,
-                    1_250_000,
-                    2_500_000,
-                    5_000_000,
-                    6_250_000,
-                    12_500_000,
-                    18_750_000,
-                    25_000_000,
-                    37_500_000,
-                    50_000_000,
-                    75_000_000,
-                    100_000_000,
-                    150_000_000,
-                    200_000_000,
-                ],
-                "hft-explicit-v2:delta:delta_bytes:fnv1a64-dd3d6eea2c44da57",
+                1,
+                "hft-explicit-v2:delta:delta_bytes:fnv1a64-ab511b6c09d3288e",
             ),
             (
                 10_000,
-                [
-                    0,
-                    6_250_000,
-                    12_500_000,
-                    25_000_000,
-                    50_000_000,
-                    62_500_000,
-                    125_000_000,
-                    187_500_000,
-                    250_000_000,
-                    375_000_000,
-                    500_000_000,
-                    750_000_000,
-                    1_000_000_000,
-                    1_500_000_000,
-                    2_000_000_000,
-                ],
-                "hft-explicit-v2:delta:delta_bytes:fnv1a64-550f0b9810595799",
+                10,
+                "hft-explicit-v2:delta:delta_bytes:fnv1a64-2a8d2b3d7ca226cc",
             ),
             (
                 100_000,
-                [
-                    0,
-                    62_500_000,
-                    125_000_000,
-                    250_000_000,
-                    500_000_000,
-                    625_000_000,
-                    1_250_000_000,
-                    1_875_000_000,
-                    2_500_000_000,
-                    3_750_000_000,
-                    5_000_000_000,
-                    7_500_000_000,
-                    10_000_000_000,
-                    15_000_000_000,
-                    20_000_000_000,
-                ],
-                "hft-explicit-v2:delta:delta_bytes:fnv1a64-dff7bb3620d66026",
+                100,
+                "hft-explicit-v2:delta:delta_bytes:fnv1a64-a09523fcb7c0174d",
             ),
         ] {
             let layout =
                 default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(interval_us)).unwrap();
+            let expected = expected_1ms.map(|bound| bound * scale);
             assert_eq!(layout.explicit_bounds_u64(), expected);
-            assert_eq!(layout.bucket_count(), 16);
+            assert_eq!(layout.bucket_count(), 43);
             assert_eq!(
                 layout.explicit_bounds_u64().last(),
                 Some(&(1_600 * 125 * u64::from(interval_us)))
@@ -1208,8 +1215,41 @@ mod tests {
             &default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(1_000)).unwrap(),
             &default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(10_000)).unwrap()
         ));
+
+        let one_microsecond = default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(1)).unwrap();
+        assert_eq!(one_microsecond.bucket_count(), 43);
+        assert!(one_microsecond.explicit_bounds_u64().contains(&12_437));
+        assert!(!one_microsecond.explicit_bounds_u64().contains(&12_438));
+
+        let maximum_interval =
+            default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(u32::MAX)).unwrap();
+        assert_eq!(
+            maximum_interval.explicit_bounds_u64().last(),
+            Some(&(1_600 * 125 * u64::from(u32::MAX)))
+        );
         assert!(default_heatmap_layout(HeatmapQuantity::DeltaBytes, None).is_err());
         assert!(default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(0)).is_err());
+    }
+
+    #[test]
+    fn delta_bytes_layout_distinguishes_common_link_saturation_bands() {
+        let layout = default_heatmap_layout(HeatmapQuantity::DeltaBytes, Some(1_000)).unwrap();
+        let bucket_for_mbps = |rate_mbps: u64| {
+            let bytes = rate_mbps * 1_000 / 8;
+            layout
+                .explicit_bounds_u64()
+                .partition_point(|bound| *bound < bytes)
+        };
+
+        assert!(bucket_for_mbps(50_010) < bucket_for_mbps(99_800));
+        assert!(bucket_for_mbps(99_800) < bucket_for_mbps(100_000));
+        for speed_gbps in DELTA_BYTES_LINK_SPEEDS_GBPS {
+            let saturation_buckets =
+                [9_500, 9_800, 9_900, 9_950, 9_980, 10_000].map(|utilization_basis_points| {
+                    bucket_for_mbps(speed_gbps * utilization_basis_points / 10)
+                });
+            assert!(saturation_buckets.windows(2).all(|pair| pair[0] < pair[1]));
+        }
     }
 
     #[test]
@@ -1449,14 +1489,14 @@ mod tests {
         config.resolve_heatmap_layouts().unwrap();
         assert_eq!(
             config.layout_for(bytes).unwrap().explicit_bounds_u64()[1],
-            6_250_000
+            62_500_000
         );
 
         config.reporting_rate = Some(100_000);
         config.resolve_heatmap_layouts().unwrap();
         assert_eq!(
             config.layout_for(bytes).unwrap().explicit_bounds_u64()[1],
-            62_500_000
+            625_000_000
         );
 
         for (reporting_rate, poll_interval_us, expected) in [

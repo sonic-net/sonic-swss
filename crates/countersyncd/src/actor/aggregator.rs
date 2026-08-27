@@ -1870,8 +1870,8 @@ mod tests {
         assert_eq!(heatmap.min, last_bound);
         assert_eq!(heatmap.max, last_bound + 1);
         assert_eq!(heatmap.sum, (last_bound * 2 + 1) as f64);
-        assert_eq!(heatmap.bucket_counts[14], 1);
-        assert_eq!(heatmap.bucket_counts[15], 1);
+        assert_eq!(heatmap.bucket_counts[41], 1);
+        assert_eq!(heatmap.bucket_counts[42], 1);
     }
 
     #[test]
