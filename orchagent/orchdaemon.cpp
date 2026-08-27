@@ -876,6 +876,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
+        // LCOV_EXCL_START: cisco-8000 platform branch is not exercised by the VS test environment
         m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
@@ -883,6 +884,7 @@ bool OrchDaemon::init()
                     queueStatIds,
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
+        // LCOV_EXCL_STOP
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
