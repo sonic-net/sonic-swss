@@ -631,6 +631,7 @@ private:
 private:
     void initializeCpuPort();
     void initializePorts();
+    void maybeWakeSaiNotificationQueues();
 
     auto getPortConfigState() const -> port_config_state_t;
     void setPortConfigState(port_config_state_t value);

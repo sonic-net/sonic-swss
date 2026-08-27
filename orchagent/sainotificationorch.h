@@ -34,6 +34,11 @@ public:
 
     SaiNotificationQueue *getSaiNotificationQueue(const std::string &op);
 
+    // Re-arm queue executors when readiness predicates start passing (e.g.
+    // allPortsReady()).  Without this, a notification enqueued before ready
+    // can stall after hasCachedData() stops re-selecting the executor.
+    void wakeReadyQueues();
+
 private:
     struct ConsumerMetadata
     {

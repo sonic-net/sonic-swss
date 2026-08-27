@@ -1760,6 +1760,14 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
+void PortsOrch::maybeWakeSaiNotificationQueues()
+{
+    if (gSaiNotificationOrch && allPortsReady())
+    {
+        gSaiNotificationOrch->wakeReadyQueues();
+    }
+}
+
 /* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
 bool PortsOrch::isInitDone()
 {
@@ -4768,6 +4776,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Got PortInitDone notification from portsyncd");
+                maybeWakeSaiNotificationQueues();
             }
 
             it = taskMap.erase(it);
@@ -4813,6 +4822,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     // allPortsReady() false and block every other port.
                     SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationQueues();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4821,6 +4831,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationQueues();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4837,6 +4848,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationQueues();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4943,6 +4955,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 m_pendingPortSet.erase(pCfg.key);
+                maybeWakeSaiNotificationQueues();
             }
 
             Port p;

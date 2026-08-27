@@ -367,6 +367,42 @@ TEST(SaiNotificationQueueExecutorTest, PerConsumerQueuesDoNotHeadOfLineBlock)
     EXPECT_FALSE(fdbQueue.hasData());
 }
 
+TEST(SaiNotificationQueueExecutorTest, WakeOnReadinessTransition)
+{
+    SaiNotificationQueue fdbQueue("FdbOrch:fdb_event", NotificationQueuePolicy::LruDedup, 100, 10);
+    SaiNotificationDispatcher dispatcher;
+    TestNotificationOrch orch;
+    std::vector<FieldValueTuple> values;
+    bool portsReady = false;
+    int fdbCalls = 0;
+
+    dispatcher.registerHandler(
+        "fdb_event",
+        [&](KeyOpFieldsValuesTuple &)
+        {
+            fdbCalls++;
+        });
+
+    fdbQueue.registerReadiness([&]() { return portsReady; });
+    fdbQueue.enqueue("fdb_event", "fdb", values);
+
+    std::unique_ptr<Executor> fdbExecutor(
+        createSaiNotificationQueueExecutor(&fdbQueue, &orch, &dispatcher, "FDB_EXECUTOR"));
+
+    fdbExecutor->execute();
+
+    EXPECT_EQ(fdbCalls, 0);
+    EXPECT_TRUE(fdbQueue.hasData());
+
+    portsReady = true;
+    fdbQueue.notifyPending();
+
+    fdbExecutor->execute();
+
+    EXPECT_EQ(fdbCalls, 1);
+    EXPECT_FALSE(fdbQueue.hasData());
+}
+
 TEST(SaiNotificationQueueTest, MissingHandlerLogsWarning)
 {
     SaiNotificationDispatcher dispatcher;

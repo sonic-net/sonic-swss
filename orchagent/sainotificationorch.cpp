@@ -109,3 +109,15 @@ void SaiNotificationOrch::registerHandler(const std::string &op,
     queue->registerReadiness(std::move(ready));
     queue->notifyPending();
 }
+
+void SaiNotificationOrch::wakeReadyQueues()
+{
+    for (const auto &entry : m_consumersByName)
+    {
+        auto *queue = entry.second.queue.get();
+        if (queue && queue->hasData() && queue->isReady())
+        {
+            queue->notifyPending();
+        }
+    }
+}
