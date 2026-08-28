@@ -25,7 +25,8 @@ PolicerMgr::PolicerMgr(DBConnector *cfgDb, DBConnector *stateDb,
                        const vector<string> &tableNames) :
     Orch(cfgDb, stateDb, tableNames, {}),
     m_cfgDb(cfgDb),
-    m_statePolicerTable(stateDb, STATE_POLICER_TABLE_NAME)
+    m_statePolicerTable(stateDb, STATE_POLICER_TABLE_NAME),
+    m_stateStormControlTable(stateDb, STATE_PORT_STORM_CONTROL_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("PolicerMgr initialized, subscribed to %zu CONFIG_DB tables", tableNames.size());
@@ -291,7 +292,11 @@ void PolicerMgr::doPortStormControlTask(Consumer &consumer)
                 m_stormPrio[key] = prio;
             }
 
-            addStormControlFilter(kernutil::resolveInterface(iface), storm_type, kbps, prio);
+            bool ok = addStormControlFilter(kernutil::resolveInterface(iface), storm_type, kbps, prio);
+
+            vector<FieldValueTuple> fvs;
+            fvs.emplace_back("status", ok ? "active" : "inactive");
+            m_stateStormControlTable.set(key, fvs);
 
             it = consumer.m_toSync.erase(it);
         }
@@ -303,6 +308,7 @@ void PolicerMgr::doPortStormControlTask(Consumer &consumer)
                 removeStormControlFilter(kernutil::resolveInterface(iface), pit->second);
                 m_stormPrio.erase(pit);
             }
+            m_stateStormControlTable.del(key);
             it = consumer.m_toSync.erase(it);
         }
         else
@@ -313,7 +319,7 @@ void PolicerMgr::doPortStormControlTask(Consumer &consumer)
     }
 }
 
-void PolicerMgr::addStormControlFilter(const string &iface, const string &stormType,
+bool PolicerMgr::addStormControlFilter(const string &iface, const string &stormType,
                                        const string &kbps, uint32_t prio)
 {
     SWSS_LOG_ENTER();
@@ -328,7 +334,7 @@ void PolicerMgr::addStormControlFilter(const string &iface, const string &stormT
     else
     {
         SWSS_LOG_WARN("Unknown storm type '%s', skipping", stormType.c_str());
-        return;
+        return false;
     }
 
     uint64_t bps = stoull(kbps) * 1000;      /* kbps -> bits/sec */
@@ -360,10 +366,16 @@ void PolicerMgr::addStormControlFilter(const string &iface, const string &stormT
             cmd_sw.erase(skip, 8);
         SWSS_LOG_NOTICE("Executing (fallback): %s", cmd_sw.c_str());
         ret = swss::exec(cmd_sw, res);
-        if (ret != 0)
-            SWSS_LOG_ERROR("tc storm-control add failed on %s (ret=%d): %s",
-                           iface.c_str(), ret, res.c_str());
     }
+
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("tc storm-control add failed on %s (ret=%d): %s",
+                       iface.c_str(), ret, res.c_str());
+        return false;
+    }
+
+    return true;
 }
 
 void PolicerMgr::removeStormControlFilter(const string &iface, uint32_t prio)

@@ -17,6 +17,9 @@
 #ifndef CFG_PORT_STORM_CONTROL_TABLE_NAME
 #define CFG_PORT_STORM_CONTROL_TABLE_NAME   "PORT_STORM_CONTROL"
 #endif
+#ifndef STATE_PORT_STORM_CONTROL_TABLE_NAME
+#define STATE_PORT_STORM_CONTROL_TABLE_NAME "PORT_STORM_CONTROL_TABLE"
+#endif
 
 /* POLICER field names (lowercase, per sonic-policer.yang) */
 #define POLICER_FIELD_METER_TYPE        "meter_type"
@@ -58,6 +61,7 @@ public:
 private:
     DBConnector *m_cfgDb;
     Table m_statePolicerTable;
+    Table m_stateStormControlTable;
     std::map<std::string, int> m_policerRefCounts;   // policer name -> refcount
     std::map<std::string, uint32_t> m_stormPrio;     // port|storm_type -> tc prio
     uint32_t m_nextStormPrio = 200;
@@ -68,7 +72,7 @@ private:
     void doPolicerTask(Consumer &consumer);
     void doPortStormControlTask(Consumer &consumer);
 
-    void addStormControlFilter(const std::string &iface, const std::string &stormType,
+    bool addStormControlFilter(const std::string &iface, const std::string &stormType,
                                const std::string &kbps, uint32_t prio);
     void removeStormControlFilter(const std::string &iface, uint32_t prio);
 };
