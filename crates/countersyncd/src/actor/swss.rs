@@ -61,6 +61,11 @@ enum SwssEvent {
     SessionDelete {
         key: String,
     },
+    Config(AggregatorConfigEvent),
+}
+
+#[derive(Debug)]
+enum AggregatorConfigEvent {
     ProfileUpdate {
         profile: String,
         aggregator: Option<String>,
@@ -95,6 +100,8 @@ enum SwssEvent {
         selector: CounterSelector,
     },
 }
+
+type SwssEventCollector = fn(&SubscriberStateTable) -> Result<Vec<SwssEvent>, String>;
 
 impl SwssActor {
     /// Creates a new SwssActor instance
@@ -199,63 +206,37 @@ impl SwssActor {
         }
 
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
-        let _session_reader = match Self::spawn_reader_thread(
-            "countersyncd-swss-session",
-            session_table,
-            event_sender.clone(),
-            Self::collect_session_events,
-        ) {
-            Ok(handle) => handle,
+        let readers = [
+            (
+                "countersyncd-swss-session",
+                session_table,
+                Self::collect_session_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-profile",
+                profile_table,
+                Self::collect_profile_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator",
+                aggregator_table,
+                Self::collect_aggregator_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator-histogram",
+                histogram_table,
+                Self::collect_histogram_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator-rollover",
+                rollover_table,
+                Self::collect_rollover_events as SwssEventCollector,
+            ),
+        ];
+        let _reader_threads = match Self::spawn_reader_threads(readers, event_sender) {
+            Ok(handles) => handles,
             Err(e) => {
-                error!("Failed to spawn SWSS session reader: {}", e);
-                return;
-            }
-        };
-        let _profile_reader = match Self::spawn_reader_thread(
-            "countersyncd-swss-profile",
-            profile_table,
-            event_sender.clone(),
-            Self::collect_profile_events,
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS profile reader: {}", e);
-                return;
-            }
-        };
-        let _aggregator_reader = match Self::spawn_reader_thread(
-            "countersyncd-swss-aggregator",
-            aggregator_table,
-            event_sender.clone(),
-            Self::collect_aggregator_events,
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS aggregator reader: {}", e);
-                return;
-            }
-        };
-        let _histogram_reader = match Self::spawn_reader_thread(
-            "countersyncd-swss-aggregator-histogram",
-            histogram_table,
-            event_sender.clone(),
-            Self::collect_histogram_events,
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS aggregator histogram reader: {}", e);
-                return;
-            }
-        };
-        let _rollover_reader = match Self::spawn_reader_thread(
-            "countersyncd-swss-aggregator-rollover",
-            rollover_table,
-            event_sender,
-            Self::collect_rollover_events,
-        ) {
-            Ok(handle) => handle,
-            Err(e) => {
-                error!("Failed to spawn SWSS aggregator rollover reader: {}", e);
+                error!("Failed to spawn SWSS reader: {}", e);
                 return;
             }
         };
@@ -271,150 +252,76 @@ impl SwssActor {
 
             // Apply each table event independently. Retained parent/child state
             // handles ordering; readers do not coalesce cross-table updates.
-            match event {
-                SwssEvent::SessionUpdate { key, session_data } => {
-                    if Self::validate_session(&key, &session_data) {
-                        match aggregator_state.try_config_for_session_key(&key) {
-                            Ok(config) => {
-                                let config = AggregatorConfigMessage::replacement(
-                                    key.clone(),
-                                    config,
-                                );
-                                if let Err(e) = Self::send_session_update(
-                                    &template_recipient,
-                                    &key,
-                                    &session_data,
-                                    config,
-                                )
-                                .await
-                                {
-                                    error!("Failed to process session {}: {}", key, e);
-                                    aggregator_state.remove_session(&key);
-                                    Self::process_session_delete(&template_recipient, &key).await;
-                                } else {
-                                    aggregator_state.add_session(key);
-                                }
-                            }
-                            Err(reason) => error!(
-                                "Rejecting effective aggregator config for session {}: {}; preserving existing session state",
-                                key, reason
-                            ),
-                        }
-                    } else {
-                        aggregator_state.remove_session(&key);
-                        Self::process_session_delete(&template_recipient, &key).await;
-                    }
-                }
-                SwssEvent::SessionDelete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
-                    aggregator_state.remove_session(&key);
-                }
-                SwssEvent::ProfileUpdate {
-                    profile,
-                    aggregator,
-                    poll_interval_us,
-                } => {
-                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
-                    aggregator_state.set_profile(profile, aggregator, poll_interval_us);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::ProfileDelete { profile } => {
-                    let affected_sessions = aggregator_state.session_keys_for_profile(&profile);
-                    aggregator_state.remove_profile(&profile);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::AggregatorUpdate { name, config } => {
-                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
-                    aggregator_state.set_aggregator_config(name, config);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::AggregatorDelete { name } => {
-                    let affected_sessions = aggregator_state.session_keys_for_aggregator(&name);
-                    aggregator_state.remove_aggregator(&name);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::HistogramUpdate {
-                    aggregator,
-                    selector,
-                    explicit_bounds,
-                } => {
-                    let affected_sessions =
-                        aggregator_state.session_keys_for_aggregator(&aggregator);
-                    aggregator_state.set_histogram_config(aggregator, selector, explicit_bounds);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::HistogramDelete {
-                    aggregator,
-                    selector,
-                } => {
-                    let affected_sessions =
-                        aggregator_state.session_keys_for_aggregator(&aggregator);
-                    aggregator_state.remove_histogram_config(&aggregator, selector);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::RolloverUpdate {
-                    aggregator,
-                    selector,
-                    bit_width,
-                } => {
-                    let affected_sessions =
-                        aggregator_state.session_keys_for_aggregator(&aggregator);
-                    aggregator_state.set_rollover_config(aggregator, selector, bit_width);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-                SwssEvent::RolloverDelete {
-                    aggregator,
-                    selector,
-                } => {
-                    let affected_sessions =
-                        aggregator_state.session_keys_for_aggregator(&aggregator);
-                    aggregator_state.remove_rollover_config(&aggregator, selector);
-                    Self::send_aggregator_configs_for_sessions(
-                        &template_recipient,
-                        &aggregator_state,
-                        affected_sessions,
-                    )
-                    .await;
-                }
-            }
+            Self::process_event(&template_recipient, &mut aggregator_state, event).await;
         }
 
         debug!("SwssActor terminated");
+    }
+
+    async fn process_event(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        aggregator_state: &mut AggregatorConfigState,
+        event: SwssEvent,
+    ) {
+        match event {
+            SwssEvent::SessionUpdate { key, session_data } => {
+                if Self::validate_session(&key, &session_data) {
+                    match aggregator_state.try_config_for_session_key(&key) {
+                        Ok(config) => {
+                            let config =
+                                AggregatorConfigMessage::replacement(key.clone(), config);
+                            if let Err(e) = Self::send_session_update(
+                                template_recipient,
+                                &key,
+                                &session_data,
+                                config,
+                            )
+                            .await
+                            {
+                                error!("Failed to process session {}: {}", key, e);
+                                aggregator_state.remove_session(&key);
+                                Self::process_session_delete(template_recipient, &key).await;
+                            } else {
+                                aggregator_state.add_session(key);
+                            }
+                        }
+                        Err(reason) => error!(
+                            "Rejecting effective aggregator config for session {}: {}; preserving existing session state",
+                            key, reason
+                        ),
+                    }
+                } else {
+                    aggregator_state.remove_session(&key);
+                    Self::process_session_delete(template_recipient, &key).await;
+                }
+            }
+            SwssEvent::SessionDelete { key } => {
+                Self::process_session_delete(template_recipient, &key).await;
+                aggregator_state.remove_session(&key);
+            }
+            SwssEvent::Config(event) => {
+                let affected_sessions = aggregator_state.apply_config_event(event);
+                Self::send_aggregator_configs_for_sessions(
+                    template_recipient,
+                    aggregator_state,
+                    affected_sessions,
+                )
+                .await;
+            }
+        }
+    }
+
+    fn spawn_reader_threads<const N: usize>(
+        readers: [(&str, SubscriberStateTable, SwssEventCollector); N],
+        event_sender: Sender<SwssEvent>,
+    ) -> Result<Vec<thread::JoinHandle<()>>, String> {
+        readers
+            .into_iter()
+            .map(|(name, table, collect_events)| {
+                Self::spawn_reader_thread(name, table, event_sender.clone(), collect_events)
+                    .map_err(|error| format!("{}: {}", name, error))
+            })
+            .collect()
     }
 
     fn spawn_reader_thread<F>(
@@ -514,14 +421,20 @@ impl SwssActor {
                 Self::extract_config_key(&item.key, CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE);
             match item.operation {
                 KeyOperation::Set => match Self::parse_profile(&item.field_values) {
-                    Ok((aggregator, poll_interval_us)) => events.push(SwssEvent::ProfileUpdate {
-                        profile,
-                        aggregator,
-                        poll_interval_us,
-                    }),
+                    Ok((aggregator, poll_interval_us)) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::ProfileUpdate {
+                            profile,
+                            aggregator,
+                            poll_interval_us,
+                        }))
+                    }
                     Err(reason) => error!("Rejecting profile update for {}: {}", profile, reason),
                 },
-                KeyOperation::Del => events.push(SwssEvent::ProfileDelete { profile }),
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::ProfileDelete {
+                        profile,
+                    }))
+                }
             }
         }
 
@@ -543,10 +456,12 @@ impl SwssActor {
             );
             match item.operation {
                 KeyOperation::Set => match Self::parse_aggregator_config(&item.field_values) {
-                    Ok(config) => events.push(SwssEvent::AggregatorUpdate {
-                        name,
-                        config: Some(config),
-                    }),
+                    Ok(config) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::AggregatorUpdate {
+                            name,
+                            config: Some(config),
+                        }))
+                    }
                     Err(reason) => {
                         error!(
                             "Rejecting aggregator config update for {}: {}",
@@ -554,7 +469,11 @@ impl SwssActor {
                         )
                     }
                 },
-                KeyOperation::Del => events.push(SwssEvent::AggregatorDelete { name }),
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::AggregatorDelete {
+                        name,
+                    }))
+                }
             }
         }
 
@@ -584,20 +503,24 @@ impl SwssActor {
             };
             match item.operation {
                 KeyOperation::Set => match Self::parse_histogram_bounds(&item.field_values) {
-                    Ok(explicit_bounds) => events.push(SwssEvent::HistogramUpdate {
-                        aggregator,
-                        selector,
-                        explicit_bounds,
-                    }),
+                    Ok(explicit_bounds) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::HistogramUpdate {
+                            aggregator,
+                            selector,
+                            explicit_bounds,
+                        }))
+                    }
                     Err(reason) => error!(
                         "Rejecting aggregator histogram update for {}: {}",
                         key, reason
                     ),
                 },
-                KeyOperation::Del => events.push(SwssEvent::HistogramDelete {
-                    aggregator,
-                    selector,
-                }),
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::HistogramDelete {
+                        aggregator,
+                        selector,
+                    }))
+                }
             }
         }
 
@@ -618,7 +541,7 @@ impl SwssActor {
                 CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE,
             );
             match Self::parse_rollover_event(key.clone(), item.operation, &item.field_values) {
-                Ok(event) => events.push(event),
+                Ok(event) => events.push(SwssEvent::Config(event)),
                 Err(reason) => {
                     error!("Rejecting aggregator rollover update for {}: {}", key, reason)
                 }
@@ -783,15 +706,15 @@ impl SwssActor {
         key: String,
         operation: KeyOperation,
         field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> Result<SwssEvent, String> {
+    ) -> Result<AggregatorConfigEvent, String> {
         let (aggregator, selector) = Self::parse_child_key(&key)?;
         Ok(match operation {
-            KeyOperation::Set => SwssEvent::RolloverUpdate {
+            KeyOperation::Set => AggregatorConfigEvent::RolloverUpdate {
                 aggregator,
                 selector,
                 bit_width: Self::parse_rollover_bit_width(field_values)?,
             },
-            KeyOperation::Del => SwssEvent::RolloverDelete {
+            KeyOperation::Del => AggregatorConfigEvent::RolloverDelete {
                 aggregator,
                 selector,
             },
@@ -1098,6 +1021,69 @@ struct AggregatorConfigState {
 }
 
 impl AggregatorConfigState {
+    fn apply_config_event(&mut self, event: AggregatorConfigEvent) -> Vec<String> {
+        match event {
+            AggregatorConfigEvent::ProfileUpdate {
+                profile,
+                aggregator,
+                poll_interval_us,
+            } => {
+                let affected_sessions = self.session_keys_for_profile(&profile);
+                self.set_profile(profile, aggregator, poll_interval_us);
+                affected_sessions
+            }
+            AggregatorConfigEvent::ProfileDelete { profile } => {
+                let affected_sessions = self.session_keys_for_profile(&profile);
+                self.remove_profile(&profile);
+                affected_sessions
+            }
+            AggregatorConfigEvent::AggregatorUpdate { name, config } => {
+                let affected_sessions = self.session_keys_for_aggregator(&name);
+                self.set_aggregator_config(name, config);
+                affected_sessions
+            }
+            AggregatorConfigEvent::AggregatorDelete { name } => {
+                let affected_sessions = self.session_keys_for_aggregator(&name);
+                self.remove_aggregator(&name);
+                affected_sessions
+            }
+            AggregatorConfigEvent::HistogramUpdate {
+                aggregator,
+                selector,
+                explicit_bounds,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.set_histogram_config(aggregator, selector, explicit_bounds);
+                affected_sessions
+            }
+            AggregatorConfigEvent::HistogramDelete {
+                aggregator,
+                selector,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.remove_histogram_config(&aggregator, selector);
+                affected_sessions
+            }
+            AggregatorConfigEvent::RolloverUpdate {
+                aggregator,
+                selector,
+                bit_width,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.set_rollover_config(aggregator, selector, bit_width);
+                affected_sessions
+            }
+            AggregatorConfigEvent::RolloverDelete {
+                aggregator,
+                selector,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.remove_rollover_config(&aggregator, selector);
+                affected_sessions
+            }
+        }
+    }
+
     fn add_session(&mut self, key: String) {
         self.sessions.insert(key);
     }
@@ -1436,6 +1422,111 @@ mod tests {
     }
 
     #[test]
+    fn config_events_update_state_and_return_affected_sessions() {
+        let histogram = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let rollover = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile0|QUEUE".to_string());
+        state.add_session("profile1|PORT".to_string());
+
+        let sorted = |mut sessions: Vec<String>| {
+            sessions.sort();
+            sessions
+        };
+        assert_eq!(
+            sorted(
+                state.apply_config_event(AggregatorConfigEvent::ProfileUpdate {
+                    profile: "profile0".to_string(),
+                    aggregator: Some("harm0".to_string()),
+                    poll_interval_us: Some(1_000),
+                })
+            ),
+            vec!["profile0|PORT".to_string(), "profile0|QUEUE".to_string()]
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::AggregatorUpdate {
+                    name: "harm0".to_string(),
+                    config: Some(AggregatorConfig {
+                        heatmap_interval: Some(10_000),
+                        heatmap_counters: HashSet::from([histogram]),
+                        rollover_counters: HashSet::from([rollover]),
+                        ..Default::default()
+                    }),
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::HistogramUpdate {
+                    aggregator: "harm0".to_string(),
+                    selector: histogram,
+                    explicit_bounds: vec![10, 20],
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::RolloverUpdate {
+                    aggregator: "harm0".to_string(),
+                    selector: rollover,
+                    bit_width: 24,
+                })
+                .len(),
+            2
+        );
+        let effective = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            effective
+                .layout_for(histogram)
+                .unwrap()
+                .explicit_bounds_u64(),
+            [10, 20]
+        );
+        assert_eq!(effective.rollover_bit_width_for(rollover), 24);
+
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::HistogramDelete {
+                    aggregator: "harm0".to_string(),
+                    selector: histogram,
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::RolloverDelete {
+                    aggregator: "harm0".to_string(),
+                    selector: rollover,
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::AggregatorDelete {
+                    name: "harm0".to_string(),
+                })
+                .len(),
+            2
+        );
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+        assert_eq!(
+            sorted(
+                state.apply_config_event(AggregatorConfigEvent::ProfileDelete {
+                    profile: "profile0".to_string(),
+                })
+            ),
+            vec!["profile0|PORT".to_string(), "profile0|QUEUE".to_string()]
+        );
+        assert!(!state.profile_poll_intervals_us.contains_key("profile0"));
+    }
+
+    #[test]
     fn test_histogram_parse_and_state_merge() {
         let custom = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
         let initially_unselected = CounterSelector::parse("QUEUE|PACKETS").unwrap();
@@ -1558,7 +1649,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             set,
-            SwssEvent::RolloverUpdate {
+            AggregatorConfigEvent::RolloverUpdate {
                 ref aggregator,
                 selector,
                 bit_width: 8,
@@ -1572,7 +1663,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             delete,
-            SwssEvent::RolloverDelete {
+            AggregatorConfigEvent::RolloverDelete {
                 ref aggregator,
                 selector,
             } if aggregator == "harm0" && selector == selected

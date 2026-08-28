@@ -29,6 +29,7 @@ use opentelemetry_proto::tonic::{
         AggregationTemporality,
         Gauge as ProtoGauge,
         Histogram as ProtoHistogram,
+        HistogramDataPoint,
         Metric,
         ResourceMetrics,
         ScopeMetrics,
@@ -105,6 +106,52 @@ fn encoded_len_varint(mut value: usize) -> usize {
 
 fn length_delimited_field_len(payload_len: usize) -> usize {
     1 + encoded_len_varint(payload_len) + payload_len
+}
+
+#[derive(Clone)]
+struct HistogramMetricTemplate {
+    name: String,
+    description: String,
+    unit: String,
+    metadata: Vec<ProtoKeyValue>,
+    histogram: ProtoHistogram,
+}
+
+impl HistogramMetricTemplate {
+    fn new(metric: Metric, mut histogram: ProtoHistogram) -> (Self, Vec<HistogramDataPoint>) {
+        let data_points = std::mem::take(&mut histogram.data_points);
+        let template = Self {
+            name: metric.name,
+            description: metric.description,
+            unit: metric.unit,
+            metadata: metric.metadata,
+            histogram,
+        };
+        (template, data_points)
+    }
+
+    fn build(&self, data_points: Vec<HistogramDataPoint>) -> Metric {
+        let mut histogram = self.histogram.clone();
+        histogram.data_points = data_points;
+        Metric {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            unit: self.unit.clone(),
+            metadata: self.metadata.clone(),
+            data: Some(Data::Histogram(histogram)),
+        }
+    }
+
+    fn into_metric(mut self, data_points: Vec<HistogramDataPoint>) -> Metric {
+        self.histogram.data_points = data_points;
+        Metric {
+            name: self.name,
+            description: self.description,
+            unit: self.unit,
+            metadata: self.metadata,
+            data: Some(Data::Histogram(self.histogram)),
+        }
+    }
 }
 
 fn request_len(resource_len: usize, scope_len: usize, metric_fields_len: usize) -> usize {
@@ -229,14 +276,10 @@ pub fn split_export_requests(
             }
         };
 
-        let mut histogram_template = histogram;
-        let data_points = std::mem::take(&mut histogram_template.data_points);
-        let histogram_base_len = histogram_template.encoded_len();
-        let mut metric_without_data = metric.clone();
-        metric_without_data.data = None;
-        let metric_without_data_len = metric_without_data.encoded_len();
-        metric.data = Some(Data::Histogram(histogram_template.clone()));
-        let empty_metric_len = metric.encoded_len();
+        let metric_without_data_len = metric.encoded_len();
+        let (histogram_template, data_points) = HistogramMetricTemplate::new(metric, histogram);
+        let histogram_base_len = histogram_template.histogram.encoded_len();
+        let empty_metric_len = histogram_template.build(Vec::new()).encoded_len();
         let histogram_key_len = empty_metric_len
             .checked_sub(
                 metric_without_data_len
@@ -270,11 +313,7 @@ pub fn split_export_requests(
                 }
 
                 if !segment_points.is_empty() {
-                    let mut segment = metric.clone();
-                    let Some(Data::Histogram(segment_histogram)) = segment.data.as_mut() else {
-                        unreachable!("histogram metric template")
-                    };
-                    segment_histogram.data_points = std::mem::take(&mut segment_points);
+                    let segment = histogram_template.build(std::mem::take(&mut segment_points));
                     request_metrics.push(segment);
                     finish_request(
                         &mut requests,
@@ -302,7 +341,7 @@ pub fn split_export_requests(
 
                 return Err(OtelActorExportError(format!(
                     "single histogram data point for metric '{}' requires {} encoded bytes and exceeds max_export_bytes {}",
-                    metric.name,
+                    histogram_template.name,
                     request_len(resource_len, scope_len, metric_field_len),
                     max_export_bytes
                 )));
@@ -310,11 +349,7 @@ pub fn split_export_requests(
         }
 
         if !segment_points.is_empty() {
-            let mut segment = metric;
-            let Some(Data::Histogram(segment_histogram)) = segment.data.as_mut() else {
-                unreachable!("histogram metric template")
-            };
-            segment_histogram.data_points = segment_points;
+            let segment = histogram_template.into_metric(segment_points);
             request_metric_fields_len += length_delimited_field_len(segment.encoded_len());
             request_metrics.push(segment);
         }
@@ -817,6 +852,43 @@ mod tests {
                 aggregation_temporality: AggregationTemporality::Delta as i32,
             })),
         }
+    }
+
+    #[test]
+    fn histogram_template_preserves_metric_metadata() {
+        let metadata = vec![ProtoKeyValue {
+            key: "schema".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::StringValue("v1".to_string())),
+            }),
+        }];
+        let metric = Metric {
+            name: "heatmap".to_string(),
+            description: "description".to_string(),
+            unit: "By".to_string(),
+            metadata: metadata.clone(),
+            data: None,
+        };
+        let histogram = ProtoHistogram {
+            data_points: vec![HistogramDataPoint::default()],
+            aggregation_temporality: AggregationTemporality::Delta as i32,
+        };
+
+        let (template, points) = HistogramMetricTemplate::new(metric, histogram);
+        let rebuilt = template.into_metric(points);
+
+        assert_eq!(rebuilt.name, "heatmap");
+        assert_eq!(rebuilt.description, "description");
+        assert_eq!(rebuilt.unit, "By");
+        assert_eq!(rebuilt.metadata, metadata);
+        assert!(matches!(
+            rebuilt.data,
+            Some(Data::Histogram(ProtoHistogram {
+                data_points,
+                aggregation_temporality,
+            })) if data_points.len() == 1
+                && aggregation_temporality == AggregationTemporality::Delta as i32
+        ));
     }
 
     fn request_stats(requests: &[ExportMetricsServiceRequest]) -> (usize, usize) {
