@@ -165,6 +165,10 @@ void AclMgr::doAclTableTask(Consumer &consumer)
                 {
                     for (auto &iface : rit->second.interfaces)
                         removeTcFlowerFilter(iface, rit->second);
+                    /* Clean the STATE_DB rule entry too — otherwise removing a
+                     * table leaves an orphaned ACL_RULE_TABLE|<table>|<rule>
+                     * status key (CONFIG_DB rules are not cascaded by the CLI). */
+                    m_stateAclRuleTable.del(rit->first);
                     rit = m_ruleState.erase(rit);
                 }
                 else
