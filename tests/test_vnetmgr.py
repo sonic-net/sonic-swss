@@ -1,6 +1,6 @@
-# Tests for vnetmgrd: CONFIG_DB -> APP_DB propagation (VNET_ROUTE and
-# VNET_ROUTE_TUNNEL) and the install_on_kernel kernel-programming path
-# (VXLAN device + VRF route + host-route static neigh).
+# Tests for vnetmgrd (Single-Vxlan-Device model): CONFIG_DB -> APP_DB
+# propagation for VNET_ROUTE_TUNNEL and the install_on_kernel programming path
+# (VRF route + host-route static neigh + bridge FDB entry on the shared Vxlan).
 
 import time
 import pytest
@@ -24,545 +24,251 @@ def create_entry_tbl(db, table, separator, key, pairs):
     create_entry(tbl, key, pairs)
 
 
-def create_entry_pst(db, table, separator, key, pairs):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    create_entry(tbl, key, pairs)
-
-
 def delete_entry_tbl(db, table, key):
     tbl = swsscommon.Table(db, table)
     tbl._del(key)
     time.sleep(1)
 
 
-def delete_entry_pst(db, table, key):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    tbl._del(key)
-    time.sleep(1)
-
-
-def _link_details(dvs, ifname):
-    """Return `ip -d link show <ifname>` output ("" if the device is absent)."""
-    rc, out = dvs.runcmd(["ip", "-d", "link", "show", ifname])
-    if rc != 0:
-        return ""
-    return out or ""
+def _run(dvs, argv):
+    rc, out = dvs.runcmd(argv)
+    return rc, (out or "")
 
 
 def _link_present(dvs, ifname):
-    return "does not exist" not in _link_details(dvs, ifname) and \
-           _link_details(dvs, ifname).strip() != ""
+    rc, _ = _run(dvs, ["ip", "-o", "link", "show", "dev", ifname])
+    return rc == 0
 
 
 def _route_in_vrf(dvs, prefix, vrf):
-    rc, out = dvs.runcmd(["ip", "route", "show", prefix, "vrf", vrf])
-    if rc != 0:
-        return ""
-    return out or ""
+    _, out = _run(dvs, ["ip", "route", "show", prefix, "vrf", vrf])
+    return out
 
 
-def _neigh_on(dvs, ifname, ip=None):
-    rc, out = dvs.runcmd(["ip", "neigh", "show", "dev", ifname])
-    if rc != 0:
-        return ""
-    if ip is None:
-        return out or ""
-    for line in (out or "").splitlines():
+def _neigh_line(dvs, ifname, ip):
+    _, out = _run(dvs, ["ip", "neigh", "show", "dev", ifname])
+    for line in out.splitlines():
         if line.split()[:1] == [ip]:
             return line
     return ""
 
 
+def _fdb_lines(dvs, ifname):
+    _, out = _run(dvs, ["bridge", "fdb", "show", "dev", ifname])
+    return out
+
+
+def _make_vxlan_pair(dvs, vni, vrf, src_ip):
+    """Simulate the Vxlan/Brvxlan/VRF trio that vxlanmgrd would create."""
+    vx = f"Vxlan{vni}"
+    br = f"Brvxlan{vni}"
+    _run(dvs, ["ip", "link", "add", vrf, "type", "vrf", "table", str(1000 + int(vni) % 1000)])
+    _run(dvs, ["ip", "link", "set", vrf, "up"])
+    _run(dvs, ["ip", "link", "add", br, "type", "bridge"])
+    _run(dvs, ["ip", "link", "set", br, "master", vrf])
+    _run(dvs, ["ip", "link", "set", br, "up"])
+    _run(dvs, ["ip", "link", "add", vx, "type", "vxlan",
+               "id", str(vni), "local", src_ip, "dstport", "4789", "nolearning"])
+    _run(dvs, ["ip", "link", "set", vx, "master", br])
+    _run(dvs, ["ip", "link", "set", vx, "up"])
+
+
+def _teardown_vxlan_pair(dvs, vni, vrf):
+    for dev in [f"Vxlan{vni}", f"Brvxlan{vni}", vrf]:
+        _run(dvs, ["ip", "link", "del", dev])
+
+
 @pytest.fixture
 def vnetmgr_env(dvs):
-    """
-    Cleanup CONFIG_DB / APP_DB state around each test, and tear down
-    any VNET / VXLAN_TUNNEL / VNET_ROUTE_TUNNEL rows left behind.
-    """
+    """Clean CONFIG_DB / APP_DB before and after each test."""
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
-    delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+    dvs.runcmd(["supervisorctl", "restart", "vnetmgrd"])
+    time.sleep(3)
 
     yield cfg_db, app_db
 
-    for key in swsscommon.Table(cfg_db, "VNET_ROUTE_TUNNEL").getKeys():
-        delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", key)
-    for key in swsscommon.Table(cfg_db, "VNET_ROUTE").getKeys():
-        delete_entry_tbl(cfg_db, "VNET_ROUTE", key)
-    for key in swsscommon.Table(cfg_db, "VNET").getKeys():
-        delete_entry_tbl(cfg_db, "VNET", key)
-    for key in swsscommon.Table(cfg_db, "VXLAN_TUNNEL").getKeys():
-        delete_entry_tbl(cfg_db, "VXLAN_TUNNEL", key)
-    delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
+    for tbl in ("VNET_ROUTE_TUNNEL", "VNET_ROUTE", "VNET", "VXLAN_TUNNEL"):
+        for key in swsscommon.Table(cfg_db, tbl).getKeys():
+            delete_entry_tbl(cfg_db, tbl, key)
     time.sleep(2)
 
 
-def _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip):
-    """Common CONFIG_DB setup shared by every install_on_kernel test."""
-    create_entry_tbl(cfg_db, "VXLAN_TUNNEL", '|', tunnel,
-                     [("src_ip", src_ip)])
+def _push_vnet(cfg_db, tunnel, vnet, vnet_vni, src_ip):
+    create_entry_tbl(cfg_db, "VXLAN_TUNNEL", '|', tunnel, [("src_ip", src_ip)])
     create_entry_tbl(cfg_db, "VNET", '|', vnet,
-                     [("vxlan_tunnel", tunnel),
-                      ("vni", vnet_vni)])
-    # Let vnetmgrd populate its m_vnetCache before the route arrives.
-    time.sleep(3)
+                     [("vxlan_tunnel", tunnel), ("vni", vnet_vni)])
+    time.sleep(2)
 
 
 class TestVnetMgr(object):
 
     def test_vnetmgrd_process_running(self, dvs, vnetmgr_env):
-        # vnetmgrd process must be running in the DVS.
         _, out = dvs.runcmd(["pgrep", "-a", "vnetmgrd"])
-        assert out.strip(), "vnetmgrd is not running inside the DVS"
+        assert out.strip(), "vnetmgrd not running"
 
-    def test_install_on_kernel_prefix_route_full_lifecycle(self, dvs, vnetmgr_env):
-        # Subnet route: Vxlan netdev + VRF route created (no neigh)
-        cfg_db, _ = vnetmgr_env
-
-        tunnel     = TUNNEL
-        vnet       = VNET
-        vnet_vni   = "5000"
-        route_vni  = "5001"
-        prefix     = "100.100.1.0/24"
-        endpoint   = "10.10.10.1"
-        src_ip     = "10.0.0.1"
-        dst_mac    = "aa:bb:cc:dd:ee:ff"
-        dev        = f"Vxlan{route_vni}"
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
-
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{vnet}|{prefix}",
-            [("endpoint", endpoint),
-             ("mac_address", dst_mac),
-             ("vni", route_vni),
-             ("install_on_kernel", "true")],
-        )
-
-        def _dev_created():
-            details = _link_details(dvs, dev)
-            ok = ("vxlan" in details and
-                  f"id {route_vni}" in details and
-                  f"local {src_ip}" in details and
-                  f"remote {endpoint}" in details and
-                  "dstport 4789" in details)
-            return (ok, details.replace("\n", " | "))
-
-        wait_for_result(
-            _dev_created,
-            polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-            failure_message=f"kernel {dev} not created with expected attributes",
-        )
-
-        def _route_installed():
-            r = _route_in_vrf(dvs, prefix, vnet)
-            return (dev in r, r)
-
-        wait_for_result(
-            _route_installed,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"kernel route {prefix} vrf {vnet} not installed via {dev}",
-        )
-
-        assert _neigh_on(dvs, dev).strip() == "", \
-            f"unexpected neigh entry for non-host route: {_neigh_on(dvs, dev)}"
-
-        app_rt_tunnel = swsscommon.Table(vnetmgr_env[1], "VNET_ROUTE_TUNNEL_TABLE")
-        app_key = f"{vnet}:{prefix}"
-
-        def _app_tunnel_row_present():
-            keys = app_rt_tunnel.getKeys()
-            return (app_key in keys, keys)
-
-        wait_for_result(
-            _app_tunnel_row_present,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TUNNEL_TABLE row {app_key} not created",
-        )
-        ok, fvs = app_rt_tunnel.get(app_key)
-        assert ok, f"APP_DB VNET_ROUTE_TUNNEL_TABLE {app_key} vanished before read"
-        fv_map = dict(fvs)
-        assert fv_map.get("endpoint") == endpoint
-        assert fv_map.get("vni") == route_vni
-        assert fv_map.get("mac_address") == dst_mac
-        assert "install_on_kernel" not in fv_map, \
-            "install_on_kernel must be stripped before write to APP_DB"
-
-        delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
-
-        def _dev_gone():
-            return (not _link_present(dvs, dev), _link_details(dvs, dev))
-
-        wait_for_result(
-            _dev_gone,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"{dev} was not deleted on VNET_ROUTE_TUNNEL delete",
-        )
-
-        assert dev not in _route_in_vrf(dvs, prefix, vnet), \
-            "kernel route was not cleaned up after Vxlan device delete"
-        assert _neigh_on(dvs, dev).strip() == "", \
-            "kernel neigh entry survived Vxlan device delete"
-
-        def _app_tunnel_row_gone():
-            keys = app_rt_tunnel.getKeys()
-            return (app_key not in keys, keys)
-
-        wait_for_result(
-            _app_tunnel_row_gone,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TUNNEL_TABLE row {app_key} not deleted",
-        )
-
-    def test_install_on_kernel_host_route_adds_static_neigh(self, dvs, vnetmgr_env):
-        # /32 host route additionally installs a static neigh with lladdr=mac_address.
-        cfg_db, _ = vnetmgr_env
-
-        tunnel     = TUNNEL
-        vnet       = VNET
-        vnet_vni   = "6000"
-        route_vni  = "6001"
-        host_ip    = "200.200.1.1"
-        prefix     = f"{host_ip}/32"
-        endpoint   = "10.20.30.1"
-        src_ip     = "10.0.0.2"
-        dst_mac    = "aa:bb:cc:dd:ee:22"
-        dev        = f"Vxlan{route_vni}"
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{vnet}|{prefix}",
-            [("endpoint", endpoint),
-             ("mac_address", dst_mac),
-             ("vni", route_vni),
-             ("install_on_kernel", "true")],
-        )
-
-        def _neigh_installed():
-            line = _neigh_on(dvs, dev, ip=host_ip)
-            return (dst_mac in line.lower(), line)
-
-        wait_for_result(
-            _neigh_installed,
-            polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-            failure_message=f"static neigh {host_ip} lladdr {dst_mac} not on {dev}",
-        )
-
-        delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
-
-        def _dev_and_neigh_gone():
-            return (not _link_present(dvs, dev) and
-                    _neigh_on(dvs, dev, ip=host_ip) == "",
-                    _link_details(dvs, dev))
-
-        wait_for_result(
-            _dev_and_neigh_gone,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"host-route teardown left {dev} or its neigh behind",
-        )
-
-    def test_vnet_route_config_to_app_db(self, dvs, vnetmgr_env):
-        # CFG_DB VNET_ROUTE -> vnetmgrd -> APP_DB VNET_ROUTE_TABLE lifecycle.
+    def test_route_install_n_delete_same_vni_as_vnet(self, dvs, vnetmgr_env):
         cfg_db, app_db = vnetmgr_env
-
-        tunnel   = TUNNEL
-        vnet     = VNET
-        vnet_vni = "8000"
-        prefix   = "30.0.0.0/24"
-        nexthop  = "1.2.3.4"
-        ifname   = "Ethernet0"
-        src_ip   = "10.0.0.4"
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
-
-        cfg_key = f"{vnet}|{prefix}"
-        app_key = f"{vnet}:{prefix}"
-
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE", '|', cfg_key,
-            [("nexthop", nexthop), ("ifname", ifname)],
-        )
-
-        app_rt = swsscommon.Table(app_db, "VNET_ROUTE_TABLE")
-
-        def _app_route_present():
-            keys = app_rt.getKeys()
-            return (app_key in keys, keys)
-
-        wait_for_result(
-            _app_route_present,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not created by vnetmgrd",
-        )
-        ok, fvs = app_rt.get(app_key)
-        assert ok, f"APP_DB VNET_ROUTE_TABLE {app_key} vanished before read"
-        fv_map = dict(fvs)
-        assert fv_map.get("nexthop") == nexthop
-        assert fv_map.get("ifname") == ifname
-
-        delete_entry_tbl(cfg_db, "VNET_ROUTE", cfg_key)
-
-        def _app_route_gone():
-            keys = app_rt.getKeys()
-            return (app_key not in keys, keys)
-
-        wait_for_result(
-            _app_route_gone,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"APP_DB VNET_ROUTE_TABLE row {app_key} not deleted by vnetmgrd",
-        )
-
-    def test_install_on_kernel_uses_vxlan_sport_override(self, dvs, vnetmgr_env):
-        # APP_SWITCH_TABLE:switch|vxlan_sport override must appear as dstport on the Vxlan dev.
-        cfg_db, app_db = vnetmgr_env
-        override_port = "13579"
-        create_entry_tbl(app_db, "SWITCH_TABLE", ':', "switch",
-                         [("vxlan_sport", override_port)])
-
-        tunnel     = TUNNEL
-        vnet       = VNET
-        vnet_vni   = "7000"
-        route_vni  = "7001"
-        prefix     = "100.101.1.0/24"
-        endpoint   = "10.30.40.1"
-        src_ip     = "10.0.0.3"
-        dst_mac    = "aa:bb:cc:dd:ee:33"
-        dev        = f"Vxlan{route_vni}"
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{vnet}|{prefix}",
-            [("endpoint", endpoint),
-             ("mac_address", dst_mac),
-             ("vni", route_vni),
-             ("install_on_kernel", "true")],
-        )
-
-        def _dev_uses_port():
-            details = _link_details(dvs, dev)
-            return (f"dstport {override_port}" in details, details)
-
-        wait_for_result(
-            _dev_uses_port,
-            polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-            failure_message=f"{dev} did not pick up vxlan_sport override {override_port}",
-        )
-
-        delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
-
-        def _dev_gone():
-            return (not _link_present(dvs, dev), _link_details(dvs, dev))
-
-        wait_for_result(
-            _dev_gone,
-            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
-            failure_message=f"{dev} was not deleted on VNET_ROUTE_TUNNEL delete",
-        )
-
-    def test_vnetmgrd_cold_restart_clears_stale_vxlan_netdevs(self, dvs, vnetmgr_env):
-        # Cold restart test to check that stale Vxlan netdevs + associated vrf neigh/routes
-        # are deleted
-        cfg_db, _ = vnetmgr_env
-
-        # Stale: should be deleted after cold restart.
-        stale_vrf   = "VnetStale99"
-        stale_dev   = "Vxlan99999"
-        stale_pfx   = "203.0.113.0/24"
-        stale_neigh = "203.0.113.5"
-        stale_mac   = "aa:bb:cc:dd:ee:99"
-
-        # Live: should be recreated after cold restart.
-        tunnel    = TUNNEL
-        vnet      = VNET
-        vnet_vni  = "6000"
-        route_vni = "6001"
-        live_pfx  = "100.200.1.0/24"
-        endpoint  = "10.20.20.1"
-        src_ip    = "10.0.0.6"
-        live_mac  = "aa:bb:cc:dd:ee:66"
-        live_dev  = f"Vxlan{route_vni}"
-
-        def _cleanup():
-            dvs.runcmd(["ip", "link", "del", stale_dev])
-            dvs.runcmd(["ip", "link", "del", stale_vrf])
-            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{live_pfx}")
-
-        _cleanup()
-
-        rc, out = dvs.runcmd(["ip", "link", "add", stale_vrf,
-                              "type", "vrf", "table", "99999"])
-        assert rc == 0, f"failed to create stale VRF {stale_vrf}: {out}"
-        dvs.runcmd(["ip", "link", "set", "dev", stale_vrf, "up"])
-
-        rc, out = dvs.runcmd(["ip", "link", "add", stale_dev,
-                              "type", "vxlan", "id", "99999", "dstport", "4789"])
-        assert rc == 0, f"failed to create stale netdev {stale_dev}: {out}"
-        dvs.runcmd(["ip", "link", "set", "dev", stale_dev, "master", stale_vrf])
-        dvs.runcmd(["ip", "link", "set", "dev", stale_dev, "up"])
-
-        rc, out = dvs.runcmd(["ip", "route", "add", stale_pfx,
-                              "dev", stale_dev, "vrf", stale_vrf])
-        assert rc == 0, f"failed to add stale route {stale_pfx}: {out}"
-        rc, out = dvs.runcmd(["ip", "neigh", "add", stale_neigh,
-                              "lladdr", stale_mac, "dev", stale_dev])
-        assert rc == 0, f"failed to add stale neigh {stale_neigh}: {out}"
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vnet_vni, src_ip)
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{vnet}|{live_pfx}",
-            [("endpoint", endpoint),
-             ("mac_address", live_mac),
-             ("vni", route_vni),
-             ("install_on_kernel", "true")],
-        )
-
-        def _live_dev_and_route_present():
-            details = _link_details(dvs, live_dev)
-            route   = _route_in_vrf(dvs, live_pfx, vnet)
-            return ("vxlan" in details and live_dev in route,
-                    f"link={details!r} route={route!r}")
-
-        wait_for_result(
-            _live_dev_and_route_present,
-            polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-            failure_message=f"live {live_dev} + route {live_pfx} not created pre-restart",
-        )
-
-        assert _link_present(dvs, stale_dev)
-        assert stale_pfx in _route_in_vrf(dvs, stale_pfx, stale_vrf)
-        assert _neigh_on(dvs, stale_dev, stale_neigh) != ""
-        assert _link_present(dvs, live_dev)
-
-        dvs.runcmd(["config", "warm_restart", "disable", "swss"])
-        dvs.runcmd(["supervisorctl", "restart", "vnetmgrd"])
-
-        def _stale_gone():
-            netdev_gone = not _link_present(dvs, stale_dev)
-            route_gone  = _route_in_vrf(dvs, stale_pfx, stale_vrf) == ""
-            neigh_gone  = _neigh_on(dvs, stale_dev, stale_neigh) == ""
-            return (netdev_gone and route_gone and neigh_gone,
-                    f"netdev={_link_details(dvs, stale_dev)!r} "
-                    f"route={_route_in_vrf(dvs, stale_pfx, stale_vrf)!r} "
-                    f"neigh={_neigh_on(dvs, stale_dev, stale_neigh)!r}")
+        vnet_vni = "5000"
+        host_ip  = "100.100.1.1"
+        prefix   = f"{host_ip}/32"
+        endpoint = "10.10.10.1"
+        src_ip   = "10.0.0.1"
+        dst_mac  = "aa:bb:cc:dd:ee:ff"
+        vx       = f"Vxlan{vnet_vni}"
+        br       = f"Brvxlan{vnet_vni}"
 
         try:
-            wait_for_result(
-                _stale_gone,
-                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
-                failure_message=(
-                    f"vnetmgrd cold restart did not cascade-clean {stale_dev} / "
-                    f"{stale_pfx} in {stale_vrf} / neigh {stale_neigh}"
-                ),
-            )
+            _make_vxlan_pair(dvs, vnet_vni, VNET, src_ip)
+            _push_vnet(cfg_db, TUNNEL, VNET, vnet_vni, src_ip)
+            create_entry_tbl(
+                cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{VNET}|{prefix}",
+                [("endpoint", endpoint),
+                 ("mac_address", dst_mac),
+                 ("vni", vnet_vni),
+                 ("install_on_kernel", "true")])
 
-            def _live_recreated():
-                details = _link_details(dvs, live_dev)
-                route   = _route_in_vrf(dvs, live_pfx, vnet)
-                ok = ("vxlan" in details and
-                      f"id {route_vni}" in details and
-                      f"local {src_ip}" in details and
-                      f"remote {endpoint}" in details and
-                      live_dev in route)
-                return (ok, f"link={details!r} route={route!r}")
+            def _route_ok():
+                r = _route_in_vrf(dvs, prefix, VNET)
+                return (br in r, r)
+            wait_for_result(_route_ok,
+                            polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                            failure_message=f"kernel route {prefix} not installed on {br}")
 
-            wait_for_result(
-                _live_recreated,
-                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-                failure_message=(
-                    f"vnetmgrd cold restart did not recreate live {live_dev} / "
-                    f"{live_pfx} in vrf {vnet} from CONFIG_DB"
-                ),
-            )
+            def _neigh_ok():
+                line = _neigh_line(dvs, br, host_ip)
+                return (dst_mac in line.lower(), line)
+            wait_for_result(_neigh_ok,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message=f"neigh {host_ip} lladdr {dst_mac} missing on {br}")
+
+            def _fdb_ok():
+                for l in _fdb_lines(dvs, vx).splitlines():
+                    if dst_mac in l and f"dst {endpoint}" in l:
+                        return ("vni " not in l, l)
+                return (False, _fdb_lines(dvs, vx))
+            wait_for_result(_fdb_ok,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="same-VNI FDB entry must NOT carry a vni override")
+
+            app_tbl = swsscommon.Table(app_db, "VNET_ROUTE_TUNNEL_TABLE")
+            def _app_row_present():
+                return (f"{VNET}:{prefix}" in app_tbl.getKeys(), app_tbl.getKeys())
+            wait_for_result(_app_row_present,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="APP_DB VNET_ROUTE_TUNNEL_TABLE row missing")
+            _, fvs = app_tbl.get(f"{VNET}:{prefix}")
+            fm = dict(fvs)
+            assert fm.get("endpoint") == endpoint
+            assert fm.get("vni") == vnet_vni
+            assert fm.get("mac_address") == dst_mac
+            assert "install_on_kernel" not in fm
+
+            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{VNET}|{prefix}")
+
+            def _route_gone():
+                r = _route_in_vrf(dvs, prefix, VNET)
+                return (br not in r, r)
+            wait_for_result(_route_gone,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="kernel route not removed on delete")
+
+            def _neigh_gone():
+                return (_neigh_line(dvs, br, host_ip) == "", "")
+            wait_for_result(_neigh_gone,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="neigh survived delete")
+
+            def _fdb_gone():
+                for l in _fdb_lines(dvs, vx).splitlines():
+                    if dst_mac in l and f"dst {endpoint}" in l:
+                        return (False, l)
+                return (True, "")
+            wait_for_result(_fdb_gone,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="bridge FDB entry survived delete")
+
+            def _app_row_gone():
+                return (f"{VNET}:{prefix}" not in app_tbl.getKeys(), app_tbl.getKeys())
+            wait_for_result(_app_row_gone,
+                            polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                            failure_message="APP_DB VNET_ROUTE_TUNNEL_TABLE row survived delete")
         finally:
-            _cleanup()
+            _teardown_vxlan_pair(dvs, vnet_vni, VNET)
 
-
-    def test_install_on_kernel_vni_matches_vnet_defers_until_netdev_exists(self, dvs, vnetmgr_env):
-        # If route vni == vnet vni, vxlanmgrd owns Vxlan<vni>; vnetmgrd defers route programming if Vxlan<vni> is not created
-        cfg_db, app_db = vnetmgr_env
-
-        tunnel   = TUNNEL
-        vnet     = VNET
-        vni      = "6500"
-        prefix   = "100.150.1.0/24"
-        endpoint = "10.30.30.1"
-        src_ip   = "10.0.0.7"
-        dst_mac  = "aa:bb:cc:dd:ee:65"
-        dev      = f"Vxlan{vni}"
-
-        # Absent APP_SWITCH_TABLE|switch stalls vxlanmgrd on router-MAC prereq.
-        delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
-        dvs.runcmd(["ip", "link", "del", dev])
-
-        marker = dvs.add_log_marker("/var/log/syslog")
-
-        _push_vnet_topology(cfg_db, tunnel, vnet, vni, src_ip)
-        create_entry_tbl(
-            cfg_db, "VNET_ROUTE_TUNNEL", "|", f"{vnet}|{prefix}",
-            [("endpoint", endpoint),
-             ("mac_address", dst_mac),
-             ("vni", vni),
-             ("install_on_kernel", "true")],
-        )
+    def test_cross_vni_fdb_has_override(self, dvs, vnetmgr_env):
+        cfg_db, _ = vnetmgr_env
+        vnet_vni  = "7000"
+        route_vni = "9999"
+        prefix    = "50.50.60.1/32"
+        endpoint  = "10.30.40.1"
+        src_ip    = "10.0.0.4"
+        dst_mac   = "aa:bb:cc:dd:ee:44"
 
         try:
-            time.sleep(5)
-            assert not _link_present(dvs, dev), (
-                f"{dev} unexpectedly present before APP_SWITCH_TABLE|switch was created; "
-                f"details={_link_details(dvs, dev)!r}"
-            )
-            assert _route_in_vrf(dvs, prefix, vnet) == "", (
-                f"route {prefix} present in {vnet} vrf before netdev was created"
-            )
+            _make_vxlan_pair(dvs, vnet_vni, VNET, src_ip)
+            _push_vnet(cfg_db, TUNNEL, VNET, vnet_vni, src_ip)
+            create_entry_tbl(
+                cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{VNET}|{prefix}",
+                [("endpoint", endpoint), ("mac_address", dst_mac),
+                 ("vni", route_vni), ("install_on_kernel", "true")])
 
-            def _retry_log_seen():
-                _, raw = dvs.runcmd(
-                    ["sh", "-c",
-                     "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
-                     "grep -F 'Vxlan device %s not yet created by vxlanmgrd' | tail -1"
-                     % (marker, dev)],
-                )
-                return (raw.strip() != "", raw)
-
-            wait_for_result(
-                _retry_log_seen,
-                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
-                failure_message=(
-                    f"vnetmgrd did not log the 'not yet created by vxlanmgrd' retry "
-                    f"for {dev}; the `ip -o link show dev` probe path did not run"
-                ),
-            )
-
-            # Create router MAC, which results in vxlanmgrd creating Vxlan<vni> on next retry.
-            create_entry_tbl(app_db, "SWITCH_TABLE", ":", "switch",
-                             [("vxlan_router_mac", "00:11:22:33:44:55")])
-
-            def _netdev_created():
-                return (_link_present(dvs, dev), _link_details(dvs, dev))
-            wait_for_result(
-                _netdev_created,
-                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-                failure_message=(
-                    f"vxlanmgrd never created {dev} after APP_SWITCH_TABLE|switch was seeded"
-                ),
-            )
-
-            def _route_installed():
-                r = _route_in_vrf(dvs, prefix, vnet)
-                return (dev in r, r)
-            wait_for_result(
-                _route_installed,
-                polling_config=PollingConfig(polling_interval=1, timeout=30, strict=True),
-                failure_message=(
-                    f"vnetmgrd never installed {prefix} in {vnet} vrf after "
-                    f"{dev} was created by vxlanmgrd"
-                ),
-            )
+            def _fdb_ok():
+                lines = _fdb_lines(dvs, f"Vxlan{vnet_vni}")
+                for l in lines.splitlines():
+                    if dst_mac in l and f"dst {endpoint}" in l:
+                        return (f"vni {route_vni}" in l, l)
+                return (False, lines)
+            wait_for_result(_fdb_ok,
+                            polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                            failure_message=f"cross-VNI FDB entry missing 'vni {route_vni}' override")
         finally:
-            delete_entry_tbl(cfg_db, "VNET_ROUTE_TUNNEL", f"{vnet}|{prefix}")
-            delete_entry_tbl(app_db, "SWITCH_TABLE", "switch")
-            dvs.runcmd(["ip", "link", "del", dev])
+            _teardown_vxlan_pair(dvs, vnet_vni, VNET)
+
+    def test_route_defers_when_netdev_missing(self, dvs, vnetmgr_env):
+        cfg_db, _ = vnetmgr_env
+        vnet_vni = "8500"
+        prefix   = "60.60.60.0/24"
+        endpoint = "10.44.55.1"
+        src_ip   = "10.0.0.5"
+        dst_mac  = "aa:bb:cc:dd:ee:55"
+
+        _push_vnet(cfg_db, TUNNEL, VNET, vnet_vni, src_ip)
+        create_entry_tbl(
+            cfg_db, "VNET_ROUTE_TUNNEL", '|', f"{VNET}|{prefix}",
+            [("endpoint", endpoint), ("mac_address", dst_mac),
+             ("vni", vnet_vni), ("install_on_kernel", "true")])
+
+        time.sleep(3)
+        assert f"Brvxlan{vnet_vni}" not in _route_in_vrf(dvs, prefix, VNET)
+
+        try:
+            _make_vxlan_pair(dvs, vnet_vni, VNET, src_ip)
+            def _route_ok():
+                r = _route_in_vrf(dvs, prefix, VNET)
+                return (f"Brvxlan{vnet_vni}" in r, r)
+            wait_for_result(_route_ok,
+                            polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                            failure_message="deferred route not installed after netdev appeared")
+        finally:
+            _teardown_vxlan_pair(dvs, vnet_vni, VNET)
+
+    def test_local_vnet_route_reaches_app_db(self, dvs, vnetmgr_env):
+        cfg_db, app_db = vnetmgr_env
+        vnet_vni = "9500"
+        prefix   = "70.70.70.0/24"
+        nexthop  = "70.70.70.254"
+
+        _push_vnet(cfg_db, TUNNEL, VNET, vnet_vni, "10.0.0.9")
+        create_entry_tbl(cfg_db, "VNET_ROUTE", '|', f"{VNET}|{prefix}",
+                         [("nexthop", nexthop)])
+        app_tbl = swsscommon.Table(app_db, "VNET_ROUTE_TABLE")
+        def _app_row():
+            return (f"{VNET}:{prefix}" in app_tbl.getKeys(), app_tbl.getKeys())
+        wait_for_result(_app_row,
+                        polling_config=PollingConfig(polling_interval=1, timeout=10, strict=True),
+                        failure_message="APP_DB VNET_ROUTE_TABLE row missing")
 
 
 def test_nonflaky_dummy():
