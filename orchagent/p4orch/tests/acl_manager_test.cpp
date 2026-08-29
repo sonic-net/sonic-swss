@@ -6500,5 +6500,14 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 }
 
+TEST_F(AclManagerTest, GetAclRuleMissingTableDoesNotInsert)
+{
+    const auto size_before = acl_rule_manager_->m_aclRuleTables.size();
+    EXPECT_EQ(nullptr, GetAclRule("NO_SUCH_TABLE", "NO_SUCH_RULE"));
+    EXPECT_EQ(size_before, acl_rule_manager_->m_aclRuleTables.size());
+    EXPECT_EQ(acl_rule_manager_->m_aclRuleTables.end(),
+              acl_rule_manager_->m_aclRuleTables.find("NO_SUCH_TABLE"));
+}
+
 } // namespace test
 } // namespace p4orch
