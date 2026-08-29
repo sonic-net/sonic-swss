@@ -30,23 +30,15 @@ using namespace swss;
 #define VXLAN "vxlan"
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_SRC_PORT "vxlan_sport"
-#define VXLAN_ROUTER_MAC "vxlan_router_mac"
-#define VXLAN_PORT "vxlan_port"
-#define VXLAN_MASK "vxlan_mask"
-#define VXLAN_DEFAULT_UDP_PORT "4789"
 #define SWITCH "switch"
 
 #define RET_SUCCESS 0
 
 // Commands
 
-static int cmdCreateVxlan(const swss::VNetMgr::VxlanKernelRouteInfo & info,
-                          const std::string & dstPort,
-                          const std::string & srcPortMin,
-                          const std::string & srcPortMax,
-                          std::string & res)
+static int cmdCreateVxlan(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
 {
-    // ip link add {{VXLAN}} [address {{SRC MAC}}] type vxlan id {{VNI}} [local {{SRC IP}}] [remote {{DST IP}}] dstport <port> [srcport <min> <max>]
+    // ip link add {{VXLAN}} [address {{SOURCE MAC}}] type vxlan id {{VNI}} [local {{SOURCE IP}}] [remote {{DEST IP}}] dstport 4789
     ostringstream cmd;
     cmd << IP_CMD " link add "
         << shellquote(info.m_vxlanDevName);
@@ -68,11 +60,7 @@ static int cmdCreateVxlan(const swss::VNetMgr::VxlanKernelRouteInfo & info,
     {
         cmd << " remote " << shellquote(info.m_dstIp);
     }
-    cmd << " dstport " << shellquote(dstPort);
-    if (!srcPortMin.empty() && !srcPortMax.empty())
-    {
-        cmd << " srcport " << shellquote(srcPortMin) << " " << shellquote(srcPortMax);
-    }
+    cmd << " dstport " << shellquote(info.m_vxlanSrcUdpPort);
     return swss::exec(cmd.str(), res);
 }
 
@@ -231,65 +219,25 @@ void VNetMgr::getAllVxlanNetDevices()
     return;
 }
 
-bool VNetMgr::getSwitchTableVxlanConfig()
+std::string VNetMgr::getVxlanSourcePort()
 {
     std::vector<FieldValueTuple> temp;
-    std::string sport;
-    std::string mask;
 
-    // SWITCH_TABLE|switch must exist; all fields inside are optional.
-    if (!m_appSwitchTable.get(SWITCH, temp))
+    if (m_appSwitchTable.get(SWITCH, temp))
     {
-        return false;
-    }
-
-    for (const auto & fv : temp)
-    {
-        if (fv.first == VXLAN_PORT)
+        auto itr = std::find_if(
+            temp.begin(),
+            temp.end(),
+            [](const FieldValueTuple &fvt) { return fvt.first == VXLAN_SRC_PORT; });
+        if (itr != temp.end() && !(itr->second.empty()))
         {
-            m_VxlanSwitchTableConfig.m_vxlanUdpPort = fv.second;
-        }
-        else if (fv.first == VXLAN_SRC_PORT)
-        {
-            sport = fv.second;
-        }
-        else if (fv.first == VXLAN_MASK)
-        {
-            mask = fv.second;
+            SWSS_LOG_DEBUG("Using Vxlan source port %s", itr->second.c_str());
+            return itr->second;
         }
     }
-
-    if (!sport.empty() && !mask.empty())
-    {
-        unsigned long sportUL = std::strtoul(sport.c_str(), nullptr, 10);
-        unsigned long maskUL  = std::strtoul(mask.c_str(),  nullptr, 10);
-
-        if (sportUL > 0xFFFF)
-        {
-            SWSS_LOG_WARN("Invalid VXLAN source port %s, must be 0-65535", sport.c_str());
-        }
-        else if (maskUL > 16 || maskUL == 0)
-        {
-            SWSS_LOG_WARN("Invalid VXLAN source port mask %s, must be 1-16", mask.c_str());
-        }
-        else
-        {
-            uint32_t span = (1u << maskUL) - 1u;
-            uint32_t portMin = static_cast<uint32_t>(sportUL) & ~span;
-            uint32_t portMax = portMin | span;
-
-            m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart = std::to_string(portMin);
-            m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeEnd   = std::to_string(portMax);
-        }
-    }
-
-    if (m_VxlanSwitchTableConfig.m_vxlanUdpPort.empty())
-    {
-        m_VxlanSwitchTableConfig.m_vxlanUdpPort = VXLAN_DEFAULT_UDP_PORT;
-    }
-
-    m_VxlanSwitchTableConfig.m_loaded = true;
-    return true;
+    
+    SWSS_LOG_DEBUG("Using default Vxlan source port: 4789");
+    return "4789"; // default port
 }
 
 void VNetMgr::doTask(Consumer &consumer)
@@ -642,18 +590,10 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
     vxlanKernelRouteInfo.m_vni = vxlanRouteInfo.m_vni;
     vxlanKernelRouteInfo.m_vnet = vxlanRouteInfo.m_vnet;
     vxlanKernelRouteInfo.m_prefix = vxlanRouteInfo.m_prefix;
-    // Load SWITCH_TABLE|switch once and cache it. Defer if the key is absent.
-    if (!m_VxlanSwitchTableConfig.m_loaded)
-    {
-        if (!getSwitchTableVxlanConfig())
-        {
-            SWSS_LOG_NOTICE("SWITCH_TABLE|switch not present for vxlan device %s; retry",
-                            vxlanDevName.c_str());
-            return false;
-        }
-    }
     vxlanKernelRouteInfo.m_srcIp = vnetInfo.m_sourceIp;
+    vxlanKernelRouteInfo.m_srcMac = vnetInfo.m_macAddress;
     vxlanKernelRouteInfo.m_vxlanDevName = vxlanDevName;
+    vxlanKernelRouteInfo.m_vxlanSrcUdpPort = getVxlanSourcePort();
 
     std::string res;
     int ret;
@@ -677,11 +617,7 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
             SWSS_LOG_INFO("Vxlan device %s already present", it->first.c_str());
         }
 
-        ret = cmdCreateVxlan(vxlanKernelRouteInfo,
-                              m_VxlanSwitchTableConfig.m_vxlanUdpPort,
-                              m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart,
-                              m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeEnd,
-                              res);
+        ret = cmdCreateVxlan(vxlanKernelRouteInfo, res);
         if (ret != RET_SUCCESS)
         {
             SWSS_LOG_ERROR("Vxlan device %s creation failed: %s",
