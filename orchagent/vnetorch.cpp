@@ -3264,8 +3264,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<IpAddress> primary_list;
     vector<IpAddress> secondary_list;
     string monitoring;
-    int32_t rx_monitor_timer = DEFAULT_MONITOR_TIMER;
-    int32_t tx_monitor_timer = DEFAULT_MONITOR_TIMER;
+    int32_t rx_monitor_timer = -1;
+    int32_t tx_monitor_timer = -1;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
