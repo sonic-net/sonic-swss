@@ -518,4 +518,21 @@ namespace tunneldecaporch_test
         });
     }
 
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_RefCountMissingTunnelDoesNotInsert)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        // operator[] would insert a default entry; find() must not.
+        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
+        tunnelDecapOrch->increaseTunnelRefCount("missing_tunnel");
+        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
+        tunnelDecapOrch->decreaseTunnelRefCount("missing_tunnel");
+        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
+        EXPECT_EQ(tunnelDecapOrch->tunnelTable.find("missing_tunnel"),
+                  tunnelDecapOrch->tunnelTable.end());
+    }
+
 } // namespace tunneldecaporch_test
