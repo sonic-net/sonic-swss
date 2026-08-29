@@ -113,7 +113,7 @@ constexpr char* kDisableDecrementTtl = "disable_decrement_ttl";
 constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
 constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
 constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
-constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kIpv6TunnelTermAction = "tunnel_decap";
 constexpr char* kDecapSrcIpv6 = "src_ipv6";
 constexpr char* kDecapDstIpv6 = "dst_ipv6";
 constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
@@ -291,6 +291,12 @@ struct P4PacketActionWithColor
     std::string packet_color;
 };
 
+struct P4ActionWithColorParam {
+    std::string sai_action;
+    std::string packet_color;
+    std::string p4_param_name;
+};
+
 struct P4AclTableDefinitionAppDbEntry
 {
     // Key
@@ -302,6 +308,8 @@ struct P4AclTableDefinitionAppDbEntry
     std::map<std::string, std::string> match_field_lookup;
     std::map<std::string, std::vector<P4ActionParamName>> action_field_lookup;
     std::map<std::string, std::vector<P4PacketActionWithColor>> packet_action_color_lookup;
+    std::map<std::string, std::vector<P4ActionWithColorParam>>
+        action_color_param_lookup;
     std::string meter_unit;
     std::string counter_unit;
 };
@@ -341,8 +349,8 @@ struct Ipv6TunnelTermAppDbEntry
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
+  uint32_t priority;
   // Action
-  std::string vrf_id;
   std::string action_str;
 };
 

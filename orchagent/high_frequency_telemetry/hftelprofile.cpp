@@ -315,7 +315,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateStatsIDs(stats_ids_set);
+        group.updateStatsIDs(std::move(stats_ids_set));
         m_groups.insert(itr, {sai_object_type, move(group)});
     }
     else
@@ -324,7 +324,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
         {
             return;
         }
-        itr->second.updateStatsIDs(stats_ids_set);
+        itr->second.updateStatsIDs(std::move(stats_ids_set));
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before update the stats
@@ -333,13 +333,13 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     deployCounterSubscriptions(sai_object_type);
 }
 
-void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id)
+bool HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id)
 {
     SWSS_LOG_ENTER();
 
     if (!isObjectTypeInProfile(object_type, object_name))
     {
-        return;
+        return false;
     }
 
     auto &objs = m_name_sai_map[object_type];
@@ -348,7 +348,7 @@ void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *obj
     {
         if (itr->second == object_id)
         {
-            return;
+            return false;
         }
     }
     objs[object_name] = object_id;
@@ -360,22 +360,30 @@ void HFTelProfile::setObjectSAIID(sai_object_type_t object_type, const char *obj
 
     // Update the counter subscription
     deployCounterSubscriptions(object_type, object_id, m_groups.at(object_type).getObjects().at(object_name));
+
+    return true;
 }
 
-void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *object_name)
+bool HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *object_name)
 {
     SWSS_LOG_ENTER();
 
     if (!isObjectTypeInProfile(object_type, object_name))
     {
-        return;
+        return false;
     }
 
-    auto &objs = m_name_sai_map[object_type];
+    auto objs_itr = m_name_sai_map.find(object_type);
+    if (objs_itr == m_name_sai_map.end())
+    {
+        return false;
+    }
+
+    auto &objs = objs_itr->second;
     auto itr = objs.find(object_name);
     if (itr == objs.end())
     {
-        return;
+        return false;
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before removing the object
@@ -398,6 +406,8 @@ void HFTelProfile::delObjectSAIID(sai_object_type_t object_type, const char *obj
         m_name_sai_map.erase(object_type);
         SWSS_LOG_DEBUG("Delete object %s from the name sai map", object_name);
     }
+
+    return true;
 }
 
 bool HFTelProfile::canBeUpdated() const
@@ -451,10 +461,14 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         m_groups.erase(itr);
     }
     m_sai_tam_tel_type_templates.erase(sai_object_type);
-    m_sai_tam_tel_type_states.erase(m_sai_tam_tel_type_objs[sai_object_type]);
-    m_sai_tam_tel_type_objs.erase(sai_object_type);
-    m_sai_tam_report_objs.erase(sai_object_type);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
+    {
+        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
+        m_sai_tam_tel_type_objs.erase(tel_type_itr);
+    }
+    m_sai_tam_report_objs.erase(sai_object_type);
     m_name_sai_map.erase(sai_object_type);
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
@@ -663,6 +677,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_REPORT_ATTR_REPORT_INTERVAL_UNIT;
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
+    attrs.push_back(attr);
 
     handleSaiCreateStatus(
         SAI_API_TAM,
@@ -709,14 +724,6 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     if (object_type == SAI_OBJECT_TYPE_PORT)
     {
         attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_INGRESS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_EGRESS;
         attr.value.booldata = true;
         attrs.push_back(attr);
     }
@@ -862,7 +869,7 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
-    attr.value.oid = stat_id;
+    attr.value.u32 = static_cast<uint32_t>(stat_id);
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_LABEL;
