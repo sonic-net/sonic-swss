@@ -30,10 +30,6 @@ extern MacAddress gMacAddress;
 
 #define SWITCH "switch"
 #define VXLAN_ROUTER_MAC "vxlan_router_mac"
-#define VXLAN_PORT "vxlan_port"
-#define VXLAN_SPORT "vxlan_sport"
-#define VXLAN_MASK "vxlan_mask"
-#define VXLAN_DEFAULT_UDP_PORT "4789"
 
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
@@ -56,13 +52,9 @@ static std::string getVxlanIfName(const swss::VxlanMgr::VxlanInfo & info)
 
 #define RET_SUCCESS 0
 
-static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info,
-                          const std::string & dstPort,
-                          const std::string & srcPortMin,
-                          const std::string & srcPortMax,
-                          std::string & res)
+static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
-    // ip link add {{VXLAN}} type vxlan id {{VNI}} [local {{SRC IP}}] dstport <port> [srcport <min> <max>]
+    // ip link add {{VXLAN}} type vxlan id {{VNI}} [local {{SOURCE IP}}] dstport 4789
     ostringstream cmd;
     cmd << IP_CMD " link add "
         << shellquote(info.m_vxlan)
@@ -73,13 +65,10 @@ static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info,
     {
         cmd << " local " << shellquote(info.m_sourceIp);
     }
-    cmd << " dstport "  << shellquote(dstPort);
-    if (!srcPortMin.empty() && !srcPortMax.empty())
-    {
-        cmd << " srcport " << shellquote(srcPortMin) << " " << shellquote(srcPortMax);
-    }
+    cmd << " dstport 4789";
     if (!info.m_sourceIp.empty())
     {
+        // Parse IP to determine IPv4 vs IPv6
         struct in6_addr addr6;
         if (inet_pton(AF_INET6, info.m_sourceIp.c_str(), &addr6) == 1)
         {
@@ -355,14 +344,14 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     }
 
     // If the mac address has been set
-    if (m_VxlanSwitchTableConfig.m_routerMac.empty() && !getSwitchTableVxlanConfig())
+    auto macAddress = getVxlanRouterMacAddress();
+    if (!macAddress.first)
     {
-        SWSS_LOG_DEBUG("Vxlan switch table config is not ready");
+        SWSS_LOG_DEBUG("Mac address is not ready");
         // Suspend this message until the mac address is set
         return false;
     }
-
-    info.m_macAddress = m_VxlanSwitchTableConfig.m_routerMac;
+    info.m_macAddress = macAddress.second;
 
     auto sourceIp = std::find_if(
         it->second.fvt.begin(),
@@ -809,70 +798,27 @@ bool VxlanMgr::isVlanStateOk(const std::string &vlanName)
     return false;
 }
 
-bool VxlanMgr::getSwitchTableVxlanConfig()
+std::pair<bool, std::string> VxlanMgr::getVxlanRouterMacAddress()
 {
     std::vector<FieldValueTuple> temp;
-    std::string sport;
-    std::string mask;
-    bool returnValue = false;
-
 
     if (m_appSwitchTable.get(SWITCH, temp))
     {
-        for (const auto & fv : temp)
+        auto itr = std::find_if(
+            temp.begin(),
+            temp.end(),
+            [](const FieldValueTuple &fvt) { return fvt.first == VXLAN_ROUTER_MAC; });
+        if (itr != temp.end() && !(itr->second.empty()))
         {
-            if (fv.first == VXLAN_ROUTER_MAC)
-            {
-                m_VxlanSwitchTableConfig.m_routerMac = fv.second;
-            }
-            else if (fv.first == VXLAN_PORT)
-            {
-                m_VxlanSwitchTableConfig.m_vxlanUdpPort = fv.second;
-            }
-            else if (fv.first == VXLAN_SPORT)
-            {
-                sport = fv.second;
-            }
-            else if (fv.first == VXLAN_MASK)
-            {
-                mask = fv.second;
-            }
+            SWSS_LOG_DEBUG("Mac address %s is ready", itr->second.c_str());
+            return std::make_pair(true, itr->second);
         }
-
-        returnValue = m_VxlanSwitchTableConfig.m_routerMac.empty() ? false : true;
-
-        if (m_VxlanSwitchTableConfig.m_vxlanUdpPort.empty())
-        {
-            m_VxlanSwitchTableConfig.m_vxlanUdpPort = VXLAN_DEFAULT_UDP_PORT;
-        }
-
-        if (!sport.empty() && !mask.empty())
-        {
-            unsigned long sportUL = std::strtoul(sport.c_str(), nullptr, 10);
-            unsigned long maskUL = std::strtoul(mask.c_str(), nullptr, 10);
-
-            if (sportUL > 0xFFFF) 
-            {
-                SWSS_LOG_WARN("Invalid VXLAN source port %s, must be in range 0-65535, all source ports will be used", sport.c_str());
-                return returnValue;
-            }
-
-            if (maskUL > 16 || maskUL == 0) 
-            {
-                SWSS_LOG_WARN("Invalid VXLAN source port mask %s, must be in range 1-16, all source ports will be used", mask.c_str());
-                return returnValue;
-            }
-
-            uint32_t span = (maskUL == 0) ? 0u : ((1u << maskUL) - 1u);
-            uint32_t portMin = static_cast<uint32_t>(sportUL) & ~span;
-            uint32_t portMax = portMin | span;
-
-            m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart = std::to_string(portMin);
-            m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeEnd = std::to_string(portMax);
-        }
+        SWSS_LOG_DEBUG("Mac address will be automatically set");
+        return std::make_pair(true, "");
     }
 
-    return returnValue;
+    SWSS_LOG_DEBUG("Mac address is not ready");
+    return std::make_pair(false, "");
 }
 
 bool VxlanMgr::createVxlan(const VxlanInfo & info)
@@ -883,11 +829,7 @@ bool VxlanMgr::createVxlan(const VxlanInfo & info)
     int ret = 0;
 
     // Create Vxlan
-    ret = cmdCreateVxlan(info,
-                         m_VxlanSwitchTableConfig.m_vxlanUdpPort,
-                         m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart,
-                         m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeEnd,
-                         res);
+    ret = cmdCreateVxlan(info, res);
     if (ret != RET_SUCCESS)
     {
         SWSS_LOG_WARN(
@@ -1087,7 +1029,7 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                    " address " + gMacAddress.to_string() + " type vxlan id " +
                    std::string(vni_id) + " local " + src_ip +
                    ((dst_ip  == "")? "":(" remote " + dst_ip)) +
-                   " nolearning " + " dstport " + m_VxlanSwitchTableConfig.m_vxlanUdpPort;
+                   " nolearning " + " dstport 4789";
 
     // Add udp6zerocsumrx only for IPv6
     struct in6_addr addr6;
