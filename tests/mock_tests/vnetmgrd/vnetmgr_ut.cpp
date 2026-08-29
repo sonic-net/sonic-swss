@@ -2,9 +2,11 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <deque>
 #include "schema.h"
 #include "warm_restart.h"
 #include "table.h"
+#include "consumerstatetable.h"
 
 #define private public
 #include "vnetmgr.h"
@@ -292,6 +294,104 @@ TEST_F(VNetMgrTest, LocalVnetRouteDoesNotHitKernel)
     ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
     ASSERT_FALSE(cmdWasIssued(" route add "));
     ASSERT_FALSE(cmdWasIssued(" neigh add "));
+}
+
+
+static bool popAppDbEntry(swss::DBConnector *db, const std::string &tableName,
+                          const std::string &key, std::string &opOut,
+                          std::vector<swss::FieldValueTuple> &fvsOut)
+{
+    swss::ConsumerStateTable consumer(db, tableName);
+    std::deque<swss::KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+    for (const auto &e : entries)
+    {
+        if (kfvKey(e) == key)
+        {
+            opOut = kfvOp(e);
+            fvsOut = kfvFieldsValues(e);
+            return true;
+        }
+    }
+    return false;
+}
+
+TEST_F(VNetMgrTest, RouteTunnelPublishedToAppDbNStripsInstallOnKernel)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+
+    std::string op;
+    std::vector<swss::FieldValueTuple> fvs;
+    ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
+                              "Vnet1:192.168.1.1/32", op, fvs));
+    ASSERT_EQ(op, SET_COMMAND);
+    bool hasInstallOnKernel = false, endpointOk = false, vniOk = false, macOk = false;
+    for (const auto &fv : fvs)
+    {
+        if (fvField(fv) == "install_on_kernel") hasInstallOnKernel = true;
+        if (fvField(fv) == "endpoint" && fvValue(fv) == "10.0.0.2") endpointOk = true;
+        if (fvField(fv) == "vni" && fvValue(fv) == "1000") vniOk = true;
+        if (fvField(fv) == "mac_address" && fvValue(fv) == "02:00:00:00:00:01") macOk = true;
+    }
+    ASSERT_FALSE(hasInstallOnKernel);
+    ASSERT_TRUE(endpointOk);
+    ASSERT_TRUE(vniOk);
+    ASSERT_TRUE(macOk);
+}
+
+TEST_F(VNetMgrTest, RouteTunnelDeletePublishesDelToAppDb)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    swss::ConsumerStateTable consumer(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    auto d = makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+
+    std::deque<swss::KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+    std::string lastOp;
+    for (const auto &e : entries)
+    {
+        if (kfvKey(e) == "Vnet1:192.168.1.1/32") lastOp = kfvOp(e);
+    }
+    ASSERT_EQ(lastOp, DEL_COMMAND);
+}
+
+TEST_F(VNetMgrTest, LocalVnetRoutePublishedToAppDbAndDeleted)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = makeTuple("Vnet1|192.168.10.0/24", SET_COMMAND,
+        {{"nexthop", "192.168.10.254"}});
+    ASSERT_TRUE(mgr.doVnetRouteTask(r, SET_COMMAND));
+
+    std::string op;
+    std::vector<swss::FieldValueTuple> fvs;
+    ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TABLE_NAME,
+                              "Vnet1:192.168.10.0/24", op, fvs));
+    ASSERT_EQ(op, SET_COMMAND);
+    bool nexthopOk = false;
+    for (const auto &fv : fvs)
+    {
+        if (fvField(fv) == "nexthop" && fvValue(fv) == "192.168.10.254") nexthopOk = true;
+    }
+    ASSERT_TRUE(nexthopOk);
+
+    auto d = makeTuple("Vnet1|192.168.10.0/24", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
+    ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TABLE_NAME,
+                              "Vnet1:192.168.10.0/24", op, fvs));
+    ASSERT_EQ(op, DEL_COMMAND);
 }
 
 } // namespace vnetmgr_ut

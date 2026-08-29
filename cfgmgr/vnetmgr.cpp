@@ -342,7 +342,9 @@ bool VNetMgr::doVnetRouteTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
     }
     deleteKernelRoute(it->second);
     m_vnetRouteTunnelCache.erase(it);
-    m_appVnetRouteTunnelTable.del(vnet_route_name);
+    std::string appKey = vnet_route_name;
+    std::replace(appKey.begin(), appKey.end(), config_db_key_delimiter, delimiter);
+    m_appVnetRouteTunnelTable.del(appKey);
     return true;
 }
 
