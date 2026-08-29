@@ -156,6 +156,16 @@ namespace tunneldecaporch_test
             delete gCrmOrch;
             gCrmOrch = nullptr;
         }
+
+        void expectMissingTunnelRefCountUnchanged(TunnelDecapOrch &orch, const string &name)
+        {
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            orch.increaseTunnelRefCount(name);
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            orch.decreaseTunnelRefCount(name);
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            EXPECT_EQ(orch.tunnelTable.find(name), orch.tunnelTable.end());
+        }
     };
 
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_Creation)
@@ -526,13 +536,7 @@ namespace tunneldecaporch_test
         ASSERT_NE(tunnelDecapOrch, nullptr);
 
         // operator[] would insert a default entry; find() must not.
-        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
-        tunnelDecapOrch->increaseTunnelRefCount("missing_tunnel");
-        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
-        tunnelDecapOrch->decreaseTunnelRefCount("missing_tunnel");
-        EXPECT_EQ(tunnelDecapOrch->getTunnelRefCount("missing_tunnel"), 0);
-        EXPECT_EQ(tunnelDecapOrch->tunnelTable.find("missing_tunnel"),
-                  tunnelDecapOrch->tunnelTable.end());
+        expectMissingTunnelRefCountUnchanged(*tunnelDecapOrch, "missing_tunnel");
     }
 
 } // namespace tunneldecaporch_test
