@@ -489,7 +489,15 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
         }
     }
 
-    /* Also validate the next hop in any protection groups containing it. */
+    /*
+     * Also validate the next hop in any protection groups containing it.  This
+     * is what completes deferred member resolution: a protection NHG may be
+     * created before its next hops resolve, and its members stay unsynced until
+     * the next hop turns up here.
+     *
+     * There is deliberately no counterpart in invalidateNextHop(); see the
+     * comment there.
+     */
     for (auto& it : m_protNhgs)
     {
         auto& nhg = it.second.nhg;
@@ -543,22 +551,13 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
         }
     }
 
-    /* Also invalidate the next hop in any protection groups containing it. */
-    for (auto& it : m_protNhgs)
-    {
-        auto& nhg = it.second.nhg;
-
-        if (nhg->hasMember(nh_key))
-        {
-            if (!nhg->invalidateNextHop(nh_key))
-            {
-                SWSS_LOG_WARN("Failed to invalidate next hop %s from protection group %s",
-                                nh_key.to_string().c_str(),
-                                it.first.c_str());
-                return false;
-            }
-        }
-    }
+    /*
+     * Protection NHGs are deliberately skipped: both legs stay programmed and
+     * switching to the standby is the owning application's decision, applied
+     * with SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER or left to the hardware via
+     * the monitored object.  Dropping a member here would pre-empt that, and
+     * would delete the primary's monitored object with it.
+     */
 
     return true;
 }

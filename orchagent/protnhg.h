@@ -103,11 +103,10 @@ public:
     bool sync() override;
     bool remove() override;
 
-    /* Sync a member once its next hop becomes valid. */
+    /* Sync a member once its next hop becomes valid.  There is no invalidate
+     * counterpart: a protection NHG keeps both legs programmed and switches
+     * over rather than dropping a member. */
     bool validateNextHop(const NextHopKey &nh_key);
-
-    /* Remove a member once its next hop becomes invalid. */
-    bool invalidateNextHop(const NextHopKey &nh_key);
 
     inline bool isTemp() const override { return false; }
     inline NextHopGroupKey getNhgKey() const override { return {}; }

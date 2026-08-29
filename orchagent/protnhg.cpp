@@ -299,25 +299,6 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
     return syncMembers({nh_key});
 }
 
-/* Remove the member for nh_key once its next hop is no longer valid. */
-bool ProtNhg::invalidateNextHop(const NextHopKey &nh_key)
-{
-    SWSS_LOG_ENTER();
-
-    if (!isSynced())
-    {
-        return true;
-    }
-
-    /* removeMembers() (NhgCommon) assumes nh_key is already in m_members. */
-    if (!hasMember(nh_key))
-    {
-        return true;
-    }
-
-    return removeMembers({nh_key});
-}
-
 bool ProtNhg::isHwAutonomous() const
 {
     SWSS_LOG_ENTER();

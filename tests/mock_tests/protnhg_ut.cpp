@@ -632,14 +632,18 @@ namespace protnhg_test
 
         ASSERT_FALSE(nhg.hasMember(unrelated_nh));
         EXPECT_TRUE(nhg.validateNextHop(unrelated_nh));
-        EXPECT_TRUE(nhg.invalidateNextHop(unrelated_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, InvalidateNextHopRemovesMemberAndValidateRestoresIt)
+    /*
+     * NeighOrch calls invalidateNextHop() when an interface goes down. A
+     * protection NHG keeps both legs programmed and switches over instead, so
+     * the call must leave its members alone.
+     */
+    TEST_F(ProtNhgTest, InvalidateNextHopLeavesProtectionMembersProgrammed)
     {
         string key = "prot_nhg_invalidate";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
@@ -650,16 +654,29 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        ASSERT_NE(nhg.getPrimaryMember(), nullptr);
         ASSERT_NE(nhg.getStandbyMember(), nullptr);
+        ASSERT_TRUE(nhg.getPrimaryMember()->isSynced());
         ASSERT_TRUE(nhg.getStandbyMember()->isSynced());
 
-        /* e.g. the standby's interface goes down. */
-        EXPECT_TRUE(gNhgOrch->invalidateNextHop(standby_nh));
-        EXPECT_FALSE(nhg.getStandbyMember()->isSynced());
+        sai_object_id_t primary_gm_id = nhg.getPrimaryMember()->getId();
+        sai_object_id_t standby_gm_id = nhg.getStandbyMember()->getId();
 
-        /* e.g. the standby's interface comes back up. */
+        /* e.g. either interface goes down. */
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(standby_nh));
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(primary_nh));
+
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+
+        /* The SAI members were not torn down and recreated either. */
+        EXPECT_EQ(nhg.getPrimaryMember()->getId(), primary_gm_id);
+        EXPECT_EQ(nhg.getStandbyMember()->getId(), standby_gm_id);
+
+        /* Coming back up is a no-op for an already synced member. */
         EXPECT_TRUE(gNhgOrch->validateNextHop(standby_nh));
         EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+        EXPECT_EQ(nhg.getStandbyMember()->getId(), standby_gm_id);
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
