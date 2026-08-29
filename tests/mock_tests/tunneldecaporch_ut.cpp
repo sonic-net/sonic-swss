@@ -156,6 +156,11 @@ namespace tunneldecaporch_test
             delete gCrmOrch;
             gCrmOrch = nullptr;
         }
+
+        bool removeDecapTunnel(TunnelDecapOrch &orch, const string &table_name, const string &key)
+        {
+            return orch.removeDecapTunnel(table_name, key);
+        }
     };
 
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_Creation)
@@ -552,7 +557,7 @@ namespace tunneldecaporch_test
         ASSERT_NE(tunnelDecapOrch, nullptr);
 
         // removeDecapTunnel should return false for a tunnel not in tunnelTable
-        bool result = tunnelDecapOrch->removeDecapTunnel(APP_TUNNEL_DECAP_TABLE_NAME, "nonexistent_tunnel");
+        bool result = removeDecapTunnel(*tunnelDecapOrch, APP_TUNNEL_DECAP_TABLE_NAME, "nonexistent_tunnel");
         EXPECT_FALSE(result);
     }
 
