@@ -58,15 +58,8 @@ public:
         std::string m_vnet;
         std::string m_prefix;
         std::string m_vxlanDevName;
+        std::string m_vxlanSrcUdpPort;
     } VxlanKernelRouteInfo;
-
-    typedef struct VxlanSwitchTableConfig
-    {
-        bool m_loaded = false;
-        std::string m_vxlanUdpPort;
-        std::string m_vxlanSrcPortRangeStart;
-        std::string m_vxlanSrcPortRangeEnd;
-    } VxlanSwitchTableConfig;
 
 private:
     void doTask(Consumer &consumer);
@@ -83,7 +76,7 @@ private:
 
     bool createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
     bool deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
-    bool getSwitchTableVxlanConfig();
+    std::string getVxlanSourcePort();
 
 
     Table m_appSwitchTable;
@@ -91,7 +84,6 @@ private:
 
     DBConnector *m_app_db;
 
-    VxlanSwitchTableConfig m_VxlanSwitchTableConfig;
     std::map<std::string, std::string> m_vxlanNetDevices;
     std::map<std::string, TunCache > m_vxlanTunnelCache;
     std::map<std::string, VnetInfo> m_vnetCache;
