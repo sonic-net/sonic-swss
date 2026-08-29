@@ -44,14 +44,6 @@ public:
         std::string vni_id;
     } MapCache;
 
-    typedef struct VxlanSwitchTableConfig
-    {
-        std::string m_routerMac;
-        std::string m_vxlanUdpPort;
-        std::string m_vxlanSrcPortRangeStart;
-        std::string m_vxlanSrcPortRangeEnd;
-    } VxlanSwitchTableConfig;
-
     void waitTillReadyToReconcile();
     void beginReconcile(bool warm);
     void endReconcile(bool warm);
@@ -92,7 +84,7 @@ private:
     bool isVrfStateOk(const std::string & vrfName);
     bool isVxlanStateOk(const std::string & vxlanName);
     bool isVlanStateOk(const std::string &vlanName);
-    bool getSwitchTableVxlanConfig();
+    std::pair<bool, std::string> getVxlanRouterMacAddress();
 
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
@@ -114,7 +106,6 @@ private:
     std::map<std::string, std::string> m_vlanMapCache;
     std::map<std::string, std::string> m_vniMapCache;
     std::map<std::string, std::string> m_EvpnNvoCache;
-    VxlanSwitchTableConfig m_VxlanSwitchTableConfig;
 
     /*
     * Vnet Cache

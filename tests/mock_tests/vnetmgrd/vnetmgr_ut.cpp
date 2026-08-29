@@ -4,7 +4,6 @@
 #include <algorithm>
 #include "schema.h"
 #include "warm_restart.h"
-#include "table.h"
 
 #define private public
 #include "vnetmgr.h"
@@ -114,14 +113,8 @@ static void addBaseTunnelAndVnet(VNetMgr &mgr,
                                const std::string &tunnelSrcIp = "10.0.0.1",
                                const std::string &vnet = "Vnet1",
                                const std::string &vni = "2000",
-                               const std::string &srcMac = "aa:bb:cc:dd:ee:ff",
-                               swss::DBConnector *appDb = nullptr)
+                               const std::string &srcMac = "aa:bb:cc:dd:ee:ff")
 {
-    if (appDb != nullptr)
-    {
-        swss::Table t(appDb, APP_SWITCH_TABLE_NAME);
-        t.set("switch", std::vector<swss::FieldValueTuple>{{"vxlan_port", "4789"}});
-    }
     auto tun = KeyOpFieldsValuesTuple{tunnel, SET_COMMAND,
         {{"src_ip", tunnelSrcIp}}};
     mgr.doVxlanTunnelCreateTask(tun);
@@ -199,7 +192,7 @@ TEST_F(VNetMgrTest, RouteTunnelVniMatchesUsesExistingVxlanmgrdNetdev)
 {
     // vxlanmgrd owns the netdev when vnis match; existing netdev -> just add route.
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -218,7 +211,7 @@ TEST_F(VNetMgrTest, RouteTunnelVniMatchesReturnsFalseWhenNetdevMissing)
 {
     // vxlanmgrd has not created the netdev yet -> return false to retry.
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     g_fail_link_show_dev = true;
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
@@ -234,7 +227,7 @@ TEST_F(VNetMgrTest, RouteTunnelVniMatchesReturnsFalseWhenNetdevMissing)
 TEST_F(VNetMgrTest, RouteTunnelCreateHappyPathIssuesIpCommands)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -252,7 +245,7 @@ TEST_F(VNetMgrTest, RouteTunnelCreateHappyPathIssuesIpCommands)
 TEST_F(VNetMgrTest, RouteTunnelHostRouteAddsStaticNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.5/32", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -264,7 +257,7 @@ TEST_F(VNetMgrTest, RouteTunnelHostRouteAddsStaticNeigh)
 TEST_F(VNetMgrTest, RouteTunnelIpv6HostRouteAddsStaticNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|2001:db8::1/128", SET_COMMAND,
                         {{"endpoint", "2001:db8:1::1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -277,7 +270,7 @@ TEST_F(VNetMgrTest, RouteTunnelIpv6HostRouteAddsStaticNeigh)
 TEST_F(VNetMgrTest, RouteTunnelIpv6PrefixNoNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|2001:db8::/64", SET_COMMAND,
                         {{"endpoint", "2001:db8:1::1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -290,7 +283,7 @@ TEST_F(VNetMgrTest, RouteTunnelIpv6PrefixNoNeigh)
 TEST_F(VNetMgrTest, RouteTunnelInstallOnKernelFalseSkipsIpCommands)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     mockCallArgs.clear();
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -305,7 +298,7 @@ TEST_F(VNetMgrTest, RouteTunnelInstallOnKernelFalseSkipsIpCommands)
 TEST_F(VNetMgrTest, RouteTunnelDeleteRemovesKernelRoute)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+    addBaseTunnelAndVnet(mgr);
     auto rt = makeTuple("Vnet1|20.0.0.0/24", SET_COMMAND,
                         {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
                          {"vni", "3000"}, {"install_on_kernel", "true"}});
@@ -338,7 +331,7 @@ TEST_F(VNetMgrTest, ExecFailurePropagatesForEachIpCommand)
     {
         SCOPED_TRACE(c.name);
         VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-        addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
+        addBaseTunnelAndVnet(mgr);
         *c.flag = true;
         auto rt = makeTuple(c.prefix, SET_COMMAND,
                             {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
@@ -361,83 +354,6 @@ TEST_F(VNetMgrTest, LocalVnetRouteSetAndDelete)
     auto d = makeTuple("Vnet1|30.0.0.0/24", DEL_COMMAND, {});
     ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
     ASSERT_FALSE(mgr.doVnetRouteTask(s, "UNKNOWN"));
-}
-
-static void writeSwitchTable(swss::DBConnector *appDb,
-                             const std::vector<swss::FieldValueTuple> &fvs)
-{
-    swss::Table t(appDb, APP_SWITCH_TABLE_NAME);
-    t.set("switch", fvs);
-}
-
-TEST_F(VNetMgrTest, SwitchTableConfigFailsWhenSwitchKeyAbsent)
-{
-    // Absent SWITCH_TABLE|switch key must fail the load.
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    ASSERT_FALSE(mgr.getSwitchTableVxlanConfig());
-    ASSERT_FALSE(mgr.m_VxlanSwitchTableConfig.m_loaded);
-}
-
-TEST_F(VNetMgrTest, SwitchTableConfigRejectsInvalidMask)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    writeSwitchTable(m_app_db.get(),
-                     {{"vxlan_sport", "20000"},
-                      {"vxlan_mask", "99"}});
-    ASSERT_TRUE(mgr.getSwitchTableVxlanConfig());
-    ASSERT_TRUE(mgr.m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart.empty());
-}
-
-TEST_F(VNetMgrTest, RouteTunnelUsesVxlanPortOverrideForDstport)
-{
-    // SWITCH_TABLE|switch.vxlan_port=6789 overrides the default
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
-    writeSwitchTable(m_app_db.get(),
-                     {{"vxlan_port", "6789"}});
-    mockCallArgs.clear();
-    auto rt = makeTuple("Vnet1|30.0.0.0/24", SET_COMMAND,
-                        {{"endpoint", "10.1.1.1"}, {"mac_address", "22:33:44:55:66:77"},
-                         {"vni", "3000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
-    ASSERT_TRUE(mgr.m_VxlanSwitchTableConfig.m_loaded);
-    ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanUdpPort, "6789");
-    ASSERT_TRUE(cmdWasIssued("dstport \"6789\""));
-}
-
-TEST_F(VNetMgrTest, RouteTunnelDefaultsDstportTo4789)
-{
-    // vxlan_port omitted from SWITCH_TABLE|switch: config defaults to 4789
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
-    mockCallArgs.clear();
-    auto rt = makeTuple("Vnet1|31.0.0.0/24", SET_COMMAND,
-                        {{"endpoint", "10.1.1.2"}, {"mac_address", "22:33:44:55:66:78"},
-                         {"vni", "3001"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
-    ASSERT_TRUE(mgr.m_VxlanSwitchTableConfig.m_loaded);
-    ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanUdpPort, "4789");
-    ASSERT_TRUE(cmdWasIssued("dstport \"4789\""));
-}
-
-
-TEST_F(VNetMgrTest, RouteTunnelPassesSrcPortRangeToCmdCreateVxlan)
-{
-    // vxlan_sport=20000, vxlan_mask=8: [19968, 20223].
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    writeSwitchTable(m_app_db.get(),
-                     {{"vxlan_sport", "20000"},
-                      {"vxlan_mask", "8"}});
-    addBaseTunnelAndVnet(mgr, "tunnel0", "10.0.0.1", "Vnet1", "2000", "aa:bb:cc:dd:ee:ff", m_app_db.get());
-    mockCallArgs.clear();
-    auto rt = makeTuple("Vnet1|32.0.0.0/24", SET_COMMAND,
-                        {{"endpoint", "10.1.1.3"}, {"mac_address", "22:33:44:55:66:79"},
-                         {"vni", "3002"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(rt));
-    ASSERT_TRUE(mgr.m_VxlanSwitchTableConfig.m_loaded);
-    ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeStart, "19968");
-    ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanSrcPortRangeEnd,   "20223");
-    ASSERT_TRUE(cmdWasIssued("srcport \"19968\" \"20223\""));
 }
 
 }  // namespace vnetmgr_ut
