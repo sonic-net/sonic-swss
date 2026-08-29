@@ -73,7 +73,7 @@ impl ReportingWindow {
                 } else if let Some(heatmap_values) = self.heatmap_values.as_mut() {
                     heatmap_values[position] = stat.counter;
                 }
-                self.stats[position] = stat.clone();
+                self.stats[position].counter = stat.counter;
                 self.stat_times[position] = sample.observation_time;
             } else {
                 let position = self.stats.len();
@@ -466,7 +466,10 @@ impl HeatmapState {
             };
             let Some(value) = series.transform(
                 selector.value_kind,
-                input_values.map_or(stat.counter, |values| values[position]),
+                input_values
+                    .and_then(|values| values.get(position))
+                    .copied()
+                    .unwrap_or(stat.counter),
                 accepted_time,
             ) else {
                 if accepted_time < series.last_observation_time {
