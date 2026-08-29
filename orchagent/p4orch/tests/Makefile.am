@@ -29,6 +29,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
 		       $(ORCHAGENT_DIR)/zmqorch.cpp \
+		       $(ORCHAGENT_DIR)/zmqrouteorch.cpp \
+		       $(ORCHAGENT_DIR)/namelabelmapper.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
 		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
@@ -64,10 +66,13 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_consumerstatetable.cpp \
 		       fake_subscriberstatetable.cpp \
 		       fake_notificationconsumer.cpp \
+		       fake_notificationconsumerstatsorch.cpp \
 		       fake_table.cpp \
 		       fake_aclorch.cpp \
 		       fake_zmqserver.cpp \
+		       fake_namelabelmapper.cpp \
 		       p4oidmapper_test.cpp \
+		       namelabelmapper_test.cpp \
 		       p4orch_test.cpp \
 		       p4orch_util_test.cpp \
 		       return_code_test.cpp \
@@ -99,8 +104,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_next_hop.cpp \
 		       mock_sai_route.cpp \
 		       mock_sai_switch.cpp \
-                       mock_sai_tunnel.cpp \
-		       mock_sai_udf.cpp
+		       mock_sai_udf.cpp \
+		       mock_sai_tunnel.cpp
 
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
