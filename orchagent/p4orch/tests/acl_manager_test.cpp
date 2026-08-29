@@ -1116,6 +1116,17 @@ class AclManagerTest : public ::testing::Test
         return acl_rule_manager_->getAclRule(acl_table_name, acl_rule_key);
     }
 
+    size_t GetAclRuleTableCount() const
+    {
+        return acl_rule_manager_->m_aclRuleTables.size();
+    }
+
+    bool HasAclRuleTable(const std::string &acl_table_name) const
+    {
+        return acl_rule_manager_->m_aclRuleTables.find(acl_table_name) !=
+               acl_rule_manager_->m_aclRuleTables.end();
+    }
+
     ReturnCode ProcessAddTableRequest(const P4AclTableDefinitionAppDbEntry &app_db_entry)
     {
         return acl_table_manager_->processAddTableRequest(app_db_entry);
@@ -6502,11 +6513,10 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
 
 TEST_F(AclManagerTest, GetAclRuleMissingTableDoesNotInsert)
 {
-    const auto size_before = acl_rule_manager_->m_aclRuleTables.size();
+    const auto size_before = GetAclRuleTableCount();
     EXPECT_EQ(nullptr, GetAclRule("NO_SUCH_TABLE", "NO_SUCH_RULE"));
-    EXPECT_EQ(size_before, acl_rule_manager_->m_aclRuleTables.size());
-    EXPECT_EQ(acl_rule_manager_->m_aclRuleTables.end(),
-              acl_rule_manager_->m_aclRuleTables.find("NO_SUCH_TABLE"));
+    EXPECT_EQ(size_before, GetAclRuleTableCount());
+    EXPECT_FALSE(HasAclRuleTable("NO_SUCH_TABLE"));
 }
 
 } // namespace test
