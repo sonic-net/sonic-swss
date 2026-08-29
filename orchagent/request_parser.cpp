@@ -87,7 +87,7 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
     if (key_separator_ == ':' and 
         key_items.size() > number_of_key_items_ and 
         (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX
-        or request_description_.key_item_types.back() == REQ_T_MAC_ADDRESS))
+        or request_description_.key_item_types.back() == REQ_T_MAC_ADDRESS or request_description_.key_item_types.back() == REQ_T_STRING))
     {
         // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
         std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());

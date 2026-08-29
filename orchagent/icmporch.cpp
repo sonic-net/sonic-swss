@@ -8,11 +8,13 @@
 #include "converter.h"
 #include "swssnet.h"
 #include "notifier.h"
+#include "notificationconsumerstatsorch.h"
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
 #include "icmporch.h"
 #include "switchorch.h"
+#include <algorithm>
 #include <string>
 
 using namespace std;
@@ -52,6 +54,10 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_icmpStateNotificationConsumer->setOpAllowList({"icmp_echo_session_state_change"});
+    m_icmpStateNotificationConsumer->setStatsLabel("IcmpOrch:icmp_echo_session_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("IcmpOrch:icmp_echo_session_state_change", m_icmpStateNotificationConsumer);
 
     // Clean up state database ICMP entries
     vector<string> keys;
@@ -65,6 +71,65 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
 
     auto icmpStateNotifier = new Notifier(m_icmpStateNotificationConsumer, this, "ICMP_STATE_NOTIFICATIONS");
     Orch::addExecutor(icmpStateNotifier);
+
+    initializeCounters();
+}
+
+void IcmpOrch::initializeCounters()
+{
+    SWSS_LOG_ENTER();
+
+    m_stats_handler = std::make_unique<SaiOffloadStatsHandler<IcmpSaiSessionHandler, sai_icmp_echo_api_t>>(
+        ICMP_SESSION_STAT_COUNTER_FLEX_COUNTER_GROUP,
+        COUNTERS_ICMP_ECHO_SESSION_NAME_MAP,
+        ICMP_SESSION_STAT_COUNTER_POLLING_INTERVAL_MS,
+        ICMP_SESSION_FLEX_COUNTER_UPDATE_TIMER_SEC);
+
+    if (!m_stats_handler->initialize())
+    {
+        return;
+    }
+
+    // Modern mode registers counters at create time; only traditional
+    // mode needs the retry timer for VID->RID resolution.
+    if (gTraditionalFlexCounter)
+    {
+        auto timer = m_stats_handler->createUpdateTimer();
+        auto et = new ExecutableTimer(timer, this, "ICMP_SESSION_FLEX_COUNTER_UPDATE_TIMER");
+        Orch::addExecutor(et);
+    }
+}
+
+std::map<std::string, sai_object_id_t> IcmpOrch::get_existing_session_map() const
+{
+    std::map<std::string, sai_object_id_t> existing;
+    for (const auto& kv : m_icmp_session_map)
+    {
+        existing[kv.first] = kv.second.session_id;
+    }
+    return existing;
+}
+
+void IcmpOrch::setCountersState(bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_stats_handler)
+    {
+        return;
+    }
+
+    m_stats_handler->setState(enable, get_existing_session_map(), sai_icmp_echo_api);
+}
+
+void IcmpOrch::doTask(swss::SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_stats_handler)
+    {
+        m_stats_handler->processPending();
+    }
 }
 
 IcmpOrch::~IcmpOrch(void)
@@ -230,6 +295,11 @@ bool IcmpOrch::create_icmp_session(const string& key, const vector<FieldValueTup
 
     m_num_sessions++;
 
+    if (m_stats_handler && m_stats_handler->isEnabled())
+    {
+        m_stats_handler->addSession(key, session_id, sai_icmp_echo_api);
+    }
+
     SWSS_LOG_NOTICE("Created ICMP offload session key(%s)", key.c_str());
     return true;
 }
@@ -293,6 +363,13 @@ bool IcmpOrch::remove_icmp_session(const string& key)
     }
 
     sai_object_id_t icmp_session_id = m_icmp_session_map[key].session_id;
+
+    // Detach counters before removing the session.
+    if (m_stats_handler)
+    {
+        m_stats_handler->removeSession(key, icmp_session_id, sai_icmp_echo_api);
+    }
+
     auto remove_status = sai_session_handler.remove(icmp_session_id);
     if ( remove_status != SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY)
     {
@@ -315,6 +392,36 @@ bool IcmpOrch::remove_icmp_session(const string& key)
 }
 
 const std::string IcmpSaiSessionHandler::m_name = "IcmpOffload";
+
+const std::vector<SelectiveCounterVariant>
+IcmpSaiSessionHandler::m_selective_counter_variants = {
+    { "IN",  { SAI_ICMP_ECHO_SESSION_STAT_IN_PACKETS  } },
+    { "OUT", { SAI_ICMP_ECHO_SESSION_STAT_OUT_PACKETS } },
+};
+
+CounterType IcmpSaiSessionHandler::native_counter_type()
+{
+    return CounterType::ICMP_ECHO_SESSION;
+}
+
+std::unordered_set<std::string> IcmpSaiSessionHandler::native_counter_stats()
+{
+    // Must match the serializer registered in sairedis for
+    // COUNTER_TYPE_ICMP_ECHO_SESSION (FlexCounter::createCounterContext).
+    return {
+        sai_serialize_enum(SAI_ICMP_ECHO_SESSION_STAT_IN_PACKETS,
+                           &sai_metadata_enum_sai_icmp_echo_session_stat_t),
+        sai_serialize_enum(SAI_ICMP_ECHO_SESSION_STAT_OUT_PACKETS,
+                           &sai_metadata_enum_sai_icmp_echo_session_stat_t),
+    };
+}
+
+sai_status_t IcmpSaiSessionHandler::set_session_attribute(sai_icmp_echo_api_t* api,
+                                                         sai_object_id_t session_id,
+                                                         const sai_attribute_t* attr)
+{
+    return api->set_icmp_echo_session_attribute(session_id, attr);
+}
 
 const std::string IcmpSaiSessionHandler::m_tx_interval_fname        = "tx_interval";
 const std::string IcmpSaiSessionHandler::m_rx_interval_fname        = "rx_interval";
@@ -559,6 +666,11 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
         m_fv_map[m_tx_interval_fname] = "0";
     }
 
+    if (m_orch.m_stats_handler)
+    {
+        m_orch.m_stats_handler->applyStatsCountMode(m_attr_val_map);
+    }
+
     // update the hw_lookup parameter in fv_vector
     auto& hw_lookup_attr_val = m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_HW_LOOKUP_VALID];
     if (hw_lookup_attr_val.booldata)
@@ -622,7 +734,14 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_update()
 
 void IcmpSaiSessionHandler::on_state_change(uint32_t count, sai_icmp_echo_session_state_notification_t *data)
 {
-    // we do not use this registered notification handler
-    // as it is called in a separate thread of sairedis
+    extern sai_redis_communication_mode_t gRedisCommunicationMode;
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer icmpNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_icmp_echo_session_state_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        icmpNotifier.send("icmp_echo_session_state_change", sdata, values);
+    }
 }
 

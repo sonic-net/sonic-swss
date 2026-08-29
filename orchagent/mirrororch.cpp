@@ -31,6 +31,8 @@
 #define MIRROR_SESSION_DST_PORT             "dst_port"
 #define MIRROR_SESSION_DIRECTION            "direction"
 #define MIRROR_SESSION_TYPE                 "type"
+#define MIRROR_SESSION_SAMPLE_RATE          "sample_rate"
+#define MIRROR_SESSION_TRUNCATE_SIZE        "truncate_size"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -47,6 +49,7 @@
 extern sai_switch_api_t *sai_switch_api;
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_port_api_t *sai_port_api;
+extern sai_samplepacket_api_t *sai_samplepacket_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
@@ -59,6 +62,9 @@ MirrorEntry::MirrorEntry(const string& platform) :
         dscp(8),
         ttl(255),
         queue(0),
+        sample_rate(0),
+        truncate_size(0),
+        samplepacketId(SAI_NULL_OBJECT_ID),
         sessionId(0),
         refCount(0)
 {
@@ -382,15 +388,15 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 {
     SWSS_LOG_ENTER();
 
-    bool src_ip_initialized = false;
-    bool dst_ip_initialized = false;
 
-    auto session = m_syncdMirrors.find(key);
-    if (session != m_syncdMirrors.end())
+    if (m_syncdMirrors.find(key) != m_syncdMirrors.end())
     {
         SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
         return task_process_status::task_duplicated;
     }
+
+    bool src_ip_initialized = false;
+    bool dst_ip_initialized = false;
 
     string platform = getenv("platform") ? getenv("platform") : "";
     MirrorEntry entry(platform);
@@ -473,6 +479,24 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             {
                 entry.type = fvValue(i);
             }
+            else if (fvField(i) == MIRROR_SESSION_SAMPLE_RATE)
+            {
+                try {
+                    entry.sample_rate = to_uint<uint32_t>(fvValue(i));
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid sample_rate for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
+            }
+            else if (fvField(i) == MIRROR_SESSION_TRUNCATE_SIZE)
+            {
+                try {
+                    entry.truncate_size = to_uint<uint32_t>(fvValue(i));
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid truncate_size for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
@@ -494,6 +518,54 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     if (src_ip_initialized && dst_ip_initialized && entry.srcIp.getIp().family != entry.dstIp.getIp().family)
     {
         SWSS_LOG_ERROR("Address family of source and destination IPs is different");
+        return task_process_status::task_invalid_entry;
+    }
+
+    // If a truncate size is configured, without an explicit sample rate,
+    // default the rate to 1 (sample every packet) so a samplepacket object
+    // is still created to carry the truncation.
+    if (entry.truncate_size > 0 && entry.sample_rate == 0)
+    {
+        entry.sample_rate = 1;
+        SWSS_LOG_NOTICE("Truncate size configured without sample rate for session %s; "
+                        "defaulting sample rate to 1", key.c_str());
+    }
+
+    // Sampled mirroring requires an explicit direction
+    if (entry.sample_rate > 0 && entry.direction.empty())
+    {
+        SWSS_LOG_ERROR("Sampled mirroring requires RX, TX or BOTH direction for session %s",
+                       key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Platform capability: reject early if the per-direction sampled mirroring
+    // capability is not supported by the ASIC.
+    if (entry.sample_rate > 0)
+    {
+        bool needIngressSample = (entry.direction == MIRROR_RX_DIRECTION ||
+                                  entry.direction == MIRROR_BOTH_DIRECTION);
+        bool needEgressSample = (entry.direction == MIRROR_TX_DIRECTION ||
+                                 entry.direction == MIRROR_BOTH_DIRECTION);
+        if (needIngressSample && !m_switchOrch->isPortIngressSampleMirrorSupported())
+        {
+            SWSS_LOG_ERROR("Ingress sampled mirroring not supported on this platform, "
+                           "rejecting session %s", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        if (needEgressSample && !m_switchOrch->isPortEgressSampleMirrorSupported())
+        {
+            SWSS_LOG_ERROR("Egress sampled mirroring not supported on this platform, "
+                           "rejecting session %s", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
+
+    // Platform capability: reject early if samplepacket truncation is not supported
+    if (entry.truncate_size > 0 && !m_switchOrch->isSamplepacketTruncationSupported())
+    {
+        SWSS_LOG_ERROR("Samplepacket truncation not supported on this platform, "
+                       "rejecting session %s", key.c_str());
         return task_process_status::task_invalid_entry;
     }
 
@@ -632,6 +704,30 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     {
      value = session.nexthopInfo.nexthop.to_string();
      fvVector.emplace_back(MIRROR_SESSION_NEXT_HOP_IP, value);
+    }
+
+    if (attr.empty() || attr == MIRROR_SESSION_SAMPLE_RATE)
+    {
+        if (session.sample_rate > 0)
+        {
+            fvVector.emplace_back(MIRROR_SESSION_SAMPLE_RATE, to_string(session.sample_rate));
+        }
+        else
+        {
+            m_mirrorTable.hdel(name, MIRROR_SESSION_SAMPLE_RATE);
+        }
+    }
+
+    if (attr.empty() || attr == MIRROR_SESSION_TRUNCATE_SIZE)
+    {
+        if (session.truncate_size > 0)
+        {
+            fvVector.emplace_back(MIRROR_SESSION_TRUNCATE_SIZE, to_string(session.truncate_size));
+        }
+        else
+        {
+            m_mirrorTable.hdel(name, MIRROR_SESSION_TRUNCATE_SIZE);
+        }
     }
 
     m_mirrorTable.set(name, fvVector);
@@ -811,7 +907,9 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
 bool MirrorOrch::setUnsetPortMirror(Port port,
                                     bool ingress,
                                     bool set,
-                                    sai_object_id_t sessionId)
+                                    sai_object_id_t sessionId,
+                                    sai_object_id_t samplepacketId,
+                                    uint32_t sample_rate)
 {
     // Check if the mirror direction is supported by the ASIC
     if (ingress && !m_switchOrch->isPortIngressMirrorSupported())
@@ -826,6 +924,48 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     }
 
     sai_status_t status;
+
+    if (sample_rate > 0)
+    {
+        // Sampled mirroring path: dispatch to per-PHY helper; LAG must be
+        // expanded to its member ports because SAMPLEPACKET/SAMPLE_MIRROR_SESSION
+        // are port-level SAI attributes and a LAG OID is not a valid target.
+        if (port.m_type == Port::LAG)
+        {
+            std::vector<Port> portv;
+            m_portsOrch->getLagMember(port, portv);
+            for (const auto &p : portv)
+            {
+                if (p.m_type != Port::PHY)
+                {
+                    SWSS_LOG_ERROR("Failed to locate PHY member port %s of LAG %s",
+                                   p.m_alias.c_str(), port.m_alias.c_str());
+                    return false;
+                }
+                if (!setUnsetSampledMirrorOnPhyPort(p.m_port_id, p.m_alias, set,
+                        ingress ? MirrorBindDirection::Ingress : MirrorBindDirection::Egress,
+                        sessionId, samplepacketId))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        else if (port.m_type == Port::PHY)
+        {
+            return setUnsetSampledMirrorOnPhyPort(port.m_port_id, port.m_alias, set,
+                        ingress ? MirrorBindDirection::Ingress : MirrorBindDirection::Egress,
+                        sessionId, samplepacketId);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Sampled mirror not supported on port %s of type %d",
+                           port.m_alias.c_str(), port.m_type);
+            return false;
+        }
+    }
+
+    // Full mirror path (existing behavior)
     sai_attribute_t port_attr;
     port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_MIRROR_SESSION:
                            SAI_PORT_ATTR_EGRESS_MIRROR_SESSION;
@@ -896,7 +1036,7 @@ bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& ses
             }
             if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                if (!setUnsetPortMirror(port, true, set, session.sessionId))
+                if (!setUnsetPortMirror(port, true, set, session.sessionId, session.samplepacketId, session.sample_rate))
                 {
                     SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
                         name.c_str(), port.m_alias.c_str());
@@ -905,7 +1045,7 @@ bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& ses
             }
             if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                if (!setUnsetPortMirror(port, false, set, session.sessionId))
+                if (!setUnsetPortMirror(port, false, set, session.sessionId, session.samplepacketId, session.sample_rate))
                 {
                     SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
                         name.c_str(), port.m_alias.c_str());
@@ -1079,12 +1219,30 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     session.status = true;
 
+    // Create SamplePacket if sample_rate > 0 (capability already verified in createEntry)
+    if (session.sample_rate > 0)
+    {
+        if (!createSamplePacket(name, session))
+        {
+            SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str());
+            sai_mirror_api->remove_mirror_session(session.sessionId);
+            session.status = false;
+            return false;
+        }
+    }
+
     if (!session.src_port.empty() && !session.direction.empty())
     {
         status = configurePortMirrorSession(name, session, true);
         if (status == false)
         {
             SWSS_LOG_ERROR("Failed to activate port mirror session %s", name.c_str());
+            // Clean up samplepacket if it was created
+            if (session.samplepacketId != SAI_NULL_OBJECT_ID)
+            {
+                removeSamplePacket(name, session);
+            }
+            sai_mirror_api->remove_mirror_session(session.sessionId);
             session.status = false;
             return false;
         }
@@ -1116,6 +1274,16 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
         if (status == false)
         {
             SWSS_LOG_ERROR("Failed to deactivate port mirror session %s", name.c_str());
+            return false;
+        }
+    }
+
+    // Remove SamplePacket if it exists
+    if (session.samplepacketId != SAI_NULL_OBJECT_ID)
+    {
+        if (!removeSamplePacket(name, session))
+        {
+            SWSS_LOG_ERROR("Failed to remove samplepacket for session %s", name.c_str());
             return false;
         }
     }
@@ -1175,6 +1343,177 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 
     setSessionState(name, session, MIRROR_SESSION_DST_MAC_ADDRESS);
 
+    return true;
+}
+
+
+bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
+                                                const std::string& phy_port_alias,
+                                                bool set,
+                                                MirrorBindDirection direction,
+                                                sai_object_id_t sessionId,
+                                                sai_object_id_t samplepacketId)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    const bool ingress = (direction == MirrorBindDirection::Ingress);
+    const sai_port_attr_t samplepacketEnableAttrId = ingress ?
+        SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
+        SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+    const sai_port_attr_t sampleMirrorSessionAttrId = ingress ?
+        SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
+        SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
+
+    sai_attribute_t sp_attr;
+    sp_attr.id = samplepacketEnableAttrId;
+    sp_attr.value.oid = set ? samplepacketId : SAI_NULL_OBJECT_ID;
+
+    sai_attribute_t mirror_attr;
+    mirror_attr.id = sampleMirrorSessionAttrId;
+    if (set)
+    {
+        mirror_attr.value.objlist.count = 1;
+        mirror_attr.value.objlist.list = &sessionId;
+    }
+    else
+    {
+        mirror_attr.value.objlist.count = 0;
+    }
+
+    // Check for samplepacket conflict before binding
+    if (set)
+    {
+        sai_attribute_t check_attr;
+        check_attr.id = samplepacketEnableAttrId;
+        if (sai_port_api->get_port_attribute(phy_port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+            && check_attr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr.value.oid != samplepacketId)
+        {
+            SWSS_LOG_ERROR("Port %s SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot bind sampled mirror",
+                           phy_port_alias.c_str(), check_attr.value.oid);
+            return false;
+        }
+    }
+
+    if (set)
+    {
+        // Set: SAMPLEPACKET_ENABLE first, then SAMPLE_MIRROR_SESSION
+        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAMPLEPACKET_ENABLE on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
+        }
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            // Rollback: clear SAMPLEPACKET_ENABLE
+            sp_attr.value.oid = SAI_NULL_OBJECT_ID;
+            sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+            return false;
+        }
+    }
+    else
+    {
+        // Clear: SAMPLE_MIRROR_SESSION first, then SAMPLEPACKET_ENABLE (reverse order)
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
+        }
+        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attrs[4];
+    uint32_t attr_count = 0;
+
+    attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+    attrs[attr_count].value.u32 = session.sample_rate;
+    attr_count++;
+
+    attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TYPE;
+    attrs[attr_count].value.s32 = SAI_SAMPLEPACKET_TYPE_MIRROR_SESSION;
+    attr_count++;
+
+    // Truncation capability already verified in createEntry
+    if (session.truncate_size > 0)
+    {
+        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
+        attrs[attr_count].value.booldata = true;
+        attr_count++;
+
+        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+        attrs[attr_count].value.u32 = session.truncate_size;
+        attr_count++;
+    }
+
+    sai_status_t status = sai_samplepacket_api->create_samplepacket(
+        &session.samplepacketId, gSwitchId, attr_count, attrs);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create samplepacket for session %s, status %d",
+                       name.c_str(), status);
+        session.samplepacketId = SAI_NULL_OBJECT_ID;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Created samplepacket for session %s, rate %u, truncate %u",
+                        name.c_str(), session.sample_rate, session.truncate_size);
+    }
+
+    return (status == SAI_STATUS_SUCCESS);
+}
+
+bool MirrorOrch::removeSamplePacket(const string& name, MirrorEntry& session)
+{
+    SWSS_LOG_ENTER();
+
+    if (session.samplepacketId == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    sai_status_t status = sai_samplepacket_api->remove_samplepacket(session.samplepacketId);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove samplepacket for session %s, status %d",
+                       name.c_str(), status);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SAMPLEPACKET, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    session.samplepacketId = SAI_NULL_OBJECT_ID;
+    SWSS_LOG_NOTICE("Removed samplepacket for session %s", name.c_str());
     return true;
 }
 
@@ -1473,11 +1812,13 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         {
             if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                setUnsetPortMirror(update.member, true, update.add, session.sessionId);
+                setUnsetPortMirror(update.member, true, update.add, session.sessionId,
+                                   session.samplepacketId, session.sample_rate);
             }
             if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                setUnsetPortMirror(update.member, false, update.add, session.sessionId);
+                setUnsetPortMirror(update.member, false, update.add, session.sessionId,
+                                   session.samplepacketId, session.sample_rate);
             }
         }
 
