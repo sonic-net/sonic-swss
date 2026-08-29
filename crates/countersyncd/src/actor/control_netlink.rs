@@ -1,10 +1,10 @@
-use std::{thread::sleep, time::Duration};
+use std::time::Duration;
 
 use log::{debug, info, warn};
 
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
-use tokio::sync::mpsc::Sender;
+use tokio::{sync::mpsc::Sender, time::{interval, MissedTickBehavior}};
 
 use std::io;
 
@@ -386,8 +386,11 @@ impl ControlNetlinkActor {
         let mut heartbeat_counter = 0u32;
         let mut last_periodic_reconnect_counter = 0u32;
         let mut family_was_available = true; // Assume family starts available
+        let mut poll_interval = interval(Duration::from_millis(10));
+        poll_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
+            poll_interval.tick().await;
             heartbeat_counter += 1;
 
             // Log heartbeat every minute to show the actor is running
@@ -477,9 +480,6 @@ impl ControlNetlinkActor {
                 debug!("Command channel is closed, terminating ControlNetlinkActor");
                 break;
             }
-
-            // Wait a bit before next iteration
-            sleep(Duration::from_millis(10));
         }
 
         debug!("ControlNetlinkActor terminated");

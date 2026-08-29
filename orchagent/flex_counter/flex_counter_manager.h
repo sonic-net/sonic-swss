@@ -46,6 +46,8 @@ enum class CounterType
     SRV6,
     SWITCH,
     HA_SET,
+    OFFLOAD_SESSION,
+    ICMP_ECHO_SESSION,
 };
 
 extern bool gTraditionalFlexCounter;
@@ -68,7 +70,11 @@ class FlexCounterManager
                 const bool enabled,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
-        FlexCounterManager()
+        FlexCounterManager() :
+            stats_mode(StatsMode::READ),
+            polling_interval(0),
+            enabled(false),
+            is_gearbox(false)
         {}
 
         FlexCounterManager(

@@ -1,3 +1,4 @@
+#include <random>
 #include "nhgorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
@@ -849,9 +850,11 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
         throw std::logic_error("No valid NH in the key");
     }
 
-    /* Randomly select the valid NH to represent the group. */
+    /* Randomly select the valid NH to represent the group using a robust RNG. */
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<size_t> dist(0, valid_nhs.size() - 1);
     auto it = valid_nhs.begin();
-    advance(it, rand() % valid_nhs.size());
+    std::advance(it, dist(rng));
 
     /* Create the temporary group. */
     NextHopGroup nhg(NextHopGroupKey(it->to_string()), true);

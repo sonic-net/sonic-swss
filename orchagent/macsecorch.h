@@ -175,7 +175,8 @@ private:
     bool setEncodingAN(
         MACsecSC &sc,
         const TaskArgs &sc_attr,
-        sai_macsec_direction_t direction);
+        sai_macsec_direction_t direction,
+        const std::string &port_sci);
     bool createMACsecSC(
         MACsecPort &macsec_port,
         const std::string &port_name,
