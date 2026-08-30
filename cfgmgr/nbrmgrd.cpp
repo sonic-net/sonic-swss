@@ -29,15 +29,21 @@ int main(int argc, char **argv)
 
     try
     {
-        vector<string> cfg_nbr_tables = {
-            CFG_NEIGH_TABLE_NAME,
-        };
-
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
+        TableConnector cfg_nbr_table(&cfgDb, CFG_NEIGH_TABLE_NAME);
+        TableConnector cfg_intf_table(&cfgDb, CFG_INTF_TABLE_NAME);
+        TableConnector cfg_device_metadat_table(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+
+        vector<TableConnector> nbrTables = {
+                          cfg_nbr_table,
+                          cfg_intf_table,
+                          cfg_device_metadat_table,
+        };
+
+        NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, nbrTables);
 
         WarmStart::initialize("nbrmgrd", "swss");
         WarmStart::checkWarmStart("nbrmgrd", "swss");
