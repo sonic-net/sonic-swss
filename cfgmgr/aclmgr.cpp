@@ -568,7 +568,14 @@ bool AclMgr::addTcFlowerFilter(const string &iface, const AclRuleFields &fields)
     if (!redirectTarget.empty())
         actions << "action mirred egress redirect dev " << kernutil::resolveInterface(redirectTarget);
     else
-        actions << "action " << kernutil::packetActionToTc(fields.packet_action);
+    {
+        string action = fields.packet_action;
+        /* A MIRROR-type rule has no PACKET_ACTION (it only mirrors); the
+         * traffic must be forwarded after mirroring, not dropped. */
+        if (action.empty() && !mirrorSession.empty())
+            action = PACKET_ACTION_FORWARD;
+        actions << "action " << kernutil::packetActionToTc(action);
+    }
 
     /* --- assemble + run (skip_sw first, then software fallback) --- */
     string cmd_hw = match.str() + " skip_sw " + actions.str();

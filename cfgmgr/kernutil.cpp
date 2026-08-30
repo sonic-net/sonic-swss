@@ -102,7 +102,10 @@ string policerToTcPolice(const map<string, string> &policer)
     if (packets)
         os << "action police pkts_rate " << cir << " pkts_burst " << cbs;
     else
-        os << "action police rate " << cir << " burst " << cbs;
+        /* cir/cbs are bytes/sec per sonic-policer.yang, but tc's bare `rate`
+         * token is interpreted as bits/sec (8x too strict). The `bps` suffix
+         * makes tc read it as bytes/sec. */
+        os << "action police rate " << cir << "bps burst " << cbs;
 
     /* Two-rate (tr_tcm) policers add a peak rate + peak burst (mtu). The tc
      * police peakrate/mtu are byte-meter only, so skip for packets meter. */
@@ -111,7 +114,7 @@ string policerToTcPolice(const map<string, string> &policer)
         string pir = getField(policer, "pir");
         string pbs = getField(policer, "pbs");
         if (!pir.empty() && !pbs.empty())
-            os << " peakrate " << pir << " mtu " << pbs;
+            os << " peakrate " << pir << "bps mtu " << pbs;
     }
 
     /* conform-exceed <exceed>/<conform>: red (exceed) first, green (conform)

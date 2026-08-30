@@ -549,14 +549,24 @@ bool QosMgr::applyMapsToPort(const string &iface,
     if (maps.count(QOS_FIELD_TC_TO_QUEUE))
     {
         const auto &m = m_tcToQueueMap[maps.at(QOS_FIELD_TC_TO_QUEUE)];
+        /* Build the 16-entry skb->priority -> band map from TC_TO_QUEUE_MAP.
+         * Use the software `prio` qdisc instead of `mqprio`: veth interfaces
+         * have a single tx queue, so mqprio (which needs real hardware queues)
+         * fails with "Device does not support hardware offload". */
+        int priomap[16] = {0};
+        for (const auto &kv : m)
+        {
+            long long tc = 0, queue = 0;
+            if (parseInt(kv.first, tc) && parseInt(kv.second, queue) &&
+                tc >= 0 && tc < 16 && queue >= 0 && queue < 16)
+                priomap[tc] = (int)queue;
+        }
         ostringstream cmd;
-        cmd << TC_CMD << " qdisc replace dev " << iface << " root mqprio num_tc 8 map";
-        /* build the 16-entry skb->priority -> tc map; default 0 */
+        cmd << TC_CMD << " qdisc replace dev " << iface << " root handle 1: prio bands 8 priomap";
         for (int i = 0; i < 16; i++)
-            cmd << " 0";
+            cmd << " " << priomap[i];
         SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
         swss::exec(cmd.str(), res);
-        (void)m;
     }
 
     if (maps.count(QOS_FIELD_TC_TO_DSCP))
