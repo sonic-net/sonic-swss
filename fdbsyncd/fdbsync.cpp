@@ -1290,6 +1290,14 @@ void FdbSync::onMsgNhg(struct nlmsghdr *msg)
     }
     else if (msg->nlmsg_type == RTM_DELNEXTHOP)
     {
+        if (m_l2NhgMap.find(nhid) == m_l2NhgMap.end())
+        {
+            SWSS_LOG_DEBUG(
+                "L2_NEXTHOP_GROUP_TABLE: DEL nhid=%u ignored; entry is not present in L2 NHG cache",
+                nhid);
+            return;
+        }
+
         /* Delete from L2_NEXTHOP_GROUP_TABLE */
         m_l2NhgTable.del(to_string(nhid));
         m_l2NhgMap.erase(nhid);

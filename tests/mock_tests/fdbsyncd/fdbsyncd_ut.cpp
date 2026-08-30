@@ -1234,6 +1234,35 @@ TEST_F(FdbSyncdEvpnMhTest, NhgRefcounting)
     free(nhg_del);
 }
 
+// Regression test for sonic-net/sonic-swss#4842. The fake ProducerStateTable
+// (mock_table.cpp) backs onto a plain std::map, so a DEL of an already-absent
+// key is indistinguishable from never calling DEL at all. To make an
+// unguarded DEL observable, pre-seed a sentinel row at the ignored nhid's
+// key: an unguarded del() would wipe it out, while the fix leaves it intact.
+TEST_F(FdbSyncdEvpnMhTest, IgnoredOifNextHopDelete)
+{
+    uint32_t nhid = 9000;
+
+    std::vector<FieldValueTuple> sentinel = { FieldValueTuple("remote_vtep", "192.0.2.1") };
+    getNhgTable().set(std::to_string(nhid), sentinel);
+
+    struct nlmsghdr *create = create_l2_nhg_member_msg(nhid, "10.0.0.50", 300);
+    m_mockFdbSync.onMsgRaw(create);
+    free(create);
+
+    EXPECT_EQ(m_mockFdbSync.m_l2NhgMap.count(nhid), 0u);
+
+    struct nlmsghdr *del = delete_nhg_msg(nhid);
+    m_mockFdbSync.onMsgRaw(del);
+    free(del);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getNhgTable().get(std::to_string(nhid), values));
+    ASSERT_EQ(values.size(), 1u);
+    EXPECT_EQ(fvField(values[0]), "remote_vtep");
+    EXPECT_EQ(fvValue(values[0]), "192.0.2.1");
+}
+
 TEST_F(FdbSyncdEvpnMhTest, TestMclagRemoteFdb)
 {
     // Test MCLAG remote FDB processing
