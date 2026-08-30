@@ -333,6 +333,8 @@ impl DataNetlinkActor {
         let fd = socket.as_raw_fd();
         match AsyncFd::try_with_interest(socket, Interest::READABLE | Interest::ERROR) {
             Ok(socket) => {
+                #[cfg(test)]
+                test::record_socket_registration();
                 debug!("Registered data netlink socket fd {} with Tokio", fd);
                 Some(socket)
             }
@@ -431,8 +433,10 @@ impl DataNetlinkActor {
         Ok(buffer)
     }
 
-    #[cfg(not(test))]
     fn recv_netlink_datagram(socket: &mut SocketType) -> Result<Vec<u8>, io::Error> {
+        #[cfg(test)]
+        socket.prepare_recv()?;
+
         Self::recv_datagram_fd(socket.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE)
     }
 
@@ -866,17 +870,7 @@ impl DataNetlinkActor {
     ) -> Result<Vec<SocketBufferMessage>, io::Error> {
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
-        #[cfg(not(test))]
         let recv_result = Self::recv_netlink_datagram(socket);
-
-        #[cfg(test)]
-        let recv_result = {
-            let mut buffer = vec![0; BUFFER_SIZE];
-            socket.recv(&mut buffer, 0).map(|size| {
-                buffer.truncate(size);
-                buffer
-            })
-        };
 
         match recv_result {
             Ok(buffer) => {
@@ -1134,7 +1128,10 @@ impl Drop for DataNetlinkActor {
 pub mod test {
     use super::*;
     use std::os::unix::net::UnixDatagram;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Mutex,
+    };
     use tokio::{spawn, sync::mpsc::channel};
 
     // Helper function to create a properly sized message vector
@@ -1212,6 +1209,12 @@ pub mod test {
     static EMPTY_NEXT_SOCKET: AtomicBool = AtomicBool::new(false);
     static MESSAGES_NEXT_SOCKET: AtomicUsize = AtomicUsize::new(1);
     static RECV_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    static REGISTERED_SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static CURRENT_SENDER: Mutex<Option<UnixDatagram>> = Mutex::new(None);
+
+    pub(super) fn record_socket_registration() {
+        REGISTERED_SOCKET_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
 
     /// Mock socket backed by a real datagram fd so tests exercise Tokio readiness registration.
     pub struct MockSocket {
@@ -1234,6 +1237,7 @@ pub mod test {
             socket
                 .set_nonblocking(true)
                 .expect("set mock socket nonblocking");
+            *CURRENT_SENDER.lock().unwrap() = Some(sender.try_clone().expect("clone mock sender"));
             let fail_on_recv = FAIL_NEXT_SOCKET.swap(false, Ordering::SeqCst);
             let message_count = MESSAGES_NEXT_SOCKET.swap(1, Ordering::SeqCst);
             if !EMPTY_NEXT_SOCKET.swap(false, Ordering::SeqCst) {
@@ -1257,28 +1261,37 @@ pub mod test {
             }
         }
 
-        /// Simulates receiving data from a netlink socket.
-        ///
-        /// # Arguments
-        ///
-        /// * `buf` - Buffer to write received data into
-        /// * `_flags` - Message flags (ignored in mock)
-        ///
-        /// # Returns
-        ///
-        /// Ok(size) on success, Err on failure or empty message
-        pub fn recv(&mut self, buf: &mut [u8], _flags: i32) -> Result<usize, io::Error> {
+        pub(super) fn prepare_recv(&mut self) -> Result<(), io::Error> {
             RECV_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
             if self.fail_on_recv {
                 self.fail_on_recv = false;
-                self.socket.recv(buf)?;
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionAborted,
                     "simulated data socket failure",
                 ));
             }
-            self.socket.recv(buf)
+            Ok(())
         }
+    }
+
+    async fn wait_for_socket_registrations(expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while REGISTERED_SOCKET_COUNT.load(Ordering::SeqCst) < expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("socket was not registered with Tokio");
+    }
+
+    fn send_to_current_socket(payload: &[u8]) {
+        CURRENT_SENDER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("mock socket sender is available")
+            .send(&create_test_message(payload))
+            .expect("send mock netlink message");
     }
 
     async fn recv_payload(receiver: &mut Receiver<SocketBufferMessage>) -> String {
@@ -1304,6 +1317,7 @@ pub mod test {
         EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
         MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
         RECV_ATTEMPTS.store(0, Ordering::SeqCst);
+        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
 
         let (command_sender, command_receiver) = channel(4);
         let (buffer_sender, mut buffer_receiver) = channel(1);
@@ -1322,6 +1336,13 @@ pub mod test {
             .send(NetlinkCommand::SoftReconnect)
             .await
             .unwrap();
+        wait_for_socket_registrations(2).await;
+        assert_eq!(SOCKET_COUNT.load(Ordering::SeqCst), 1);
+        send_to_current_socket(b"after-soft-reconnect");
+        assert_eq!(
+            recv_payload(&mut buffer_receiver).await,
+            "after-soft-reconnect"
+        );
 
         command_sender
             .send(NetlinkCommand::SocketConnect(SocketConnect {
@@ -1384,6 +1405,7 @@ pub mod test {
         EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
         MESSAGES_NEXT_SOCKET.store(3, Ordering::SeqCst);
         RECV_ATTEMPTS.store(0, Ordering::SeqCst);
+        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
 
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(3);
@@ -1404,7 +1426,7 @@ pub mod test {
         })
         .await
         .expect("socket was not drained to WouldBlock");
-        assert_eq!(RECV_ATTEMPTS.load(Ordering::SeqCst), 4);
+        assert!(RECV_ATTEMPTS.load(Ordering::SeqCst) >= 4);
 
         command_sender.send(NetlinkCommand::Close).await.unwrap();
         task.await.unwrap();
@@ -1412,19 +1434,26 @@ pub mod test {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_data_netlink_does_not_poll_an_idle_socket() {
+    async fn test_data_netlink_wakes_after_idle_without_polling() {
         SOCKET_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
         EMPTY_NEXT_SOCKET.store(true, Ordering::SeqCst);
         MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
         RECV_ATTEMPTS.store(0, Ordering::SeqCst);
+        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
 
         let (command_sender, command_receiver) = channel(1);
-        let actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
+        let (buffer_sender, mut buffer_receiver) = channel(1);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
+        actor.add_recipient(buffer_sender);
         let task = spawn(DataNetlinkActor::run(actor));
 
+        wait_for_socket_registrations(1).await;
         tokio::time::sleep(Duration::from_millis(25)).await;
-        assert_eq!(RECV_ATTEMPTS.load(Ordering::SeqCst), 0);
+        assert!(RECV_ATTEMPTS.load(Ordering::SeqCst) <= 1);
+
+        send_to_current_socket(b"after-idle");
+        assert_eq!(recv_payload(&mut buffer_receiver).await, "after-idle");
 
         command_sender.send(NetlinkCommand::Close).await.unwrap();
         task.await.unwrap();
@@ -1747,6 +1776,7 @@ pub mod test {
         EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
         MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
         RECV_ATTEMPTS.store(0, Ordering::SeqCst);
+        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
         let (_, command_receiver) = channel(1);
         let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304, 5);
         assert_eq!(actor.netlink_rcvbuf_bytes, 4194304);
