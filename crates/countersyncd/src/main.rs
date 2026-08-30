@@ -219,12 +219,12 @@ struct Args {
     )]
     netlink_rcvbuf: usize,
 
-    /// Socket readiness poll interval in milliseconds. Shorter than HFT sample interval (e.g. 10 ms) reduces ENOBUFS.
+    /// Deprecated compatibility option. Netlink reads are now driven by fd readiness.
     #[arg(
         long,
         default_value = "5",
         value_parser = clap::value_parser!(u64).range(1..),
-        help = "Poll interval in ms for netlink socket readiness. Default 5, minimum 1"
+        help = "Deprecated and ignored; netlink reads are event-driven"
     )]
     socket_readiness_timeout_ms: u64,
 
@@ -323,10 +323,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Comm stats log interval: {} seconds",
         args.comm_stats_interval
     );
-    info!(
-        "Socket readiness poll interval: {} ms",
-        args.socket_readiness_timeout_ms
-    );
+    info!("Netlink data socket uses event-driven readiness notifications");
     info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
         args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
@@ -593,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn test_socket_readiness_timeout_custom() {
+    fn test_deprecated_socket_readiness_timeout_is_accepted() {
         let args = parse(&["countersyncd", "--socket-readiness-timeout-ms", "10"]).unwrap();
         assert_eq!(args.socket_readiness_timeout_ms, 10);
     }
