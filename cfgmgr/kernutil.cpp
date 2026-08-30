@@ -102,10 +102,17 @@ string policerToTcPolice(const map<string, string> &policer)
     if (packets)
         os << "action police pkts_rate " << cir << " pkts_burst " << cbs;
     else
+    {
         /* cir/cbs are bytes/sec per sonic-policer.yang, but tc's bare `rate`
          * token is interpreted as bits/sec (8x too strict). The `bps` suffix
-         * makes tc read it as bytes/sec. */
+         * makes tc read it as bytes/sec. tc's default police mtu/minburst (2Kb)
+         * is too small for jumbo frames (the veth/GSO path coalesces to ~9KB),
+         * so set a jumbo minburst for single-rate. tr_tcm supplies `mtu` from
+         * its pbs in the peakrate clause below. */
         os << "action police rate " << cir << "bps burst " << cbs;
+        if (getField(policer, "mode") != "tr_tcm")
+            os << " mtu 10000";
+    }
 
     /* Two-rate (tr_tcm) policers add a peak rate + peak burst (mtu). The tc
      * police peakrate/mtu are byte-meter only, so skip for packets meter. */
