@@ -98,31 +98,35 @@ string policerToTcPolice(const map<string, string> &policer)
 
     bool packets = (getField(policer, "meter_type") == "packets");
 
+    /* tc police's `conform-exceed` has only two actions (conform/exceed), so it
+     * cannot express trTCM's three colors. Collapse tr_tcm to a single-rate
+     * policer at the effective admission rate: PIR when yellow forwards (green
+     * == yellow), CIR when yellow drops (yellow == red). */
+    if (!packets && getField(policer, "mode") == "tr_tcm")
+    {
+        string yellow = getField(policer, "yellow_packet_action");
+        if (yellow != "drop" && yellow != "deny")
+        {
+            string pir = getField(policer, "pir");
+            string pbs = getField(policer, "pbs");
+            if (!pir.empty() && !pbs.empty())
+            {
+                cir = pir;
+                cbs = pbs;
+            }
+        }
+    }
+
     ostringstream os;
     if (packets)
         os << "action police pkts_rate " << cir << " pkts_burst " << cbs;
     else
-    {
         /* cir/cbs are bytes/sec per sonic-policer.yang, but tc's bare `rate`
          * token is interpreted as bits/sec (8x too strict). The `bps` suffix
          * makes tc read it as bytes/sec. tc's default police mtu/minburst (2Kb)
          * is too small for jumbo frames (the veth/GSO path coalesces to ~9KB),
-         * so set a jumbo minburst for single-rate. tr_tcm supplies `mtu` from
-         * its pbs in the peakrate clause below. */
-        os << "action police rate " << cir << "bps burst " << cbs;
-        if (getField(policer, "mode") != "tr_tcm")
-            os << " mtu 10000";
-    }
-
-    /* Two-rate (tr_tcm) policers add a peak rate + peak burst (mtu). The tc
-     * police peakrate/mtu are byte-meter only, so skip for packets meter. */
-    if (!packets && getField(policer, "mode") == "tr_tcm")
-    {
-        string pir = getField(policer, "pir");
-        string pbs = getField(policer, "pbs");
-        if (!pir.empty() && !pbs.empty())
-            os << " peakrate " << pir << "bps mtu " << pbs;
-    }
+         * so set a jumbo minburst. */
+        os << "action police rate " << cir << "bps burst " << cbs << " mtu 10000";
 
     /* conform-exceed <exceed>/<conform>: red (exceed) first, green (conform)
      * second. Green defaults to pipe (continue to mirror), red to drop. */
