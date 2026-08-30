@@ -300,6 +300,17 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
                             fields.ip_proto.c_str(), fields.l4_src_port.c_str(),
                             fields.packet_action.c_str(), fields.priority, fields.stage.c_str());
 
+            /* If this rule already exists with a different priority, tear down
+             * the old tc filter first. addTcFlowerFilter() only does
+             * delete-before-add at the NEW priority, so a priority change would
+             * otherwise leave the stale old-priority filter behind. */
+            auto old_it = m_ruleState.find(key);
+            if (old_it != m_ruleState.end() && old_it->second.priority != fields.priority)
+            {
+                for (auto &iface : old_it->second.interfaces)
+                    removeTcFlowerFilter(iface, old_it->second);
+            }
+
             bool all_ok = true;
             vector<string> resolved_ifaces;
             for (auto &iface : interfaces_to_program)
