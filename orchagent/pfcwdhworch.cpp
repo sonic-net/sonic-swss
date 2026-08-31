@@ -523,10 +523,10 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
     if (!startWdOnPort(port, detectionTime, restorationTime, action, pfcStatHistory))
     {
-        SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
-        return task_process_status::task_need_retry;
+        return handleStartWdOnPortFailure(port);
     }
 
+    clearPfcWdPending(port);
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
     // Port is tracked in m_hwWdPorts by configureHwWatchdog
     return task_process_status::task_success;
@@ -667,17 +667,16 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%ums, action=%s",
-                    port.m_alias.c_str(), detectionTime, restorationTime, serializeAction(action).c_str());
-
     // Validate port has lossless TCs before configuring hardware
     set<uint8_t> losslessTc;
     if (!getLosslessTcsForPort(port, losslessTc))
     {
-        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
         writeFailureStatus(port);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%ums, action=%s",
+                    port.m_alias.c_str(), detectionTime, restorationTime, serializeAction(action).c_str());
 
     // Cleanup handler called on configuration failure
     auto handleFailure = [this, &port](const string& errorMsg) -> bool {
@@ -977,15 +976,14 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Disabling hardware watchdog on port %s", port.m_alias.c_str());
-
     // Get lossless TCs for this port
     std::set<uint8_t> losslessTc;
     if (!getLosslessTcsForPort(port, losslessTc))
     {
-        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
         return true;  // Nothing to disable
     }
+
+    SWSS_LOG_NOTICE("Disabling hardware watchdog on port %s", port.m_alias.c_str());
 
     // Disable PFC DLDR on each lossless queue and remove from queue→port mapping
     for (auto tc : losslessTc)

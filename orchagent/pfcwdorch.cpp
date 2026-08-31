@@ -66,6 +66,25 @@ bool PfcWdBaseOrch::getTimerRange(PfcWdTimerRange& range) const
     return true;
 }
 
+task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    // A port with no lossless TCs is not ready for the PFC watchdog yet, so the entry stays pending and starts once the port becomes PFC-ready.
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        if (m_pfcwdPendingPorts.insert(port.m_alias).second)
+        {
+            SWSS_LOG_INFO("Deferring PFC Watchdog on port %s: no lossless TC yet", port.m_alias.c_str());
+        }
+        return task_process_status::task_need_retry;
+    }
+
+    SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+    return task_process_status::task_need_retry;
+}
+
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
