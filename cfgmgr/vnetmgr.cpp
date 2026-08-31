@@ -123,7 +123,17 @@ static int cmdCreateFdbEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, s
     bridgeEntry << BRIDGE_CMD " fdb append " << shellquote(info.m_dstMac)
                 << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
                 << " master static";
-    return swss::exec(bridgeEntry.str(), res);
+    r = swss::exec(bridgeEntry.str(), res);
+    if (r != RET_SUCCESS)
+    {
+        ostringstream rollback;
+        rollback << BRIDGE_CMD " fdb del " << shellquote(info.m_dstMac)
+                 << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
+                 << " dst " << shellquote(info.m_dstIp);
+        std::string rbRes;
+        swss::exec(rollback.str(), rbRes);
+    }
+    return r;
 }
 
 static int cmdDeleteFdbEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
@@ -167,7 +177,7 @@ void VNetMgr::doTask(Consumer &consumer)
         auto t = it->second;
         const std::string & op = kfvOp(t);
 
-        if (op == SET_COMMAND || op == DEL_COMMAND)
+        if (op == SET_COMMAND)
         {
             if (table_name == CFG_VNET_TABLE_NAME)
             {
@@ -176,6 +186,25 @@ void VNetMgr::doTask(Consumer &consumer)
             else if (table_name == CFG_VNET_RT_TUNNEL_TABLE_NAME)
             {
                 task_result = doVnetRouteTunnelCreateTask(t);
+            }
+            else if (table_name == CFG_VNET_RT_TABLE_NAME)
+            {
+                task_result = doVnetRouteTask(t, op);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+            }
+        }
+        if (op == DEL_COMMAND)
+        {
+            if (table_name == CFG_VNET_TABLE_NAME)
+            {
+                task_result = doVnetDeleteTask(t);
+            }
+            else if (table_name == CFG_VNET_RT_TUNNEL_TABLE_NAME)
+            {
+                task_result = doVnetRouteTunnelDeleteTask(t);
             }
             else if (table_name == CFG_VNET_RT_TABLE_NAME)
             {
@@ -298,30 +327,38 @@ bool VNetMgr::doVnetRouteTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
     routeInfo.m_routeName = vnet_route_name;
     m_vnetRouteTunnelCache[vnet_route_name] = routeInfo;
 
-    if (routeInfo.m_installOnKernel)
+    try
     {
-        std::string _addr;
-        if (!shouldAddNeighEntry(routeInfo.m_prefix, _addr))
+        if (routeInfo.m_installOnKernel)
         {
-            SWSS_LOG_ERROR("Skipping kernel install for non-host tunnel route %s"
-                           " in vnet %s: bridge/FDB path requires a host prefix",
-                           routeInfo.m_prefix.c_str(), routeInfo.m_vnet.c_str());
+            std::string _addr;
+            if (!shouldAddNeighEntry(routeInfo.m_prefix, _addr))
+            {
+                SWSS_LOG_ERROR("Skipping kernel install for non-host tunnel route %s"
+                               " in vnet %s: bridge/FDB path requires a host prefix",
+                               routeInfo.m_prefix.c_str(), routeInfo.m_vnet.c_str());
+            }
+            else if (!createKernelRoute(routeInfo))
+            {
+                SWSS_LOG_ERROR("Failed to create kernel route %s", vnet_route_name.c_str());
+                return false;
+            }
         }
-        else if (!createKernelRoute(routeInfo))
+        else
         {
-            SWSS_LOG_ERROR("Failed to create kernel route %s", vnet_route_name.c_str());
-            return false;
+            deleteKernelRoute(routeInfo);
         }
     }
-    else
+    catch (const std::exception & e)
     {
-        deleteKernelRoute(routeInfo);
+        SWSS_LOG_ERROR("Kernel install/uninstall for vnet route %s failed: %s",
+                       vnet_route_name.c_str(), e.what());
     }
 
     string vnetRouteTunnelName = kfvKey(t);
     replace(vnetRouteTunnelName.begin(), vnetRouteTunnelName.end(), config_db_key_delimiter, delimiter);
 
-    std::vector<swss::FieldValueTuple> values = const_cast<std::vector<swss::FieldValueTuple>&>(kfvFieldsValues(t));
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(t);
     values.erase(std::remove_if(values.begin(), values.end(),
                 [](const swss::FieldValueTuple & fv) { return fv.first == INSTALL_ON_KERNEL; }),
                 values.end());
@@ -340,7 +377,15 @@ bool VNetMgr::doVnetRouteTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
         SWSS_LOG_WARN("Vxlan route tunnel %s hasn't been created", vnet_route_name.c_str());
         return true;
     }
-    deleteKernelRoute(it->second);
+    try
+    {
+        deleteKernelRoute(it->second);
+    }
+    catch (const std::exception & e)
+    {
+        SWSS_LOG_ERROR("Kernel uninstall for vnet route %s failed: %s",
+                       vnet_route_name.c_str(), e.what());
+    }
     m_vnetRouteTunnelCache.erase(it);
     std::string appKey = vnet_route_name;
     std::replace(appKey.begin(), appKey.end(), config_db_key_delimiter, delimiter);
