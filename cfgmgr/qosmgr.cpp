@@ -584,6 +584,25 @@ bool QosMgr::applyMapsToPort(const string &iface,
         }
     }
 
+    if (maps.count(QOS_FIELD_SCHEDULER))
+    {
+        const auto &cfg = m_schedulerMap[maps.at(QOS_FIELD_SCHEDULER)];
+        string rate = cfg.count(SCHED_FIELD_PIR) ? cfg.at(SCHED_FIELD_PIR)
+                    : (cfg.count(SCHED_FIELD_CIR) ? cfg.at(SCHED_FIELD_CIR) : "");
+        string burst = cfg.count(SCHED_FIELD_PBS) ? cfg.at(SCHED_FIELD_PBS)
+                     : (cfg.count(SCHED_FIELD_CBS) ? cfg.at(SCHED_FIELD_CBS) : "");
+        if (!rate.empty() && !burst.empty())
+        {
+            /* Port-level scheduler = port shaping. A single tbf shaper caps the
+             * whole port to the scheduler's peak (max-bandwidth) rate/burst. */
+            ostringstream cmd;
+            cmd << TC_CMD << " qdisc replace dev " << iface
+                << " root handle 1: tbf rate " << rate << "bps burst " << burst;
+            SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
+            swss::exec(cmd.str(), res);
+        }
+    }
+
     reason.clear();
     return true;
 }
