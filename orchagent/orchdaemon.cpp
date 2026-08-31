@@ -827,13 +827,20 @@ bool OrchDaemon::init()
 
         // Complete hardware recovery needs deadlock detection and recovery in
         // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
-        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT, and a platform
+        // that reports DLDR may report DLR init too, so DLDR is checked first:
+        // starting a software handler there would duplicate the hardware.
         if (gSwitchOrch->checkPfcDldrEnable())
         {
-            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
         }
-
-        if(pfcDlrInit)
+        else if(pfcDlrInit)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
