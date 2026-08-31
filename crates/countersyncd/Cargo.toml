@@ -68,6 +68,7 @@ swss-common = { workspace = true }
 
 [dev-dependencies]
 # Test utilities  
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 async-trait = { workspace = true }

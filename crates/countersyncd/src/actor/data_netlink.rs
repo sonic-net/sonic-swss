@@ -646,17 +646,15 @@ impl DataNetlinkActor {
     #[cfg(test)]
     fn connect_with_nl_resolver(&mut self, family: &str, group: &str) -> Option<SocketType> {
         test::record_connection_attempt();
-        if !test::connections_enabled() {
+        let Some((family_id, group_id)) = test::resolve_mock_family(family, group) else {
             debug!(
-                "Test: family '{}' is unavailable, connection failed",
-                family
+                "Test: family '{}', group '{}' is unavailable, connection failed",
+                family, group
             );
             return None;
-        }
+        };
 
-        // For tests, we always allow successful connections
-        // The MockSocket itself will control data availability
-        let sock = SocketType::new(family, group);
+        let sock = SocketType::new(family, group, family_id, group_id);
         if sock.valid {
             debug!("Test: Created new valid MockSocket");
             Some(sock)
@@ -1012,7 +1010,10 @@ impl DataNetlinkActor {
                                 result => ActorEvent::SocketRead(result.map(Some)),
                             }
                         }
-                        Err(e) => ActorEvent::SocketRead(Err(e)),
+                        Err(e) => {
+                            actor.socket = Self::unregister_socket(&mut socket);
+                            ActorEvent::SocketRead(Err(e))
+                        }
                     }
                 }
                 _ = heartbeat_interval.tick() => ActorEvent::Heartbeat,
@@ -1099,7 +1100,9 @@ impl DataNetlinkActor {
                         }
                         Err(e) => {
                             warn!("Failed to receive message: {:?}", e);
-                            actor.socket = Self::unregister_socket(&mut socket);
+                            if actor.socket.is_none() {
+                                actor.socket = Self::unregister_socket(&mut socket);
+                            }
                             actor.disconnect();
                             consecutive_failures += 1;
                             if consecutive_failures <= MAX_LOCAL_RECONNECT_ATTEMPTS {
@@ -1144,8 +1147,9 @@ pub mod test {
     use tokio::{spawn, sync::mpsc::channel};
 
     // Helper function to create a properly sized message vector
-    fn create_test_message(payload: &[u8]) -> Vec<u8> {
-        let msg = create_mock_netlink_message(payload);
+    fn create_test_message_for_family(payload: &[u8], family_id: u16) -> Vec<u8> {
+        let mut msg = create_mock_netlink_message(payload);
+        msg[4..6].copy_from_slice(&family_id.to_le_bytes());
         let actual_len = 20 + payload.len(); // 16 (nlmsg) + 4 (genl) + payload
         msg[..actual_len].to_vec()
     }
@@ -1220,9 +1224,28 @@ pub mod test {
     static RECV_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
     static REGISTERED_SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
     static CONNECTION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
-    static LIVE_SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static CONNECTIONS_ENABLED: AtomicBool = AtomicBool::new(true);
-    static CURRENT_SENDER: Mutex<Option<UnixDatagram>> = Mutex::new(None);
+    static NEXT_SOCKET_ID: AtomicUsize = AtomicUsize::new(1);
+    static AUTO_SEED_SOCKETS: AtomicBool = AtomicBool::new(true);
+    static FAIL_SOCKET_ID: AtomicUsize = AtomicUsize::new(0);
+    static MOCK_KERNEL_FAMILY: Mutex<Option<MockFamily>> = Mutex::new(None);
+    static ALLOW_ANY_FAMILY: AtomicBool = AtomicBool::new(true);
+    static LIVE_SUBSCRIPTIONS: Mutex<Vec<MockSubscription>> = Mutex::new(Vec::new());
+    static SUCCESSFUL_CONNECTIONS: Mutex<Vec<(u16, u32)>> = Mutex::new(Vec::new());
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct MockFamily {
+        name: String,
+        group: String,
+        family_id: u16,
+        group_id: u32,
+    }
+
+    struct MockSubscription {
+        socket_id: usize,
+        family_id: u16,
+        group_id: u32,
+        sender: UnixDatagram,
+    }
 
     pub(super) fn record_socket_registration() {
         REGISTERED_SOCKET_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -1232,11 +1255,24 @@ pub mod test {
         CONNECTION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub(super) fn connections_enabled() -> bool {
-        CONNECTIONS_ENABLED.load(Ordering::SeqCst)
+    pub(super) fn resolve_mock_family(family: &str, group: &str) -> Option<(u16, u32)> {
+        if ALLOW_ANY_FAMILY.load(Ordering::SeqCst) {
+            return Some((0x20, 0x100));
+        }
+
+        MOCK_KERNEL_FAMILY
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|entry| entry.name == family && entry.group == group)
+            .map(|entry| (entry.family_id, entry.group_id))
     }
 
     pub(crate) fn reset_mock_state(empty_next_socket: bool, messages_next_socket: usize) {
+        assert!(
+            LIVE_SUBSCRIPTIONS.lock().unwrap().is_empty(),
+            "cannot reset mock state while data sockets are active"
+        );
         SOCKET_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
         EMPTY_NEXT_SOCKET.store(empty_next_socket, Ordering::SeqCst);
@@ -1244,21 +1280,53 @@ pub mod test {
         RECV_ATTEMPTS.store(0, Ordering::SeqCst);
         REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
         CONNECTION_ATTEMPTS.store(0, Ordering::SeqCst);
-        LIVE_SOCKET_COUNT.store(0, Ordering::SeqCst);
-        CONNECTIONS_ENABLED.store(true, Ordering::SeqCst);
-        *CURRENT_SENDER.lock().unwrap() = None;
+        AUTO_SEED_SOCKETS.store(true, Ordering::SeqCst);
+        FAIL_SOCKET_ID.store(0, Ordering::SeqCst);
+        ALLOW_ANY_FAMILY.store(true, Ordering::SeqCst);
+        *MOCK_KERNEL_FAMILY.lock().unwrap() = None;
+        SUCCESSFUL_CONNECTIONS.lock().unwrap().clear();
     }
 
-    pub(crate) fn set_connections_enabled(enabled: bool) {
-        CONNECTIONS_ENABLED.store(enabled, Ordering::SeqCst);
+    pub(crate) fn use_mock_kernel_registry() {
+        ALLOW_ANY_FAMILY.store(false, Ordering::SeqCst);
+        AUTO_SEED_SOCKETS.store(false, Ordering::SeqCst);
+        *MOCK_KERNEL_FAMILY.lock().unwrap() = None;
+    }
+
+    pub(crate) fn register_mock_family(family: &str, group: &str, family_id: u16, group_id: u32) {
+        ALLOW_ANY_FAMILY.store(false, Ordering::SeqCst);
+        *MOCK_KERNEL_FAMILY.lock().unwrap() = Some(MockFamily {
+            name: family.to_string(),
+            group: group.to_string(),
+            family_id,
+            group_id,
+        });
+    }
+
+    pub(crate) fn unregister_mock_family(family: &str, family_id: u16) {
+        let mut registry = MOCK_KERNEL_FAMILY.lock().unwrap();
+        if registry
+            .as_ref()
+            .is_some_and(|entry| entry.name == family && entry.family_id == family_id)
+        {
+            *registry = None;
+        }
+    }
+
+    pub(crate) fn mock_family_exists(family: &str) -> bool {
+        if ALLOW_ANY_FAMILY.load(Ordering::SeqCst) {
+            return true;
+        }
+
+        MOCK_KERNEL_FAMILY
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|entry| entry.name == family)
     }
 
     pub(crate) fn connection_attempts() -> usize {
         CONNECTION_ATTEMPTS.load(Ordering::SeqCst)
-    }
-
-    pub(crate) fn socket_count() -> usize {
-        SOCKET_COUNT.load(Ordering::SeqCst)
     }
 
     pub(crate) fn registered_socket_count() -> usize {
@@ -1266,7 +1334,42 @@ pub mod test {
     }
 
     pub(crate) fn live_socket_count() -> usize {
-        LIVE_SOCKET_COUNT.load(Ordering::SeqCst)
+        LIVE_SUBSCRIPTIONS.lock().unwrap().len()
+    }
+
+    pub(crate) fn current_subscription() -> Option<(u16, u32)> {
+        LIVE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .last()
+            .map(|subscription| (subscription.family_id, subscription.group_id))
+    }
+
+    pub(crate) fn successful_connections() -> Vec<(u16, u32)> {
+        SUCCESSFUL_CONNECTIONS.lock().unwrap().clone()
+    }
+
+    pub(crate) fn send_kernel_data(family_id: u16, group_id: u32, payload: &[u8]) -> bool {
+        LIVE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|subscription| {
+                subscription.family_id == family_id && subscription.group_id == group_id
+            })
+            .fold(false, |sent, subscription| {
+                subscription.send(payload) || sent
+            })
+    }
+
+    pub(crate) fn fail_current_socket_on_next_recv() {
+        let socket_id = LIVE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .last()
+            .expect("mock data socket is connected")
+            .socket_id;
+        FAIL_SOCKET_ID.store(socket_id, Ordering::SeqCst);
     }
 
     /// Mock socket backed by a real datagram fd so tests exercise Tokio readiness registration.
@@ -1275,6 +1378,7 @@ pub mod test {
         socket: UnixDatagram,
         _sender: UnixDatagram,
         fail_on_recv: bool,
+        socket_id: usize,
     }
 
     impl AsRawFd for MockSocket {
@@ -1284,17 +1388,28 @@ pub mod test {
     }
 
     impl MockSocket {
-        pub fn new(family: &str, group: &str) -> Self {
+        pub fn new(family: &str, group: &str, family_id: u16, group_id: u32) -> Self {
             let count = SOCKET_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+            let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::SeqCst);
             let (sender, socket) = UnixDatagram::pair().expect("create mock socket pair");
-            LIVE_SOCKET_COUNT.fetch_add(1, Ordering::SeqCst);
             socket
                 .set_nonblocking(true)
                 .expect("set mock socket nonblocking");
-            *CURRENT_SENDER.lock().unwrap() = Some(sender.try_clone().expect("clone mock sender"));
+            LIVE_SUBSCRIPTIONS.lock().unwrap().push(MockSubscription {
+                socket_id,
+                family_id,
+                group_id,
+                sender: sender.try_clone().expect("clone mock sender"),
+            });
+            SUCCESSFUL_CONNECTIONS
+                .lock()
+                .unwrap()
+                .push((family_id, group_id));
             let fail_on_recv = FAIL_NEXT_SOCKET.swap(false, Ordering::SeqCst);
             let message_count = MESSAGES_NEXT_SOCKET.swap(1, Ordering::SeqCst);
-            if !EMPTY_NEXT_SOCKET.swap(false, Ordering::SeqCst) {
+            if AUTO_SEED_SOCKETS.load(Ordering::SeqCst)
+                && !EMPTY_NEXT_SOCKET.swap(false, Ordering::SeqCst)
+            {
                 for message_index in 1..=message_count {
                     let payload = if message_count == 1 {
                         format!("{family}/{group}/socket-{count}")
@@ -1302,7 +1417,10 @@ pub mod test {
                         format!("{family}/{group}/message-{message_index}")
                     };
                     sender
-                        .send(&create_test_message(payload.as_bytes()))
+                        .send(&create_test_message_for_family(
+                            payload.as_bytes(),
+                            family_id,
+                        ))
                         .expect("seed mock socket");
                 }
             }
@@ -1312,12 +1430,16 @@ pub mod test {
                 socket,
                 _sender: sender,
                 fail_on_recv,
+                socket_id,
             }
         }
 
         pub(super) fn prepare_recv(&mut self) -> Result<(), io::Error> {
             RECV_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
-            if self.fail_on_recv {
+            let injected_failure = FAIL_SOCKET_ID
+                .compare_exchange(self.socket_id, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok();
+            if self.fail_on_recv || injected_failure {
                 self.fail_on_recv = false;
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionAborted,
@@ -1330,7 +1452,18 @@ pub mod test {
 
     impl Drop for MockSocket {
         fn drop(&mut self) {
-            LIVE_SOCKET_COUNT.fetch_sub(1, Ordering::SeqCst);
+            LIVE_SUBSCRIPTIONS
+                .lock()
+                .unwrap()
+                .retain(|entry| entry.socket_id != self.socket_id);
+        }
+    }
+
+    impl MockSubscription {
+        fn send(&self, payload: &[u8]) -> bool {
+            self.sender
+                .send(&create_test_message_for_family(payload, self.family_id))
+                .is_ok()
         }
     }
 
@@ -1345,13 +1478,12 @@ pub mod test {
     }
 
     fn send_to_current_socket(payload: &[u8]) {
-        CURRENT_SENDER
+        assert!(LIVE_SUBSCRIPTIONS
             .lock()
             .unwrap()
-            .as_ref()
+            .last()
             .expect("mock socket sender is available")
-            .send(&create_test_message(payload))
-            .expect("send mock netlink message");
+            .send(payload));
     }
 
     async fn recv_payload(receiver: &mut Receiver<SocketBufferMessage>) -> String {
