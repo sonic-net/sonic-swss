@@ -350,7 +350,24 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
             if (!ok)
                 SWSS_LOG_WARN("SCHEDULER %s rejected: %s", name.c_str(), reason.c_str());
             else
+            {
                 m_schedulerMap[name] = cfg;
+
+                /* SCHEDULER -> PORT dependency: re-apply the port-level shaper
+                 * for every port whose PORT_QOS_MAP references this scheduler,
+                 * so a runtime rate update is reflected without re-binding. */
+                for (const auto &entry : m_portQosMap)
+                {
+                    const string &port = entry.first;
+                    const map<string, string> &maps = entry.second;
+                    if (maps.count(QOS_FIELD_SCHEDULER) &&
+                        maps.at(QOS_FIELD_SCHEDULER) == name)
+                    {
+                        string iface = kernutil::resolveInterface(port);
+                        applyMapsToPort(iface, maps, reason);
+                    }
+                }
+            }
 
             writeMapStatus(m_stateSchedulerTable, name, ok ? "active" : "inactive");
             it = consumer.m_toSync.erase(it);
