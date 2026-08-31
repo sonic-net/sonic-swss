@@ -3,6 +3,7 @@
 //! This module defines data structures for converting SAI statistics
 //! to OpenTelemetry gauge format for export to observability systems.
 
+use super::aggregator::Heatmap;
 use crate::message::saistats::{SAIStat, SAIStats};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
@@ -37,7 +38,7 @@ pub struct OtelDataPoint {
     /// Timestamp in nanoseconds since Unix epoch
     pub time_unix_nano: u64,
     /// The gauge value (converted from SAI counter)
-    pub value: i64,
+    pub value: u64,
 }
 
 /// OpenTelemetry Attribute (Key-Value Pair)
@@ -49,6 +50,38 @@ pub struct OtelAttribute {
     pub key: String,
     /// Attribute value
     pub value: String,
+}
+
+impl Heatmap {
+    pub fn to_proto(
+        &self,
+        session_key: Option<&str>,
+    ) -> opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+        let mut attributes = vec![
+            OtelAttribute::new("object_name", self.object_name.as_ref()).to_proto(),
+            OtelAttribute::new("sai_type_id", self.type_id.to_string()).to_proto(),
+            OtelAttribute::new("sai_stat_id", self.stat_id.to_string()).to_proto(),
+            OtelAttribute::new("heatmap_value_kind", self.value_kind.as_str()).to_proto(),
+            OtelAttribute::new("heatmap_quantity", self.quantity.as_str()).to_proto(),
+            OtelAttribute::new("heatmap_schema", self.schema.as_ref()).to_proto(),
+        ];
+        if let Some(session_key) = session_key {
+            attributes.push(OtelAttribute::new("hft_session", session_key).to_proto());
+        }
+
+        opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+            attributes,
+            start_time_unix_nano: self.start_time_unix_nano,
+            time_unix_nano: self.time_unix_nano,
+            count: self.count,
+            sum: Some(self.sum),
+            bucket_counts: self.bucket_counts.clone(),
+            explicit_bounds: self.explicit_bounds.to_vec(),
+            min: Some(self.min as f64),
+            max: Some(self.max as f64),
+            ..Default::default()
+        }
+    }
 }
 
 impl OtelAttribute {
@@ -83,15 +116,19 @@ impl OtelDataPoint {
         Self {
             attributes,
             time_unix_nano: observation_time_nano,
-            value: sai_stat.counter as i64,
+            value: sai_stat.counter,
         }
     }
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
     pub fn to_proto(&self) -> NumberDataPoint {
+        // Keep one numeric representation for a metric across its lifetime.
+        // OTLP doubles cannot exactly represent every u64 above 2^53, but they
+        // avoid signed wraparound and backend type changes at i64::MAX.
+        let value = number_data_point::Value::AsDouble(self.value as f64);
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
-            value: Some(number_data_point::Value::AsInt(self.value)),
+            value: Some(value),
             attributes: self.attributes.iter().map(|attr| attr.to_proto()).collect(),
             ..Default::default()
         }
@@ -173,8 +210,20 @@ impl OtelMetrics {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use crate::message::aggregator::{
+        default_heatmap_layout, heatmap_schema, HeatmapLayout, HeatmapQuantity, HeatmapValueKind,
+    };
     use crate::message::saistats::{SAIStat, SAIStats};
     use log::{info, debug};
+    use opentelemetry_proto::tonic::{
+        collector::metrics::v1::ExportMetricsServiceRequest,
+        common::v1::InstrumentationScope,
+        metrics::v1::{
+            metric::Data, AggregationTemporality, Histogram, Metric, ResourceMetrics, ScopeMetrics,
+        },
+        resource::v1::Resource,
+    };
+    use prost::Message;
 
     /// Helper function to create test SAI statistics (similar to saistats.rs pattern)
     fn create_test_sai_stats(observation_time: u64, stat_count: usize) -> SAIStats {
@@ -188,6 +237,90 @@ mod tests {
             .collect();
 
         SAIStats::new(observation_time, stats)
+    }
+
+    fn encoded_heatmap_point(
+        object_index: usize,
+        quantity: HeatmapQuantity,
+        layout: Arc<HeatmapLayout>,
+    ) -> opentelemetry_proto::tonic::metrics::v1::HistogramDataPoint {
+        let value_kind = match quantity {
+            HeatmapQuantity::DeltaBytes | HeatmapQuantity::DeltaCount => HeatmapValueKind::Delta,
+            HeatmapQuantity::AbsoluteBytes
+            | HeatmapQuantity::AbsoluteCells
+            | HeatmapQuantity::Native => HeatmapValueKind::CurrentOccupancy,
+        };
+        Heatmap {
+            object_name: Arc::from(format!("Ethernet{object_index}")),
+            type_id: u32::MAX,
+            stat_id: u32::MAX,
+            start_time_unix_nano: u64::MAX - 1,
+            time_unix_nano: u64::MAX,
+            count: 64,
+            sum: 4_096.0,
+            min: 64,
+            max: 64,
+            explicit_bounds: layout.explicit_bounds(),
+            bucket_counts: {
+                let mut counts = vec![0; layout.bucket_count()];
+                let bucket = layout
+                    .explicit_bounds_u64()
+                    .partition_point(|bound| *bound < 64);
+                counts[bucket] = 64;
+                counts
+            },
+            value_kind,
+            quantity,
+            unit: quantity.unit(),
+            schema: heatmap_schema(value_kind, quantity, layout.explicit_bounds_u64()),
+        }
+        .to_proto(Some("profile_with_representative_name|PORT"))
+    }
+
+    fn encoded_request_size(
+        series_count: usize,
+        layouts: Vec<(HeatmapQuantity, Arc<HeatmapLayout>)>,
+    ) -> usize {
+        let mut points = vec![Vec::new(); layouts.len()];
+        for index in 0..series_count {
+            let layout_index = index % layouts.len();
+            let (quantity, layout) = &layouts[layout_index];
+            points[layout_index].push(encoded_heatmap_point(index, *quantity, layout.clone()));
+        }
+        let metrics = layouts
+            .into_iter()
+            .zip(points)
+            .map(|((quantity, _), data_points)| Metric {
+                name: format!("sai_counter_{}_heatmap", quantity.as_str()),
+                description: format!("SAI {} heatmap", quantity.as_str()),
+                unit: quantity.unit().to_string(),
+                data: Some(Data::Histogram(Histogram {
+                    data_points,
+                    aggregation_temporality: AggregationTemporality::Delta as i32,
+                })),
+                ..Default::default()
+            })
+            .collect();
+        ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource {
+                    attributes: vec![OtelAttribute::new("service.name", "countersyncd").to_proto()],
+                    dropped_attributes_count: 0,
+                }),
+                scope_metrics: vec![ScopeMetrics {
+                    scope: Some(InstrumentationScope {
+                        name: "countersyncd".to_string(),
+                        version: "1.0".to_string(),
+                        attributes: Vec::new(),
+                        dropped_attributes_count: 0,
+                    }),
+                    metrics,
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        }
+        .encoded_len()
     }
 
     #[test]
@@ -266,7 +399,7 @@ mod tests {
         assert!(first_gauge.description.contains("Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
-        let expected_time_nano = 1672531200u64; 
+        let expected_time_nano = 1672531200u64;
         for gauge in &gauges {
             assert_eq!(gauge.data_points[0].time_unix_nano, expected_time_nano);
         }
@@ -337,8 +470,8 @@ mod tests {
 
         assert_eq!(proto_point.time_unix_nano, 123456789);
         match proto_point.value.unwrap() {
-            number_data_point::Value::AsInt(val) => assert_eq!(val, 777),
-            _ => panic!("Expected integer value"),
+            number_data_point::Value::AsDouble(val) => assert_eq!(val, 777.0),
+            _ => panic!("Expected double value"),
         }
         assert_eq!(proto_point.attributes.len(), 3);
 
@@ -412,5 +545,168 @@ fn test_sai_to_otel_gauge_conversion() {
         assert_eq!(otel_metrics.len(), 0);
         assert!(otel_metrics.is_empty());
         assert_eq!(otel_metrics.service_name, "countersyncd");
+    }
+
+    #[test]
+    fn converts_heatmap_to_otel_histogram() {
+        let heatmap = Heatmap {
+            object_name: Arc::from("Ethernet0"),
+            type_id: 1,
+            stat_id: 2,
+            start_time_unix_nano: 1_000,
+            time_unix_nano: 2_000,
+            count: 3,
+            sum: 11.0,
+            min: 1,
+            max: 8,
+            explicit_bounds: Arc::from([1.0, 2.0, 8.0]),
+            bucket_counts: vec![1, 1, 1, 0],
+            value_kind: crate::message::aggregator::HeatmapValueKind::Delta,
+            quantity: crate::message::aggregator::HeatmapQuantity::DeltaCount,
+            unit: "1",
+            schema: crate::message::aggregator::heatmap_schema(
+                crate::message::aggregator::HeatmapValueKind::Delta,
+                crate::message::aggregator::HeatmapQuantity::DeltaCount,
+                &[1, 2, 8],
+            ),
+        };
+
+        let point = heatmap.to_proto(Some("profile|PORT"));
+
+        assert_eq!(point.start_time_unix_nano, 1_000);
+        assert_eq!(point.time_unix_nano, 2_000);
+        assert_eq!(point.count, 3);
+        assert_eq!(point.sum, Some(11.0));
+        assert_eq!(point.min, Some(1.0));
+        assert_eq!(point.max, Some(8.0));
+        assert_eq!(point.explicit_bounds, vec![1.0, 2.0, 8.0]);
+        assert_eq!(point.bucket_counts, vec![1, 1, 1, 0]);
+        assert_eq!(point.attributes.len(), 7);
+        assert!(point.attributes.iter().any(|attribute| {
+            attribute.key == "hft_session"
+                && attribute
+                    .value
+                    .as_ref()
+                    .and_then(|value| value.value.as_ref())
+                    == Some(&Value::StringValue("profile|PORT".to_string()))
+        }));
+        for (key, expected) in [
+            ("heatmap_value_kind", "delta"),
+            ("heatmap_quantity", "delta_count"),
+            ("heatmap_schema", heatmap.schema.as_ref()),
+        ] {
+            assert!(point.attributes.iter().any(|attribute| {
+                attribute.key == key
+                    && attribute
+                        .value
+                        .as_ref()
+                        .and_then(|value| value.value.as_ref())
+                        == Some(&Value::StringValue(expected.to_string()))
+            }));
+        }
+    }
+
+    #[test]
+    fn compact_default_histogram_points_have_stable_encoded_sizes() {
+        let quantities = [
+            HeatmapQuantity::DeltaBytes,
+            HeatmapQuantity::AbsoluteBytes,
+            HeatmapQuantity::AbsoluteCells,
+            HeatmapQuantity::DeltaCount,
+            HeatmapQuantity::Native,
+        ];
+        let sizes = quantities.map(|quantity| {
+            let layout = default_heatmap_layout(quantity, Some(1_000)).unwrap();
+            encoded_heatmap_point(0, quantity, layout).encoded_len()
+        });
+
+        assert_eq!(sizes, [1_028, 528, 802, 804, 1_250]);
+        let old = encoded_heatmap_point(
+            0,
+            HeatmapQuantity::DeltaCount,
+            HeatmapLayout::from_explicit_bounds((0..255).collect()).unwrap(),
+        )
+        .encoded_len();
+        assert_eq!(old, 4_436);
+        assert!(old > 4 * 1_024, "old point encoded to {old} bytes");
+    }
+
+    #[test]
+    fn compact_default_export_requests_stay_under_grpc_budget() {
+        let compact_layouts = || {
+            [
+                HeatmapQuantity::DeltaBytes,
+                HeatmapQuantity::AbsoluteBytes,
+                HeatmapQuantity::AbsoluteCells,
+                HeatmapQuantity::DeltaCount,
+                HeatmapQuantity::Native,
+            ]
+            .into_iter()
+            .map(|quantity| {
+                (
+                    quantity,
+                    default_heatmap_layout(quantity, Some(1_000)).unwrap(),
+                )
+            })
+            .collect()
+        };
+        let compact = [64, 512, 4_096].map(|count| encoded_request_size(count, compact_layouts()));
+        assert_eq!(compact, [56_769, 454_457, 3_638_351]);
+        assert!(compact[2] > 3 * 1_024 * 1_024);
+        assert!(compact.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let old_layout = || {
+            vec![(
+                HeatmapQuantity::DeltaCount,
+                HeatmapLayout::from_explicit_bounds((0..255).collect()).unwrap(),
+            )]
+        };
+        let old = encoded_request_size(4_096, old_layout());
+        assert_eq!(old, 18_193_460);
+        assert!(
+            old > 16 * 1_024 * 1_024,
+            "4096 old points encoded to {old} bytes"
+        );
+
+        let per_quantity = [
+            HeatmapQuantity::DeltaBytes,
+            HeatmapQuantity::AbsoluteBytes,
+            HeatmapQuantity::AbsoluteCells,
+            HeatmapQuantity::DeltaCount,
+            HeatmapQuantity::Native,
+        ]
+        .map(|quantity| {
+            encoded_request_size(
+                4_096,
+                vec![(
+                    quantity,
+                    default_heatmap_layout(quantity, Some(1_000)).unwrap(),
+                )],
+            )
+        });
+        assert_eq!(
+            per_quantity,
+            [4_234_293, 2_186_299, 3_308_607, 3_316_788, 5_143_594]
+        );
+        let max_export_bytes = 3 * 1_024 * 1_024;
+        assert!(per_quantity[0] > max_export_bytes);
+        assert!(per_quantity[1] < max_export_bytes);
+        assert!(per_quantity[2..]
+            .iter()
+            .all(|size| *size > max_export_bytes));
+    }
+
+    #[test]
+    fn encodes_gauges_consistently_as_double() {
+        for counter in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+            let stat = SAIStat {
+                object_name: "Ethernet0".to_string(),
+                type_id: 1,
+                stat_id: 2,
+                counter,
+            };
+            let point = OtelDataPoint::from_sai_stat(&stat, 1).to_proto();
+            assert_eq!(point.value, Some(number_data_point::Value::AsDouble(counter as f64)));
+        }
     }
 }

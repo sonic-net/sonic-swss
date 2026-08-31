@@ -22,7 +22,10 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
 
     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
     let message_length = 16 + set_length;
-    assert!(message_length <= u16::MAX as usize, "template too large for a single IPFIX message");
+    assert!(
+        message_length <= u16::MAX as usize,
+        "template too large for a single IPFIX message"
+    );
 
     let mut buf = Vec::with_capacity(message_length);
 
@@ -65,9 +68,27 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
 /// template ID. Observation time starts at 1 and increments per emitted set;
 /// each counter is observation_time + counter_index.
 pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
+    generate_ipfix_records_with_observation_times(ipfix_templates, 1..)
+}
+
+pub fn generate_ipfix_records_with_observation_times(
+    ipfix_templates: &[u8],
+    observation_times: impl IntoIterator<Item = u64>,
+) -> Vec<u8> {
+    generate_ipfix_records_with_values(ipfix_templates, observation_times, |time, index| {
+        time + index as u64
+    })
+}
+
+pub fn generate_ipfix_records_with_values(
+    ipfix_templates: &[u8],
+    observation_times: impl IntoIterator<Item = u64>,
+    mut counter_value: impl FnMut(u64, usize) -> u64,
+) -> Vec<u8> {
     let mut records = Vec::new();
     let mut offset: usize = 0;
     let mut sequence: u32 = 0;
+    let mut observation_times = observation_times.into_iter();
 
     while offset + 4 <= ipfix_templates.len() {
         let message_len = match get_ipfix_message_length(&ipfix_templates[offset..]) {
@@ -147,11 +168,13 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
             data_message.extend_from_slice(&template_id.to_be_bytes());
             data_message.extend_from_slice(&(data_set_length as u16).to_be_bytes());
 
-            let observation_time = (sequence as u64) + 1;
+            let Some(observation_time) = observation_times.next() else {
+                return records;
+            };
             data_message.extend_from_slice(&observation_time.to_be_bytes());
 
             for idx in 0..counters_count {
-                let counter = observation_time + idx as u64;
+                let counter = counter_value(observation_time, idx);
                 data_message.extend_from_slice(&counter.to_be_bytes());
             }
 

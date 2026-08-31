@@ -91,3 +91,7 @@ harness = false
 [[bench]]
 name = "counter_db_actor_perf"
 harness = false
+
+[[bench]]
+name = "aggregator_perf"
+harness = false

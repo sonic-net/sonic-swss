@@ -16,6 +16,7 @@ use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
+    aggregator::AggregatorActor,
     ipfix::IpfixActor,
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
@@ -144,6 +145,16 @@ fn classify_otel_join(
             message: describe_join_error(e),
         },
     }
+}
+
+fn parse_nonzero_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid positive integer '{value}'"))?;
+    if value == 0 {
+        return Err("value must be greater than zero".to_string());
+    }
+    Ok(value)
 }
 
 /// SONiC High Frequency Telemetry Counter Sync Daemon
@@ -280,6 +291,15 @@ struct Args {
     )]
     otel_max_counters_per_export: usize,
 
+    /// Maximum encoded bytes in one OTLP export request
+    #[arg(
+        long,
+        default_value = "3145728",
+        value_parser = parse_nonzero_usize,
+        help = "Maximum encoded bytes in one OTLP export request"
+    )]
+    otel_max_export_bytes: usize,
+
     /// Flush timeout for OTLP export in milliseconds
     #[arg(
         long,
@@ -315,8 +335,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.enable_otel {
         info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
         info!(
-            "OpenTelemetry batching: max_counters_per_export={}, flush_timeout_ms={}",
-            args.otel_max_counters_per_export, args.otel_flush_timeout_ms
+            "OpenTelemetry batching: max_counters_per_export={}, max_export_bytes={}, flush_timeout_ms={}",
+            args.otel_max_counters_per_export, args.otel_max_export_bytes, args.otel_flush_timeout_ms
         );
     }
     info!(
@@ -338,6 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
     let (ipfix_record_sender, ipfix_record_receiver) = channel(args.data_netlink_capacity);
     let (ipfix_template_sender, ipfix_template_receiver) = channel(10); // Fixed capacity for templates
+    let (aggregator_stats_sender, aggregator_stats_receiver) = channel(args.data_netlink_capacity);
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
@@ -367,6 +388,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
+    ipfix.add_recipient(aggregator_stats_sender);
+
+    let mut aggregator = AggregatorActor::new_without_config(aggregator_stats_receiver);
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
     let swss = match SwssActor::new(ipfix_template_sender) {
@@ -389,8 +413,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        // Add stats reporter to ipfix recipients only when enabled
-        ipfix.add_recipient(stats_report_sender.clone());
+        // Add stats reporter to aggregator recipients only when enabled
+        aggregator.add_recipient(stats_report_sender.clone());
         Some(StatsReporterActor::new(
             stats_report_receiver,
             reporter_config,
@@ -408,8 +432,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             interval: Duration::from_secs(args.counter_db_frequency),
         };
 
-        // Add counter DB to ipfix recipients only when enabled
-        ipfix.add_recipient(counter_db_sender.clone());
+        // Add counter DB to aggregator recipients only when enabled
+        aggregator.add_recipient(counter_db_sender.clone());
         match CounterDBActor::new(counter_db_receiver, counter_db_config) {
             Ok(actor) => Some(actor),
             Err(e) => {
@@ -428,11 +452,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let otel_config = OtelActorConfig {
             collector_endpoint: args.otel_endpoint.clone(),
             max_counters_per_export: args.otel_max_counters_per_export,
+            max_export_bytes: args.otel_max_export_bytes,
             flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
         };
 
-        // Add OTEL to ipfix recipients only when enabled
-        ipfix.add_recipient(otel_sender.clone());
+        // Add OTEL to aggregator recipients only when enabled
+        aggregator.add_recipient(otel_sender.clone());
         match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
             Ok(actor) => Some(actor),
             Err(e) => {
@@ -478,6 +503,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("SWSS actor started");
         SwssActor::run(swss).await;
         info!("SWSS actor terminated");
+    });
+
+    let mut aggregator_handle = spawn(async move {
+        info!("Aggregator actor started");
+        AggregatorActor::run(aggregator).await;
+        info!("Aggregator actor terminated");
     });
 
     // Only spawn stats reporter if enabled
@@ -531,6 +562,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = &mut swss_handle => {
             classify_join("SWSS", res)
         }
+        res = &mut aggregator_handle => {
+            classify_join("Aggregator", res)
+        }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
             classify_join("Stats reporter", res)
         }
@@ -552,6 +586,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     control_netlink_handle.abort();
     ipfix_handle.abort();
     swss_handle.abort();
+    aggregator_handle.abort();
 
     if let Some(handle) = reporter_handle.as_mut() {
         handle.abort();
@@ -582,6 +617,7 @@ mod tests {
         assert_eq!(args.netlink_rcvbuf, 4194304);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
+        assert_eq!(args.otel_max_export_bytes, 3 * 1024 * 1024);
         assert!(!args.enable_stats);
         assert!(!args.enable_counter_db);
         assert!(!args.enable_otel);
@@ -613,5 +649,10 @@ mod tests {
     #[test]
     fn test_unknown_flag_rejected() {
         assert!(parse(&["countersyncd", "--unknown-flag"]).is_err());
+    }
+
+    #[test]
+    fn test_otel_max_export_bytes_zero_rejected() {
+        assert!(parse(&["countersyncd", "--otel-max-export-bytes", "0"]).is_err());
     }
 }

@@ -81,7 +81,7 @@ async fn run_stream(prepared: PreparedDataset) -> (Duration, usize) {
     for tmpl in prepared.templates.iter() {
         for msg_idx in 0..tmpl.records {
             let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            let _ = tx.send(msg).await;
+            let _ = tx.send(msg.into()).await;
         }
     }
 

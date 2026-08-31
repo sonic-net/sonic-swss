@@ -1,20 +1,38 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::{
+    aggregator::{
+        AggregatorConfig, AggregatorConfigMessage, CounterSelector, HeatmapLayout,
+        DEFAULT_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH, MIN_ROLLOVER_BIT_WIDTH,
+    },
+    ipfix::IPFixTemplatesMessage,
+};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info, warn};
-use std::{collections::HashMap, sync::Arc, thread};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
+const CONFIG_DB_ID: i32 = 4;
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_PROFILE";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM";
+const CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE: &str =
+    "HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
-/// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
-/// messages through the state database. It specifically listens for
-/// HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE updates and forwards IPFIX template
-/// configurations to the IPFIX actor.
+#[cfg(test)]
+const MAX_TEST_ITERATIONS: usize = 20;
+
+/// SwssActor monitors HFT session state and HFT aggregator/profile config.
 ///
 /// The state DB message format example:
 /// ```text
@@ -27,176 +45,513 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 /// ```
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
+    pub profile_table: SubscriberStateTable,
+    pub aggregator_table: SubscriberStateTable,
+    pub histogram_table: SubscriberStateTable,
+    pub rollover_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
 }
 
 #[derive(Debug)]
 enum SwssEvent {
-    Update { key: String, session_data: SessionData },
-    Delete { key: String },
+    SessionUpdate {
+        key: String,
+        session_data: SessionData,
+    },
+    SessionDelete {
+        key: String,
+    },
+    Config(AggregatorConfigEvent),
 }
+
+#[derive(Debug)]
+enum AggregatorConfigEvent {
+    ProfileUpdate {
+        profile: String,
+        aggregator: Option<String>,
+        poll_interval_us: Option<u32>,
+    },
+    ProfileDelete {
+        profile: String,
+    },
+    AggregatorUpdate {
+        name: String,
+        config: Option<AggregatorConfig>,
+    },
+    AggregatorDelete {
+        name: String,
+    },
+    HistogramUpdate {
+        aggregator: String,
+        selector: CounterSelector,
+        explicit_bounds: Vec<u64>,
+    },
+    HistogramDelete {
+        aggregator: String,
+        selector: CounterSelector,
+    },
+    RolloverUpdate {
+        aggregator: String,
+        selector: CounterSelector,
+        bit_width: u8,
+    },
+    RolloverDelete {
+        aggregator: String,
+        selector: CounterSelector,
+    },
+}
+
+type SwssEventCollector = fn(&SubscriberStateTable) -> Result<Vec<SwssEvent>, String>;
 
 impl SwssActor {
     /// Creates a new SwssActor instance
     ///
     /// # Arguments
     /// * `template_recipient` - Channel sender for forwarding IPFIX templates to IPFIX actor
-    pub fn new(template_recipient: Sender<IPFixTemplatesMessage>) -> Result<Self, String> {
-        let connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
+    pub fn new(
+        template_recipient: Sender<IPFixTemplatesMessage>,
+    ) -> Result<Self, String> {
+        let session_connect = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0)
             .map_err(|e| format!("Failed to create DB connection: {}", e))?;
         let session_table = SubscriberStateTable::new(
-            connect,
+            session_connect,
             STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE,
             None,
             None,
         )
         .map_err(|e| format!("Failed to create session table: {}", e))?;
 
+        let profile_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB profile connection: {}", e))?;
+        let profile_table = SubscriberStateTable::new(
+            profile_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create profile table: {}", e))?;
+
+        let aggregator_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB aggregator connection: {}", e))?;
+        let aggregator_table = SubscriberStateTable::new(
+            aggregator_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create aggregator table: {}", e))?;
+
+        let histogram_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB histogram connection: {}", e))?;
+        let histogram_table = SubscriberStateTable::new(
+            histogram_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create aggregator histogram table: {}", e))?;
+
+        let rollover_connect = DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0)
+            .map_err(|e| format!("Failed to create CONFIG_DB rollover connection: {}", e))?;
+        let rollover_table = SubscriberStateTable::new(
+            rollover_connect,
+            CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed to create aggregator rollover table: {}", e))?;
+
         Ok(SwssActor {
             session_table,
+            profile_table,
+            aggregator_table,
+            histogram_table,
+            rollover_table,
             template_recipient,
         })
     }
 
     /// Main event loop for the SwssActor
     ///
-    /// Continuously monitors the HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE for updates
-    /// and processes enabled IPFIX sessions by forwarding their templates to the IPFIX actor.
+    /// Continuously monitors HFT session state and aggregator/profile config updates.
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
     pub async fn run(actor: SwssActor) {
-        info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
+        info!("SwssActor started, monitoring HFT session state and aggregator/profile config");
 
-        #[cfg(test)]
-        const MAX_TEST_ITERATIONS: usize = 20;
-
-        // Keep the SWSS table polling on a dedicated blocking thread so we don't park a Tokio worker.
+        // Keep SWSS table polling on dedicated blocking threads so hiredis
+        // calls never park a Tokio worker.
         let SwssActor {
-            mut session_table,
+            session_table,
+            profile_table,
+            aggregator_table,
+            histogram_table,
+            rollover_table,
             template_recipient,
         } = actor;
+        let mut aggregator_state = AggregatorConfigState::default();
+        let mut pending_events = VecDeque::new();
+        for events in [
+            Self::collect_profile_events(&profile_table),
+            Self::collect_aggregator_events(&aggregator_table),
+            Self::collect_histogram_events(&histogram_table),
+            Self::collect_rollover_events(&rollover_table),
+            Self::collect_session_events(&session_table),
+        ] {
+            match events {
+                Ok(events) => pending_events.extend(events),
+                Err(e) => error!("{}", e),
+            }
+        }
+
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let readers = [
+            (
+                "countersyncd-swss-session",
+                session_table,
+                Self::collect_session_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-profile",
+                profile_table,
+                Self::collect_profile_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator",
+                aggregator_table,
+                Self::collect_aggregator_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator-histogram",
+                histogram_table,
+                Self::collect_histogram_events as SwssEventCollector,
+            ),
+            (
+                "countersyncd-swss-aggregator-rollover",
+                rollover_table,
+                Self::collect_rollover_events as SwssEventCollector,
+            ),
+        ];
+        let _reader_threads = match Self::spawn_reader_threads(readers, event_sender) {
+            Ok(handles) => handles,
+            Err(e) => {
+                error!("Failed to spawn SWSS reader: {}", e);
+                return;
+            }
+        };
 
-        let _reader_thread = match thread::Builder::new()
-            .name("countersyncd-swss".to_string())
-            .spawn(move || {
-                #[cfg(test)]
-                let mut iteration_count = 0;
-
-                loop {
-                    if event_sender.is_closed() {
-                        debug!("SwssActor event receiver closed, terminating reader thread");
-                        break;
-                    }
-
-                    #[cfg(test)]
-                    {
-                        iteration_count += 1;
-                        if iteration_count > MAX_TEST_ITERATIONS {
-                            debug!(
-                                "SwssActor test mode reached maximum iterations ({}), terminating reader thread",
-                                MAX_TEST_ITERATIONS
-                            );
-                            break;
-                        }
-                    }
-
-                    #[cfg(test)]
-                    let timeout = Duration::from_millis(50);
-                    #[cfg(not(test))]
-                    let timeout = Duration::from_secs(10);
-
-                    match Self::blocking_collect_events(&mut session_table, timeout) {
-                        Ok(events) => {
-                            for event in events {
-                                if event_sender.blocking_send(event).is_err() {
-                                    debug!("SwssActor event receiver dropped, terminating reader thread");
-                                    return;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Error reading from session table: {}", e);
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                    }
-                }
-
-                #[cfg(test)]
-                debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
-            }) {
-                Ok(handle) => handle,
-                Err(e) => {
-                    error!("Failed to spawn SwssActor reader thread: {}", e);
-                    return;
-                }
+        loop {
+            let event = match pending_events.pop_front() {
+                Some(event) => event,
+                None => match event_receiver.recv().await {
+                    Some(event) => event,
+                    None => break,
+                },
             };
 
-        while let Some(event) = event_receiver.recv().await {
-            match event {
-                SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(&template_recipient, &key, &session_data).await;
-                }
-                SwssEvent::Delete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
-                }
-            }
+            // Apply each table event independently. Retained parent/child state
+            // handles ordering; readers do not coalesce cross-table updates.
+            Self::process_event(&template_recipient, &mut aggregator_state, event).await;
         }
 
         debug!("SwssActor terminated");
     }
 
-    fn blocking_collect_events(
-        session_table: &mut SubscriberStateTable,
-        timeout: Duration,
-    ) -> Result<Vec<SwssEvent>, String> {
-        let mut events = Vec::new();
-
-        match session_table.read_data(timeout, false) {
-            Ok(select_result) => match select_result {
-                swss_common::SelectResult::Data => match session_table.pops() {
-                    Ok(items) => {
-                        for item in items {
-                            debug!(
-                                "SwssActor received: key={}, op={:?}",
-                                item.key, item.operation
-                            );
-
-                            let session_key = Self::extract_session_key(&item.key);
-                            match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::Update {
-                                    key: session_key,
-                                    session_data: Self::parse_session_data(&item.field_values),
-                                }),
-                                KeyOperation::Del => {
-                                    events.push(SwssEvent::Delete { key: session_key })
-                                }
+    async fn process_event(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        aggregator_state: &mut AggregatorConfigState,
+        event: SwssEvent,
+    ) {
+        match event {
+            SwssEvent::SessionUpdate { key, session_data } => {
+                if Self::validate_session(&key, &session_data) {
+                    match aggregator_state.try_config_for_session_key(&key) {
+                        Ok(config) => {
+                            let config =
+                                AggregatorConfigMessage::replacement(key.clone(), config);
+                            if let Err(e) = Self::send_session_update(
+                                template_recipient,
+                                &key,
+                                &session_data,
+                                config,
+                            )
+                            .await
+                            {
+                                error!("Failed to process session {}: {}", key, e);
+                                aggregator_state.remove_session(&key);
+                                Self::process_session_delete(template_recipient, &key).await;
+                            } else {
+                                aggregator_state.add_session(key);
                             }
                         }
-                        Ok(events)
+                        Err(reason) => error!(
+                            "Rejecting effective aggregator config for session {}: {}; preserving existing session state",
+                            key, reason
+                        ),
                     }
-                    Err(e) => {
-                        error!("Error popping items from session table: {}", e);
-                        Ok(events)
-                    }
-                },
-                swss_common::SelectResult::Timeout => {
-                    debug!("Timeout waiting for session table updates");
-                    Ok(events)
+                } else {
+                    aggregator_state.remove_session(&key);
+                    Self::process_session_delete(template_recipient, &key).await;
                 }
-                swss_common::SelectResult::Signal => {
-                    debug!("Signal received while waiting for session table updates");
-                    Ok(events)
-                }
-            },
-            Err(e) => Err(format!("Error reading from session table: {}", e)),
+            }
+            SwssEvent::SessionDelete { key } => {
+                Self::process_session_delete(template_recipient, &key).await;
+                aggregator_state.remove_session(&key);
+            }
+            SwssEvent::Config(event) => {
+                let affected_sessions = aggregator_state.apply_config_event(event);
+                Self::send_aggregator_configs_for_sessions(
+                    template_recipient,
+                    aggregator_state,
+                    affected_sessions,
+                )
+                .await;
+            }
         }
     }
 
-    fn parse_session_data(
-        field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> SessionData {
+    fn spawn_reader_threads<const N: usize>(
+        readers: [(&str, SubscriberStateTable, SwssEventCollector); N],
+        event_sender: Sender<SwssEvent>,
+    ) -> Result<Vec<thread::JoinHandle<()>>, String> {
+        readers
+            .into_iter()
+            .map(|(name, table, collect_events)| {
+                Self::spawn_reader_thread(name, table, event_sender.clone(), collect_events)
+                    .map_err(|error| format!("{}: {}", name, error))
+            })
+            .collect()
+    }
+
+    fn spawn_reader_thread<F>(
+        name: &str,
+        table: SubscriberStateTable,
+        event_sender: Sender<SwssEvent>,
+        collect_events: F,
+    ) -> Result<thread::JoinHandle<()>, std::io::Error>
+    where
+        F: Fn(&SubscriberStateTable) -> Result<Vec<SwssEvent>, String> + Send + 'static,
+    {
+        let name = name.to_string();
+        thread::Builder::new().name(name.clone()).spawn(move || {
+            #[cfg(test)]
+            let mut iteration_count = 0;
+
+            loop {
+                if event_sender.is_closed() {
+                    break;
+                }
+
+                #[cfg(test)]
+                {
+                    iteration_count += 1;
+                    if iteration_count > MAX_TEST_ITERATIONS {
+                        break;
+                    }
+                }
+
+                #[cfg(test)]
+                let timeout = Duration::from_millis(50);
+                #[cfg(not(test))]
+                let timeout = Duration::from_secs(10);
+
+                let events = match table.read_data(timeout, false) {
+                    Ok(swss_common::SelectResult::Data) => collect_events(&table),
+                    Ok(swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal) => {
+                        Ok(Vec::new())
+                    }
+                    Err(e) => Err(format!("Error reading from {}: {}", name, e)),
+                };
+
+                match events {
+                    Ok(events) => {
+                        for event in events {
+                            if event_sender.blocking_send(event).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("{}", e);
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+        })
+    }
+
+    fn collect_session_events(
+        session_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = session_table
+            .pops()
+            .map_err(|e| format!("Error popping items from session table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            debug!(
+                "SwssActor received: key={}, op={:?}",
+                item.key, item.operation
+            );
+
+            let session_key = Self::extract_session_key(&item.key);
+            match item.operation {
+                KeyOperation::Set => events.push(SwssEvent::SessionUpdate {
+                    key: session_key,
+                    session_data: Self::parse_session_data(&item.field_values),
+                }),
+                KeyOperation::Del => events.push(SwssEvent::SessionDelete { key: session_key }),
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn collect_profile_events(
+        profile_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = profile_table
+            .pops()
+            .map_err(|e| format!("Error popping items from profile table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let profile =
+                Self::extract_config_key(&item.key, CONFIG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE);
+            match item.operation {
+                KeyOperation::Set => match Self::parse_profile(&item.field_values) {
+                    Ok((aggregator, poll_interval_us)) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::ProfileUpdate {
+                            profile,
+                            aggregator,
+                            poll_interval_us,
+                        }))
+                    }
+                    Err(reason) => error!("Rejecting profile update for {}: {}", profile, reason),
+                },
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::ProfileDelete {
+                        profile,
+                    }))
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn collect_aggregator_events(
+        aggregator_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = aggregator_table
+            .pops()
+            .map_err(|e| format!("Error popping items from aggregator table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let name = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_TABLE,
+            );
+            match item.operation {
+                KeyOperation::Set => match Self::parse_aggregator_config(&item.field_values) {
+                    Ok(config) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::AggregatorUpdate {
+                            name,
+                            config: Some(config),
+                        }))
+                    }
+                    Err(reason) => {
+                        error!(
+                            "Rejecting aggregator config update for {}: {}",
+                            name, reason
+                        )
+                    }
+                },
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::AggregatorDelete {
+                        name,
+                    }))
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn collect_histogram_events(
+        histogram_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = histogram_table
+            .pops()
+            .map_err(|e| format!("Error popping items from aggregator histogram table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let key = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_HISTOGRAM_TABLE,
+            );
+            let parsed = Self::parse_histogram_key(&key);
+            let (aggregator, selector) = match parsed {
+                Ok(parsed) => parsed,
+                Err(reason) => {
+                    error!("Rejecting aggregator histogram key {}: {}", key, reason);
+                    continue;
+                }
+            };
+            match item.operation {
+                KeyOperation::Set => match Self::parse_histogram_bounds(&item.field_values) {
+                    Ok(explicit_bounds) => {
+                        events.push(SwssEvent::Config(AggregatorConfigEvent::HistogramUpdate {
+                            aggregator,
+                            selector,
+                            explicit_bounds,
+                        }))
+                    }
+                    Err(reason) => error!(
+                        "Rejecting aggregator histogram update for {}: {}",
+                        key, reason
+                    ),
+                },
+                KeyOperation::Del => {
+                    events.push(SwssEvent::Config(AggregatorConfigEvent::HistogramDelete {
+                        aggregator,
+                        selector,
+                    }))
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn collect_rollover_events(
+        rollover_table: &SubscriberStateTable,
+    ) -> Result<Vec<SwssEvent>, String> {
+        let items = rollover_table
+            .pops()
+            .map_err(|e| format!("Error popping items from aggregator rollover table: {}", e))?;
+        let mut events = Vec::with_capacity(items.len());
+
+        for item in items {
+            let key = Self::extract_config_key(
+                &item.key,
+                CONFIG_HIGH_FREQUENCY_TELEMETRY_AGGREGATOR_ROLLOVER_TABLE,
+            );
+            match Self::parse_rollover_event(key.clone(), item.operation, &item.field_values) {
+                Ok(event) => events.push(SwssEvent::Config(event)),
+                Err(reason) => {
+                    error!("Rejecting aggregator rollover update for {}: {}", key, reason)
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
+    fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
         let mut session_data = SessionData::default();
 
         for (field, value) in field_values {
@@ -217,6 +572,174 @@ impl SwssActor {
         session_data
     }
 
+    fn parse_profile(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<(Option<String>, Option<u32>), String> {
+        let aggregator = field_values.get("aggregator").and_then(|value| {
+            let aggregator = value.to_string_lossy().trim().to_string();
+            if aggregator.is_empty() {
+                None
+            } else {
+                Some(aggregator)
+            }
+        });
+        let poll_interval_us = field_values
+            .get("poll_interval")
+            .ok_or_else(|| "missing mandatory poll_interval".to_string())?;
+        let poll_interval_us = poll_interval_us
+            .to_string_lossy()
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| {
+                format!(
+                    "Invalid poll_interval '{}'",
+                    poll_interval_us.to_string_lossy()
+                )
+            })?;
+        if poll_interval_us == 0 {
+            return Err("poll_interval must be greater than zero".to_string());
+        }
+        Ok((aggregator, Some(poll_interval_us)))
+    }
+
+    fn parse_aggregator_config(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<AggregatorConfig, String> {
+        let reporting_rate = match field_values.get("reporting_rate") {
+            Some(value) => {
+                let value = value.to_string_lossy();
+                let rate = value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid reporting_rate '{}'", value))?;
+                if rate == 0 {
+                    return Err("reporting_rate must be greater than zero".to_string());
+                }
+                Some(rate)
+            }
+            None => None,
+        };
+
+        let rollover_counters = match Self::config_field(field_values, "rollover_counters") {
+            Some(value) => {
+                crate::message::aggregator::CounterSelector::parse_list(&value.to_string_lossy())?
+            }
+            None => HashSet::new(),
+        };
+        let heatmap_interval = match field_values.get("heatmap_interval") {
+            Some(value) => {
+                let value = value.to_string_lossy();
+                let interval = value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid heatmap_interval '{}'", value))?;
+                if interval == 0 {
+                    return Err("heatmap_interval must be greater than zero".to_string());
+                }
+                Some(interval)
+            }
+            None => None,
+        };
+        let heatmap_counters = match Self::config_field(field_values, "heatmap_counters") {
+            Some(value) => {
+                crate::message::aggregator::CounterSelector::parse_list(&value.to_string_lossy())?
+            }
+            None => HashSet::new(),
+        };
+        let config = AggregatorConfig {
+            reporting_rate,
+            rollover_counters,
+            rollover_bit_width_overrides: Default::default(),
+            heatmap_interval,
+            heatmap_counters,
+            heatmap_explicit_bounds: Default::default(),
+            ..Default::default()
+        };
+        config.validate_structure()?;
+        Ok(config)
+    }
+
+    fn parse_histogram_key(key: &str) -> Result<(String, CounterSelector), String> {
+        Self::parse_child_key(key)
+    }
+
+    fn parse_child_key(key: &str) -> Result<(String, CounterSelector), String> {
+        let mut components = key.split('|');
+        let aggregator = components
+            .next()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| "expected <aggregator>|<GROUP>|<COUNTER>".to_string())?;
+        let group = components
+            .next()
+            .ok_or_else(|| "expected <aggregator>|<GROUP>|<COUNTER>".to_string())?;
+        let counter = components
+            .next()
+            .ok_or_else(|| "expected <aggregator>|<GROUP>|<COUNTER>".to_string())?;
+        if components.next().is_some() {
+            return Err("expected <aggregator>|<GROUP>|<COUNTER>".to_string());
+        }
+        let selector = CounterSelector::parse(&format!("{}|{}", group, counter))?;
+        Ok((aggregator.to_string(), selector))
+    }
+
+    fn parse_rollover_bit_width(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<u8, String> {
+        let value = field_values
+            .get("bit_width")
+            .ok_or_else(|| "missing bit_width".to_string())?;
+        let value = value.to_string_lossy();
+        let bit_width = value
+            .trim()
+            .parse::<u8>()
+            .map_err(|_| format!("Invalid bit_width '{}'", value))?;
+        if !(MIN_ROLLOVER_BIT_WIDTH..=MAX_ROLLOVER_BIT_WIDTH).contains(&bit_width) {
+            return Err(format!(
+                "bit_width must be in range {}..={}",
+                MIN_ROLLOVER_BIT_WIDTH, MAX_ROLLOVER_BIT_WIDTH
+            ));
+        }
+        Ok(bit_width)
+    }
+
+    fn parse_rollover_event(
+        key: String,
+        operation: KeyOperation,
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<AggregatorConfigEvent, String> {
+        let (aggregator, selector) = Self::parse_child_key(&key)?;
+        Ok(match operation {
+            KeyOperation::Set => AggregatorConfigEvent::RolloverUpdate {
+                aggregator,
+                selector,
+                bit_width: Self::parse_rollover_bit_width(field_values)?,
+            },
+            KeyOperation::Del => AggregatorConfigEvent::RolloverDelete {
+                aggregator,
+                selector,
+            },
+        })
+    }
+
+    fn parse_histogram_bounds(
+        field_values: &HashMap<String, swss_common::CxxString>,
+    ) -> Result<Vec<u64>, String> {
+        let value = Self::config_field(field_values, "explicit_bounds")
+            .ok_or_else(|| "missing explicit_bounds".to_string())?;
+        let bounds = AggregatorConfig::parse_explicit_bounds(&value.to_string_lossy())?;
+        HeatmapLayout::from_explicit_bounds(bounds.clone())?;
+        Ok(bounds)
+    }
+
+    fn config_field<'a>(
+        field_values: &'a HashMap<String, swss_common::CxxString>,
+        name: &str,
+    ) -> Option<&'a swss_common::CxxString> {
+        field_values
+            .get(name)
+            .or_else(|| field_values.get(&format!("{}@", name)))
+    }
+
     /// Extracts the session key from the full Redis key by removing the table name prefix
     ///
     /// # Arguments
@@ -232,6 +755,17 @@ impl SwssActor {
         }
         // If no table prefix found, return as-is
         full_key.to_string()
+    }
+
+    fn extract_config_key(full_key: &str, table_name: &str) -> String {
+        full_key
+            .strip_prefix(&format!("{}|", table_name))
+            .unwrap_or(full_key)
+            .to_string()
+    }
+
+    fn extract_profile_from_session_key(session_key: &str) -> &str {
+        session_key.split('|').next().unwrap_or(session_key)
     }
 
     /// Processes session update messages from the state database
@@ -250,28 +784,19 @@ impl SwssActor {
         let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
-        if let Err(e) = self.validate_and_process_session(key, &session_data).await {
-            error!("Failed to process session {}: {}", key, e);
+        match self.validate_and_process_session(key, &session_data).await {
+            Ok(_) => {}
+            Err(e) => error!("Failed to process session {}: {}", key, e),
         }
     }
 
-    async fn process_session_update(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
-            error!("Failed to process session {}: {}", key, e);
-        }
-    }
-
-    async fn process_session_delete(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-    ) {
+    async fn process_session_delete(template_recipient: &Sender<IPFixTemplatesMessage>, key: &str) {
         info!("Session deleted: {}", key);
 
-        let delete_message = IPFixTemplatesMessage::delete(key.to_string());
+        let delete_message = IPFixTemplatesMessage::delete_with_aggregator_config(
+            key.to_string(),
+            AggregatorConfigMessage::delete(key.to_string()),
+        );
 
         match template_recipient.send(delete_message).await {
             Ok(_) => {
@@ -295,8 +820,19 @@ impl SwssActor {
         &mut self,
         key: &str,
         session_data: &SessionData,
-    ) -> Result<(), String> {
-        Self::validate_and_send_session(&self.template_recipient, key, session_data).await
+    ) -> Result<bool, String> {
+        if !Self::validate_session(key, session_data) {
+            Self::process_session_delete(&self.template_recipient, key).await;
+            return Ok(false);
+        }
+        Self::send_session_update(
+            &self.template_recipient,
+            key,
+            session_data,
+            AggregatorConfigMessage::replacement(key.to_string(), None),
+        )
+        .await?;
+        Ok(true)
     }
 
     /// Validates session data and processes enabled IPFIX sessions
@@ -304,15 +840,10 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session identifier
     /// * `session_data` - Parsed session configuration
-    async fn validate_and_send_session(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) -> Result<(), String> {
-        // Only process enabled sessions with ipfix type
+    fn validate_session(key: &str, session_data: &SessionData) -> bool {
         if session_data.stream_status != "enabled" {
             debug!("Skipping disabled session: {}", key);
-            return Ok(());
+            return false;
         }
 
         if session_data.session_type != "ipfix" {
@@ -320,13 +851,23 @@ impl SwssActor {
                 "Skipping non-IPFIX session: {} (type: {})",
                 key, session_data.session_type
             );
-            return Ok(());
+            return false;
         }
 
         if session_data.session_config.is_empty() {
-            return Err("Session config is empty".to_string());
+            error!("Failed to process session {}: Session config is empty", key);
+            return false;
         }
 
+        true
+    }
+
+    async fn send_session_update(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        key: &str,
+        session_data: &SessionData,
+        aggregator_config: AggregatorConfigMessage,
+    ) -> Result<(), String> {
         info!(
             "Processing enabled IPFIX session: key={}, object_names={}, object_ids={}",
             key, session_data.object_names, session_data.object_ids
@@ -392,7 +933,8 @@ impl SwssActor {
             }
         };
 
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
+        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids)
+            .with_aggregator_config(aggregator_config);
 
         template_recipient
             .send(message)
@@ -403,6 +945,61 @@ impl SwssActor {
         Ok(())
     }
 
+    async fn send_aggregator_config_for_session(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        aggregator_state: &AggregatorConfigState,
+        key: &str,
+        is_delete: bool,
+        reset: bool,
+    ) {
+        let config = if is_delete {
+            Ok(None)
+        } else {
+            aggregator_state.try_config_for_session_key(key)
+        };
+        let config = match config {
+            Ok(config) => config,
+            Err(reason) => {
+                error!(
+                    "Rejecting effective aggregator config for session {}: {}; preserving existing aggregator state",
+                    key, reason
+                );
+                return;
+            }
+        };
+        let message = if is_delete {
+            AggregatorConfigMessage::delete(key.to_string())
+        } else if reset {
+            AggregatorConfigMessage::replacement(key.to_string(), config)
+        } else {
+            AggregatorConfigMessage::new(key.to_string(), config)
+        };
+
+        if let Err(e) = template_recipient
+            .send(IPFixTemplatesMessage::config(message))
+            .await
+        {
+            error!("Failed to send aggregator config for {}: {}", key, e);
+        }
+    }
+
+    async fn send_aggregator_configs_for_sessions(
+        template_recipient: &Sender<IPFixTemplatesMessage>,
+        aggregator_state: &AggregatorConfigState,
+        session_keys: Vec<String>,
+    ) {
+        for key in session_keys {
+            Self::send_aggregator_config_for_session(
+                template_recipient,
+                aggregator_state,
+                &key,
+                false,
+                false,
+            )
+            .await;
+        }
+    }
+
     /// Handles session deletion events
     ///
     /// # Arguments
@@ -410,6 +1007,256 @@ impl SwssActor {
     #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
         Self::process_session_delete(&self.template_recipient, key).await;
+    }
+}
+
+#[derive(Default)]
+struct AggregatorConfigState {
+    profile_aggregators: HashMap<String, String>,
+    profile_poll_intervals_us: HashMap<String, u32>,
+    aggregator_configs: HashMap<String, AggregatorConfig>,
+    histogram_configs: HashMap<String, HashMap<CounterSelector, Vec<u64>>>,
+    rollover_configs: HashMap<String, HashMap<CounterSelector, u8>>,
+    sessions: HashSet<String>,
+}
+
+impl AggregatorConfigState {
+    fn apply_config_event(&mut self, event: AggregatorConfigEvent) -> Vec<String> {
+        match event {
+            AggregatorConfigEvent::ProfileUpdate {
+                profile,
+                aggregator,
+                poll_interval_us,
+            } => {
+                let affected_sessions = self.session_keys_for_profile(&profile);
+                self.set_profile(profile, aggregator, poll_interval_us);
+                affected_sessions
+            }
+            AggregatorConfigEvent::ProfileDelete { profile } => {
+                let affected_sessions = self.session_keys_for_profile(&profile);
+                self.remove_profile(&profile);
+                affected_sessions
+            }
+            AggregatorConfigEvent::AggregatorUpdate { name, config } => {
+                let affected_sessions = self.session_keys_for_aggregator(&name);
+                self.set_aggregator_config(name, config);
+                affected_sessions
+            }
+            AggregatorConfigEvent::AggregatorDelete { name } => {
+                let affected_sessions = self.session_keys_for_aggregator(&name);
+                self.remove_aggregator(&name);
+                affected_sessions
+            }
+            AggregatorConfigEvent::HistogramUpdate {
+                aggregator,
+                selector,
+                explicit_bounds,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.set_histogram_config(aggregator, selector, explicit_bounds);
+                affected_sessions
+            }
+            AggregatorConfigEvent::HistogramDelete {
+                aggregator,
+                selector,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.remove_histogram_config(&aggregator, selector);
+                affected_sessions
+            }
+            AggregatorConfigEvent::RolloverUpdate {
+                aggregator,
+                selector,
+                bit_width,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.set_rollover_config(aggregator, selector, bit_width);
+                affected_sessions
+            }
+            AggregatorConfigEvent::RolloverDelete {
+                aggregator,
+                selector,
+            } => {
+                let affected_sessions = self.session_keys_for_aggregator(&aggregator);
+                self.remove_rollover_config(&aggregator, selector);
+                affected_sessions
+            }
+        }
+    }
+
+    fn add_session(&mut self, key: String) {
+        self.sessions.insert(key);
+    }
+
+    fn remove_session(&mut self, key: &str) {
+        self.sessions.remove(key);
+    }
+
+    fn set_profile(
+        &mut self,
+        profile: String,
+        aggregator: Option<String>,
+        poll_interval_us: Option<u32>,
+    ) {
+        match aggregator {
+            Some(aggregator) => {
+                self.profile_aggregators.insert(profile.clone(), aggregator);
+            }
+            None => {
+                self.profile_aggregators.remove(&profile);
+            }
+        }
+        match poll_interval_us {
+            Some(interval) => {
+                self.profile_poll_intervals_us.insert(profile, interval);
+            }
+            None => {
+                self.profile_poll_intervals_us.remove(&profile);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn set_profile_aggregator(&mut self, profile: String, aggregator: Option<String>) {
+        self.set_profile(profile, aggregator, Some(10_000));
+    }
+
+    fn remove_profile(&mut self, profile: &str) {
+        self.profile_aggregators.remove(profile);
+        self.profile_poll_intervals_us.remove(profile);
+    }
+
+    fn set_aggregator_config(&mut self, name: String, config: Option<AggregatorConfig>) {
+        match config {
+            Some(mut config) => {
+                config.poll_interval_us = None;
+                config.heatmap_layouts.clear();
+                self.aggregator_configs.insert(name, config);
+            }
+            None => {
+                self.aggregator_configs.remove(&name);
+            }
+        }
+    }
+
+    fn remove_aggregator(&mut self, name: &str) {
+        self.aggregator_configs.remove(name);
+        // Child-table readers preserve their own ordering. Keep child rows
+        // cached but inert while the parent is absent so parent/child events
+        // converge correctly regardless of cross-table interleaving.
+    }
+
+    fn set_histogram_config(
+        &mut self,
+        aggregator: String,
+        selector: CounterSelector,
+        explicit_bounds: Vec<u64>,
+    ) {
+        self.histogram_configs
+            .entry(aggregator)
+            .or_default()
+            .insert(selector, explicit_bounds);
+    }
+
+    fn remove_histogram_config(&mut self, aggregator: &str, selector: CounterSelector) {
+        if let Some(configs) = self.histogram_configs.get_mut(aggregator) {
+            configs.remove(&selector);
+            if configs.is_empty() {
+                self.histogram_configs.remove(aggregator);
+            }
+        }
+    }
+
+    fn set_rollover_config(
+        &mut self,
+        aggregator: String,
+        selector: CounterSelector,
+        bit_width: u8,
+    ) {
+        self.rollover_configs
+            .entry(aggregator)
+            .or_default()
+            .insert(selector, bit_width);
+    }
+
+    fn remove_rollover_config(&mut self, aggregator: &str, selector: CounterSelector) {
+        if let Some(configs) = self.rollover_configs.get_mut(aggregator) {
+            configs.remove(&selector);
+            if configs.is_empty() {
+                self.rollover_configs.remove(aggregator);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn config_for_session_key(&self, session_key: &str) -> Option<AggregatorConfig> {
+        match self.try_config_for_session_key(session_key) {
+            Ok(config) => config,
+            Err(reason) => {
+                error!(
+                    "Rejecting effective aggregator config for session {}: {}",
+                    session_key, reason
+                );
+                None
+            }
+        }
+    }
+
+    fn try_config_for_session_key(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<AggregatorConfig>, String> {
+        let profile = SwssActor::extract_profile_from_session_key(session_key);
+        let Some(aggregator) = self.profile_aggregators.get(profile) else {
+            return Ok(None);
+        };
+        let Some(base_config) = self.aggregator_configs.get(aggregator) else {
+            return Ok(None);
+        };
+        let mut config = base_config.clone();
+        config.poll_interval_us = self.profile_poll_intervals_us.get(profile).copied();
+        if let Some(histograms) = self.histogram_configs.get(aggregator) {
+            config.heatmap_explicit_bounds.extend(
+                histograms
+                    .iter()
+                    .filter(|(selector, _)| config.heatmap_counters.contains(selector))
+                    .map(|(selector, bounds)| (*selector, bounds.clone())),
+            );
+        }
+        if let Some(rollovers) = self.rollover_configs.get(aggregator) {
+            config.rollover_bit_width_overrides.extend(
+                rollovers
+                    .iter()
+                    .filter(|(selector, bit_width)| {
+                        config.rollover_counters.contains(selector)
+                            && **bit_width != DEFAULT_ROLLOVER_BIT_WIDTH
+                    })
+                    .map(|(selector, bit_width)| (*selector, *bit_width)),
+            );
+        }
+        config.resolve_heatmap_layouts()?;
+        Ok(Some(config))
+    }
+
+    fn session_keys_for_profile(&self, profile: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| SwssActor::extract_profile_from_session_key(key) == profile)
+            .cloned()
+            .collect()
+    }
+
+    fn session_keys_for_aggregator(&self, aggregator: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter(|key| {
+                let profile = SwssActor::extract_profile_from_session_key(key);
+                self.profile_aggregators
+                    .get(profile)
+                    .is_some_and(|configured| configured == aggregator)
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -433,6 +1280,9 @@ struct SessionData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::aggregator::Aggregator;
+    use crate::message::aggregator::default_heatmap_layout;
+    use crate::message::saistats::{SAIStat, SAIStats};
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
@@ -498,6 +1348,891 @@ mod tests {
             .expect("Should have object_names");
         assert_eq!(object_names, &vec!["Ethernet0", "Ethernet1", "Ethernet2"]);
         assert_eq!(received_message.object_ids, Some(vec![1, 2, 3]));
+        assert!(received_message
+            .aggregator_config
+            .as_ref()
+            .is_some_and(|config| config.reset));
+    }
+
+    #[test]
+    fn test_profile_and_aggregator_config_mapping() {
+        let mut profile_fields = HashMap::new();
+        profile_fields.insert("aggregator".to_string(), CxxString::from("harm0"));
+        profile_fields.insert("poll_interval".to_string(), CxxString::from("10000"));
+        assert_eq!(
+            SwssActor::parse_profile(&profile_fields),
+            Ok((Some("harm0".to_string()), Some(10_000)))
+        );
+        assert!(SwssActor::parse_profile(&HashMap::new()).is_err());
+        profile_fields.insert("poll_interval".to_string(), CxxString::from("0"));
+        assert!(SwssActor::parse_profile(&profile_fields)
+            .unwrap_err()
+            .contains("greater than zero"));
+
+        let mut aggregator_fields = HashMap::new();
+        aggregator_fields.insert("reporting_rate".to_string(), CxxString::from("100"));
+        aggregator_fields.insert(
+            "rollover_counters@".to_string(),
+            CxxString::from("PORT|IF_IN_OCTETS"),
+        );
+        aggregator_fields.insert("heatmap_interval".to_string(), CxxString::from("1000"));
+        aggregator_fields.insert(
+            "heatmap_counters@".to_string(),
+            CxxString::from("PORT|IF_IN_UCAST_PKTS,QUEUE|WATERMARK_BYTES"),
+        );
+        let config =
+            SwssActor::parse_aggregator_config(&aggregator_fields).expect("aggregator config");
+        assert_eq!(config.reporting_rate, Some(100));
+        assert_eq!(config.rollover_counters.len(), 1);
+        assert!(config.rollover_bit_width_overrides.is_empty());
+        assert_eq!(config.heatmap_interval, Some(1000));
+        assert_eq!(config.heatmap_counters.len(), 2);
+        assert!(config.heatmap_explicit_bounds.is_empty());
+
+        let empty_aggregator_fields = HashMap::new();
+        let empty_config = SwssActor::parse_aggregator_config(&empty_aggregator_fields)
+            .expect("aggregator config");
+        assert_eq!(empty_config.reporting_rate, None);
+        assert!(empty_config.heatmap_layouts.is_empty());
+
+        let mut invalid_heatmap = HashMap::new();
+        invalid_heatmap.insert(
+            "heatmap_counters@".to_string(),
+            CxxString::from("PORT|IF_IN_UCAST_PKTS"),
+        );
+        assert!(SwssActor::parse_aggregator_config(&invalid_heatmap).is_err());
+
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(100),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("session aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn config_events_update_state_and_return_affected_sessions() {
+        let histogram = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let rollover = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile0|QUEUE".to_string());
+        state.add_session("profile1|PORT".to_string());
+
+        let sorted = |mut sessions: Vec<String>| {
+            sessions.sort();
+            sessions
+        };
+        assert_eq!(
+            sorted(
+                state.apply_config_event(AggregatorConfigEvent::ProfileUpdate {
+                    profile: "profile0".to_string(),
+                    aggregator: Some("harm0".to_string()),
+                    poll_interval_us: Some(1_000),
+                })
+            ),
+            vec!["profile0|PORT".to_string(), "profile0|QUEUE".to_string()]
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::AggregatorUpdate {
+                    name: "harm0".to_string(),
+                    config: Some(AggregatorConfig {
+                        heatmap_interval: Some(10_000),
+                        heatmap_counters: HashSet::from([histogram]),
+                        rollover_counters: HashSet::from([rollover]),
+                        ..Default::default()
+                    }),
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::HistogramUpdate {
+                    aggregator: "harm0".to_string(),
+                    selector: histogram,
+                    explicit_bounds: vec![10, 20],
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::RolloverUpdate {
+                    aggregator: "harm0".to_string(),
+                    selector: rollover,
+                    bit_width: 24,
+                })
+                .len(),
+            2
+        );
+        let effective = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            effective
+                .layout_for(histogram)
+                .unwrap()
+                .explicit_bounds_u64(),
+            [10, 20]
+        );
+        assert_eq!(effective.rollover_bit_width_for(rollover), 24);
+
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::HistogramDelete {
+                    aggregator: "harm0".to_string(),
+                    selector: histogram,
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::RolloverDelete {
+                    aggregator: "harm0".to_string(),
+                    selector: rollover,
+                })
+                .len(),
+            2
+        );
+        assert_eq!(
+            state
+                .apply_config_event(AggregatorConfigEvent::AggregatorDelete {
+                    name: "harm0".to_string(),
+                })
+                .len(),
+            2
+        );
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+        assert_eq!(
+            sorted(
+                state.apply_config_event(AggregatorConfigEvent::ProfileDelete {
+                    profile: "profile0".to_string(),
+                })
+            ),
+            vec!["profile0|PORT".to_string(), "profile0|QUEUE".to_string()]
+        );
+        assert!(!state.profile_poll_intervals_us.contains_key("profile0"));
+    }
+
+    #[test]
+    fn test_histogram_parse_and_state_merge() {
+        let custom = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let initially_unselected = CounterSelector::parse("QUEUE|PACKETS").unwrap();
+        assert_eq!(
+            SwssActor::parse_histogram_key("harm0|PORT|IF_IN_UCAST_PKTS").unwrap(),
+            ("harm0".to_string(), custom)
+        );
+        assert!(SwssActor::parse_histogram_key("harm0|PORT").is_err());
+        assert!(SwssActor::parse_histogram_key("harm|0|PORT|IF_IN_UCAST_PKTS").is_err());
+
+        let fields = HashMap::from([(
+            "explicit_bounds@".to_string(),
+            CxxString::from("0,1024,4096"),
+        )]);
+        assert_eq!(
+            SwssActor::parse_histogram_bounds(&fields).unwrap(),
+            vec![0, 1024, 4096]
+        );
+        let invalid_fields = HashMap::from([(
+            "explicit_bounds@".to_string(),
+            CxxString::from("0,4096,1024"),
+        )]);
+        assert!(SwssActor::parse_histogram_bounds(&invalid_fields).is_err());
+
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile1|QUEUE".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_profile_aggregator("profile1".to_string(), Some("harm0".to_string()));
+
+        // Child rows can arrive first. They remain inert until the parent both
+        // exists and selects the corresponding counter.
+        state.set_histogram_config("harm0".to_string(), custom, vec![0, 1024, 4096]);
+        state.set_histogram_config("harm0".to_string(), initially_unselected, vec![10, 20]);
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(1_000),
+                heatmap_counters: HashSet::from([custom]),
+                ..Default::default()
+            }),
+        );
+        for session in ["profile0|PORT", "profile1|QUEUE"] {
+            let merged = state.config_for_session_key(session).unwrap();
+            assert_eq!(
+                merged.heatmap_explicit_bounds,
+                std::collections::BTreeMap::from([(custom, vec![0, 1024, 4096])])
+            );
+        }
+
+        let mut affected = state.session_keys_for_aggregator("harm0");
+        affected.sort();
+        assert_eq!(
+            affected,
+            vec!["profile0|PORT".to_string(), "profile1|QUEUE".to_string()]
+        );
+
+        state.remove_histogram_config("harm0", custom);
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert!(fallback.heatmap_explicit_bounds.is_empty());
+        assert!(Arc::ptr_eq(
+            &fallback.layout_for(custom).unwrap(),
+            &default_heatmap_layout(custom.heatmap_quantity(), None).unwrap()
+        ));
+
+        let mut parent = state
+            .config_for_session_key("profile0|PORT")
+            .expect("parent config");
+        parent.heatmap_counters.insert(initially_unselected);
+        state.set_aggregator_config("harm0".to_string(), Some(parent));
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .unwrap()
+                .heatmap_explicit_bounds
+                .get(&initially_unselected),
+            Some(&vec![10, 20])
+        );
+    }
+
+    #[test]
+    fn test_rollover_parse_and_retained_state_merge() {
+        let selected = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let initially_unselected = CounterSelector::parse("PORT|IF_OUT_OCTETS").unwrap();
+        assert_eq!(
+            SwssActor::parse_child_key("harm0|PORT|IF_IN_OCTETS").unwrap(),
+            ("harm0".to_string(), selected)
+        );
+        assert!(SwssActor::parse_child_key("harm0|PORT").is_err());
+        assert!(SwssActor::parse_child_key("harm|0|PORT|IF_IN_OCTETS").is_err());
+
+        for bit_width in [1, 24, 32, 48, 63] {
+            let fields = HashMap::from([(
+                "bit_width".to_string(),
+                CxxString::from(bit_width.to_string()),
+            )]);
+            assert_eq!(SwssActor::parse_rollover_bit_width(&fields), Ok(bit_width));
+        }
+        for bit_width in [0, 64] {
+            let fields = HashMap::from([(
+                "bit_width".to_string(),
+                CxxString::from(bit_width.to_string()),
+            )]);
+            assert!(SwssActor::parse_rollover_bit_width(&fields).is_err());
+        }
+        assert!(SwssActor::parse_rollover_bit_width(&HashMap::new()).is_err());
+        assert!(SwssActor::parse_rollover_bit_width(&HashMap::from([(
+            "bit_width@".to_string(),
+            CxxString::from("8"),
+        )]))
+        .is_err());
+
+        let set = SwssActor::parse_rollover_event(
+            "harm0|PORT|IF_IN_OCTETS".to_string(),
+            KeyOperation::Set,
+            &HashMap::from([("bit_width".to_string(), CxxString::from("8"))]),
+        )
+        .unwrap();
+        assert!(matches!(
+            set,
+            AggregatorConfigEvent::RolloverUpdate {
+                ref aggregator,
+                selector,
+                bit_width: 8,
+            } if aggregator == "harm0" && selector == selected
+        ));
+        let delete = SwssActor::parse_rollover_event(
+            "harm0|PORT|IF_IN_OCTETS".to_string(),
+            KeyOperation::Del,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(matches!(
+            delete,
+            AggregatorConfigEvent::RolloverDelete {
+                ref aggregator,
+                selector,
+            } if aggregator == "harm0" && selector == selected
+        ));
+
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_rollover_config("harm0".to_string(), selected, 8);
+        state.set_rollover_config("harm0".to_string(), initially_unselected, 24);
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selected]),
+                ..Default::default()
+            }),
+        );
+        let custom = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(custom.rollover_bit_width_for(selected), 8);
+        assert!(!custom
+            .rollover_bit_width_overrides
+            .contains_key(&initially_unselected));
+
+        state.remove_rollover_config("harm0", selected);
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            fallback.rollover_bit_width_for(selected),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+
+        state.set_rollover_config("harm0".to_string(), selected, DEFAULT_ROLLOVER_BIT_WIDTH);
+        assert!(state
+            .config_for_session_key("profile0|PORT")
+            .unwrap()
+            .rollover_bit_width_overrides
+            .is_empty());
+
+        let mut parent = state
+            .config_for_session_key("profile0|PORT")
+            .expect("parent config");
+        parent.rollover_counters.insert(initially_unselected);
+        state.set_aggregator_config("harm0".to_string(), Some(parent));
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .unwrap()
+                .rollover_bit_width_for(initially_unselected),
+            24
+        );
+    }
+
+    #[test]
+    fn test_parent_before_child_falls_back_then_switches_at_config_boundary() {
+        let selector = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(1_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert!(fallback.heatmap_explicit_bounds.is_empty());
+        assert_eq!(
+            fallback.layout_for(selector).unwrap().explicit_bounds_u64(),
+            default_heatmap_layout(selector.heatmap_quantity(), None)
+                .unwrap()
+                .explicit_bounds_u64()
+        );
+
+        // The independent child event produces a new effective config. Runtime
+        // applies it at that config boundary and discards the partial heatmap.
+        state.set_histogram_config("harm0".to_string(), selector, vec![10, 20]);
+        let custom = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            custom.layout_for(selector).unwrap().explicit_bounds_u64(),
+            &[10, 20]
+        );
+        assert_ne!(fallback, custom);
+    }
+
+    #[test]
+    fn test_rollover_parent_before_child_defaults_updates_and_falls_back() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+
+        let fallback = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            fallback.rollover_bit_width_for(selector),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+
+        state.set_rollover_config("harm0".to_string(), selector, 24);
+        let custom = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(custom.rollover_bit_width_for(selector), 24);
+
+        state.remove_rollover_config("harm0", selector);
+        let restored = state.config_for_session_key("profile0|PORT").unwrap();
+        assert_eq!(
+            restored.rollover_bit_width_for(selector),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+    }
+
+    #[test]
+    fn test_parent_delete_keeps_child_state_inert_until_recreated() {
+        let selector = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let rollover = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        let parent = AggregatorConfig {
+            heatmap_interval: Some(1_000),
+            heatmap_counters: HashSet::from([selector]),
+            rollover_counters: HashSet::from([rollover]),
+            ..Default::default()
+        };
+        state.set_aggregator_config("harm0".to_string(), Some(parent.clone()));
+        state.set_histogram_config("harm0".to_string(), selector, vec![10, 20]);
+        state.set_rollover_config("harm0".to_string(), rollover, 8);
+        assert!(state
+            .config_for_session_key("profile0|PORT")
+            .unwrap()
+            .heatmap_explicit_bounds
+            .contains_key(&selector));
+
+        state.remove_aggregator("harm0");
+        assert!(state.config_for_session_key("profile0|PORT").is_none());
+        assert!(state.histogram_configs.contains_key("harm0"));
+        assert!(state.rollover_configs.contains_key("harm0"));
+        state.set_aggregator_config("harm0".to_string(), Some(parent));
+        assert!(state
+            .config_for_session_key("profile0|PORT")
+            .unwrap()
+            .heatmap_explicit_bounds
+            .contains_key(&selector));
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .unwrap()
+                .rollover_bit_width_for(rollover),
+            8
+        );
+
+        state.remove_histogram_config("harm0", selector);
+        state.remove_rollover_config("harm0", rollover);
+        let cleaned = state.config_for_session_key("profile0|PORT").unwrap();
+        assert!(cleaned.heatmap_explicit_bounds.is_empty());
+        assert_eq!(
+            cleaned.rollover_bit_width_for(rollover),
+            DEFAULT_ROLLOVER_BIT_WIDTH
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_config_message_is_replacement() {
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config("harm0".to_string(), Some(AggregatorConfig::default()));
+        let (sender, mut receiver) = channel(2);
+
+        SwssActor::send_aggregator_config_for_session(
+            &sender,
+            &state,
+            "profile0|PORT",
+            false,
+            true,
+        )
+        .await;
+        assert!(receiver
+            .recv()
+            .await
+            .unwrap()
+            .aggregator_config
+            .is_some_and(|config| config.reset));
+
+        SwssActor::send_aggregator_config_for_session(
+            &sender,
+            &state,
+            "profile0|PORT",
+            false,
+            false,
+        )
+        .await;
+        assert!(receiver
+            .recv()
+            .await
+            .unwrap()
+            .aggregator_config
+            .is_some_and(|config| !config.reset));
+    }
+
+    #[tokio::test]
+    async fn test_rollover_child_update_uses_ordered_config_envelope() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        state.set_rollover_config("harm0".to_string(), selector, 8);
+        let (sender, mut receiver) = channel(1);
+
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        let message = receiver.recv().await.unwrap();
+        assert!(message.templates.is_none());
+        let config = message.aggregator_config.expect("config envelope");
+        assert!(!config.reset);
+        assert_eq!(
+            config
+                .config
+                .unwrap()
+                .rollover_bit_width_for(selector),
+            8
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_effective_update_preserves_existing_aggregator_state() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), Some(10));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(10),
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: std::collections::BTreeMap::from([(selector, 8)]),
+                ..Default::default()
+            }),
+        );
+        let (sender, mut receiver) = channel(1);
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        let control = receiver.recv().await.unwrap().aggregator_config.unwrap();
+        let mut aggregator = Aggregator::default();
+        aggregator.set_config(control.key, control.config);
+        let sample = |time, counter| {
+            Arc::new(SAIStats::new(
+                time,
+                vec![SAIStat {
+                    object_name: "Ethernet0".to_string(),
+                    type_id: selector.type_id,
+                    stat_id: selector.stat_id,
+                    counter,
+                }],
+            ))
+        };
+        assert!(aggregator
+            .process(Some(Arc::from("profile0|PORT")), sample(1_000, 250))
+            .is_none());
+        assert_eq!(
+            aggregator
+                .process(Some(Arc::from("profile0|PORT")), sample(10_001, 5))
+                .unwrap()
+                .stats
+                .stats[0]
+                .counter,
+            250
+        );
+
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                rollover_counters: HashSet::from([selector]),
+                rollover_bit_width_overrides: std::collections::BTreeMap::from([(selector, 8)]),
+                heatmap_interval: Some(100),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        SwssActor::send_aggregator_configs_for_sessions(
+            &sender,
+            &state,
+            vec!["profile0|PORT".to_string()],
+        )
+        .await;
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+
+        let output = aggregator
+            .process(Some(Arc::from("profile0|PORT")), sample(20_001, 10))
+            .expect("existing reporting window must remain active");
+        assert_eq!(output.stats.stats[0].counter, 261);
+    }
+
+    #[test]
+    fn test_multiple_profiles_can_share_aggregator_config() {
+        let mut state = AggregatorConfigState::default();
+        state.add_session("profile0|PORT".to_string());
+        state.add_session("profile1|QUEUE".to_string());
+        state.set_profile_aggregator("profile0".to_string(), Some("harm0".to_string()));
+        state.set_profile_aggregator("profile1".to_string(), Some("harm0".to_string()));
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(100),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 aggregator config")
+                .reporting_rate,
+            Some(100)
+        );
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(200),
+                ..Default::default()
+            }),
+        );
+
+        let mut affected_sessions = state.session_keys_for_aggregator("harm0");
+        affected_sessions.sort();
+        assert_eq!(
+            affected_sessions,
+            vec!["profile0|PORT".to_string(), "profile1|QUEUE".to_string()]
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile0|PORT")
+                .expect("profile0 updated aggregator config")
+                .reporting_rate,
+            Some(200)
+        );
+        assert_eq!(
+            state
+                .config_for_session_key("profile1|QUEUE")
+                .expect("profile1 updated aggregator config")
+                .reporting_rate,
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn profile_poll_intervals_resolve_distinct_shared_byte_layouts() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        for profile in ["profile0", "profile1"] {
+            state.add_session(format!("{profile}|PORT"));
+        }
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(1_000),
+        );
+        state.set_profile(
+            "profile1".to_string(),
+            Some("harm0".to_string()),
+            Some(10_000),
+        );
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                reporting_rate: Some(5_000),
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+
+        let first = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        let second = state
+            .try_config_for_session_key("profile1|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.poll_interval_us, Some(1_000));
+        assert_eq!(second.poll_interval_us, Some(10_000));
+        assert_eq!(
+            first.layout_for(selector).unwrap().explicit_bounds_u64()[1],
+            31_250_000
+        );
+        assert_eq!(
+            second.layout_for(selector).unwrap().explicit_bounds_u64()[1],
+            62_500_000
+        );
+        assert!(!Arc::ptr_eq(
+            &first.layout_for(selector).unwrap(),
+            &second.layout_for(selector).unwrap()
+        ));
+        let first_layout = first.layout_for(selector).unwrap();
+        let second_layout = second.layout_for(selector).unwrap();
+        assert_ne!(
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                first_layout.explicit_bounds_u64(),
+            ),
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                second_layout.explicit_bounds_u64(),
+            )
+        );
+
+        state.remove_profile("profile0");
+        assert!(!state.profile_poll_intervals_us.contains_key("profile0"));
+    }
+
+    #[test]
+    fn profile_poll_update_changes_effective_byte_layout() {
+        let selector = CounterSelector::parse("PORT|IF_OUT_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(1_000),
+        );
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        let before = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(10_000),
+        );
+        let after = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_ne!(before, after);
+        assert_ne!(
+            before.layout_for(selector).unwrap().explicit_bounds_u64(),
+            after.layout_for(selector).unwrap().explicit_bounds_u64()
+        );
+    }
+
+    #[test]
+    fn custom_byte_layout_does_not_require_profile_interval() {
+        let selector = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([selector]),
+                ..Default::default()
+            }),
+        );
+        state.set_histogram_config("harm0".to_string(), selector, vec![0, 100, 1_000]);
+
+        let config = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            config.layout_for(selector).unwrap().explicit_bounds_u64(),
+            &[0, 100, 1_000]
+        );
+
+        state.set_profile(
+            "profile0".to_string(),
+            Some("harm0".to_string()),
+            Some(50_000),
+        );
+        let updated = state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.layout_for(selector).unwrap().explicit_bounds_u64(),
+            &[0, 100, 1_000]
+        );
+        assert_eq!(
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                config.layout_for(selector).unwrap().explicit_bounds_u64(),
+            ),
+            crate::message::aggregator::heatmap_schema(
+                selector.heatmap_value_kind(),
+                selector.heatmap_quantity(),
+                updated.layout_for(selector).unwrap().explicit_bounds_u64(),
+            )
+        );
+    }
+
+    #[test]
+    fn missing_profile_interval_rejects_only_default_byte_counter() {
+        let bytes = CounterSelector::parse("PORT|IF_IN_OCTETS").unwrap();
+        let count = CounterSelector::parse("PORT|IF_IN_UCAST_PKTS").unwrap();
+        let mut state = AggregatorConfigState::default();
+        state.set_profile("profile0".to_string(), Some("harm0".to_string()), None);
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([count]),
+                ..Default::default()
+            }),
+        );
+        assert!(state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap()
+            .is_some());
+
+        state.set_aggregator_config(
+            "harm0".to_string(),
+            Some(AggregatorConfig {
+                heatmap_interval: Some(100_000),
+                heatmap_counters: HashSet::from([bytes]),
+                ..Default::default()
+            }),
+        );
+        assert!(state
+            .try_config_for_session_key("profile0|PORT")
+            .unwrap_err()
+            .contains("byte-delta"));
     }
 
     #[tokio::test]
@@ -549,6 +2284,10 @@ mod tests {
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
+        assert!(received_message
+            .aggregator_config
+            .as_ref()
+            .is_some_and(|config| config.is_delete));
     }
 
     #[tokio::test]
@@ -567,8 +2306,14 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let received_message = template_receiver
+            .try_recv()
+            .expect("disabled session should unregister its template");
+        assert!(received_message.is_delete);
+        assert!(received_message
+            .aggregator_config
+            .as_ref()
+            .is_some_and(|config| config.is_delete));
     }
 
     #[tokio::test]
@@ -587,8 +2332,10 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let received_message = template_receiver
+            .try_recv()
+            .expect("invalid session type should unregister its template");
+        assert!(received_message.is_delete);
     }
 
     #[tokio::test]

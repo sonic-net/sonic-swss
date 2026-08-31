@@ -1,192 +1,427 @@
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use std::time::Duration;
-use std::{net::SocketAddr, thread};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
+use prost::Message;
 use tokio::runtime::Builder;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::{Request, Response, Status};
-use tonic::transport::Server;
+use tonic::{transport::Server, Request, Response, Status};
 
-use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
-use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
+use countersyncd::{
+    actor::otel::{
+        default_instrumentation_scope, default_resource, split_export_requests,
+        DEFAULT_MAX_EXPORT_BYTES,
+    },
+    message::aggregator::{
+        default_heatmap_layout, heatmap_schema, Heatmap, HeatmapLayout, HeatmapQuantity,
+        HeatmapValueKind,
+    },
+};
+use opentelemetry_proto::tonic::{
+    collector::metrics::v1::{
+        metrics_service_client::MetricsServiceClient,
+        metrics_service_server::{MetricsService, MetricsServiceServer},
+        ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+    },
+    metrics::v1::{metric::Data, AggregationTemporality, Histogram, Metric},
+};
 
-mod ipfix_bench_data;
-use ipfix_bench_data::{PreparedDataset, datasets};
+const NOMINAL_INTERVAL_US: u32 = 1_000;
+const SESSION_KEY: &str = "profile_with_representative_name|PORT";
 
-/// Simple mock collector service that just counts exports.
 struct MockMetricsService {
-    exports: Arc<AtomicU64>,
+    requests: Arc<AtomicU64>,
+    data_points: Arc<AtomicU64>,
 }
 
 #[tonic::async_trait]
-impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsService for MockMetricsService {
+impl MetricsService for MockMetricsService {
     async fn export(
         &self,
-        _request: Request<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest>,
-    ) -> Result<Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>, Status> {
-        self.exports.fetch_add(1, Ordering::Relaxed);
-        Ok(Response::new(Default::default()))
+        request: Request<ExportMetricsServiceRequest>,
+    ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
+        let request = request.into_inner();
+        assert!(request.encoded_len() <= DEFAULT_MAX_EXPORT_BYTES);
+        let data_points = request
+            .resource_metrics
+            .into_iter()
+            .flat_map(|resource| resource.scope_metrics)
+            .flat_map(|scope| scope.metrics)
+            .filter_map(|metric| match metric.data {
+                Some(Data::Histogram(histogram)) => {
+                    for point in &histogram.data_points {
+                        assert_eq!(point.bucket_counts.iter().sum::<u64>(), point.count);
+                    }
+                    Some(histogram.data_points.len() as u64)
+                }
+                _ => None,
+            })
+            .sum::<u64>();
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.data_points.fetch_add(data_points, Ordering::Relaxed);
+        Ok(Response::new(ExportMetricsServiceResponse::default()))
     }
 }
 
-/// Start a mock OTLP collector on an ephemeral port, returning its endpoint and a shutdown handle.
-fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()>, Arc<AtomicU64>) {
-    let (addr_tx, addr_rx) = std::sync::mpsc::channel();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let exports = Arc::new(AtomicU64::new(0));
-    let exports_clone = exports.clone();
+struct MockCollector {
+    endpoint: String,
+    shutdown: oneshot::Sender<()>,
+    handle: thread::JoinHandle<()>,
+    requests: Arc<AtomicU64>,
+    data_points: Arc<AtomicU64>,
+}
+
+fn start_mock_collector() -> MockCollector {
+    let (addr_sender, addr_receiver) = std::sync::mpsc::channel();
+    let (shutdown, shutdown_receiver) = oneshot::channel();
+    let requests = Arc::new(AtomicU64::new(0));
+    let data_points = Arc::new(AtomicU64::new(0));
+    let service_requests = requests.clone();
+    let service_data_points = data_points.clone();
 
     let handle = thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("mock collector runtime");
-        rt.block_on(async move {
+        let runtime = tokio::runtime::Runtime::new().expect("mock collector runtime");
+        runtime.block_on(async move {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind mock collector");
-            let addr = listener.local_addr().expect("collector addr");
-            addr_tx.send(addr).expect("send collector addr");
-
-            let svc = MockMetricsService { exports: exports_clone };
+            addr_sender
+                .send(listener.local_addr().expect("collector address"))
+                .expect("send collector address");
             let incoming = TcpListenerStream::new(listener);
-
+            let service = MockMetricsService {
+                requests: service_requests,
+                data_points: service_data_points,
+            };
             Server::builder()
-                .add_service(
-                    opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsServiceServer::new(
-                        svc,
-                    ),
-                )
+                .add_service(MetricsServiceServer::new(service))
                 .serve_with_incoming_shutdown(incoming, async {
-                    let _ = shutdown_rx.await;
+                    let _ = shutdown_receiver.await;
                 })
                 .await
-                .ok();
+                .expect("serve mock collector");
         });
     });
 
-    let addr: SocketAddr = addr_rx.recv().expect("collector addr recv");
-    (format!("http://{}", addr), shutdown_tx, handle, exports)
+    let address: SocketAddr = addr_receiver.recv().expect("receive collector address");
+    MockCollector {
+        endpoint: format!("http://{address}"),
+        shutdown,
+        handle,
+        requests,
+        data_points,
+    }
 }
 
-fn build_stats_message(counters: usize, seed: u64) -> SAIStatsMessage {
-    let stats = (0..counters)
-        .map(|idx| SAIStat {
-            object_name: format!("obj_{idx}"),
-            type_id: 1 + (idx as u32 % 4),
-            stat_id: 100 + idx as u32,
-            counter: seed.wrapping_add(idx as u64),
+fn compact_layouts() -> Vec<(HeatmapQuantity, Arc<HeatmapLayout>)> {
+    [
+        HeatmapQuantity::DeltaBytes,
+        HeatmapQuantity::AbsoluteBytes,
+        HeatmapQuantity::AbsoluteCells,
+        HeatmapQuantity::DeltaCount,
+        HeatmapQuantity::Native,
+    ]
+    .into_iter()
+    .map(|quantity| {
+        (
+            quantity,
+            default_heatmap_layout(quantity, Some(NOMINAL_INTERVAL_US))
+                .expect("compact default layout"),
+        )
+    })
+    .collect()
+}
+
+fn build_heatmap(
+    object_index: usize,
+    quantity: HeatmapQuantity,
+    layout: Arc<HeatmapLayout>,
+) -> Heatmap {
+    let mut bucket_counts = vec![0; layout.bucket_count()];
+    let bucket = layout
+        .explicit_bounds_u64()
+        .partition_point(|bound| *bound < 64);
+    bucket_counts[bucket] = 64;
+    Heatmap {
+        object_name: Arc::from(format!("Ethernet{object_index}")),
+        type_id: quantity as u32 + 1,
+        stat_id: quantity as u32 + 100,
+        start_time_unix_nano: 1_000_000,
+        time_unix_nano: 2_000_000,
+        count: 64,
+        sum: 4_096.0,
+        min: 64,
+        max: 64,
+        explicit_bounds: layout.explicit_bounds(),
+        bucket_counts,
+        value_kind: match quantity {
+            HeatmapQuantity::AbsoluteBytes
+            | HeatmapQuantity::AbsoluteCells
+            | HeatmapQuantity::Native => HeatmapValueKind::CurrentOccupancy,
+            HeatmapQuantity::DeltaBytes | HeatmapQuantity::DeltaCount => HeatmapValueKind::Delta,
+        },
+        quantity,
+        unit: quantity.unit(),
+        schema: heatmap_schema(
+            match quantity {
+                HeatmapQuantity::AbsoluteBytes
+                | HeatmapQuantity::AbsoluteCells
+                | HeatmapQuantity::Native => HeatmapValueKind::CurrentOccupancy,
+                HeatmapQuantity::DeltaBytes | HeatmapQuantity::DeltaCount => {
+                    HeatmapValueKind::Delta
+                }
+            },
+            quantity,
+            layout.explicit_bounds_u64(),
+        ),
+    }
+}
+
+fn request_metrics(request: ExportMetricsServiceRequest) -> Vec<Metric> {
+    request
+        .resource_metrics
+        .into_iter()
+        .next()
+        .unwrap()
+        .scope_metrics
+        .into_iter()
+        .next()
+        .unwrap()
+        .metrics
+}
+
+fn native_split_requests(series_count: usize) -> Vec<ExportMetricsServiceRequest> {
+    let layout = default_heatmap_layout(HeatmapQuantity::Native, None).unwrap();
+    let points = (0..series_count)
+        .map(|index| {
+            build_heatmap(index, HeatmapQuantity::Native, layout.clone())
+                .to_proto(Some(SESSION_KEY))
         })
+        .collect();
+    split_export_requests(
+        &default_resource(),
+        &default_instrumentation_scope(),
+        vec![Metric {
+            name: "benchmark_native_heatmap".to_string(),
+            description: "Benchmark native heatmap".to_string(),
+            unit: "1".to_string(),
+            data: Some(Data::Histogram(Histogram {
+                data_points: points,
+                aggregation_temporality: AggregationTemporality::Delta as i32,
+            })),
+            ..Default::default()
+        }],
+        DEFAULT_MAX_EXPORT_BYTES,
+    )
+    .unwrap()
+}
+
+fn build_export_requests(series_count: usize) -> Vec<ExportMetricsServiceRequest> {
+    let layouts = compact_layouts();
+    let mut data_points = vec![Vec::new(); layouts.len()];
+    for index in 0..series_count {
+        let layout_index = index % layouts.len();
+        let (quantity, layout) = &layouts[layout_index];
+        data_points[layout_index]
+            .push(build_heatmap(index, *quantity, layout.clone()).to_proto(Some(SESSION_KEY)));
+    }
+
+    let metrics = layouts
+        .into_iter()
+        .zip(data_points)
+        .filter(|(_, points)| !points.is_empty())
+        .map(|((quantity, _), points)| Metric {
+            name: format!("benchmark_{}_heatmap", quantity.as_str()),
+            description: format!("Benchmark {} heatmap", quantity.as_str()),
+            unit: quantity.unit().to_string(),
+            data: Some(Data::Histogram(Histogram {
+                data_points: points,
+                aggregation_temporality: AggregationTemporality::Delta as i32,
+            })),
+            ..Default::default()
+        })
+        .collect();
+
+    split_export_requests(
+        &default_resource(),
+        &default_instrumentation_scope(),
+        metrics,
+        DEFAULT_MAX_EXPORT_BYTES,
+    )
+    .expect("split compact benchmark request")
+}
+
+fn bench_histogram_conversion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("histogram_data_point_conversion");
+    group.throughput(Throughput::Elements(1));
+
+    let mut cases = compact_layouts()
+        .into_iter()
+        .map(|(quantity, layout)| (quantity.as_str(), quantity, layout))
         .collect::<Vec<_>>();
+    cases.push((
+        "synthetic_old_256_buckets",
+        HeatmapQuantity::DeltaCount,
+        HeatmapLayout::from_explicit_bounds((0..255).collect()).expect("synthetic old layout"),
+    ));
 
-    Arc::new(SAIStats::new(seed, stats))
-}
-
-async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::Duration, usize) {
-    let (tx, rx) = mpsc::channel(1024);
-    let (shutdown_tx, _shutdown_rx) = oneshot::channel();
-
-    let cfg = OtelActorConfig {
-        collector_endpoint: endpoint,
-        max_counters_per_export: 10_000,
-        flush_timeout: Duration::from_secs(1),
-    };
-
-    let actor = OtelActor::new(rx, cfg, shutdown_tx)
-        .await
-        .expect("create otel actor");
-
-    let handle = tokio::spawn(async move { actor.run().await });
-
-    let total_counters = prepared.expected_counters;
-    let start = std::time::Instant::now();
-
-    for tmpl in prepared.templates.iter() {
-        for msg_idx in 0..tmpl.records {
-            let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            tx.send(msg).await.expect("send stats");
-        }
+    for (name, quantity, layout) in cases {
+        let heatmap = build_heatmap(0, quantity, layout);
+        let encoded_bytes = heatmap.to_proto(Some(SESSION_KEY)).encoded_len();
+        group.bench_with_input(
+            BenchmarkId::new(name, format!("{encoded_bytes}B_per_point")),
+            &heatmap,
+            |bencher, heatmap| {
+                bencher.iter(|| black_box(heatmap).to_proto(black_box(Some(SESSION_KEY))));
+            },
+        );
     }
-
-    drop(tx); // close channel so actor exits after processing
-
-    let _ = handle.await;
-    let elapsed = start.elapsed();
-
-    (elapsed, total_counters)
-}
-
-fn counters_per_second(elapsed: std::time::Duration, counters: usize) -> f64 {
-    if elapsed.as_secs_f64() > 0.0 {
-        counters as f64 / elapsed.as_secs_f64()
-    } else {
-        0.0
-    }
-}
-
-fn bench_otel_actor(c: &mut Criterion) {
-    let (endpoint, collector_shutdown, collector_handle, exports_counter) = start_mock_collector();
-    let mut group = c.benchmark_group("otel_actor_perf");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-
-    let endpoint_clone = endpoint.clone();
-    let exports_counter_total = exports_counter.clone();
-
-    for spec in datasets() {
-        let bench_id = BenchmarkId::from_parameter(spec.name);
-        group.throughput(Throughput::Elements(
-            spec.total_counters_per_iteration() as u64,
-        ));
-
-        let endpoint = endpoint_clone.clone();
-        let exports_counter = exports_counter.clone();
-
-        group.bench_function(bench_id, move |b| {
-            let rt = Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tokio current-thread runtime");
-
-            let spec = spec.clone();
-            let endpoint = endpoint.clone();
-            let exports_counter = exports_counter.clone();
-
-            b.to_async(&rt).iter_batched(
-                {
-                    let spec = spec.clone();
-                    move || PreparedDataset::new(spec.clone())
-                },
-                move |prepared| {
-                    let endpoint = endpoint.clone();
-                    let exports_counter = exports_counter.clone();
-                    let spec = spec.clone();
-                    async move {
-                        let exports_before = exports_counter.load(Ordering::Relaxed);
-
-                        let (elapsed, counters) = run_stream(prepared, endpoint.clone()).await;
-
-                        let exports_after = exports_counter.load(Ordering::Relaxed);
-                        let exported = exports_after.saturating_sub(exports_before);
-                        let cps = counters_per_second(elapsed, counters);
-                        println!(
-                            "Dataset {} -> elapsed {:?}, counters {}, cps {:.2}, exports {}",
-                            spec.name, elapsed, counters, cps, exported
-                        );
-                    }
-                },
-                BatchSize::SmallInput,
-            )
-        });
-    }
-
     group.finish();
-
-    // Shut down mock collector
-    let _ = collector_shutdown.send(());
-    let _ = collector_handle.join();
-
-    println!("Total mock exports: {}", exports_counter_total.load(Ordering::Relaxed));
 }
 
-criterion_group!(benches, bench_otel_actor);
+#[derive(Clone)]
+struct SendCase {
+    name: &'static str,
+    series_count: usize,
+    requests: Vec<ExportMetricsServiceRequest>,
+    encoded_bytes: usize,
+    max_request_bytes: usize,
+}
+
+fn send_cases() -> Vec<SendCase> {
+    [
+        ("mixed", 64usize, build_export_requests(64)),
+        ("mixed", 512, build_export_requests(512)),
+        ("mixed", 4_096, build_export_requests(4_096)),
+        ("native_split", 4_096, native_split_requests(4_096)),
+    ]
+    .into_iter()
+    .map(|(name, series_count, requests)| {
+        assert!(requests
+            .iter()
+            .all(|request| request.encoded_len() <= DEFAULT_MAX_EXPORT_BYTES));
+        let encoded_bytes = requests.iter().map(Message::encoded_len).sum();
+        let max_request_bytes = requests.iter().map(Message::encoded_len).max().unwrap();
+        let decoded_points = requests
+            .iter()
+            .cloned()
+            .flat_map(request_metrics)
+            .filter_map(|metric| match metric.data {
+                Some(Data::Histogram(histogram)) => Some(histogram.data_points.len()),
+                _ => None,
+            })
+            .sum::<usize>();
+        assert_eq!(decoded_points, series_count);
+        SendCase {
+            name,
+            series_count,
+            requests,
+            encoded_bytes,
+            max_request_bytes,
+        }
+    })
+    .collect()
+}
+
+async fn export_requests(
+    mut client: MetricsServiceClient<tonic::transport::Channel>,
+    requests: Vec<ExportMetricsServiceRequest>,
+) {
+    for request in requests {
+        black_box(
+            client
+                .export(request)
+                .await
+                .expect("export benchmark request"),
+        );
+    }
+}
+
+fn bench_send_group(
+    c: &mut Criterion,
+    runtime: &tokio::runtime::Runtime,
+    collector: &MockCollector,
+    bytes: bool,
+) {
+    let suffix = if bytes { "bytes" } else { "points" };
+    let mut group = c.benchmark_group(format!("direct_tonic_histogram_export_{suffix}"));
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
+
+    for case in send_cases() {
+        let request_count = case.requests.len();
+        let requests_before = collector.requests.load(Ordering::Relaxed);
+        let points_before = collector.data_points.load(Ordering::Relaxed);
+        let client = runtime
+            .block_on(MetricsServiceClient::connect(collector.endpoint.clone()))
+            .expect("connect benchmark client");
+        runtime.block_on(export_requests(client.clone(), case.requests.clone()));
+        assert_eq!(
+            collector.requests.load(Ordering::Relaxed) - requests_before,
+            request_count as u64
+        );
+        assert_eq!(
+            collector.data_points.load(Ordering::Relaxed) - points_before,
+            case.series_count as u64
+        );
+
+        group.throughput(if bytes {
+            Throughput::Bytes(case.encoded_bytes as u64)
+        } else {
+            Throughput::Elements(case.series_count as u64)
+        });
+        group.bench_function(
+            BenchmarkId::new(
+                format!("{}_{}", case.name, suffix),
+                format!(
+                    "{}_points_{}_requests_{}B_max_{}B_total",
+                    case.series_count, request_count, case.max_request_bytes, case.encoded_bytes
+                ),
+            ),
+            |bencher| {
+                bencher.to_async(runtime).iter_batched(
+                    || (client.clone(), case.requests.clone()),
+                    |(mut client, requests)| async move {
+                        for request in requests {
+                            black_box(
+                                client
+                                    .export(request)
+                                    .await
+                                    .expect("export benchmark request"),
+                            );
+                        }
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_grpc_export(c: &mut Criterion) {
+    let collector = start_mock_collector();
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("benchmark runtime");
+    bench_send_group(c, &runtime, &collector, false);
+    bench_send_group(c, &runtime, &collector, true);
+    drop(runtime);
+    let _ = collector.shutdown.send(());
+    collector.handle.join().expect("join mock collector");
+}
+
+criterion_group!(benches, bench_histogram_conversion, bench_grpc_export);
 criterion_main!(benches);

@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeMap,
     fmt::{Display, Formatter},
     pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -23,22 +25,34 @@ use opentelemetry_proto::tonic::{
         KeyValue as ProtoKeyValue,
     },
     metrics::v1::{
+        metric::Data,
+        AggregationTemporality,
         Gauge as ProtoGauge,
+        Histogram as ProtoHistogram,
+        HistogramDataPoint,
         Metric,
         ResourceMetrics,
         ScopeMetrics,
     },
     resource::v1::Resource as ProtoResource,
 };
+use prost::Message;
 use crate::message::{
+    aggregator::{AggregatedStatsMessage, Heatmap},
     otel::OtelMetrics,
-    saistats::SAIStatsMessage,
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
 const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;
 const MAX_EXPORT_RETRIES: u64 = 30;
+pub const DEFAULT_MAX_EXPORT_BYTES: usize = 3 * 1024 * 1024;
+
+fn heatmap_payload_units(heatmap: &Heatmap) -> usize {
+    1usize
+        .saturating_add(heatmap.explicit_bounds.len())
+        .saturating_add(heatmap.bucket_counts.len())
+}
 
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
@@ -47,6 +61,8 @@ pub struct OtelActorConfig {
     pub collector_endpoint: String,
     /// Max counters to accumulate before forcing an export
     pub max_counters_per_export: usize,
+    /// Maximum encoded OTLP request payload in bytes.
+    pub max_export_bytes: usize,
     /// Max time to wait before flushing buffered metrics
     pub flush_timeout: Duration,
 }
@@ -56,6 +72,7 @@ impl Default for OtelActorConfig {
         Self {
             collector_endpoint: "http://localhost:4317".to_string(),
             max_counters_per_export: 10_000,
+            max_export_bytes: DEFAULT_MAX_EXPORT_BYTES,
             flush_timeout: Duration::from_secs(1),
         }
     }
@@ -78,9 +95,336 @@ impl Display for OtelActorExportError {
     }
 }
 
+fn encoded_len_varint(mut value: usize) -> usize {
+    let mut len = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        len += 1;
+    }
+    len
+}
+
+fn length_delimited_field_len(payload_len: usize) -> usize {
+    1 + encoded_len_varint(payload_len) + payload_len
+}
+
+#[derive(Clone)]
+struct HistogramMetricTemplate {
+    name: String,
+    description: String,
+    unit: String,
+    metadata: Vec<ProtoKeyValue>,
+    histogram: ProtoHistogram,
+}
+
+impl HistogramMetricTemplate {
+    fn new(metric: Metric, mut histogram: ProtoHistogram) -> (Self, Vec<HistogramDataPoint>) {
+        let data_points = std::mem::take(&mut histogram.data_points);
+        let template = Self {
+            name: metric.name,
+            description: metric.description,
+            unit: metric.unit,
+            metadata: metric.metadata,
+            histogram,
+        };
+        (template, data_points)
+    }
+
+    fn build(&self, data_points: Vec<HistogramDataPoint>) -> Metric {
+        let mut histogram = self.histogram.clone();
+        histogram.data_points = data_points;
+        Metric {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            unit: self.unit.clone(),
+            metadata: self.metadata.clone(),
+            data: Some(Data::Histogram(histogram)),
+        }
+    }
+
+    fn into_metric(mut self, data_points: Vec<HistogramDataPoint>) -> Metric {
+        self.histogram.data_points = data_points;
+        Metric {
+            name: self.name,
+            description: self.description,
+            unit: self.unit,
+            metadata: self.metadata,
+            data: Some(Data::Histogram(self.histogram)),
+        }
+    }
+}
+
+fn request_len(resource_len: usize, scope_len: usize, metric_fields_len: usize) -> usize {
+    let scope_metrics_len = length_delimited_field_len(scope_len) + metric_fields_len;
+    let resource_metrics_len =
+        length_delimited_field_len(resource_len) + length_delimited_field_len(scope_metrics_len);
+    length_delimited_field_len(resource_metrics_len)
+}
+
+fn export_request(
+    resource: &ProtoResource,
+    instrumentation_scope: &InstrumentationScope,
+    metrics: Vec<Metric>,
+) -> ExportMetricsServiceRequest {
+    ExportMetricsServiceRequest {
+        resource_metrics: vec![ResourceMetrics {
+            resource: Some(resource.clone()),
+            scope_metrics: vec![ScopeMetrics {
+                scope: Some(instrumentation_scope.clone()),
+                schema_url: String::new(),
+                metrics,
+            }],
+            schema_url: String::new(),
+        }],
+    }
+}
+
+pub fn default_resource() -> ProtoResource {
+    ProtoResource {
+        attributes: vec![ProtoKeyValue {
+            key: "service.name".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::StringValue("countersyncd".to_string())),
+            }),
+        }],
+        dropped_attributes_count: 0,
+    }
+}
+
+pub fn default_instrumentation_scope() -> InstrumentationScope {
+    InstrumentationScope {
+        name: "countersyncd".to_string(),
+        version: "1.0".to_string(),
+        attributes: Vec::new(),
+        dropped_attributes_count: 0,
+    }
+}
+
+fn finish_request(
+    requests: &mut Vec<ExportMetricsServiceRequest>,
+    resource: &ProtoResource,
+    instrumentation_scope: &InstrumentationScope,
+    metrics: &mut Vec<Metric>,
+    max_export_bytes: usize,
+) -> Result<(), OtelActorExportError> {
+    if metrics.is_empty() {
+        return Ok(());
+    }
+    let request = export_request(resource, instrumentation_scope, std::mem::take(metrics));
+    let encoded_len = request.encoded_len();
+    if encoded_len > max_export_bytes {
+        return Err(OtelActorExportError(format!(
+            "internal OTLP batching error: encoded request is {} bytes, exceeding max_export_bytes {}",
+            encoded_len, max_export_bytes
+        )));
+    }
+    requests.push(request);
+    Ok(())
+}
+
+/// Splits metrics into exact-size OTLP requests in one pass over their encoded data.
+pub fn split_export_requests(
+    resource: &ProtoResource,
+    instrumentation_scope: &InstrumentationScope,
+    metrics: Vec<Metric>,
+    max_export_bytes: usize,
+) -> Result<Vec<ExportMetricsServiceRequest>, OtelActorExportError> {
+    if max_export_bytes == 0 {
+        return Err(OtelActorExportError(
+            "max_export_bytes must be greater than zero".to_string(),
+        ));
+    }
+
+    let resource_len = resource.encoded_len();
+    let scope_len = instrumentation_scope.encoded_len();
+    let mut requests = Vec::new();
+    let mut request_metrics = Vec::new();
+    let mut request_metric_fields_len = 0usize;
+
+    for mut metric in metrics {
+        let histogram = match metric.data.take() {
+            Some(Data::Histogram(histogram)) if !histogram.data_points.is_empty() => histogram,
+            data => {
+                metric.data = data;
+                let metric_field_len = length_delimited_field_len(metric.encoded_len());
+                if request_len(
+                    resource_len,
+                    scope_len,
+                    request_metric_fields_len + metric_field_len,
+                ) > max_export_bytes
+                {
+                    finish_request(
+                        &mut requests,
+                        resource,
+                        instrumentation_scope,
+                        &mut request_metrics,
+                        max_export_bytes,
+                    )?;
+                    request_metric_fields_len = 0;
+                }
+                if request_len(resource_len, scope_len, metric_field_len) > max_export_bytes {
+                    return Err(OtelActorExportError(format!(
+                        "OTLP metric '{}' requires {} encoded bytes and exceeds max_export_bytes {}",
+                        metric.name,
+                        request_len(resource_len, scope_len, metric_field_len),
+                        max_export_bytes
+                    )));
+                }
+                request_metric_fields_len += metric_field_len;
+                request_metrics.push(metric);
+                continue;
+            }
+        };
+
+        let metric_without_data_len = metric.encoded_len();
+        let (histogram_template, data_points) = HistogramMetricTemplate::new(metric, histogram);
+        let histogram_base_len = histogram_template.histogram.encoded_len();
+        let empty_metric_len = histogram_template.build(Vec::new()).encoded_len();
+        let histogram_key_len = empty_metric_len
+            .checked_sub(
+                metric_without_data_len
+                    + histogram_base_len
+                    + encoded_len_varint(histogram_base_len),
+            )
+            .ok_or_else(|| {
+                OtelActorExportError("failed to calculate OTLP histogram envelope size".to_string())
+            })?;
+        let mut segment_points = Vec::new();
+        let mut segment_point_fields_len = 0usize;
+
+        for point in data_points {
+            let point_field_len = length_delimited_field_len(point.encoded_len());
+            loop {
+                let histogram_len = histogram_base_len + segment_point_fields_len + point_field_len;
+                let metric_len = metric_without_data_len
+                    + histogram_key_len
+                    + encoded_len_varint(histogram_len)
+                    + histogram_len;
+                let metric_field_len = length_delimited_field_len(metric_len);
+                if request_len(
+                    resource_len,
+                    scope_len,
+                    request_metric_fields_len + metric_field_len,
+                ) <= max_export_bytes
+                {
+                    segment_point_fields_len += point_field_len;
+                    segment_points.push(point);
+                    break;
+                }
+
+                if !segment_points.is_empty() {
+                    let segment = histogram_template.build(std::mem::take(&mut segment_points));
+                    request_metrics.push(segment);
+                    finish_request(
+                        &mut requests,
+                        resource,
+                        instrumentation_scope,
+                        &mut request_metrics,
+                        max_export_bytes,
+                    )?;
+                    request_metric_fields_len = 0;
+                    segment_point_fields_len = 0;
+                    continue;
+                }
+
+                if !request_metrics.is_empty() {
+                    finish_request(
+                        &mut requests,
+                        resource,
+                        instrumentation_scope,
+                        &mut request_metrics,
+                        max_export_bytes,
+                    )?;
+                    request_metric_fields_len = 0;
+                    continue;
+                }
+
+                return Err(OtelActorExportError(format!(
+                    "single histogram data point for metric '{}' requires {} encoded bytes and exceeds max_export_bytes {}",
+                    histogram_template.name,
+                    request_len(resource_len, scope_len, metric_field_len),
+                    max_export_bytes
+                )));
+            }
+        }
+
+        if !segment_points.is_empty() {
+            let segment = histogram_template.into_metric(segment_points);
+            request_metric_fields_len += length_delimited_field_len(segment.encoded_len());
+            request_metrics.push(segment);
+        }
+    }
+
+    finish_request(
+        &mut requests,
+        resource,
+        instrumentation_scope,
+        &mut request_metrics,
+        max_export_bytes,
+    )?;
+    Ok(requests)
+}
+
+fn build_proto_metrics(
+    buffer: &[OtelMetrics],
+    heatmaps: &[(Option<Arc<str>>, Arc<[Heatmap]>)],
+) -> Vec<Metric> {
+    let gauge_count = buffer.iter().map(|metrics| metrics.gauges.len()).sum();
+    let mut proto_metrics = Vec::with_capacity(gauge_count);
+    for otel_metrics in buffer {
+        for gauge in &otel_metrics.gauges {
+            proto_metrics.push(Metric {
+                name: gauge.name.clone(),
+                description: gauge.description.clone(),
+                unit: gauge.unit.clone(),
+                metadata: Vec::new(),
+                data: Some(Data::Gauge(ProtoGauge {
+                    data_points: gauge
+                        .data_points
+                        .iter()
+                        .map(|point| point.to_proto())
+                        .collect(),
+                })),
+            });
+        }
+    }
+
+    let mut histograms = BTreeMap::<(u32, u32), (ProtoHistogram, &'static str)>::new();
+    for (key, heatmaps) in heatmaps {
+        for heatmap in heatmaps.iter() {
+            histograms
+                .entry((heatmap.type_id, heatmap.stat_id))
+                .or_insert_with(|| {
+                    (
+                        ProtoHistogram {
+                            data_points: Vec::new(),
+                            aggregation_temporality: AggregationTemporality::Delta as i32,
+                        },
+                        heatmap.unit,
+                    )
+                })
+                .0
+                .data_points
+                .push(heatmap.to_proto(key.as_deref()));
+        }
+    }
+    proto_metrics.extend(
+        histograms
+            .into_iter()
+            .map(|((type_id, stat_id), (histogram, unit))| Metric {
+                name: format!("sai_counter_type_{}_stat_{}_heatmap", type_id, stat_id),
+                description: format!("SAI counter heatmap (type:{}, stat:{})", type_id, stat_id),
+                unit: unit.to_string(),
+                metadata: Vec::new(),
+                data: Some(Data::Histogram(histogram)),
+            }),
+    );
+    proto_metrics
+}
+
 /// Actor that receives SAI statistics and exports to OpenTelemetry
 pub struct OtelActor {
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<AggregatedStatsMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
     client: Option<MetricsServiceClient<Channel>>,
@@ -91,6 +435,7 @@ pub struct OtelActor {
 
     // Batching
     buffer: Vec<OtelMetrics>,
+    heatmaps: Vec<(Option<Arc<str>>, Arc<[Heatmap]>)>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
 
@@ -110,30 +455,22 @@ pub struct OtelActor {
 impl OtelActor {
     /// Creates a new OtelActor instance
     pub async fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<AggregatedStatsMessage>,
         config: OtelActorConfig,
-        shutdown_notifier: oneshot::Sender<()>
+        shutdown_notifier: oneshot::Sender<()>,
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
+        if config.max_export_bytes == 0 {
+            return Err(Box::new(OtelActorExportError(
+                "max_export_bytes must be greater than zero".to_string(),
+            )));
+        }
         let client = None;
 
         // Pre-create reusable resource
-        let resource = ProtoResource {
-            attributes: vec![ProtoKeyValue {
-                key: "service.name".to_string(),
-                value: Some(AnyValue {
-                    value: Some(Value::StringValue("countersyncd".to_string())),
-                }),
-            }],
-            dropped_attributes_count: 0,
-        };
+        let resource = default_resource();
 
         // Pre-create reusable instrumentation scope
-        let instrumentation_scope = InstrumentationScope {
-            name: "countersyncd".to_string(),
-            version: "1.0".to_string(),
-            attributes: vec![],
-            dropped_attributes_count: 0,
-        };
+        let instrumentation_scope = default_instrumentation_scope();
 
         info!(
             "OtelActor initialized - endpoint: {}",
@@ -150,6 +487,7 @@ impl OtelActor {
             resource,
             instrumentation_scope,
             buffer: Vec::new(),
+            heatmaps: Vec::new(),
             buffered_counters: 0,
             flush_deadline,
             messages_received: 0,
@@ -219,13 +557,21 @@ impl OtelActor {
     }
 
     /// Handle incoming SAI statistics message
-    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) -> Result<(), Box<dyn ExportError>>{
+    async fn handle_stats_message(
+        &mut self,
+        message: AggregatedStatsMessage,
+    ) -> Result<(), Box<dyn ExportError>> {
         self.messages_received += 1;
 
-        debug!("Received SAI stats with {} entries, observation_time: {}",
-               stats.stats.len(), stats.observation_time);
+        let stats = message.stats;
 
-        let was_empty = self.buffer.is_empty();
+        debug!(
+            "Received SAI stats with {} entries, observation_time: {}",
+            stats.stats.len(),
+            stats.observation_time
+        );
+
+        let was_empty = self.buffer.is_empty() && self.heatmaps.is_empty();
 
         // Convert to OTel format using message types and buffer
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
@@ -236,14 +582,26 @@ impl OtelActor {
         }
 
         self.buffer.push(otel_metrics);
-        self.buffered_counters += counters_in_message;
+        let heatmap_payload = message
+            .heatmaps
+            .iter()
+            .map(heatmap_payload_units)
+            .fold(0usize, usize::saturating_add);
+        if heatmap_payload != 0 {
+            self.heatmaps.push((message.key, message.heatmaps));
+        }
+        self.buffered_counters = self
+            .buffered_counters
+            .saturating_add(counters_in_message)
+            .saturating_add(heatmap_payload);
 
         // Start timeout when buffer transitions from empty to non-empty
         if was_empty {
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
         }
 
-        // Force flush when counter threshold is reached
+        // This inexpensive counter threshold controls flush cadence. Exact
+        // protobuf byte limits are enforced when the buffer is serialized.
         if self.buffered_counters >= self.config.max_counters_per_export {
             self.flush_buffer().await?;
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
@@ -351,67 +709,56 @@ impl OtelActor {
 
     // Export buffered metrics to OpenTelemetry collector 
     async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
+        if self.buffer.is_empty() && self.heatmaps.is_empty() {
             return Ok(());
         }
 
-        let mut proto_metrics: Vec<Metric> = Vec::new();
-
-        for otel_metrics in &self.buffer {
-            for gauge in &otel_metrics.gauges {
-                let proto_data_points = gauge.data_points.iter()
-                    .map(|dp| dp.to_proto())
-                    .collect();
-
-                let proto_gauge = ProtoGauge {
-                    data_points: proto_data_points,
-                };
-
-                proto_metrics.push(Metric {
-                    name: gauge.name.clone(),
-                    description: gauge.description.clone(),
-                    metadata: vec![],
-                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
-                    ..Default::default()
-                });
-            }
-        }
+        let proto_metrics = build_proto_metrics(&self.buffer, &self.heatmaps);
 
         if proto_metrics.is_empty() {
             self.buffer.clear();
+            self.heatmaps.clear();
             self.buffered_counters = 0;
             return Ok(());
         }
 
-        let resource_metrics = ResourceMetrics {
-            resource: Some(self.resource.clone()),
-            scope_metrics: vec![ScopeMetrics {
-                scope: Some(self.instrumentation_scope.clone()),
-                schema_url: String::new(),
-                metrics: proto_metrics,
-            }],
-            schema_url: String::new(),
+        let requests = match split_export_requests(
+            &self.resource,
+            &self.instrumentation_scope,
+            proto_metrics,
+            self.config.max_export_bytes,
+        ) {
+            Ok(requests) => requests,
+            Err(error) => {
+                self.export_failures += 1;
+                error!("Failed to construct bounded OTLP export: {}", error);
+                return Err(Box::new(error));
+            }
         };
 
-        let request = ExportMetricsServiceRequest {
-            resource_metrics: vec![resource_metrics],
-        };
-
-        // Send the export request
-        let result = self.send_request(request).await;
-
-        if let Err(e) = &result {
-            self.export_failures += 1;
-            error!(
-                "Failed to export buffered metrics (consecutive failures {}): {:?}",
-                self.consecutive_failures, e
-            );
+        let mut first_error = None;
+        for request in requests {
+            if let Err(error) = self.send_request(request).await {
+                self.export_failures += 1;
+                error!(
+                    "Failed to export buffered metrics (consecutive failures {}): {:?}",
+                    self.consecutive_failures, error
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
         }
 
+        // Keep the logical batch intact until every size-bounded request has
+        // completed its retry path, then retire the batch as one unit.
         self.buffer.clear();
+        self.heatmaps.clear();
         self.buffered_counters = 0;
-
-        result
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {
@@ -440,5 +787,384 @@ impl OtelActor {
             "OtelActor shutdown complete. {} messages, {} exports, {} failures",
             self.messages_received, self.exports_performed, self.export_failures
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::aggregator::{
+        default_heatmap_layout, heatmap_schema, HeatmapLayout, HeatmapQuantity, HeatmapValueKind,
+    };
+    use opentelemetry_proto::tonic::metrics::v1::{HistogramDataPoint, NumberDataPoint};
+
+    fn histogram_point(
+        object_name: &str,
+        quantity: HeatmapQuantity,
+        layout: Arc<HeatmapLayout>,
+    ) -> HistogramDataPoint {
+        let mut bucket_counts = vec![0; layout.bucket_count()];
+        let bucket = layout
+            .explicit_bounds_u64()
+            .partition_point(|bound| *bound < 64);
+        bucket_counts[bucket] = 64;
+        let value_kind = match quantity {
+            HeatmapQuantity::DeltaBytes | HeatmapQuantity::DeltaCount => HeatmapValueKind::Delta,
+            _ => HeatmapValueKind::CurrentOccupancy,
+        };
+        Heatmap {
+            object_name: Arc::from(object_name),
+            type_id: u32::MAX,
+            stat_id: u32::MAX,
+            start_time_unix_nano: u64::MAX - 1,
+            time_unix_nano: u64::MAX,
+            count: 64,
+            sum: 4_096.0,
+            min: 64,
+            max: 64,
+            explicit_bounds: layout.explicit_bounds(),
+            bucket_counts,
+            value_kind,
+            quantity,
+            unit: quantity.unit(),
+            schema: heatmap_schema(value_kind, quantity, layout.explicit_bounds_u64()),
+        }
+        .to_proto(Some("profile_with_representative_name|PORT"))
+    }
+
+    fn histogram_metric(
+        name: &str,
+        quantity: HeatmapQuantity,
+        layout: Arc<HeatmapLayout>,
+        point_count: usize,
+        object_name_len: usize,
+    ) -> Metric {
+        let object_name = "x".repeat(object_name_len);
+        Metric {
+            name: name.to_string(),
+            description: format!("description for {name}"),
+            unit: quantity.unit().to_string(),
+            metadata: Vec::new(),
+            data: Some(Data::Histogram(ProtoHistogram {
+                data_points: (0..point_count)
+                    .map(|_| histogram_point(&object_name, quantity, layout.clone()))
+                    .collect(),
+                aggregation_temporality: AggregationTemporality::Delta as i32,
+            })),
+        }
+    }
+
+    #[test]
+    fn histogram_template_preserves_metric_metadata() {
+        let metadata = vec![ProtoKeyValue {
+            key: "schema".to_string(),
+            value: Some(AnyValue {
+                value: Some(Value::StringValue("v1".to_string())),
+            }),
+        }];
+        let metric = Metric {
+            name: "heatmap".to_string(),
+            description: "description".to_string(),
+            unit: "By".to_string(),
+            metadata: metadata.clone(),
+            data: None,
+        };
+        let histogram = ProtoHistogram {
+            data_points: vec![HistogramDataPoint::default()],
+            aggregation_temporality: AggregationTemporality::Delta as i32,
+        };
+
+        let (template, points) = HistogramMetricTemplate::new(metric, histogram);
+        let rebuilt = template.into_metric(points);
+
+        assert_eq!(rebuilt.name, "heatmap");
+        assert_eq!(rebuilt.description, "description");
+        assert_eq!(rebuilt.unit, "By");
+        assert_eq!(rebuilt.metadata, metadata);
+        assert!(matches!(
+            rebuilt.data,
+            Some(Data::Histogram(ProtoHistogram {
+                data_points,
+                aggregation_temporality,
+            })) if data_points.len() == 1
+                && aggregation_temporality == AggregationTemporality::Delta as i32
+        ));
+    }
+
+    fn request_stats(requests: &[ExportMetricsServiceRequest]) -> (usize, usize) {
+        let mut points = 0;
+        let mut gauges = 0;
+        for request in requests {
+            assert!(request.encoded_len() <= DEFAULT_MAX_EXPORT_BYTES);
+            let resource_metrics = &request.resource_metrics[0];
+            assert_eq!(
+                resource_metrics.resource.as_ref(),
+                Some(&default_resource())
+            );
+            let scope_metrics = &resource_metrics.scope_metrics[0];
+            assert_eq!(
+                scope_metrics.scope.as_ref(),
+                Some(&default_instrumentation_scope())
+            );
+            for metric in &scope_metrics.metrics {
+                match metric.data.as_ref() {
+                    Some(Data::Histogram(histogram)) => {
+                        assert_eq!(
+                            histogram.aggregation_temporality,
+                            AggregationTemporality::Delta as i32
+                        );
+                        for point in &histogram.data_points {
+                            assert_eq!(point.bucket_counts.iter().sum::<u64>(), point.count);
+                        }
+                        points += histogram.data_points.len();
+                    }
+                    Some(Data::Gauge(gauge)) => gauges += gauge.data_points.len(),
+                    _ => {}
+                }
+            }
+        }
+        (points, gauges)
+    }
+
+    #[test]
+    fn heatmap_flush_accounting_tracks_bounds_and_counts() {
+        let heatmap = Heatmap {
+            object_name: Arc::from("Ethernet0"),
+            type_id: 1,
+            stat_id: 2,
+            start_time_unix_nano: 0,
+            time_unix_nano: 1,
+            count: 1,
+            sum: 1.0,
+            min: 1,
+            max: 1,
+            explicit_bounds: Arc::from([1.0, 2.0, 8.0]),
+            bucket_counts: vec![1, 0, 0, 0],
+            value_kind: HeatmapValueKind::Delta,
+            quantity: HeatmapQuantity::DeltaCount,
+            unit: "1",
+            schema: heatmap_schema(
+                HeatmapValueKind::Delta,
+                HeatmapQuantity::DeltaCount,
+                &[1, 2, 8],
+            ),
+        };
+
+        assert_eq!(heatmap_payload_units(&heatmap), 8);
+    }
+
+    #[test]
+    fn splits_4096_native_points_and_preserves_histogram_metadata() {
+        let metric = histogram_metric(
+            "native_level",
+            HeatmapQuantity::Native,
+            default_heatmap_layout(HeatmapQuantity::Native, None).unwrap(),
+            4_096,
+            32,
+        );
+        let requests = split_export_requests(
+            &default_resource(),
+            &default_instrumentation_scope(),
+            vec![metric],
+            DEFAULT_MAX_EXPORT_BYTES,
+        )
+        .unwrap();
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests
+                .iter()
+                .map(Message::encoded_len)
+                .collect::<Vec<_>>(),
+            vec![3_145_464, 2_081_276]
+        );
+        assert_eq!(request_stats(&requests), (4_096, 0));
+        for request in requests {
+            for metric in &request.resource_metrics[0].scope_metrics[0].metrics {
+                assert_eq!(metric.name, "native_level");
+                assert_eq!(metric.description, "description for native_level");
+                assert_eq!(metric.unit, "1");
+            }
+        }
+    }
+
+    #[test]
+    fn splits_4096_points_for_every_default_quantity() {
+        for quantity in [
+            HeatmapQuantity::DeltaBytes,
+            HeatmapQuantity::AbsoluteBytes,
+            HeatmapQuantity::AbsoluteCells,
+            HeatmapQuantity::DeltaCount,
+            HeatmapQuantity::Native,
+        ] {
+            let metric = histogram_metric(
+                quantity.as_str(),
+                quantity,
+                default_heatmap_layout(quantity, Some(1_000)).unwrap(),
+                4_096,
+                32,
+            );
+            let requests = split_export_requests(
+                &default_resource(),
+                &default_instrumentation_scope(),
+                vec![metric],
+                DEFAULT_MAX_EXPORT_BYTES,
+            )
+            .unwrap();
+
+            assert!(!requests.is_empty(), "{}", quantity.as_str());
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request.encoded_len() <= DEFAULT_MAX_EXPORT_BYTES),
+                "{}",
+                quantity.as_str()
+            );
+            assert_eq!(
+                request_stats(&requests),
+                (4_096, 0),
+                "{}",
+                quantity.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn splits_512_max_custom_points_with_long_attributes() {
+        let layout = HeatmapLayout::from_explicit_bounds_for(
+            HeatmapQuantity::DeltaCount,
+            (0..511).collect(),
+        )
+        .unwrap();
+        let metric_name = "m".repeat(4_096);
+        let metric = histogram_metric(
+            &metric_name,
+            HeatmapQuantity::DeltaCount,
+            layout,
+            512,
+            4_096,
+        );
+        let requests = split_export_requests(
+            &default_resource(),
+            &default_instrumentation_scope(),
+            vec![metric],
+            DEFAULT_MAX_EXPORT_BYTES,
+        )
+        .unwrap();
+
+        assert_eq!(
+            requests
+                .iter()
+                .map(Message::encoded_len)
+                .collect::<Vec<_>>(),
+            vec![3_139_294, 3_139_294, 210_290]
+        );
+        assert_eq!(request_stats(&requests), (512, 0));
+    }
+
+    #[test]
+    fn splits_mixed_gauges_and_histograms_without_losing_points() {
+        let gauge = Metric {
+            name: "gauge".to_string(),
+            description: "gauge description".to_string(),
+            unit: "1".to_string(),
+            metadata: Vec::new(),
+            data: Some(Data::Gauge(ProtoGauge {
+                data_points: vec![NumberDataPoint::default()],
+            })),
+        };
+        let histogram = histogram_metric(
+            "native",
+            HeatmapQuantity::Native,
+            default_heatmap_layout(HeatmapQuantity::Native, None).unwrap(),
+            4_096,
+            128,
+        );
+        let requests = split_export_requests(
+            &default_resource(),
+            &default_instrumentation_scope(),
+            vec![gauge, histogram],
+            DEFAULT_MAX_EXPORT_BYTES,
+        )
+        .unwrap();
+
+        assert_eq!(
+            requests
+                .iter()
+                .map(Message::encoded_len)
+                .collect::<Vec<_>>(),
+            vec![3_144_772, 2_487_487]
+        );
+        assert_eq!(request_stats(&requests), (4_096, 1));
+    }
+
+    #[test]
+    fn rejects_a_single_point_that_exceeds_the_cap() {
+        let metric = histogram_metric(
+            "too_large",
+            HeatmapQuantity::Native,
+            default_heatmap_layout(HeatmapQuantity::Native, None).unwrap(),
+            1,
+            4_096,
+        );
+        let error = split_export_requests(
+            &default_resource(),
+            &default_instrumentation_scope(),
+            vec![metric],
+            64,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("single histogram data point"));
+        assert!(error.to_string().contains("max_export_bytes 64"));
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_export_byte_configuration() {
+        let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+        let (shutdown, _shutdown_receiver) = oneshot::channel();
+        let error = OtelActor::new(
+            receiver,
+            OtelActorConfig {
+                max_export_bytes: 0,
+                ..Default::default()
+            },
+            shutdown,
+        )
+        .await
+        .err()
+        .expect("zero max_export_bytes must fail");
+        assert!(error.to_string().contains("greater than zero"));
+    }
+
+    #[tokio::test]
+    async fn failed_size_split_retains_buffered_metrics() {
+        let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+        let (shutdown, _shutdown_receiver) = oneshot::channel();
+        let mut actor = OtelActor::new(
+            receiver,
+            OtelActorConfig {
+                max_export_bytes: 64,
+                ..Default::default()
+            },
+            shutdown,
+        )
+        .await
+        .unwrap();
+        actor.buffer.push(OtelMetrics::from_sai_stats(
+            &crate::message::saistats::SAIStats::new(
+                1,
+                vec![crate::message::saistats::SAIStat {
+                    object_name: "x".repeat(4_096),
+                    type_id: 1,
+                    stat_id: 1,
+                    counter: 1,
+                }],
+            ),
+        ));
+        actor.buffered_counters = 1;
+
+        assert!(actor.flush_buffer().await.is_err());
+        assert_eq!(actor.buffer.len(), 1);
+        assert_eq!(actor.buffered_counters, 1);
     }
 }
