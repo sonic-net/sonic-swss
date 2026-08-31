@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "switch_types.h"
 #include "switch_container.h"
 
 class SwitchHelper final
@@ -12,6 +13,7 @@ public:
 
     const SwitchHash& getSwHash() const;
     void setSwHash(const SwitchHash &hash);
+    void setSwHashPacketType(const SwitchHash &hash);
 
     bool parseSwHash(SwitchHash &hash) const;
 
@@ -25,6 +27,10 @@ private:
     bool parseSwHashLagHash(SwitchHash &hash, const std::string &field, const std::string &value) const;
     bool parseSwHashEcmpHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const;
     bool parseSwHashLagHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const;
+
+    // For packet-type variants with state tracking
+    template<typename T>
+    bool parseSwHashPacketTypeFieldList(T &obj, const std::string &field, const std::string &value) const;
 
     bool validateSwHash(SwitchHash &hash) const;
 
