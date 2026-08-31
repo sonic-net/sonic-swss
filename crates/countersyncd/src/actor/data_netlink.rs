@@ -645,6 +645,15 @@ impl DataNetlinkActor {
     /// Mock connection method using shared router for testing.
     #[cfg(test)]
     fn connect_with_nl_resolver(&mut self, family: &str, group: &str) -> Option<SocketType> {
+        test::record_connection_attempt();
+        if !test::connections_enabled() {
+            debug!(
+                "Test: family '{}' is unavailable, connection failed",
+                family
+            );
+            return None;
+        }
+
         // For tests, we always allow successful connections
         // The MockSocket itself will control data availability
         let sock = SocketType::new(family, group);
@@ -1210,10 +1219,54 @@ pub mod test {
     static MESSAGES_NEXT_SOCKET: AtomicUsize = AtomicUsize::new(1);
     static RECV_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
     static REGISTERED_SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static CONNECTION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    static LIVE_SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static CONNECTIONS_ENABLED: AtomicBool = AtomicBool::new(true);
     static CURRENT_SENDER: Mutex<Option<UnixDatagram>> = Mutex::new(None);
 
     pub(super) fn record_socket_registration() {
         REGISTERED_SOCKET_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn record_connection_attempt() {
+        CONNECTION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn connections_enabled() -> bool {
+        CONNECTIONS_ENABLED.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn reset_mock_state(empty_next_socket: bool, messages_next_socket: usize) {
+        SOCKET_COUNT.store(0, Ordering::SeqCst);
+        FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
+        EMPTY_NEXT_SOCKET.store(empty_next_socket, Ordering::SeqCst);
+        MESSAGES_NEXT_SOCKET.store(messages_next_socket, Ordering::SeqCst);
+        RECV_ATTEMPTS.store(0, Ordering::SeqCst);
+        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        CONNECTION_ATTEMPTS.store(0, Ordering::SeqCst);
+        LIVE_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        CONNECTIONS_ENABLED.store(true, Ordering::SeqCst);
+        *CURRENT_SENDER.lock().unwrap() = None;
+    }
+
+    pub(crate) fn set_connections_enabled(enabled: bool) {
+        CONNECTIONS_ENABLED.store(enabled, Ordering::SeqCst);
+    }
+
+    pub(crate) fn connection_attempts() -> usize {
+        CONNECTION_ATTEMPTS.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn socket_count() -> usize {
+        SOCKET_COUNT.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn registered_socket_count() -> usize {
+        REGISTERED_SOCKET_COUNT.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn live_socket_count() -> usize {
+        LIVE_SOCKET_COUNT.load(Ordering::SeqCst)
     }
 
     /// Mock socket backed by a real datagram fd so tests exercise Tokio readiness registration.
@@ -1234,6 +1287,7 @@ pub mod test {
         pub fn new(family: &str, group: &str) -> Self {
             let count = SOCKET_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
             let (sender, socket) = UnixDatagram::pair().expect("create mock socket pair");
+            LIVE_SOCKET_COUNT.fetch_add(1, Ordering::SeqCst);
             socket
                 .set_nonblocking(true)
                 .expect("set mock socket nonblocking");
@@ -1271,6 +1325,12 @@ pub mod test {
                 ));
             }
             Ok(())
+        }
+    }
+
+    impl Drop for MockSocket {
+        fn drop(&mut self) {
+            LIVE_SOCKET_COUNT.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
@@ -1312,12 +1372,7 @@ pub mod test {
             .is_test(true)
             .try_init();
 
-        SOCKET_COUNT.store(0, Ordering::SeqCst);
-        FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
-        RECV_ATTEMPTS.store(0, Ordering::SeqCst);
-        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        reset_mock_state(false, 1);
 
         let (command_sender, command_receiver) = channel(4);
         let (buffer_sender, mut buffer_receiver) = channel(1);
@@ -1400,12 +1455,7 @@ pub mod test {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_data_netlink_processes_all_ready_datagrams() {
-        SOCKET_COUNT.store(0, Ordering::SeqCst);
-        FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        MESSAGES_NEXT_SOCKET.store(3, Ordering::SeqCst);
-        RECV_ATTEMPTS.store(0, Ordering::SeqCst);
-        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        reset_mock_state(false, 3);
 
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(3);
@@ -1435,12 +1485,7 @@ pub mod test {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_data_netlink_wakes_after_idle_without_polling() {
-        SOCKET_COUNT.store(0, Ordering::SeqCst);
-        FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        EMPTY_NEXT_SOCKET.store(true, Ordering::SeqCst);
-        MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
-        RECV_ATTEMPTS.store(0, Ordering::SeqCst);
-        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        reset_mock_state(true, 1);
 
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
@@ -1771,12 +1816,7 @@ pub mod test {
     #[test]
     #[serial_test::serial]
     fn test_netlink_rcvbuf_stored_on_construction() {
-        SOCKET_COUNT.store(0, Ordering::SeqCst);
-        FAIL_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        EMPTY_NEXT_SOCKET.store(false, Ordering::SeqCst);
-        MESSAGES_NEXT_SOCKET.store(1, Ordering::SeqCst);
-        RECV_ATTEMPTS.store(0, Ordering::SeqCst);
-        REGISTERED_SOCKET_COUNT.store(0, Ordering::SeqCst);
+        reset_mock_state(false, 1);
         let (_, command_receiver) = channel(1);
         let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304, 5);
         assert_eq!(actor.netlink_rcvbuf_bytes, 4194304);
