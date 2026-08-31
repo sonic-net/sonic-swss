@@ -114,6 +114,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/lib/asan.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
+                $(top_srcdir)/lib/poecfg.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/lib/recorder.cpp \
                 $(top_srcdir)/lib/orch_zmq_config.cpp \
@@ -217,7 +218,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp \
-                $(top_srcdir)/orchagent/shlorch.cpp
+                $(top_srcdir)/orchagent/shlorch.cpp \
+                $(top_srcdir)/orchagent/poeorch.cpp
 
 
 
