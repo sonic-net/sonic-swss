@@ -34,6 +34,7 @@ int main(int argc, char **argv)
             CFG_ACL_TABLE_TABLE_NAME,
             CFG_ACL_RULE_TABLE_NAME,
             CFG_ACL_TABLE_TYPE_TABLE_NAME,
+            CFG_POLICER_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);

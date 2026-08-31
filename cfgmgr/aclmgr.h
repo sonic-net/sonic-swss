@@ -20,6 +20,9 @@
 #ifndef CFG_ACL_TABLE_TYPE_TABLE_NAME
 #define CFG_ACL_TABLE_TYPE_TABLE_NAME   "ACL_TABLE_TYPE"
 #endif
+#ifndef CFG_POLICER_TABLE_NAME
+#define CFG_POLICER_TABLE_NAME          "POLICER"
+#endif
 
 /* ACL table/rule field names from CONFIG_DB */
 #define ACL_TABLE_FIELD_TYPE            "type"
@@ -145,11 +148,13 @@ private:
     /* Internal tracking */
     std::set<std::string> m_programmedTables;      // table_id of accepted ACL tables
     std::map<std::string, AclRuleState> m_ruleState; // rule_key -> programmed state
+    std::map<std::string, AclRuleFields> m_ruleFields; // rule_key -> parsed fields (for re-apply)
 
     /* Handler methods */
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
+    void doPolicerTask(Consumer &consumer);
 
     /* Resolve a referenced policer into a tc "action police ..." string. */
     bool getPolicerPoliceAction(const std::string &policerName, std::string &policeAction);

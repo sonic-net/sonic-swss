@@ -63,6 +63,8 @@ void AclMgr::doTask(Consumer &consumer)
         doAclTableTask(consumer);
     else if (table_name == CFG_ACL_RULE_TABLE_NAME)
         doAclRuleTask(consumer);
+    else if (table_name == CFG_POLICER_TABLE_NAME)
+        doPolicerTask(consumer);
     else if (table_name == CFG_ACL_TABLE_TYPE_TABLE_NAME)
     {
         /* ACL_TABLE_TYPE defines reusable match/action templates. AclOrch uses
@@ -330,6 +332,7 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
             state.protocol = buildProtocol(fields);
             state.hook = (fields.stage == "egress") ? "egress" : "ingress";
             state.interfaces = resolved_ifaces;
+            m_ruleFields[key] = fields;
             m_ruleState[key] = state;
 
             vector<FieldValueTuple> stateFvs;
@@ -352,6 +355,7 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
             }
 
             m_stateAclRuleTable.del(key);
+            m_ruleFields.erase(key);
 
             it = consumer.m_toSync.erase(it);
         }
@@ -360,6 +364,43 @@ void AclMgr::doAclRuleTask(Consumer &consumer)
             SWSS_LOG_ERROR("ACL_RULE: unknown operation '%s'", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+    }
+}
+
+/*
+ * doPolicerTask — when a POLICER entry changes, re-apply every ACL rule whose
+ * POLICER_ACTION references it. addTcFlowerFilter() re-resolves the policer
+ * rate via getPolicerPoliceAction() and does delete-before-add, so this
+ * reproduces the SAI "update-in-place / references follow" semantics at the tc
+ * level (there is no stable SAI OID to mutate in-place).
+ */
+void AclMgr::doPolicerTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        string policerName = kfvKey(it->second);
+
+        SWSS_LOG_NOTICE("POLICER changed: %s, re-applying referencing ACL rules",
+                        policerName.c_str());
+
+        for (auto &entry : m_ruleFields)
+        {
+            const AclRuleFields &fields = entry.second;
+            if (fields.policer_action != policerName)
+                continue;
+
+            auto stateIt = m_ruleState.find(entry.first);
+            if (stateIt == m_ruleState.end())
+                continue;
+
+            for (auto &iface : stateIt->second.interfaces)
+                addTcFlowerFilter(iface, fields);
+        }
+
+        it = consumer.m_toSync.erase(it);
     }
 }
 
