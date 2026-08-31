@@ -597,7 +597,8 @@ bool QosMgr::applyMapsToPort(const string &iface,
              * whole port to the scheduler's peak (max-bandwidth) rate/burst. */
             ostringstream cmd;
             cmd << TC_CMD << " qdisc replace dev " << iface
-                << " root handle 1: tbf rate " << rate << "bps burst " << burst;
+                << " root handle 1: tbf rate " << rate << "bps burst " << burst
+                << " latency 50ms";
             SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
             swss::exec(cmd.str(), res);
         }
