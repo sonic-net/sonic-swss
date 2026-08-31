@@ -211,6 +211,7 @@ public:
     uint32_t  m_fdb_count = 0;
     uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
+    uint32_t  m_l2mc_count=0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
