@@ -627,13 +627,13 @@ bool QosMgr::applyQueueToPort(const string &iface, const string &queue,
         ostringstream cmd;
         if (type == SCHED_TYPE_STRICT)
         {
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << queue
+            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
                 << " handle " << (10 + qnum) << ": prio";
         }
         else
         {
             string quantum = cfg.count(SCHED_FIELD_WEIGHT) ? cfg.at(SCHED_FIELD_WEIGHT) : "1";
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << queue
+            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
                 << " handle " << (10 + qnum) << ": drr quantum " << quantum;
         }
         SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
@@ -649,7 +649,7 @@ bool QosMgr::applyQueueToPort(const string &iface, const string &queue,
         string ecn = cfg.count(WRED_FIELD_ECN) ? cfg.at(WRED_FIELD_ECN) : "ecn_none";
 
         ostringstream cmd;
-        cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << queue
+        cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
             << " handle " << (20 + qnum) << ": red min " << mn << " max " << mx
             << " probability " << prob << "%";
         if (ecn != "ecn_none")
