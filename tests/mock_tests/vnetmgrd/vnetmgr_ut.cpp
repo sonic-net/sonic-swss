@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <deque>
+#include <sstream>
 #include "schema.h"
 #include "warm_restart.h"
 #include "table.h"
@@ -391,6 +392,34 @@ TEST_F(VNetMgrTest, LocalVnetRoutePublishedToAppDbAndDeleted)
     ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
     ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TABLE_NAME,
                               "Vnet1:192.168.10.0/24", op, fvs));
+    ASSERT_EQ(op, DEL_COMMAND);
+}
+
+TEST_F(VNetMgrTest, RouteTunnelMalformedPrefix)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = makeTuple("Vnet1|192.168.1.1/abc", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+
+    std::string op;
+    std::vector<swss::FieldValueTuple> fvs;
+    ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
+                              "Vnet1:192.168.1.1/abc", op, fvs));
+    ASSERT_EQ(op, SET_COMMAND);
+    bool endpointOk = false;
+    for (const auto &fv : fvs)
+    {
+        if (fvField(fv) == "endpoint" && fvValue(fv) == "10.0.0.2") endpointOk = true;
+    }
+    ASSERT_TRUE(endpointOk);
+
+    auto d = makeTuple("Vnet1|192.168.1.1/abc", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+    ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
+                              "Vnet1:192.168.1.1/abc", op, fvs));
     ASSERT_EQ(op, DEL_COMMAND);
 }
 
