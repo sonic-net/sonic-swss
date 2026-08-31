@@ -731,6 +731,16 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            /* Remove the tc realization for this port (root qdisc + ingress
+             * classification filters). Without this, a removed PORT_QOS_MAP
+             * leaves a stale shaper/qdisc shaping traffic. */
+            string iface = kernutil::resolveInterface(key);
+            string res;
+            string cmd = string(TC_CMD) + " qdisc del dev " + iface + " root";
+            swss::exec(cmd, res);
+            cmd = string(TC_CMD) + " filter del dev " + iface + " ingress";
+            swss::exec(cmd, res);
+
             m_portQosMap.erase(key);
             m_statePortQosMapTable.del(key);
             it = consumer.m_toSync.erase(it);
