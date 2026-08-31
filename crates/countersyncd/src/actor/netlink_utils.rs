@@ -9,6 +9,8 @@ use netlink_sys::Socket;
 use std::io;
 #[cfg(not(test))]
 use std::os::fd::AsRawFd;
+#[cfg(not(test))]
+use std::time::Duration;
 
 #[cfg(not(test))]
 use log::{debug, info, warn};
@@ -60,6 +62,32 @@ pub fn set_socket_rcvbuf(socket: &Socket, bytes: usize) {
     }
 }
 
+#[cfg(not(test))]
+pub(crate) fn set_socket_recv_timeout(socket: &Socket, timeout: Duration) -> io::Result<()> {
+    let timeout = libc::timeval {
+        tv_sec: timeout.as_secs().try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "socket timeout is too large")
+        })?,
+        tv_usec: timeout.subsec_micros().try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "socket timeout is too precise")
+        })?,
+    };
+    let result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            (&timeout as *const libc::timeval).cast(),
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        )
+    };
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 /// Creates a netlink socket for family/group resolution.
 ///
 /// The socket is configured in blocking mode for request-response operations.
@@ -79,6 +107,10 @@ pub fn create_nl_resolver() -> Option<Socket> {
             // Set to blocking mode for request-response operations
             if let Err(e) = socket.set_non_blocking(false) {
                 warn!("Failed to set resolver socket to blocking mode: {:?}", e);
+                return None;
+            }
+            if let Err(e) = set_socket_recv_timeout(&socket, Duration::from_secs(2)) {
+                warn!("Failed to set resolver receive timeout: {:?}", e);
                 return None;
             }
             debug!("Created netlink socket for family/group resolution (blocking mode)");
@@ -254,10 +286,7 @@ pub fn resolve_family_id(socket: &mut Socket, family_name: &str) -> Result<u16, 
                 "Family ID not found in response",
             ))
         }
-        NetlinkPayload::Error(err) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Netlink error: {:?}", err),
-        )),
+        NetlinkPayload::Error(err) => Err(err.into()),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Unexpected response type",
@@ -408,10 +437,7 @@ pub fn resolve_multicast_group(
                 format!("Multicast group '{}' not found", group_name),
             ))
         }
-        NetlinkPayload::Error(err) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Netlink error: {:?}", err),
-        )),
+        NetlinkPayload::Error(err) => Err(err.into()),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Unexpected response type",

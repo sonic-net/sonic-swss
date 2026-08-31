@@ -1,8 +1,4 @@
-use std::{
-    collections::LinkedList,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::LinkedList, sync::Arc, time::Duration};
 
 use std::os::unix::io::AsRawFd;
 #[cfg(test)]
@@ -17,7 +13,7 @@ use tokio::{
     io::{unix::AsyncFd, Interest, Ready as TokioReady},
     select,
     sync::mpsc::{Receiver, Sender},
-    time::{interval, MissedTickBehavior},
+    time::{interval, Instant, MissedTickBehavior},
 };
 
 use std::io;
@@ -684,6 +680,10 @@ impl DataNetlinkActor {
                     warn!("Failed to bind temporary socket: {:?}", e);
                     return None;
                 }
+                if let Err(e) = netlink_utils::set_socket_recv_timeout(&s, Duration::from_secs(2)) {
+                    warn!("Failed to set temporary resolver receive timeout: {:?}", e);
+                    return None;
+                }
                 s
             }
             Err(e) => {
@@ -786,7 +786,7 @@ impl DataNetlinkActor {
         if !force {
             if let Some(_socket) = &self.socket {
                 let time_since_last_data = Instant::now().duration_since(self.last_data_time);
-                if time_since_last_data > Duration::from_secs(SOCKET_HEALTH_TIMEOUT_SECS) {
+                if time_since_last_data >= Duration::from_secs(SOCKET_HEALTH_TIMEOUT_SECS) {
                     warn!(
                         "Socket unhealthy - no data received for {} seconds, forcing reconnection",
                         time_since_last_data.as_secs()

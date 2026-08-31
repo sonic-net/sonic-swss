@@ -1,8 +1,4 @@
 use std::time::Duration;
-#[cfg(not(test))]
-use std::time::Instant;
-#[cfg(test)]
-use tokio::time::Instant;
 
 use log::{debug, info, warn};
 
@@ -10,7 +6,7 @@ use log::{debug, info, warn};
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
 use tokio::{
     sync::mpsc::Sender,
-    time::{interval, MissedTickBehavior},
+    time::{interval, Instant, MissedTickBehavior},
 };
 
 use std::io;
@@ -28,12 +24,12 @@ type SocketType = test::MockSocket;
 const BUFFER_SIZE: usize = 0xFFFF;
 /// Interval for periodic family existence checks (in milliseconds)
 const FAMILY_CHECK_INTERVAL_MS: u64 = 1_000_u64;
-/// Interval for heartbeat logging (number of main loop iterations)
-const HEARTBEAT_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
-/// Interval for periodic reconnect commands (number of main loop iterations)
-const PERIODIC_RECONNECT_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
-/// Interval for control socket recreation attempts (number of main loop iterations)
-const CONTROL_SOCKET_RECREATE_INTERVAL: u32 = 18000; // 18000 * 10ms = 3 minutes
+/// Interval for heartbeat logging.
+const HEARTBEAT_LOG_INTERVAL_SECS: u64 = 60;
+/// Interval for periodic reconnect commands.
+const PERIODIC_RECONNECT_INTERVAL_SECS: u64 = 60;
+/// Interval for control socket recreation attempts.
+const CONTROL_SOCKET_RECREATE_INTERVAL_SECS: u64 = 3 * 60;
 /// Minimum netlink message header size in bytes
 const NETLINK_HEADER_SIZE: usize = 16;
 /// Generic Netlink controller family ID (`GENL_ID_CTRL`).
@@ -153,7 +149,7 @@ impl ControlNetlinkActor {
     /// Mock control socket for testing.
     #[cfg(test)]
     fn connect_control_socket() -> Option<SocketType> {
-        Some(test::MockSocket)
+        test::connect_control_socket()
     }
 
     /// Creates a netlink socket for family/group resolution.
@@ -223,53 +219,123 @@ impl ControlNetlinkActor {
 
     /// Attempts to receive a control message from the control socket.
     ///
-    /// Returns the target family's change if detected, None if no relevant message,
+    /// Returns all target-family changes found in one receive,
     /// or Err if there was an error receiving.
     async fn try_recv_control(
         socket: Option<&mut SocketType>,
         target_family: &str,
-    ) -> Result<Option<FamilyEvent>, io::Error> {
+    ) -> Result<Vec<FamilyEvent>, io::Error> {
         debug!("Attempting to receive control message");
         let socket = socket.ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotConnected, "No control socket available")
         })?;
+        let mut events = Vec::new();
 
-        let mut buffer = vec![0; BUFFER_SIZE];
-        match socket.recv_from(&mut buffer, 0) {
-            Ok((size, _addr)) => {
-                if size == 0 {
-                    return Ok(None);
-                }
+        loop {
+            let mut buffer = Vec::with_capacity(BUFFER_SIZE);
+            match socket.recv_from(&mut buffer, 0) {
+                Ok((size, _addr)) => {
+                    if size == 0 {
+                        continue;
+                    }
 
-                buffer.resize(size, 0);
-                debug!("Received control message of {} bytes", size);
+                    buffer.truncate(size);
+                    debug!("Received control message of {} bytes", size);
 
-                // Parse the netlink control message
-                match Self::parse_control_message(&buffer, target_family) {
-                    Ok(event) => {
-                        if event.is_some() {
-                            info!(
-                                "Control message indicates family '{}' status change",
-                                target_family
+                    match Self::parse_control_datagram(&buffer, target_family) {
+                        Ok(received_events) => events.extend(received_events),
+                        Err(error) if events.is_empty() => return Err(error),
+                        Err(error) => {
+                            warn!(
+                                "Ignoring malformed control datagram after {} valid event(s): {}",
+                                events.len(),
+                                error
                             );
                         }
-                        Ok(event)
-                    }
-                    Err(e) => {
-                        debug!("Failed to parse control message: {:?}", e);
-                        Ok(None) // Continue even if parsing fails
                     }
                 }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // No messages available - this is normal for non-blocking sockets
-                Ok(None)
-            }
-            Err(e) => {
-                debug!("Control socket error: {:?}", e);
-                Err(e)
+                Err(ref error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if !events.is_empty() {
+                        info!(
+                            "Control messages indicate {} status change(s) for family '{}'",
+                            events.len(),
+                            target_family
+                        );
+                    }
+                    return Ok(events);
+                }
+                Err(error) if !events.is_empty() => {
+                    warn!(
+                        "Control socket failed after {} valid event(s): {:?}",
+                        events.len(),
+                        error
+                    );
+                    return Ok(events);
+                }
+                Err(error) => {
+                    debug!("Control socket error: {:?}", error);
+                    return Err(error);
+                }
             }
         }
+    }
+
+    fn parse_control_datagram(
+        buffer: &[u8],
+        target_family: &str,
+    ) -> Result<Vec<FamilyEvent>, io::Error> {
+        let mut events = Vec::new();
+        let mut offset = 0usize;
+
+        while offset + NETLINK_HEADER_SIZE <= buffer.len() {
+            let nl_len =
+                u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
+            let message_end = offset
+                .checked_add(nl_len)
+                .filter(|end| *end <= buffer.len());
+            let Some(message_end) = message_end.filter(|_| nl_len >= NETLINK_HEADER_SIZE) else {
+                let error = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid control netlink message length {nl_len} at offset {offset}"),
+                );
+                if events.is_empty() {
+                    return Err(error);
+                }
+                warn!(
+                    "Discarding malformed trailing control message after {} valid event(s): {}",
+                    events.len(),
+                    error
+                );
+                break;
+            };
+            match Self::parse_control_message(&buffer[offset..message_end], target_family) {
+                Ok(Some(event)) => events.push(event),
+                Ok(None) => {}
+                Err(error) if !events.is_empty() => {
+                    warn!(
+                        "Discarding malformed trailing control message after {} valid event(s): {}",
+                        events.len(),
+                        error
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+            let aligned_len = nl_len.checked_add(3).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Control message alignment overflow",
+                )
+            })? & !3;
+            offset = offset.checked_add(aligned_len).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Control message offset overflow",
+                )
+            })?;
+        }
+
+        Ok(events)
     }
 
     /// Parses a netlink control message to check if it's relevant to our target family.
@@ -291,8 +357,16 @@ impl ControlNetlinkActor {
             return Ok(None);
         }
 
-        let _nl_len = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        let nl_len = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        if nl_len < GENL_HEADER_SIZE || nl_len > buffer.len() {
+            return Ok(None);
+        }
         let nl_type = u16::from_le_bytes([buffer[4], buffer[5]]);
+        debug!(
+            "Control netlink header: nl_type={}, genl_cmd={}",
+            nl_type,
+            buffer.get(16).copied().unwrap_or_default()
+        );
 
         // Check if this is a generic netlink message
         if nl_type != GENL_ID_CTRL {
@@ -325,8 +399,11 @@ impl ControlNetlinkActor {
 
                 // Parse attributes to find family name
                 let attrs_start = GENL_HEADER_SIZE; // After netlink + genl headers
-                if buffer.len() > attrs_start {
-                    if Self::parse_family_name_from_attrs(&buffer[attrs_start..], target_family)? {
+                if nl_len > attrs_start {
+                    if Self::parse_family_name_from_attrs(
+                        &buffer[attrs_start..nl_len],
+                        target_family,
+                    )? {
                         return Ok(Some(event));
                     }
                 }
@@ -403,66 +480,80 @@ impl ControlNetlinkActor {
     /// * `actor` - The ControlNetlinkActor instance to run
     pub async fn run(mut actor: ControlNetlinkActor) {
         debug!("Starting ControlNetlinkActor for family '{}'", actor.family);
-        let mut heartbeat_counter = 0u32;
-        let mut last_periodic_reconnect_counter = 0u32;
         let mut family_was_available = true; // Assume family starts available
+        let mut last_heartbeat = Instant::now();
+        let mut last_periodic_reconnect = Instant::now();
+        let mut last_control_socket_recreate = Instant::now();
         let mut poll_interval = interval(Duration::from_millis(10));
         poll_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             poll_interval.tick().await;
-            heartbeat_counter += 1;
+            let now = Instant::now();
 
             // Log heartbeat every minute to show the actor is running
-            if heartbeat_counter % HEARTBEAT_LOG_INTERVAL == 0 {
+            if now.duration_since(last_heartbeat)
+                >= Duration::from_secs(HEARTBEAT_LOG_INTERVAL_SECS)
+            {
                 info!(
                     "ControlNetlinkActor is running normally - monitoring family '{}', family_was_available={}",
                     actor.family,
                     family_was_available,
                 );
+                last_heartbeat = now;
             }
 
             // Check for control socket activity
             if let Some(ref mut control_socket) = actor.control_socket {
                 match Self::try_recv_control(Some(control_socket), &actor.family).await {
-                    Ok(Some(event)) => {
-                        family_was_available = event == FamilyEvent::Registered;
-                        // Family status changed, force reconnection to pick up new group ID
+                    Ok(events) if !events.is_empty() => {
+                        let final_event = *events.last().unwrap();
+                        family_was_available = final_event == FamilyEvent::Registered;
                         info!(
-                            "Detected family '{}' {:?} event, sending reconnect command",
-                            actor.family, event
+                            "Detected {} family '{}' event(s), final state {:?}; reconnecting once",
+                            events.len(),
+                            actor.family,
+                            final_event
                         );
                         if let Err(e) = actor.command_sender.send(NetlinkCommand::Reconnect).await {
                             warn!("Failed to send reconnect command: {:?}", e);
-                            break; // Channel is closed, exit
+                            break;
                         }
                         continue;
                     }
-                    Ok(None) => {
+                    Ok(_) => {
                         // No relevant control message, continue with periodic check
                     }
                     Err(e) => {
                         debug!("Failed to receive control message: {:?}", e);
                         // Don't reconnect control socket immediately, it's not critical
                         // But we should try to recreate it periodically
-                        if heartbeat_counter % CONTROL_SOCKET_RECREATE_INTERVAL == 0 {
+                        if now.duration_since(last_control_socket_recreate)
+                            >= Duration::from_secs(CONTROL_SOCKET_RECREATE_INTERVAL_SECS)
+                        {
                             debug!("Attempting to recreate control socket");
                             actor.control_socket = Self::connect_control_socket();
+                            last_control_socket_recreate = now;
                         }
                     }
                 }
+            } else if now.duration_since(last_control_socket_recreate)
+                >= Duration::from_secs(CONTROL_SOCKET_RECREATE_INTERVAL_SECS)
+            {
+                debug!("Attempting to create missing control socket");
+                actor.control_socket = Self::connect_control_socket();
+                last_control_socket_recreate = now;
             }
 
             // Perform periodic family existence check
-            let now = Instant::now();
             if now.duration_since(actor.last_family_check).as_millis()
-                > FAMILY_CHECK_INTERVAL_MS as u128
+                >= FAMILY_CHECK_INTERVAL_MS as u128
             {
                 actor.last_family_check = now;
                 let family_available = actor.check_family_exists();
                 debug!(
-                    "heartbeat: family_available={}, family_was_available={}, heartbeat_counter={}",
-                    family_available, family_was_available, heartbeat_counter
+                    "heartbeat: family_available={}, family_was_available={}",
+                    family_available, family_was_available
                 );
                 if family_available != family_was_available {
                     if family_available {
@@ -484,11 +575,12 @@ impl ControlNetlinkActor {
                     // Send periodic soft reconnect commands to ensure DataNetlinkActor stays connected
                     // This handles cases where DataNetlinkActor disconnected due to socket errors
                     // SoftReconnect only reconnects if socket is unhealthy, avoiding unnecessary reconnections
-                    if heartbeat_counter - last_periodic_reconnect_counter
-                        >= PERIODIC_RECONNECT_INTERVAL
+                    if now.duration_since(last_periodic_reconnect)
+                        >= Duration::from_secs(PERIODIC_RECONNECT_INTERVAL_SECS)
                     {
-                        debug!("Sending periodic soft reconnect command to check data socket health (counter: {}, last: {}, interval: {})", 
-                               heartbeat_counter, last_periodic_reconnect_counter, PERIODIC_RECONNECT_INTERVAL);
+                        debug!(
+                            "Sending periodic soft reconnect command to check data socket health"
+                        );
                         if let Err(e) = actor
                             .command_sender
                             .send(NetlinkCommand::SoftReconnect)
@@ -497,7 +589,7 @@ impl ControlNetlinkActor {
                             warn!("Failed to send periodic soft reconnect command: {:?}", e);
                             break; // Channel is closed, exit
                         }
-                        last_periodic_reconnect_counter = heartbeat_counter;
+                        last_periodic_reconnect = now;
                     }
                 }
             }
@@ -520,7 +612,14 @@ pub mod test {
     use crate::actor::data_netlink::{self, DataNetlinkActor};
     use crate::message::buffer::SocketBufferMessage;
     use netlink_sys::SocketAddr;
-    use std::{collections::VecDeque, sync::Mutex, time::Duration};
+    use std::{
+        collections::VecDeque,
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Mutex,
+        },
+        time::Duration,
+    };
     use tokio::{
         spawn,
         sync::mpsc::{channel, Receiver},
@@ -533,6 +632,20 @@ pub mod test {
 
     static CONTROL_MESSAGES: Mutex<VecDeque<MockControlMessage>> = Mutex::new(VecDeque::new());
     static TARGET_FAMILY: Mutex<Option<String>> = Mutex::new(None);
+    static CONTROL_SOCKET_ERROR: AtomicBool = AtomicBool::new(false);
+    static CONTROL_SOCKET_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+    static CONTROL_SOCKET_FAILURES_REMAINING: AtomicUsize = AtomicUsize::new(0);
+
+    pub(super) fn connect_control_socket() -> Option<MockSocket> {
+        CONTROL_SOCKET_CONNECTIONS.fetch_add(1, Ordering::SeqCst);
+        let remaining = CONTROL_SOCKET_FAILURES_REMAINING.load(Ordering::SeqCst);
+        if remaining > 0 {
+            CONTROL_SOCKET_FAILURES_REMAINING.fetch_sub(1, Ordering::SeqCst);
+            None
+        } else {
+            Some(MockSocket)
+        }
+    }
 
     /// Mock socket for testing purposes.
     pub struct MockSocket;
@@ -540,9 +653,15 @@ pub mod test {
     impl MockSocket {
         pub fn recv_from(
             &mut self,
-            buf: &mut [u8],
+            buf: &mut Vec<u8>,
             _flags: i32,
         ) -> Result<(usize, SocketAddr), io::Error> {
+            if CONTROL_SOCKET_ERROR.load(Ordering::SeqCst) {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "simulated control socket failure",
+                ));
+            }
             let Some(message) = CONTROL_MESSAGES.lock().unwrap().pop_front() else {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
@@ -550,8 +669,8 @@ pub mod test {
                 ));
             };
 
-            let size = message.bytes.len().min(buf.len());
-            buf[..size].copy_from_slice(&message.bytes[..size]);
+            buf.extend_from_slice(&message.bytes);
+            let size = message.bytes.len();
             Ok((size, SocketAddr::new(0, 0)))
         }
     }
@@ -559,6 +678,9 @@ pub mod test {
     fn reset_control_mock(target_family: &str) {
         CONTROL_MESSAGES.lock().unwrap().clear();
         *TARGET_FAMILY.lock().unwrap() = Some(target_family.to_string());
+        CONTROL_SOCKET_ERROR.store(false, Ordering::SeqCst);
+        CONTROL_SOCKET_CONNECTIONS.store(0, Ordering::SeqCst);
+        CONTROL_SOCKET_FAILURES_REMAINING.store(0, Ordering::SeqCst);
     }
 
     pub(super) fn family_available() -> bool {
@@ -698,6 +820,12 @@ pub mod test {
         }
     }
 
+    async fn settle_actor_tasks() {
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn test_control_netlink_actor() {
@@ -790,15 +918,11 @@ pub mod test {
         // registry already exposes the new generation and both notifications are queued.
         inject_family_deleted(FAMILY, OLD_FAMILY_ID);
         inject_family_registered(FAMILY, GROUP, NEW_FAMILY_ID, NEW_GROUP_ID);
-        wait_for_connection_attempts(3).await;
+        wait_for_connection_attempts(2).await;
 
         assert_eq!(
             data_netlink::test::successful_connections(),
-            vec![
-                (OLD_FAMILY_ID, OLD_GROUP_ID),
-                (NEW_FAMILY_ID, NEW_GROUP_ID),
-                (NEW_FAMILY_ID, NEW_GROUP_ID),
-            ]
+            vec![(OLD_FAMILY_ID, OLD_GROUP_ID), (NEW_FAMILY_ID, NEW_GROUP_ID)]
         );
         assert_eq!(
             data_netlink::test::current_subscription(),
@@ -871,6 +995,85 @@ pub mod test {
         stop_actors(actors).await;
     }
 
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_periodic_family_check_recovers_missed_notifications() {
+        const FAMILY: &str = "test_family";
+        const GROUP: &str = "test_group";
+        const OLD_FAMILY_ID: u16 = 0x60;
+        const OLD_GROUP_ID: u32 = 0x400;
+        const NEW_FAMILY_ID: u16 = 0x61;
+        const NEW_GROUP_ID: u32 = 0x401;
+
+        let actors = start_actors(FAMILY, GROUP, OLD_FAMILY_ID, OLD_GROUP_ID).await;
+        settle_actor_tasks().await;
+        data_netlink::test::unregister_mock_family(FAMILY, OLD_FAMILY_ID);
+
+        advance_control_ticks(99).await;
+        assert_eq!(data_netlink::test::connection_attempts(), 1);
+        advance_control_ticks(1).await;
+        assert_eq!(data_netlink::test::connection_attempts(), 1);
+
+        data_netlink::test::register_mock_family(FAMILY, GROUP, NEW_FAMILY_ID, NEW_GROUP_ID);
+        advance_control_ticks(99).await;
+        assert_eq!(data_netlink::test::connection_attempts(), 1);
+        advance_control_ticks(1).await;
+        settle_actor_tasks().await;
+
+        assert_eq!(data_netlink::test::connection_attempts(), 2);
+        assert_eq!(
+            data_netlink::test::current_subscription(),
+            Some((NEW_FAMILY_ID, NEW_GROUP_ID))
+        );
+        stop_actors(actors).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_soft_reconnect_uses_sixty_second_elapsed_timeout() {
+        const FAMILY: &str = "test_family";
+        const GROUP: &str = "test_group";
+
+        let actors = start_actors(FAMILY, GROUP, 0x70, 0x500).await;
+        settle_actor_tasks().await;
+        advance(Duration::from_secs(59)).await;
+        settle_actor_tasks().await;
+        assert_eq!(data_netlink::test::connection_attempts(), 1);
+
+        advance(Duration::from_secs(1)).await;
+        settle_actor_tasks().await;
+        assert_eq!(data_netlink::test::connection_attempts(), 2);
+        assert_eq!(data_netlink::test::live_socket_count(), 1);
+        stop_actors(actors).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_control_socket_recreates_after_three_minutes_elapsed() {
+        reset_control_mock("test_family");
+        CONTROL_SOCKET_ERROR.store(true, Ordering::SeqCst);
+        let (command_sender, command_receiver) = channel(10);
+        let actor = ControlNetlinkActor::new("test_family", command_sender);
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 1);
+        let task = spawn(ControlNetlinkActor::run(actor));
+        settle_actor_tasks().await;
+
+        advance(Duration::from_secs(179)).await;
+        settle_actor_tasks().await;
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 1);
+
+        advance(Duration::from_secs(1)).await;
+        settle_actor_tasks().await;
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 2);
+
+        drop(command_receiver);
+        advance(Duration::from_millis(10)).await;
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("control actor did not stop")
+            .expect("control actor panicked");
+    }
+
     /// Tests control message parsing functionality.
     #[test]
     fn test_control_message_parsing() {
@@ -890,6 +1093,57 @@ pub mod test {
                 None
             );
         }
+    }
+
+    #[test]
+    fn test_multiple_control_messages_in_one_datagram() {
+        let mut datagram = control_message(CTRL_CMD_DELFAMILY, "test_family", 0x20);
+        datagram.extend(control_message(CTRL_CMD_NEWFAMILY, "test_family", 0x21));
+
+        assert_eq!(
+            ControlNetlinkActor::parse_control_datagram(&datagram, "test_family").unwrap(),
+            vec![FamilyEvent::Unregistered, FamilyEvent::Registered]
+        );
+    }
+
+    #[test]
+    fn test_valid_event_before_malformed_trailing_message_is_kept() {
+        let mut datagram = control_message(CTRL_CMD_DELFAMILY, "test_family", 0x20);
+        datagram.extend_from_slice(&u32::MAX.to_le_bytes());
+        datagram.resize(datagram.len() + NETLINK_HEADER_SIZE - 4, 0);
+
+        assert_eq!(
+            ControlNetlinkActor::parse_control_datagram(&datagram, "test_family").unwrap(),
+            vec![FamilyEvent::Unregistered]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_missing_control_socket_is_retried_after_three_minutes() {
+        reset_control_mock("test_family");
+        CONTROL_SOCKET_FAILURES_REMAINING.store(1, Ordering::SeqCst);
+        let (command_sender, command_receiver) = channel(10);
+        let actor = ControlNetlinkActor::new("test_family", command_sender);
+        assert!(actor.control_socket.is_none());
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 1);
+        let task = spawn(ControlNetlinkActor::run(actor));
+        settle_actor_tasks().await;
+
+        advance(Duration::from_secs(179)).await;
+        settle_actor_tasks().await;
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 1);
+
+        advance(Duration::from_secs(1)).await;
+        settle_actor_tasks().await;
+        assert_eq!(CONTROL_SOCKET_CONNECTIONS.load(Ordering::SeqCst), 2);
+
+        drop(command_receiver);
+        advance(Duration::from_millis(10)).await;
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("control actor did not stop")
+            .expect("control actor panicked");
     }
 
     /// Tests family name parsing from attributes.
