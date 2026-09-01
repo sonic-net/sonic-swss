@@ -798,7 +798,6 @@ bool OrchDaemon::init()
         static const vector<sai_queue_stat_t> queueStatIds =
         {
             SAI_QUEUE_STAT_PACKETS,
-            SAI_QUEUE_STAT_DROPPED_PACKETS,
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
