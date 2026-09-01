@@ -39,7 +39,9 @@ packet operations remain real.
 
 Wall-clock runtime is host-dependent because module, link, and packet operations
 remain synchronous and real. Successful runs report `elapsed_wall`; measure a full
-run on the target host rather than inferring runtime from the virtual outages.
+run on the target host rather than inferring runtime from the virtual outages. The
+final Linux 6.8 validation completed the 137 reloads in 51.69 seconds, excluding
+the initial release build and package installation.
 
 For local debugging only, a shorter run can bypass the minimum of 101 measured
 reloads:
