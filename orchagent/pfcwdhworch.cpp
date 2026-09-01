@@ -464,7 +464,17 @@ task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 
 	// Delegate to base implementation to stop watchdog on the port and
 	// update common bookkeeping.
-	return PfcWdBaseOrch::deleteEntry(key);
+	task_process_status status = PfcWdBaseOrch::deleteEntry(key);
+
+	// A port deferred for a missing lossless TC is only removed from the pending
+	// set when it starts, so a port deleted while still deferred would stay there
+	// for the lifetime of the process.
+	if (status == task_process_status::task_success)
+	{
+		clearPfcWdPending(port);
+	}
+
+	return status;
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,
@@ -789,11 +799,16 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 {
     SWSS_LOG_ENTER();
 
-    // Get lossless TCs for this port
+    // A PORT_QOS_MAP update can clear the PFC mask while the watchdog is running,
+    // so an empty lossless TC set only means there is no queue left to reprogram.
+    // The port level teardown and the bookkeeping below still have to run, or the
+    // port keeps its intervals and the tracked action stays set with no port
+    // configured, which then rejects every later action change.
     std::set<uint8_t> losslessTc;
     if (!getLosslessTcsForPort(port, losslessTc))
     {
-        return true;  // Nothing to disable
+        SWSS_LOG_INFO("No lossless TC on port %s, clearing the port level watchdog state only",
+                      port.m_alias.c_str());
     }
 
     SWSS_LOG_NOTICE("Disabling hardware watchdog on port %s", port.m_alias.c_str());
@@ -832,6 +847,21 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
         m_stormedQueues.erase(queueId);
     }
 
+    // The lossless TC set may have shrunk since the port was configured, so drop
+    // anything still mapped to this port instead of only the TCs seen above.
+    for (auto it = m_queueToPortMap.begin(); it != m_queueToPortMap.end(); )
+    {
+        if (it->second.port_alias == port.m_alias)
+        {
+            m_stormedQueues.erase(it->first);
+            it = m_queueToPortMap.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
     // Clear detection and restoration intervals on port level
     std::vector<sai_map_t> empty_map_list;
 
@@ -865,25 +895,16 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
     // Remove entry from STATE_DB
     m_pfcWdHwStateTable->del(port.m_alias);
 
-    // If no ports have hardware watchdog configured, reset action to unknown
+    // If no ports have hardware watchdog configured, reset action to unknown.
+    // Only the tracked action is cleared: the switch level attribute is left as
+    // programmed so that reconfiguring the last port does not flap the action
+    // through FORWARD, and it is rewritten by configureSwitchAction() as soon as
+    // a port is configured again.
     if (m_pfcwd_ports.empty())
     {
-        // Put the switch level action back to the SAI default, so the hardware
-        // stops dropping once no port is watched. Leaving it programmed while
-        // STATE_DB reports unknown would misrepresent what the hardware does.
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
-        attr.value.u32 = SAI_PACKET_ACTION_FORWARD;
-
-        sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to reset switch level PFC DLR packet action: %d", status);
-        }
-
         this->setPfcDlrPacketAction(PfcWdAction::PFC_WD_ACTION_UNKNOWN);
         this->updateDlrPacketActionInStateTable();
-        SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, switch level action reset");
+        SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, reset action to UNKNOWN");
     }
 
     SWSS_LOG_NOTICE("Successfully disabled hardware PFC watchdog on port %s",
@@ -908,11 +929,11 @@ bool PfcWdHwOrch::isPortInStormedState(const Port& port)
     uint8_t pfcMask = 0;
     if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
     {
-        // Report the port as stormed rather than allow a change that may be
-        // unsafe while the state cannot be read.
-        SWSS_LOG_WARN("Failed to get PFC mask on port %s, treating it as stormed",
-                      port.m_alias.c_str());
-        return true;
+        // The mask is unreadable, so no lossless queue can be inspected. The port
+        // is reported as not stormed: treating it as stormed instead would make
+        // the configuration undeletable for as long as the read keeps failing.
+        SWSS_LOG_WARN("Failed to get PFC mask on port %s", port.m_alias.c_str());
+        return false;
     }
 
     // Check each lossless queue to see if any is in stormed state
