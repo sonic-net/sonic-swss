@@ -5923,7 +5923,12 @@ struct PfcWdHwOrchTest : public PortsOrchTest
         _hook_sai_port_api();
         _hook_sai_queue_api();
 
-        // Reset hw-specific counters for each test
+        // Reset hw-specific counters for each test. The failure injection flags
+        // are reset here rather than only at the end of each failure test: an
+        // ASSERT returns from the test body, which would otherwise leave the
+        // flags set and fail every test that runs after it.
+        resetPfcWdFailureFlags();
+        _sai_switch_dlr_packet_action = 0;
         _sai_switch_dlr_packet_action_count = 0;
         _sai_captured_deadlock_callback = nullptr;
         _sai_port_dld_intervals.clear();
@@ -5938,6 +5943,7 @@ struct PfcWdHwOrchTest : public PortsOrchTest
 
     void TearDown() override
     {
+        resetPfcWdFailureFlags();
         delete gPfcWdHwOrch;
         gPfcWdHwOrch = nullptr;
         _unhook_sai_queue_api();
@@ -5945,6 +5951,39 @@ struct PfcWdHwOrchTest : public PortsOrchTest
         _unhook_sai_switch_api();
         unsetenv("platform");
         PortsOrchTest::TearDown();
+    }
+
+    // The notification reaches the orch over the ASIC_DB NOTIFICATIONS channel.
+    // hiredis is mocked in this binary, so a PUBLISH from NotificationProducer
+    // would never come back out of a subscriber, and pops() does not touch the
+    // socket while its queue is empty. Frame the message the way
+    // NotificationProducer::send() does and hand it to the consumer's reader,
+    // which is how the other mock_tests inject pub/sub messages.
+    static void feedDeadlockNotification(swss::NotificationConsumer *nc,
+                                         const std::string &op,
+                                         const std::string &data)
+    {
+        std::vector<swss::FieldValueTuple> framed;
+        framed.emplace_back(op, data);
+        std::string msg = swss::JSon::buildJson(framed);
+
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3;
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        mockReply->element[2]->str = (char *)calloc(msg.length() + 1, sizeof(char));
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+        mockReply->element[2]->len = (int)msg.length();
+
+        nc->readData();
+
+        free(mockReply->element[2]->str);
+        free(mockReply->element[2]);
+        free(mockReply->element);
+        free(mockReply);
+        mockReply = nullptr;
     }
 
     // Reset all PFC watchdog failure injection flags
@@ -6449,12 +6488,17 @@ TEST_F(PfcWdHwOrchTest, DeadlockNotificationThroughConsumer)
     data.queue_id = queueId;
     data.event    = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
 
-    std::string serialized = sai_serialize_queue_deadlock_ntf(1, &data);
+    // The consumer only exists when the switch reports the notification
+    // capability; without it the dereferences below would crash rather than fail.
+    ASSERT_NE(gPfcWdHwOrch->m_deadlockNotificationConsumer, nullptr);
 
-    swss::DBConnector asicDb("ASIC_DB", 0);
-    swss::NotificationProducer producer(&asicDb, "NOTIFICATIONS");
-    std::vector<swss::FieldValueTuple> values;
-    producer.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, serialized, values);
+    // Not stormed until the notification is actually consumed.
+    ASSERT_FALSE(gPfcWdHwOrch->isPortInStormedState(port));
+
+    std::string serialized = sai_serialize_queue_deadlock_ntf(1, &data);
+    feedDeadlockNotification(gPfcWdHwOrch->m_deadlockNotificationConsumer,
+                             SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                             serialized);
 
     // Consume it the way orchagent does.
     gPfcWdHwOrch->doTask(*gPfcWdHwOrch->m_deadlockNotificationConsumer);
@@ -6464,7 +6508,9 @@ TEST_F(PfcWdHwOrchTest, DeadlockNotificationThroughConsumer)
     // And the recovery event clears it again.
     data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
     serialized = sai_serialize_queue_deadlock_ntf(1, &data);
-    producer.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, serialized, values);
+    feedDeadlockNotification(gPfcWdHwOrch->m_deadlockNotificationConsumer,
+                             SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                             serialized);
 
     gPfcWdHwOrch->doTask(*gPfcWdHwOrch->m_deadlockNotificationConsumer);
 
@@ -6564,6 +6610,9 @@ TEST_F(PfcWdHwOrchTest, SAIFailureSwitchAction)
         ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
     }
 
+    // The action write is what failed, so nothing may be left tracked.
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
+
     // Verify STATE_DB reports failure status
     vector<FieldValueTuple> fvs;
     ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
@@ -6606,8 +6655,11 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDldInterval)
         ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
     }
 
-    // Verify clean state: switch action not set (rollback)
-    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+    // The switch level attribute is deliberately left as programmed on rollback;
+    // what has to be cleared is the action the orch tracks, so that the next
+    // configuration is free to pick a different one.
+    ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_DROP);
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
 
     // Verify STATE_DB reports failure status
     vector<FieldValueTuple> fvs;
@@ -6651,8 +6703,11 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDlrInterval)
         ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
     }
 
-    // Verify clean state: switch action rolled back
-    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+    // The switch level attribute is deliberately left as programmed on rollback;
+    // what has to be cleared is the action the orch tracks, so that the next
+    // configuration is free to pick a different one.
+    ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_DROP);
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
 
     // Verify STATE_DB reports failure status
     vector<FieldValueTuple> fvs;
@@ -6694,8 +6749,11 @@ TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
     ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
     ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
 
-    // Verify clean state: switch action rolled back
-    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+    // The switch level attribute is deliberately left as programmed on rollback;
+    // what has to be cleared is the action the orch tracks, so that the next
+    // configuration is free to pick a different one.
+    ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_DROP);
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
 
     // Verify STATE_DB reports failure status
     vector<FieldValueTuple> fvs;
