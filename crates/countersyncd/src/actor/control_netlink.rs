@@ -775,7 +775,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(10);
         let close_sender = command_sender.clone();
         let (buffer_sender, buffer_receiver) = channel(4);
-        let mut data_actor = DataNetlinkActor::new(family, group, command_receiver, 0, 5);
+        let mut data_actor = DataNetlinkActor::new(family, group, command_receiver, 0);
         data_actor.add_recipient(buffer_sender);
         let control_actor = ControlNetlinkActor::new(family, command_sender);
 

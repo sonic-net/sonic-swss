@@ -6,7 +6,7 @@ mod utilities;
 
 // External dependencies
 use clap::Parser;
-use log::{error, info};
+use log::{error, info, warn};
 use opentelemetry::ExportError;
 use std::time::Duration;
 use tokio::{spawn, sync::mpsc::channel};
@@ -222,11 +222,10 @@ struct Args {
     /// Deprecated compatibility option. Netlink reads are now driven by fd readiness.
     #[arg(
         long,
-        default_value = "5",
         value_parser = clap::value_parser!(u64).range(1..),
         help = "Deprecated and ignored; netlink reads are event-driven"
     )]
-    socket_readiness_timeout_ms: u64,
+    socket_readiness_timeout_ms: Option<u64>,
 
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
     #[arg(
@@ -297,6 +296,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
 
+    if let Some(value) = args.socket_readiness_timeout_ms {
+        warn!(
+            "--socket-readiness-timeout-ms={} is deprecated and ignored; netlink reads are event-driven",
+            value
+        );
+    }
+
     info!("Starting SONiC High Frequency Telemetry Counter Sync Daemon");
     info!("Stats reporting enabled: {}", args.enable_stats);
     if args.enable_stats {
@@ -357,7 +363,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         group.as_str(),
         command_receiver,
         args.netlink_rcvbuf,
-        args.socket_readiness_timeout_ms,
     );
     data_netlink.add_recipient(ipfix_record_sender);
 
@@ -575,7 +580,7 @@ mod tests {
     #[test]
     fn test_defaults() {
         let args = parse(&["countersyncd"]).unwrap();
-        assert_eq!(args.socket_readiness_timeout_ms, 5);
+        assert_eq!(args.socket_readiness_timeout_ms, None);
         assert_eq!(args.netlink_rcvbuf, 4194304);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
@@ -592,7 +597,7 @@ mod tests {
     #[test]
     fn test_deprecated_socket_readiness_timeout_is_accepted() {
         let args = parse(&["countersyncd", "--socket-readiness-timeout-ms", "10"]).unwrap();
-        assert_eq!(args.socket_readiness_timeout_ms, 10);
+        assert_eq!(args.socket_readiness_timeout_ms, Some(10));
     }
 
     #[test]

@@ -444,7 +444,6 @@ impl DataNetlinkActor {
     /// * `group` - The multicast group name
     /// * `command_recipient` - Channel for receiving control commands
     /// * `netlink_rcvbuf_bytes` - Socket SO_RCVBUF size in bytes (0 = OS default). Larger values reduce ENOBUFS under high HFT load.
-    /// * `_socket_readiness_timeout_ms` - Deprecated compatibility argument; reads are event-driven.
     ///
     /// # Returns
     ///
@@ -454,7 +453,6 @@ impl DataNetlinkActor {
         group: &str,
         command_recipient: Receiver<NetlinkCommand>,
         netlink_rcvbuf_bytes: usize,
-        _socket_readiness_timeout_ms: u64,
     ) -> Self {
         let nl_resolver = Self::create_nl_resolver();
         let mut actor = DataNetlinkActor {
@@ -1509,7 +1507,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(4);
         let (buffer_sender, mut buffer_receiver) = channel(1);
 
-        let mut actor = DataNetlinkActor::new("family-1", "group-1", command_receiver, 0, 5);
+        let mut actor = DataNetlinkActor::new("family-1", "group-1", command_receiver, 0);
         actor.add_recipient(buffer_sender);
 
         let task = spawn(DataNetlinkActor::run(actor));
@@ -1591,7 +1589,7 @@ pub mod test {
 
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(3);
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
         actor.add_recipient(buffer_sender);
         let task = spawn(DataNetlinkActor::run(actor));
 
@@ -1621,7 +1619,7 @@ pub mod test {
 
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
         actor.add_recipient(buffer_sender);
         let task = spawn(DataNetlinkActor::run(actor));
 
@@ -1950,7 +1948,7 @@ pub mod test {
     fn test_netlink_rcvbuf_stored_on_construction() {
         reset_mock_state(false, 1);
         let (_, command_receiver) = channel(1);
-        let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304, 5);
+        let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304);
         assert_eq!(actor.netlink_rcvbuf_bytes, 4194304);
     }
 }

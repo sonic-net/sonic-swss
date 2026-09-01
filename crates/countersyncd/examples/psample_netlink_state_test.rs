@@ -434,7 +434,7 @@ fn start_actors() -> Actors {
     let (command_sender, command_receiver) = channel(32);
     let (data_sender, data_receiver) = channel(32);
 
-    let mut data_actor = DataNetlinkActor::new(FAMILY, GROUP, command_receiver, 4 * 1024 * 1024, 5);
+    let mut data_actor = DataNetlinkActor::new(FAMILY, GROUP, command_receiver, 4 * 1024 * 1024);
     data_actor.add_recipient(data_sender);
     let control_actor = ControlNetlinkActor::new(FAMILY, command_sender.clone());
 
