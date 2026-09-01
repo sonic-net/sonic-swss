@@ -15,7 +15,6 @@ extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
-extern sai_buffer_api_t *sai_buffer_api;
 
 extern event_handle_t g_events_handle;
 

@@ -44,6 +44,18 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
     }
 }
 
+void on_queue_pfc_deadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::NotificationProducer pfcDeadlockNotifier(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_queue_deadlock_ntf(count, data);
+        std::vector<swss::FieldValueTuple> values;
+        pfcDeadlockNotifier.send("queue_pfc_deadlock", sdata, values);
+    }
+}
+
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)

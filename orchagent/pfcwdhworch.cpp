@@ -1,8 +1,9 @@
 #include "pfcwdhworch.h"
+#include "notifications.h"
+#include "notifier.h"
 #include "schema.h"
 #include "switchorch.h"
 #include "portsorch.h"
-#include "saiextensions.h"
 #include "sai_serialize.h"
 #include <algorithm>
 #include <set>
@@ -11,23 +12,10 @@ extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t* sai_port_api;
 extern sai_queue_api_t* sai_queue_api;
-extern sai_buffer_api_t* sai_buffer_api;
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 // Global instance pointer for SAI callback
-static PfcWdHwOrch* g_pfcWdHwOrch = nullptr;
-
-// SAI callback wrapper
-static void on_queue_pfc_deadlock(
-        _In_ uint32_t count,
-        _In_ sai_queue_deadlock_notification_data_t *data)
-{
-    if (g_pfcWdHwOrch != nullptr)
-    {
-        g_pfcWdHwOrch->onQueuePfcDeadlock(count, data);
-    }
-}
 
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
                          const vector<sai_port_stat_t> &portStatIds,
@@ -41,13 +29,11 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     m_detectionTimeMax(0),
     m_restorationTimeMin(0),
     m_restorationTimeMax(0),
-    m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
-    m_pfcWdHwStateTable(make_shared<Table>(m_stateDb.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
+    m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
 {
     SWSS_LOG_ENTER();
 
     // Set global instance pointer
-    g_pfcWdHwOrch = this;
 
     // Mark hardware watchdog recovery in STATE_DB
     this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_HARDWARE);
@@ -65,7 +51,6 @@ PfcWdHwOrch::~PfcWdHwOrch(void)
 {
     SWSS_LOG_ENTER();
 
-    g_pfcWdHwOrch = nullptr;
 }
 
 void PfcWdHwOrch::initializeTimerRanges()
@@ -92,10 +77,13 @@ void PfcWdHwOrch::initializeTimerRanges()
                        m_restorationTimeMin, m_restorationTimeMax);
 
         // Store ranges in STATE_DB
-        this->updateStateTable(PFC_WD_HW_DETECTION_TIME_MIN, to_string(m_detectionTimeMin));
-        this->updateStateTable(PFC_WD_HW_DETECTION_TIME_MAX, to_string(m_detectionTimeMax));
-        this->updateStateTable(PFC_WD_HW_RESTORATION_TIME_MIN, to_string(m_restorationTimeMin));
-        this->updateStateTable(PFC_WD_HW_RESTORATION_TIME_MAX, to_string(m_restorationTimeMax));
+        vector<FieldValueTuple> fvs = {
+            { PFC_WD_HW_DETECTION_TIME_MIN,   to_string(m_detectionTimeMin)   },
+            { PFC_WD_HW_DETECTION_TIME_MAX,   to_string(m_detectionTimeMax)   },
+            { PFC_WD_HW_RESTORATION_TIME_MIN, to_string(m_restorationTimeMin) },
+            { PFC_WD_HW_RESTORATION_TIME_MAX, to_string(m_restorationTimeMax) },
+        };
+        this->updateStateTable(fvs);
     }
     else
     {
@@ -108,13 +96,25 @@ void PfcWdHwOrch::registerCallbacks()
 {
     SWSS_LOG_ENTER();
 
+    /* The SAI notification runs on a libsairedis thread, so it is forwarded to
+     * the ASIC_DB NOTIFICATIONS channel and consumed here on the orchagent
+     * thread instead, keeping the watchdog state single-threaded. */
+    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+    m_deadlockNotificationConsumer = new swss::NotificationConsumer(
+        m_notificationsDb.get(), "NOTIFICATIONS");
+    m_deadlockNotificationConsumer->setOpAllowList({"queue_pfc_deadlock"});
+    m_deadlockNotificationConsumer->setStatsLabel("PfcWdHwOrch:queue_pfc_deadlock");
+    auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
+                                         "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
+    Orch::addExecutor(deadlockNotifier);
+
     // Register PFC deadlock notification callback
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
     {
         sai_attribute_t attr;
         attr.id = SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY;
-        attr.value.ptr = (void *)on_queue_pfc_deadlock;
+        attr.value.ptr = (void *)on_queue_pfc_deadlock;   // forwards to ASIC_DB NOTIFICATIONS
 
         sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
         if (status != SAI_STATUS_SUCCESS)
@@ -150,6 +150,39 @@ void PfcWdHwOrch::recoverWarmReboot(DBConnector *db)
     else
     {
         SWSS_LOG_INFO("No existing PFC watchdog configuration found");
+    }
+}
+
+void PfcWdHwOrch::doTask(NotificationConsumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (&consumer != m_deadlockNotificationConsumer)
+    {
+        return;
+    }
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+
+    for (auto &entry : entries)
+    {
+        string op  = kfvKey(entry);
+        string data = kfvOp(entry);
+
+        if (op != "queue_pfc_deadlock")
+        {
+            continue;
+        }
+
+        uint32_t count = 0;
+        sai_queue_deadlock_notification_data_t *deadlockData = nullptr;
+
+        sai_deserialize_queue_deadlock_ntf(data, count, &deadlockData);
+
+        onQueuePfcDeadlock(count, deadlockData);
+
+        sai_deserialize_free_queue_deadlock_ntf(count, deadlockData);
     }
 }
 
@@ -515,6 +548,32 @@ bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
     }
 }
 
+void PfcWdHwOrch::mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+
+    // The deadlock notification carries only a queue id, so keep the port and
+    // TC each watched queue belongs to for the lookup in onQueuePfcDeadlock().
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+
+        PortQueueInfo info;
+        info.port_id = port.m_port_id;
+        info.port_alias = port.m_alias;
+        info.queue_index = tc;
+        m_queueToPortMap[queueId] = info;
+
+        SWSS_LOG_NOTICE("Watching queue 0x%" PRIx64 " on port %s TC %d",
+                        queueId, port.m_alias.c_str(), tc);
+    }
+}
+
 bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
                                       uint32_t restorationTime, PfcWdAction action)
 {
@@ -557,7 +616,8 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
         return false;
     }
 
-    // Initialize queue statistics in COUNTERS_DB
+    // Keep the queue to port mapping the deadlock notification needs
+    mapQueuesToPort(port, losslessTc);
 
     // Track this port
     m_hwWdPorts.insert(port.m_alias);
