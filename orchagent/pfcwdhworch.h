@@ -38,6 +38,7 @@ protected:
 
 public:
     // PFC deadlock notification callback
+    void doTask(NotificationConsumer &consumer) override;
     void onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data);
 
 private:
@@ -50,7 +51,7 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-    
+
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
     uint32_t m_detectionTimeMax;
@@ -58,8 +59,11 @@ private:
     uint32_t m_restorationTimeMax;
 
     // STATE_DB for hardware watchdog state
-    shared_ptr<DBConnector> m_stateDb;
     shared_ptr<Table> m_pfcWdHwStateTable;
+
+    // PFC deadlock notifications, forwarded from the SAI callback thread
+    shared_ptr<DBConnector> m_notificationsDb;
+    swss::NotificationConsumer *m_deadlockNotificationConsumer = nullptr;
 
     // Write failure status to STATE_DB
     void writeFailureStatus(const Port& port);
@@ -86,6 +90,7 @@ private:
     bool enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
+    void mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc);
 
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;

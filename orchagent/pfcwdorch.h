@@ -33,6 +33,7 @@ extern "C" {
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
 #define PFC_STAT_HISTORY                "pfc_stat_history"
 #define PFC_WD_DLR_PACKET_ACTION        "DLR_PACKET_ACTION"
+#define PFC_WD_STATE_KEY                "PFC_WD"
 
 // Default timer limits in milliseconds, overridable via getTimerRange()
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
@@ -113,8 +114,13 @@ protected:
 
     void updateStateTable(const string &field, const string &value)
     {
-        string key = m_stateTable->getTableName() + m_stateTable->getTableNameSeparator() + "PFC_WD";
-        m_stateDb->hset(key, field, value);
+        m_stateTable->hset(PFC_WD_STATE_KEY, field, value);
+    }
+
+    // Write several fields in one round trip rather than one per field.
+    void updateStateTable(const vector<FieldValueTuple> &fvs)
+    {
+        m_stateTable->set(PFC_WD_STATE_KEY, fvs);
     }
 
     void updateDlrPacketActionInStateTable()

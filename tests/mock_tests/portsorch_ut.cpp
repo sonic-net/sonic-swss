@@ -301,6 +301,8 @@ namespace portsorch_test
             {
                 return SAI_STATUS_FAILURE;
             }
+            return SAI_STATUS_SUCCESS;
+        }
         else if (attr[0].id == SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL)
         {
             if (_sai_fail_port_dld_interval)
