@@ -112,6 +112,10 @@ protected:
     // already been logged.
     std::set<std::string> m_pfcwdPendingPorts;
 
+    // Ports the watchdog is currently running on, maintained by both the
+    // software and hardware implementations.
+    std::set<std::string> m_pfcwd_ports;
+
     void updateStateTable(const string &field, const string &value)
     {
         m_stateTable->hset(PFC_WD_STATE_KEY, field, value);
@@ -167,7 +171,6 @@ private:
     shared_ptr<DBConnector> m_stateDb = nullptr;
     shared_ptr<Table> m_stateTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
-    std::set<std::string> m_pfcwd_ports;
 };
 
 #endif

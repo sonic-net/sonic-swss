@@ -6128,7 +6128,7 @@ TEST_F(PfcWdHwOrchTest, GlobalConfigRejected)
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
 
     // GLOBAL configuration should be rejected for hardware-based PFC watchdog
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("GLOBAL"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("GLOBAL"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, NonPhysicalPortRejected)
@@ -6146,7 +6146,7 @@ TEST_F(PfcWdHwOrchTest, NonPhysicalPortRejected)
 
     // Non-physical port should be rejected
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("PortChannel01"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("PortChannel01"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, InvalidPortRejected)
@@ -6155,7 +6155,7 @@ TEST_F(PfcWdHwOrchTest, InvalidPortRejected)
         { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
 
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("EthernetNonExistent"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("EthernetNonExistent"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, DeleteEntryValidation)
@@ -6233,7 +6233,7 @@ TEST_F(PfcWdHwOrchTest, TimeRangeValidation)
 
         ASSERT_EQ(status, task_process_status::task_invalid_entry)
             << "Test case '" << tc.name << "' failed: should reject out-of-range time";
-        ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u)
+        ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u)
             << "Test case '" << tc.name << "' failed: port should not be configured";
     }
 }
@@ -6247,13 +6247,13 @@ TEST_F(PfcWdHwOrchTest, InvalidConfigRejected)
     auto status = gPfcWdHwOrch->createEntry("Ethernet0",
         { { "action", "invalid_action" }, { "detection_time", "200" }, { "restoration_time", "200" } });
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     // Test 2: Missing detection_time field
     status = gPfcWdHwOrch->createEntry("Ethernet0",
         { { "action", "drop" }, { "restoration_time", "200" } });
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     // Test 3: Unknown field
     status = gPfcWdHwOrch->createEntry("Ethernet0",
@@ -6262,7 +6262,7 @@ TEST_F(PfcWdHwOrchTest, InvalidConfigRejected)
           { "restoration_time", "200" },
           { "unknown_field", "some_value" } });
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, NoLosslessTcFailure)
@@ -6286,7 +6286,7 @@ TEST_F(PfcWdHwOrchTest, NoLosslessTcFailure)
     ASSERT_EQ(fields["status"], "failed");
 
     // Port must not be tracked
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, FirstPortAction)
@@ -6300,7 +6300,7 @@ TEST_F(PfcWdHwOrchTest, FirstPortAction)
 
     ASSERT_EQ(_sai_switch_dlr_packet_action_count, before + 1);
     ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_DROP);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
 }
 
 TEST_F(PfcWdHwOrchTest, ActionMismatchRejected)
@@ -6315,7 +6315,7 @@ TEST_F(PfcWdHwOrchTest, ActionMismatchRejected)
     auto status = gPfcWdHwOrch->createEntry("Ethernet8", { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } });
 
     ASSERT_EQ(status, task_process_status::task_invalid_entry);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet8"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet8"), 0u);
 }
 
 TEST_F(PfcWdHwOrchTest, ActionResetOnLastDelete)
@@ -6328,7 +6328,7 @@ TEST_F(PfcWdHwOrchTest, ActionResetOnLastDelete)
 
     deleteHwWdEntry("Ethernet0");
     ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
-    ASSERT_TRUE(gPfcWdHwOrch->m_hwWdPorts.empty());
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcwd_ports.empty());
 }
 
 TEST_F(PfcWdHwOrchTest, ForwardActionConfig)
@@ -6342,7 +6342,7 @@ TEST_F(PfcWdHwOrchTest, ForwardActionConfig)
         { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } });
 
     ASSERT_EQ(status, task_process_status::task_success);
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
 
     // Verify SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION was set to FORWARD
     ASSERT_GT(_sai_switch_dlr_packet_action_count, beforeCount);
@@ -6364,7 +6364,7 @@ TEST_F(PfcWdHwOrchTest, ReconfigurePort)
     enablePfcOnPort("Ethernet0");
 
     gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);
@@ -6458,7 +6458,7 @@ TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
     static_cast<Orch *>(gPfcWdHwOrch)->doTask();
 
     // Verify configuration was restored
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);
@@ -6533,6 +6533,49 @@ TEST_F(PfcWdHwOrchTest, DldrLifecycle)
     ASSERT_FALSE(_sai_queue_dldr_enabled[queue_tc4]);
 }
 
+/*
+ * The deadlock notification reaches the orch through the ASIC_DB
+ * NOTIFICATIONS channel rather than the SAI callback thread, so drive it the
+ * way it actually arrives: serialize, publish, and let doTask() consume it.
+ * Calling onQueuePfcDeadlock() directly would not exercise the unpacking.
+ */
+TEST_F(PfcWdHwOrchTest, DeadlockNotificationThroughConsumer)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    sai_queue_deadlock_notification_data_t data;
+    memset(&data, 0, sizeof(data));
+    data.queue_id = queueId;
+    data.event    = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+
+    std::string serialized = sai_serialize_queue_deadlock_ntf(1, &data);
+
+    swss::DBConnector asicDb("ASIC_DB", 0);
+    swss::NotificationProducer producer(&asicDb, "NOTIFICATIONS");
+    std::vector<swss::FieldValueTuple> values;
+    producer.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, serialized, values);
+
+    // Consume it the way orchagent does.
+    gPfcWdHwOrch->doTask(*gPfcWdHwOrch->m_deadlockNotificationConsumer);
+
+    ASSERT_TRUE(gPfcWdHwOrch->isPortInStormedState(port));
+
+    // And the recovery event clears it again.
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    serialized = sai_serialize_queue_deadlock_ntf(1, &data);
+    producer.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, serialized, values);
+
+    gPfcWdHwOrch->doTask(*gPfcWdHwOrch->m_deadlockNotificationConsumer);
+
+    ASSERT_FALSE(gPfcWdHwOrch->isPortInStormedState(port));
+}
+
 TEST_F(PfcWdHwOrchTest, StormedPortProtection)
 {
     bringUpPorts();
@@ -6569,7 +6612,7 @@ TEST_F(PfcWdHwOrchTest, StormedPortProtection)
     deleteHwWdEntry("Ethernet0");
 
     // Port must still be tracked - delete was rejected
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
 }
 
 TEST_F(PfcWdHwOrchTest, QueueMapLifecycle)
@@ -6610,8 +6653,8 @@ TEST_F(PfcWdHwOrchTest, SAIFailureSwitchAction)
     // Verify entry creation failed
     ASSERT_NE(status, task_process_status::task_success);
 
-    // Verify clean state: port not added to m_hwWdPorts
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    // Verify clean state: port not added to m_pfcwd_ports
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);
@@ -6650,8 +6693,8 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDldInterval)
     // Verify entry creation failed
     ASSERT_NE(status, task_process_status::task_success);
 
-    // Verify clean state: port not added to m_hwWdPorts
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    // Verify clean state: port not added to m_pfcwd_ports
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);
@@ -6695,8 +6738,8 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDlrInterval)
     // Verify entry creation failed
     ASSERT_NE(status, task_process_status::task_success);
 
-    // Verify clean state: port not added to m_hwWdPorts
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    // Verify clean state: port not added to m_pfcwd_ports
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);
@@ -6740,8 +6783,8 @@ TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
     // Verify entry creation failed
     ASSERT_NE(status, task_process_status::task_success);
 
-    // Verify clean state: port not added to m_hwWdPorts
-    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+    // Verify clean state: port not added to m_pfcwd_ports
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 
     Port port;
     gPortsOrch->getPort("Ethernet0", port);

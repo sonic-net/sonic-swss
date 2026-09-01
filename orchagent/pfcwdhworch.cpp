@@ -37,6 +37,7 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
 
     // Mark hardware watchdog recovery in STATE_DB
     this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_HARDWARE);
+    this->updateDlrPacketActionInStateTable();
 
     SWSS_LOG_NOTICE("Initializing hardware-based PFC watchdog");
 
@@ -84,10 +85,16 @@ void PfcWdHwOrch::initializeTimerRanges()
             { PFC_WD_HW_RESTORATION_TIME_MAX, to_string(m_restorationTimeMax) },
         };
         this->updateStateTable(fvs);
+
+        m_timerRangesValid = true;
     }
     else
     {
-        SWSS_LOG_WARN("Failed to query PFC watchdog hardware timer ranges (detection: %d, restoration: %d)",
+        // Without the ranges the configured times cannot be checked against
+        // the hardware, so they are accepted as given and SAI reports any
+        // value it will not take.
+        SWSS_LOG_WARN("Failed to query PFC watchdog hardware timer ranges (detection: %d, restoration: %d), "
+                      "configured times will not be range checked",
                      status_dld, status_dlr);
     }
 }
@@ -96,22 +103,22 @@ void PfcWdHwOrch::registerCallbacks()
 {
     SWSS_LOG_ENTER();
 
-    /* The SAI notification runs on a libsairedis thread, so it is forwarded to
-     * the ASIC_DB NOTIFICATIONS channel and consumed here on the orchagent
-     * thread instead, keeping the watchdog state single-threaded. */
-    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_deadlockNotificationConsumer = new swss::NotificationConsumer(
-        m_notificationsDb.get(), "NOTIFICATIONS");
-    m_deadlockNotificationConsumer->setOpAllowList({"queue_pfc_deadlock"});
-    m_deadlockNotificationConsumer->setStatsLabel("PfcWdHwOrch:queue_pfc_deadlock");
-    auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
-                                         "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
-    Orch::addExecutor(deadlockNotifier);
-
     // Register PFC deadlock notification callback
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
     {
+        /* The SAI notification runs on a libsairedis thread, so it is forwarded to
+         * the ASIC_DB NOTIFICATIONS channel and consumed here on the orchagent
+         * thread instead, keeping the watchdog state single-threaded. */
+        m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+        m_deadlockNotificationConsumer = new swss::NotificationConsumer(
+            m_notificationsDb.get(), "NOTIFICATIONS");
+        m_deadlockNotificationConsumer->setOpAllowList({SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK});
+        m_deadlockNotificationConsumer->setStatsLabel("PfcWdHwOrch:" SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK);
+        auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
+                                             "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
+        Orch::addExecutor(deadlockNotifier);
+
         sai_attribute_t attr;
         attr.id = SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY;
         attr.value.ptr = (void *)on_queue_pfc_deadlock;   // forwards to ASIC_DB NOTIFICATIONS
@@ -167,10 +174,10 @@ void PfcWdHwOrch::doTask(NotificationConsumer &consumer)
 
     for (auto &entry : entries)
     {
-        string op  = kfvKey(entry);
-        string data = kfvOp(entry);
+        string op   = kfvOp(entry);
+        string data = kfvKey(entry);
 
-        if (op != "queue_pfc_deadlock")
+        if (op != SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK)
         {
             continue;
         }
@@ -259,13 +266,8 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     // GLOBAL configuration not supported for hardware watchdog
     if (key == PFC_WD_GLOBAL)
     {
-        SWSS_LOG_WARN("GLOBAL configuration is not supported for hardware-based PFC watchdog");
-
-        for (const auto& field : data)
-        {
-            SWSS_LOG_WARN("Field '%s' with value '%s' is not supported for hardware-based PFC watchdog",
-                         fvField(field).c_str(), fvValue(field).c_str());
-        }
+        SWSS_LOG_INFO("Ignoring %s entry: the hardware watchdog takes its configuration per port",
+                      key.c_str());
 
         return task_process_status::task_invalid_entry;
     }
@@ -300,46 +302,10 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
             if (field == PFC_WD_DETECTION_TIME)
             {
                 detectionTime = static_cast<uint32_t>(stoul(value));
-
-                // Check detection time is within supported range
-                if (m_detectionTimeMin > 0 && m_detectionTimeMax > 0)
-                {
-                    if (detectionTime < m_detectionTimeMin)
-                    {
-                        SWSS_LOG_ERROR("Detection time %u ms is below minimum supported value %u ms on port %s",
-                                      detectionTime, m_detectionTimeMin, key.c_str());
-                        return task_process_status::task_invalid_entry;
-                    }
-
-                    if (detectionTime > m_detectionTimeMax)
-                    {
-                        SWSS_LOG_ERROR("Detection time %u ms exceeds maximum supported value %u ms on port %s",
-                                      detectionTime, m_detectionTimeMax, key.c_str());
-                        return task_process_status::task_invalid_entry;
-                    }
-                }
             }
             else if (field == PFC_WD_RESTORATION_TIME)
             {
                 restorationTime = static_cast<uint32_t>(stoul(value));
-
-                // Check restoration time is within supported range
-                if (m_restorationTimeMin > 0 && m_restorationTimeMax > 0)
-                {
-                    if (restorationTime < m_restorationTimeMin)
-                    {
-                        SWSS_LOG_ERROR("Restoration time %u ms is below minimum supported value %u ms on port %s",
-                                      restorationTime, m_restorationTimeMin, key.c_str());
-                        return task_process_status::task_invalid_entry;
-                    }
-
-                    if (restorationTime > m_restorationTimeMax)
-                    {
-                        SWSS_LOG_ERROR("Restoration time %u ms exceeds maximum supported value %u ms on port %s",
-                                      restorationTime, m_restorationTimeMax, key.c_str());
-                        return task_process_status::task_invalid_entry;
-                    }
-                }
             }
             else if (field == PFC_WD_ACTION)
             {
@@ -386,6 +352,30 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return task_process_status::task_invalid_entry;
     }
+    if (restorationTime == 0)
+    {
+        SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Both times are checked here rather than while parsing, so that a field
+    // left out of the configuration is still validated.
+    if (m_timerRangesValid)
+    {
+        if (detectionTime < m_detectionTimeMin || detectionTime > m_detectionTimeMax)
+        {
+            SWSS_LOG_ERROR("Detection time %u ms is outside the supported range [%u-%u] ms on port %s",
+                           detectionTime, m_detectionTimeMin, m_detectionTimeMax, key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax)
+        {
+            SWSS_LOG_ERROR("Restoration time %u ms is outside the supported range [%u-%u] ms on port %s",
+                           restorationTime, m_restorationTimeMin, m_restorationTimeMax, key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
     if (pfcStatHistory != "enable" && pfcStatHistory != "disable")
     {
         SWSS_LOG_ERROR("%s is invalid value for %s", pfcStatHistory.c_str(), PFC_STAT_HISTORY);
@@ -397,8 +387,8 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     // reconfiguring the single existing port.
     PfcWdAction currentAction = this->getPfcDlrPacketAction();
 
-    bool isSinglePortReconfiguration = (m_hwWdPorts.size() == 1 &&
-                                        m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end());
+    bool isSinglePortReconfiguration = (m_pfcwd_ports.size() == 1 &&
+                                        m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end());
 
     if (currentAction != PfcWdAction::PFC_WD_ACTION_UNKNOWN &&
         currentAction != action &&
@@ -414,7 +404,7 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     }
 
     // Check if port is already configured and has any queue in stormed state
-    if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
+    if (m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end())
     {
         if (isPortInStormedState(port))
         {
@@ -425,11 +415,16 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         }
     }
 
-    // Hardware watchdog doesn't support in-place updates, so stop
-    // existing configuration before applying new one
-    SWSS_LOG_INFO("Attempting to disable any existing hardware PFC watchdog on port %s before applying new configuration",
-                  port.m_alias.c_str());
-    stopWdOnPort(port);
+    // The hardware watchdog has no in-place update, so an existing
+    // configuration is torn down first. A port that was never configured has
+    // nothing to stop, and issuing the disable anyway would clear intervals
+    // and DLDR on queues that were never programmed.
+    if (m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end())
+    {
+        SWSS_LOG_INFO("Disabling the existing hardware PFC watchdog on port %s before reconfiguring",
+                      port.m_alias.c_str());
+        stopWdOnPort(port);
+    }
 
     if (!startWdOnPort(port, detectionTime, restorationTime, action, pfcStatHistory))
     {
@@ -438,7 +433,7 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
     clearPfcWdPending(port);
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
-    // Port is tracked in m_hwWdPorts by configureHwWatchdog
+    // Port is tracked in m_pfcwd_ports by configureHwWatchdog
     return task_process_status::task_success;
 }
 
@@ -455,7 +450,7 @@ task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 
 	// If hardware watchdog is configured on this port, disallow deletion
 	// while any lossless queue is still in stormed state.
-	if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
+	if (m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end())
 	{
 		if (isPortInStormedState(port))
 		{
@@ -620,7 +615,7 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     mapQueuesToPort(port, losslessTc);
 
     // Track this port
-    m_hwWdPorts.insert(port.m_alias);
+    m_pfcwd_ports.insert(port.m_alias);
 
     SWSS_LOG_NOTICE("Successfully configured hardware PFC watchdog on port %s with %zu lossless TCs",
                    port.m_alias.c_str(), losslessTc.size());
@@ -865,17 +860,30 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
     }
 
     // Remove port from tracking set
-    m_hwWdPorts.erase(port.m_alias);
+    m_pfcwd_ports.erase(port.m_alias);
 
     // Remove entry from STATE_DB
     m_pfcWdHwStateTable->del(port.m_alias);
 
     // If no ports have hardware watchdog configured, reset action to unknown
-    if (m_hwWdPorts.empty())
+    if (m_pfcwd_ports.empty())
     {
+        // Put the switch level action back to the SAI default, so the hardware
+        // stops dropping once no port is watched. Leaving it programmed while
+        // STATE_DB reports unknown would misrepresent what the hardware does.
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
+        attr.value.u32 = SAI_PACKET_ACTION_FORWARD;
+
+        sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to reset switch level PFC DLR packet action: %d", status);
+        }
+
         this->setPfcDlrPacketAction(PfcWdAction::PFC_WD_ACTION_UNKNOWN);
         this->updateDlrPacketActionInStateTable();
-        SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, reset action to UNKNOWN");
+        SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, switch level action reset");
     }
 
     SWSS_LOG_NOTICE("Successfully disabled hardware PFC watchdog on port %s",
@@ -900,8 +908,11 @@ bool PfcWdHwOrch::isPortInStormedState(const Port& port)
     uint8_t pfcMask = 0;
     if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
     {
-        SWSS_LOG_WARN("Failed to get PFC mask on port %s", port.m_alias.c_str());
-        return false;
+        // Report the port as stormed rather than allow a change that may be
+        // unsafe while the state cannot be read.
+        SWSS_LOG_WARN("Failed to get PFC mask on port %s, treating it as stormed",
+                      port.m_alias.c_str());
+        return true;
     }
 
     // Check each lossless queue to see if any is in stormed state
