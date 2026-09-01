@@ -381,6 +381,8 @@ pub struct DataNetlinkActor {
     command_recipient: Receiver<NetlinkCommand>,
     /// Message parser for handling one or more netlink messages in each datagram
     message_parser: NetlinkMessageParser,
+    /// Reused storage for complete netlink datagrams.
+    receive_buffer: Vec<u8>,
     /// Netlink socket receive buffer size in bytes (0 = OS default). Reduces ENOBUFS when set.
     netlink_rcvbuf_bytes: usize,
 }
@@ -451,10 +453,11 @@ impl DataNetlinkActor {
         }
     }
 
-    fn recv_datagram_fd(
+    fn recv_datagram_fd_into(
         fd: std::os::unix::io::RawFd,
         max_size: usize,
-    ) -> Result<Vec<u8>, io::Error> {
+        buffer: &mut Vec<u8>,
+    ) -> Result<(), io::Error> {
         let mut peek_buffer = [0u8; 1];
         // Peek first to size the receive buffer exactly and to make truncation observable. A fixed
         // large buffer would either waste memory in the hot path or still silently truncate when a
@@ -498,8 +501,8 @@ impl DataNetlinkActor {
             ));
         }
 
-        let mut buffer = vec![0u8; needed];
-        let (size, flags, source) = Self::recvmsg_into(fd, &mut buffer, 0)?;
+        buffer.resize(needed, 0);
+        let (size, flags, source) = Self::recvmsg_into(fd, buffer, 0)?;
         if source != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -519,14 +522,27 @@ impl DataNetlinkActor {
         }
 
         buffer.truncate(size);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn recv_datagram_fd(
+        fd: std::os::unix::io::RawFd,
+        max_size: usize,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut buffer = Vec::new();
+        Self::recv_datagram_fd_into(fd, max_size, &mut buffer)?;
         Ok(buffer)
     }
 
-    fn recv_netlink_datagram(socket: &mut SocketType) -> Result<Vec<u8>, io::Error> {
+    fn recv_netlink_datagram(
+        socket: &mut SocketType,
+        buffer: &mut Vec<u8>,
+    ) -> Result<(), io::Error> {
         #[cfg(test)]
         socket.prepare_recv()?;
 
-        Self::recv_datagram_fd(socket.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE)
+        Self::recv_datagram_fd_into(socket.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE, buffer)
     }
 
     /// Creates a new DataNetlinkActor instance.
@@ -555,6 +571,7 @@ impl DataNetlinkActor {
             buffer_recipients: Vec::new(),
             command_recipient,
             message_parser: NetlinkMessageParser::new(),
+            receive_buffer: Vec::new(),
             netlink_rcvbuf_bytes,
         }
     }
@@ -709,14 +726,15 @@ impl DataNetlinkActor {
         socket: &mut SocketType,
         message_parser: &mut NetlinkMessageParser,
         expected_family_id: u16,
+        receive_buffer: &mut Vec<u8>,
     ) -> Result<ParseOutcome, io::Error> {
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
-        let recv_result = Self::recv_netlink_datagram(socket);
+        let recv_result = Self::recv_netlink_datagram(socket, receive_buffer);
 
         match recv_result {
-            Ok(buffer) => {
-                let size = buffer.len();
+            Ok(()) => {
+                let size = receive_buffer.len();
                 debug!("Received netlink data, size: {} bytes", size);
 
                 if size == 0 {
@@ -727,12 +745,12 @@ impl DataNetlinkActor {
                 }
 
                 if log::log_enabled!(log::Level::Debug) {
-                    let hex_dump = format_hex_lines(&buffer);
+                    let hex_dump = format_hex_lines(receive_buffer);
                     debug!("Raw netlink recv buffer ({} bytes):\n{}", size, hex_dump);
                 }
 
                 // Parse buffer which may contain multiple messages and/or incomplete messages
-                let outcome = message_parser.parse_buffer(&buffer, expected_family_id)?;
+                let outcome = message_parser.parse_buffer(receive_buffer, expected_family_id)?;
                 debug!(
                     "Parsed {} complete messages and dropped {} from {} bytes of data",
                     outcome.messages.len(),
@@ -915,6 +933,7 @@ impl DataNetlinkActor {
                                 guard.get_inner_mut(),
                                 &mut actor.message_parser,
                                 family_id,
+                                &mut actor.receive_buffer,
                             ) {
                                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                     guard.clear_ready_matching(TokioReady::READABLE);
