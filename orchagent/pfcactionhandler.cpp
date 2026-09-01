@@ -331,6 +331,8 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
             {
                 SWSS_LOG_ERROR("Failed to create ingress PFCWD drop rule %s, last SAI status %s",
                                m_strRule.c_str(), sai_serialize_status(newRule->getLastSaiStatus()).c_str());
+                // The ingress DROP table is shared and persistent; intentionally keep
+                // the just-created empty table so the next queue can reuse it.
                 m_rolledBack = true;
                 return;
             }

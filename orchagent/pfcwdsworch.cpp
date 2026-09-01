@@ -638,6 +638,19 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     // egress PMF) so no PFC event path aborts orchagent.
     try
     {
+        return startWdActionOnQueueImpl(event, entry, info);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("PFC watchdog %s action failed on queue 0x%" PRIx64 ": %s", event.c_str(), queueId, e.what());
+        return false;
+    }
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const string &event,
+        typename map<sai_object_id_t, PfcWdQueueEntry>::iterator entry, const string &info)
+{
     if (m_bigRedSwitchFlag)
     {
         SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ignore syncd pfc watchdog notification");
@@ -751,12 +764,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     else
     {
         SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());
-        return false;
-    }
-    }
-    catch (const std::exception &e)
-    {
-        SWSS_LOG_ERROR("PFC watchdog %s action failed on queue 0x%" PRIx64 ": %s", event.c_str(), queueId, e.what());
         return false;
     }
 
