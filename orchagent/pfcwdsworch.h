@@ -60,6 +60,8 @@ private:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
     void setSwWdState(const string& portAlias, uint8_t queueIdx, const char* status);
+    bool startWdActionOnQueueImpl(const string &event,
+            typename map<sai_object_id_t, PfcWdQueueEntry>::iterator entry, const string &info);
     void doTask(swss::NotificationConsumer &wdNotification);
 
     unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc);
