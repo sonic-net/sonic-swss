@@ -77,10 +77,11 @@ task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
         return task_process_status::task_need_retry;
     }
 
-    // The port is PFC ready, so the failure is in the programming itself and
-    // retrying it would repeat the same stop and start against the ASIC.
+    // The port is PFC ready, so the failure is in the programming itself. The
+    // entry is kept for retry: doTask() has no case for task_failed and would
+    // drop the configuration outright, leaving CONFIG_DB and the ASIC out of sync.
     SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
-    return task_process_status::task_failed;
+    return task_process_status::task_need_retry;
 }
 
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
