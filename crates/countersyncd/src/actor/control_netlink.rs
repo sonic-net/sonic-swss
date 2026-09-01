@@ -582,7 +582,6 @@ impl ControlNetlinkActor {
                             Err(error) if error.kind() == io::ErrorKind::WouldBlock => guard.clear_ready(),
                             Err(error) if error.kind() == io::ErrorKind::InvalidData
                                 || error.kind() == io::ErrorKind::PermissionDenied => {
-                                guard.clear_ready();
                                 warn!("Dropping invalid control netlink datagram: {error}");
                                 if !actor.reconcile(&mut state, false).await {
                                     break;
@@ -1263,5 +1262,23 @@ pub mod test {
                 .kind(),
             io::ErrorKind::PermissionDenied
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_invalid_control_datagram_does_not_delay_queued_notification() {
+        const FAMILY: &str = "test_family";
+        const GROUP: &str = "test_group";
+        let actors = start_actors(FAMILY, GROUP, 0x20, 0x100).await;
+
+        send_control_message(&[1, 2, 3, 4]);
+        inject_family_registered(FAMILY, GROUP, 0x21, 0x101);
+        wait_for_connection_attempts(2).await;
+
+        assert_eq!(
+            data_netlink::test::current_subscription(),
+            Some((0x21, 0x101))
+        );
+        stop_actors(actors).await;
     }
 }
