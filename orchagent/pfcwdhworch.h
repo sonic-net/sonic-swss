@@ -58,6 +58,10 @@ private:
     uint32_t m_restorationTimeMin;
     uint32_t m_restorationTimeMax;
 
+    // False when the hardware ranges could not be queried, in which case the
+    // configured times are not range checked.
+    bool m_timerRangesValid = false;
+
     // STATE_DB for hardware watchdog state
     shared_ptr<Table> m_pfcWdHwStateTable;
 
@@ -92,8 +96,6 @@ private:
                                     const function<bool(const string&)>& handleFailure);
     void mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc);
 
-    // Ports where hardware watchdog is configured
-    std::set<std::string> m_hwWdPorts;
 
     // Port and queue information
     struct PortQueueInfo

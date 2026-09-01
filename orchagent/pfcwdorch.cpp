@@ -42,9 +42,6 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
         return;
     }
 
-    // Add PfcDlrPacketAction to state table
-    string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
-    this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
 }
 
 
@@ -80,8 +77,10 @@ task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
         return task_process_status::task_need_retry;
     }
 
+    // The port is PFC ready, so the failure is in the programming itself and
+    // retrying it would repeat the same stop and start against the ASIC.
     SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
-    return task_process_status::task_need_retry;
+    return task_process_status::task_failed;
 }
 
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
