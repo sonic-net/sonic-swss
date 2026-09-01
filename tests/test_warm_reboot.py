@@ -1905,11 +1905,34 @@ class TestWarmReboot(object):
         time.sleep(2)
 
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
-    def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
+    def test_system_warmreboot_neighbor_syncup(self, dvs, testlog, request):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        asic_db = dvs.get_asic_db()
+        initial_router_interfaces = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
+        intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+
+        def cleanup():
+            warm_restart_set(dvs, "system", "false")
+            exitcode, _ = dvs.runcmd(["sh", "-c", "supervisorctl status neighsyncd | grep -q RUNNING"])
+            if exitcode != 0:
+                start_neighsyncd(dvs)
+            flush_neigh_entries(dvs)
+            dvs.get_app_db().wait_for_n_keys("NEIGH_TABLE", 0)
+
+            for index in range(8, 8+NUM_INTF):
+                intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(index*4, index*4))
+                intf_tbl._del("Ethernet{}|{}00::1/64".format(index*4, index*4))
+                intf_tbl._del("Ethernet{}".format(index*4))
+            asic_db.wait_for_n_keys(
+                "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE",
+                len(initial_router_interfaces),
+            )
+
+        request.addfinalizer(cleanup)
 
         #enable ipv6 on docker
         dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
@@ -1925,8 +1948,6 @@ class TestWarmReboot(object):
         # ipv6: 3200::1/64...6000::1/64
         # bring up the servers'interfaces and assign NUM_NEIGH_PER_INTF (e,g 128) ips per interface
         macs = []
-        intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         for i in range(8, 8+NUM_INTF):
             # set timeout to be the same as real HW
             # set stale timer bigger to avoid testbed difference related timing issues.
@@ -2165,15 +2186,6 @@ class TestWarmReboot(object):
 
         # check restore Count
         swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
-
-        # disable system warm restart
-        warm_restart_set(dvs, "system", "false")
-
-        for i in range(8, 8+NUM_INTF):
-            intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
-            intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
-            intf_tbl._del("Ethernet{}".format(i*4, i*4))
-            intf_tbl._del("Ethernet{}".format(i*4, i*4))
 
     @pytest.mark.skip(reason="This test is failing consistently")
     def test_VrfMgrdWarmRestart(self, dvs, testlog):
@@ -2525,7 +2537,7 @@ class TestSrv6MySidWarmRestart(object):
                 if field not in cls.MY_SID_OID_FIELDS
             }
 
-    def test_orchagent_static_mysid_warm_restart(self, dvs):
+    def test_orchagent_static_mysid_warm_restart(self, dvs, request):
         dvs.setup_db()
 
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -2543,11 +2555,50 @@ class TestSrv6MySidWarmRestart(object):
         asic_mysid = swsscommon.Table(asic_db.db_connection, self.MY_SID_ASIC_TABLE)
 
         initial_mysids = set(asic_mysid.getKeys())
+        initial_neighbors = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"))
+        initial_router_interfaces = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
         initial_tunnels = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"))
         initial_tunnel_terms = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"))
+        initial_vrfs = set(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
+        entries = {
+            "32:16:16:0:fc00:0:1:100::": [("action", "end")],
+            "32:16:16:0:fc00:0:1:101::": [("action", "end.dt46"), ("vrf", "VrfWarm")],
+            "32:16:16:0:fc00:0:1:102::": [("action", "end.x"), ("adj", "2001::1")],
+            "32:16:16:0:fc00:0:1:103::": [("action", "un")],
+        }
+        restart_completed = False
+
+        def cleanup():
+            if not restart_completed:
+                dvs.stop_swss()
+                dvs.start_swss()
+                dvs.check_swss_ready()
+            dvs.warm_restart_swss("false")
+
+            for key in entries:
+                app_mysid._del(key)
+            asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(initial_tunnels))
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(initial_tunnel_terms))
+
+            app_neighbor._del("Ethernet104:2001::1")
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", len(initial_neighbors))
+            config_mysid._del("loc-warm|fc00:0:1:103::/64")
+            config_locator._del("loc-warm")
+            config_intf._del("Ethernet104|2001::2/126")
+            config_intf._del("Ethernet104")
+            asic_db.wait_for_n_keys(
+                "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE",
+                len(initial_router_interfaces),
+            )
+            config_vrf._del("VrfWarm")
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_vrfs))
+
+        request.addfinalizer(cleanup)
 
         dvs.runcmd("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
         config_vrf.set("VrfWarm", swsscommon.FieldValuePairs([("empty", "empty")]))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_vrfs) + 1)
         config_intf.set("Ethernet104", swsscommon.FieldValuePairs([("NULL", "NULL")]))
         config_intf.set("Ethernet104|2001::2/126", swsscommon.FieldValuePairs([("NULL", "NULL")]))
         dvs.port_admin_set("Ethernet104", "up")
@@ -2567,12 +2618,6 @@ class TestSrv6MySidWarmRestart(object):
             ("decap_dscp_mode", "uniform"),
         ]))
 
-        entries = {
-            "32:16:16:0:fc00:0:1:100::": [("action", "end")],
-            "32:16:16:0:fc00:0:1:101::": [("action", "end.dt46"), ("vrf", "VrfWarm")],
-            "32:16:16:0:fc00:0:1:102::": [("action", "end.x"), ("adj", "2001::1")],
-            "32:16:16:0:fc00:0:1:103::": [("action", "un")],
-        }
         for key, fields in entries.items():
             app_mysid.set(key, swsscommon.FieldValuePairs(fields))
 
@@ -2594,6 +2639,7 @@ class TestSrv6MySidWarmRestart(object):
             "orchagent",
             {"state": "reconciled"},
         )
+        restart_completed = True
 
         assert self.snapshot_table(app_mysid_view) == app_before
         self.assert_asic_state_preserved(asic_before, self.snapshot_table(asic_mysid))
@@ -2601,20 +2647,7 @@ class TestSrv6MySidWarmRestart(object):
         assert nadd == 0
         assert ndel == 0
 
-        for key in entries:
-            app_mysid._del(key)
-        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(initial_tunnels))
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", len(initial_tunnel_terms))
-
-        app_neighbor._del("Ethernet104:2001::1")
-        config_mysid._del("loc-warm|fc00:0:1:103::/64")
-        config_locator._del("loc-warm")
-        config_intf._del("Ethernet104|2001::2/126")
-        config_intf._del("Ethernet104")
-        config_vrf._del("VrfWarm")
-
-    def test_fpmsyncd_static_mysid_timer_replay(self, dvs):
+    def test_fpmsyncd_static_mysid_timer_replay(self, dvs, request):
         _, output = dvs.runcmd("vtysh -c 'show zebra dplane providers'")
         if "dplane_fpm_sonic" not in output:
             pytest.skip("dplane_fpm_sonic is required for static MySID replay")
@@ -2627,6 +2660,16 @@ class TestSrv6MySidWarmRestart(object):
         key = "32:16:16:0:fc00:0:1:200::"
 
         initial_mysids = set(asic_mysid.getKeys())
+
+        def cleanup():
+            dvs.runcmd("ip -6 route del fc00:0:1:200::/128 encap seg6local action End dev sr-warm")
+            dvs.get_app_db().wait_for_deleted_entry("SRV6_MY_SID_TABLE", key)
+            asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
+            dvs.runcmd("vtysh -c 'configure terminal' -c 'segment-routing' -c 'no srv6'")
+            dvs.runcmd("ip link del sr-warm")
+
+        request.addfinalizer(cleanup)
+
         dvs.runcmd("ip link add sr-warm type dummy")
         dvs.runcmd("ip link set sr-warm up")
         dvs.runcmd("vtysh -c 'configure terminal' -c 'segment-routing' -c 'srv6' -c 'locators' -c 'locator loc-warm' -c 'prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16'")
@@ -2669,12 +2712,6 @@ class TestSrv6MySidWarmRestart(object):
         nadd, ndel = dvs.CountSubscribedObjects(pubsub_asic)
         assert nadd == 0
         assert ndel == 0
-
-        dvs.runcmd("ip -6 route del fc00:0:1:200::/128 encap seg6local action End dev sr-warm")
-        dvs.get_app_db().wait_for_deleted_entry("SRV6_MY_SID_TABLE", key)
-        asic_db.wait_for_n_keys(self.MY_SID_ASIC_TABLE, len(initial_mysids))
-        dvs.runcmd("vtysh -c 'configure terminal' -c 'segment-routing' -c 'no srv6'")
-        dvs.runcmd("ip link del sr-warm")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
