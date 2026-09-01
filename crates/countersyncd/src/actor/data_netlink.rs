@@ -1,4 +1,4 @@
-use std::{collections::LinkedList, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use std::os::unix::io::AsRawFd;
 #[cfg(test)]
@@ -6,21 +6,20 @@ use std::os::unix::io::RawFd;
 
 use log::{debug, info, warn};
 
-use netlink_sys::Socket;
 #[cfg(not(test))]
-use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
+use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
 use tokio::{
     io::{unix::AsyncFd, Interest, Ready as TokioReady},
     select,
     sync::mpsc::{Receiver, Sender},
-    time::{interval, Instant, MissedTickBehavior},
+    time::{interval, sleep_until, Instant, MissedTickBehavior},
 };
 
 use std::io;
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    netlink::{NetlinkCommand, SocketConnect},
+    netlink::{NetlinkCommand, NetlinkSubscription},
 };
 #[cfg(not(test))]
 use super::netlink_utils;
@@ -33,6 +32,8 @@ type SocketType = test::MockSocket;
 
 /// Path to the sonic constants configuration file
 const SONIC_CONSTANTS: &str = "/etc/sonic/constants.yml";
+const DEFAULT_FAMILY: &str = "sonic_stel";
+const DEFAULT_GROUP: &str = "ipfix";
 
 /// Size of the buffer used for receiving netlink messages
 #[cfg(test)]
@@ -45,14 +46,13 @@ const ENOBUFS: i32 = 105;
 /// Maximum number of consecutive failures before waiting for ControlNetlinkActor
 const MAX_LOCAL_RECONNECT_ATTEMPTS: u32 = 3;
 
-/// Socket health check timeout - if no data received for this duration, socket is considered unhealthy
-const SOCKET_HEALTH_TIMEOUT_SECS: u64 = 60;
-
 /// Heartbeat logging interval.
 const HEARTBEAT_INTERVAL_SECS: u64 = 5 * 60;
 
 /// Retry interval after a socket cannot be registered with the Tokio reactor.
 const SOCKET_REGISTRATION_RETRY_SECS: u64 = 1;
+const MAX_SOCKET_REGISTRATION_RETRY_SECS: u64 = 60;
+const WARNING_SUMMARY_INTERVAL_SECS: u64 = 60;
 
 /// Maximum supported size for a single netlink datagram/message.
 /// This bounds userspace allocation after peeking the datagram length.
@@ -61,6 +61,42 @@ const MAX_NETLINK_DATAGRAM_SIZE: usize = 16 * 1024 * 1024;
 /// Netlink message parser for handling multiple messages in one datagram
 #[derive(Debug)]
 struct NetlinkMessageParser;
+
+#[derive(Debug)]
+struct ParseOutcome {
+    messages: Vec<SocketBufferMessage>,
+    dropped_messages: usize,
+    first_error: Option<String>,
+}
+
+struct WarningLimiter {
+    last_log: Option<tokio::time::Instant>,
+    suppressed: usize,
+}
+
+impl WarningLimiter {
+    fn new() -> Self {
+        Self {
+            last_log: None,
+            suppressed: 0,
+        }
+    }
+
+    fn record(&mut self, count: usize) -> Option<usize> {
+        let now = tokio::time::Instant::now();
+        if self.last_log.is_none_or(|last| {
+            now.duration_since(last) >= Duration::from_secs(WARNING_SUMMARY_INTERVAL_SECS)
+        }) {
+            let suppressed = self.suppressed;
+            self.last_log = Some(now);
+            self.suppressed = 0;
+            Some(suppressed)
+        } else {
+            self.suppressed += count;
+            None
+        }
+    }
+}
 
 impl NetlinkMessageParser {
     fn new() -> Self {
@@ -81,19 +117,18 @@ impl NetlinkMessageParser {
         error: io::Error,
         offset: usize,
         remaining: usize,
-    ) -> Result<Vec<SocketBufferMessage>, io::Error> {
+    ) -> Result<ParseOutcome, io::Error> {
         if complete_messages.is_empty() {
             return Err(error);
         }
 
-        warn!(
-            "Discarding trailing {} bytes at offset {} after parsing {} message(s): {}",
-            remaining,
-            offset,
-            complete_messages.len(),
-            error
-        );
-        Ok(complete_messages)
+        Ok(ParseOutcome {
+            messages: complete_messages,
+            dropped_messages: 1,
+            first_error: Some(format!(
+                "discarding trailing {remaining} bytes at offset {offset}: {error}"
+            )),
+        })
     }
 
     /// Parse a single netlink datagram that may contain one or more complete netlink messages.
@@ -103,8 +138,14 @@ impl NetlinkMessageParser {
     /// treated as a continuation of the previous one.
     /// Returns the generic-netlink payload from each complete netlink message. For IPFIX data,
     /// each payload can contain multiple IPFIX sets and records.
-    fn parse_buffer(&mut self, new_data: &[u8]) -> Result<Vec<SocketBufferMessage>, io::Error> {
+    fn parse_buffer(
+        &mut self,
+        new_data: &[u8],
+        expected_family_id: u16,
+    ) -> Result<ParseOutcome, io::Error> {
         let mut complete_messages = Vec::new();
+        let mut dropped_messages = 0;
+        let mut first_error = None;
         let mut offset = 0;
 
         // Parse all complete messages in the buffer
@@ -127,7 +168,7 @@ impl NetlinkMessageParser {
             }
 
             // Extract message length from netlink header
-            let nl_len = u32::from_le_bytes([
+            let nl_len = u32::from_ne_bytes([
                 new_data[offset],
                 new_data[offset + 1],
                 new_data[offset + 2],
@@ -177,14 +218,14 @@ impl NetlinkMessageParser {
             let aligned_nl_len = Self::nlmsg_align(nl_len);
 
             // Extract complete message without trailing alignment padding
-            let message_data = new_data[offset..offset + nl_len].to_vec();
+            let message_data = &new_data[offset..offset + nl_len];
             debug!(
                 "Found complete message: offset={}, length={}, aligned_length={}",
                 offset, nl_len, aligned_nl_len
             );
 
             // Extract payload from this message
-            match Self::extract_payload_from_slice(&message_data) {
+            match Self::extract_payload_from_slice(message_data, expected_family_id) {
                 Ok(payload) => {
                     debug!(
                         "Successfully extracted payload with {} bytes",
@@ -193,11 +234,10 @@ impl NetlinkMessageParser {
                     complete_messages.push(payload);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to extract payload from message at offset {}: {}",
-                        offset, e
-                    );
-                    // Continue with next message instead of failing completely
+                    dropped_messages += 1;
+                    first_error.get_or_insert_with(|| {
+                        format!("failed to extract message at offset {offset}: {e}")
+                    });
                 }
             }
 
@@ -205,11 +245,27 @@ impl NetlinkMessageParser {
             offset += usize::min(aligned_nl_len, remaining);
         }
 
-        Ok(complete_messages)
+        Ok(ParseOutcome {
+            messages: complete_messages,
+            dropped_messages,
+            first_error,
+        })
+    }
+
+    #[cfg(test)]
+    fn parse_test_buffer(
+        &mut self,
+        new_data: &[u8],
+    ) -> Result<Vec<SocketBufferMessage>, io::Error> {
+        self.parse_buffer(new_data, 0x10)
+            .map(|outcome| outcome.messages)
     }
 
     /// Extract payload from a single complete netlink message
-    fn extract_payload_from_slice(message_data: &[u8]) -> Result<SocketBufferMessage, io::Error> {
+    fn extract_payload_from_slice(
+        message_data: &[u8],
+        expected_family_id: u16,
+    ) -> Result<SocketBufferMessage, io::Error> {
         const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
         const GENL_HDRLEN: usize = 4; // sizeof(struct genlmsghdr)
         const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
@@ -234,7 +290,7 @@ impl NetlinkMessageParser {
         }
 
         // Extract netlink message length from header
-        let nl_len = u32::from_le_bytes(message_data[NLMSG_LEN].try_into().unwrap()) as usize;
+        let nl_len = u32::from_ne_bytes(message_data[NLMSG_LEN].try_into().unwrap()) as usize;
 
         if nl_len != message_data.len() {
             return Err(io::Error::new(
@@ -247,6 +303,16 @@ impl NetlinkMessageParser {
             ));
         }
 
+        let nl_type = u16::from_ne_bytes(message_data[NLMSG_TYPE].try_into().unwrap());
+        if nl_type != expected_family_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Netlink message type {nl_type} does not match family {expected_family_id}"
+                ),
+            ));
+        }
+
         // Debug: Print headers only when debug logging is enabled
         if log::log_enabled!(log::Level::Debug) {
             debug!(
@@ -254,10 +320,9 @@ impl NetlinkMessageParser {
                 NLMSG_HDRLEN,
                 &message_data[..NLMSG_HDRLEN]
             );
-            let nl_type = u16::from_le_bytes(message_data[NLMSG_TYPE].try_into().unwrap());
-            let nl_flags = u16::from_le_bytes(message_data[NLMSG_FLAGS].try_into().unwrap());
-            let nl_seq = u32::from_le_bytes(message_data[NLMSG_SEQ].try_into().unwrap());
-            let nl_pid = u32::from_le_bytes(message_data[NLMSG_PID].try_into().unwrap());
+            let nl_flags = u16::from_ne_bytes(message_data[NLMSG_FLAGS].try_into().unwrap());
+            let nl_seq = u32::from_ne_bytes(message_data[NLMSG_SEQ].try_into().unwrap());
+            let nl_pid = u32::from_ne_bytes(message_data[NLMSG_PID].try_into().unwrap());
             debug!(
                 "  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}",
                 nl_len, nl_type, nl_flags, nl_seq, nl_pid
@@ -272,7 +337,7 @@ impl NetlinkMessageParser {
                 let genl_cmd = message_data[GENL_CMD];
                 let genl_version = message_data[GENL_VERSION];
                 let genl_reserved =
-                    u16::from_le_bytes(message_data[GENL_RESERVED].try_into().unwrap());
+                    u16::from_ne_bytes(message_data[GENL_RESERVED].try_into().unwrap());
                 debug!(
                     "  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}",
                     genl_cmd, genl_version, genl_reserved
@@ -308,13 +373,10 @@ pub struct DataNetlinkActor {
     group: String,
     /// The active netlink socket connection (None if disconnected)
     socket: Option<SocketType>,
-    /// Reusable netlink socket for family/group resolution (None if not available)
-    #[allow(dead_code)]
-    nl_resolver: Option<Socket>,
-    /// Timestamp of when we last received data on the socket (for health checking)
-    last_data_time: Instant,
+    /// Family and multicast group associated with the active socket.
+    subscription: Option<NetlinkSubscription>,
     /// List of channels to send received buffer messages to
-    buffer_recipients: LinkedList<Sender<SocketBufferMessage>>,
+    buffer_recipients: Vec<Sender<SocketBufferMessage>>,
     /// Channel for receiving control commands
     command_recipient: Receiver<NetlinkCommand>,
     /// Message parser for handling one or more netlink messages in each datagram
@@ -324,24 +386,38 @@ pub struct DataNetlinkActor {
 }
 
 impl DataNetlinkActor {
-    fn register_active_socket(&mut self) -> Option<AsyncFd<SocketType>> {
-        let socket = self.socket.take()?;
+    fn membership_is_set(groups: &[u32], group_id: u32) -> bool {
+        let Some(bit) = group_id.checked_sub(1) else {
+            return false;
+        };
+        let word = bit as usize / u32::BITS as usize;
+        word < groups.len() && groups[word] & (1 << (bit % u32::BITS)) != 0
+    }
+
+    fn register_active_socket(&mut self) -> Result<Option<AsyncFd<SocketType>>, io::Error> {
+        let Some(socket) = self.socket.take() else {
+            return Ok(None);
+        };
         let fd = socket.as_raw_fd();
+        #[cfg(test)]
+        if test::fail_socket_registration() {
+            self.socket = Some(socket);
+            return Err(io::Error::other("simulated socket registration failure"));
+        }
         match AsyncFd::try_with_interest(socket, Interest::READABLE | Interest::ERROR) {
             Ok(socket) => {
                 #[cfg(test)]
                 test::record_socket_registration();
                 debug!("Registered data netlink socket fd {} with Tokio", fd);
-                Some(socket)
+                Ok(Some(socket))
             }
             Err(e) => {
                 let (socket, cause) = e.into_parts();
-                warn!(
-                    "Failed to register data netlink socket fd {} with Tokio: {:?}",
-                    fd, cause
-                );
                 self.socket = Some(socket);
-                None
+                Err(io::Error::new(
+                    cause.kind(),
+                    format!("failed to register data netlink socket fd {fd}: {cause}"),
+                ))
             }
         }
     }
@@ -354,7 +430,7 @@ impl DataNetlinkActor {
         fd: std::os::unix::io::RawFd,
         buffer: &mut [u8],
         flags: i32,
-    ) -> Result<(usize, i32), io::Error> {
+    ) -> Result<(usize, i32, u32), io::Error> {
         let mut iov = libc::iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
@@ -362,13 +438,16 @@ impl DataNetlinkActor {
         let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
+        let mut source: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+        msg.msg_name = (&mut source as *mut libc::sockaddr_nl).cast();
+        msg.msg_namelen = std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
 
         // Safe on the Tokio worker because the fd is configured as non-blocking by connect().
         let size = unsafe { libc::recvmsg(fd, &mut msg, flags) };
         if size < 0 {
             Err(io::Error::last_os_error())
         } else {
-            Ok((size as usize, msg.msg_flags))
+            Ok((size as usize, msg.msg_flags, source.nl_pid))
         }
     }
 
@@ -380,8 +459,16 @@ impl DataNetlinkActor {
         // Peek first to size the receive buffer exactly and to make truncation observable. A fixed
         // large buffer would either waste memory in the hot path or still silently truncate when a
         // producer emits a larger datagram than expected.
-        let (needed, peek_flags) =
+        let (needed, peek_flags, peek_source) =
             Self::recvmsg_into(fd, &mut peek_buffer, libc::MSG_PEEK | libc::MSG_TRUNC)?;
+        if peek_source != 0 {
+            let mut drain_buffer = [0u8; 1];
+            let _ = Self::recvmsg_into(fd, &mut drain_buffer, libc::MSG_TRUNC);
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("Data netlink datagram came from userspace port {peek_source}"),
+            ));
+        }
 
         if needed == 0 {
             let _ = Self::recvmsg_into(fd, &mut peek_buffer, 0);
@@ -412,7 +499,13 @@ impl DataNetlinkActor {
         }
 
         let mut buffer = vec![0u8; needed];
-        let (size, flags) = Self::recvmsg_into(fd, &mut buffer, 0)?;
+        let (size, flags, source) = Self::recvmsg_into(fd, &mut buffer, 0)?;
+        if source != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("Data netlink datagram came from userspace port {source}"),
+            ));
+        }
         if flags & libc::MSG_TRUNC != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -454,23 +547,16 @@ impl DataNetlinkActor {
         command_recipient: Receiver<NetlinkCommand>,
         netlink_rcvbuf_bytes: usize,
     ) -> Self {
-        let nl_resolver = Self::create_nl_resolver();
-        let mut actor = DataNetlinkActor {
+        DataNetlinkActor {
             family: family.to_string(),
             group: group.to_string(),
             socket: None,
-            nl_resolver,
-            last_data_time: Instant::now(),
-            buffer_recipients: LinkedList::new(),
+            subscription: None,
+            buffer_recipients: Vec::new(),
             command_recipient,
             message_parser: NetlinkMessageParser::new(),
             netlink_rcvbuf_bytes,
-        };
-
-        // Use instance method for initial connection
-        actor.socket = actor.connect_with_nl_resolver(family, group);
-
-        actor
+        }
     }
 
     /// Adds a new recipient channel for receiving buffer messages.
@@ -479,118 +565,15 @@ impl DataNetlinkActor {
     ///
     /// * `recipient` - Channel sender for distributing received messages
     pub fn add_recipient(&mut self, recipient: Sender<SocketBufferMessage>) {
-        self.buffer_recipients.push_back(recipient);
+        self.buffer_recipients.push(recipient);
     }
 
-    /// Creates a netlink socket for family/group resolution.
-    ///
-    /// # Returns
-    ///
-    /// Some(socket) if creation is successful, None otherwise
-    /// Creates a netlink socket for family/group resolution.
-    /// Now delegates to netlink_utils module.
     #[cfg(not(test))]
-    fn create_nl_resolver() -> Option<Socket> {
-        netlink_utils::create_nl_resolver()
-    }
-
-    /// Mock netlink resolver for testing.
-    #[cfg(test)]
-    fn create_nl_resolver() -> Option<Socket> {
-        None
-    }
-
-    /// Establishes a connection to the netlink socket using the netlink resolver when available.
-    ///
-    /// # Arguments
-    ///
-    /// * `family` - The generic netlink family name
-    /// * `group` - The multicast group name
-    ///
-    /// # Returns
-    ///
-    /// Some(socket) if connection is successful, None otherwise
-    #[cfg(not(test))]
-    fn connect_with_nl_resolver(&mut self, family: &str, group: &str) -> Option<SocketType> {
+    fn open_socket(&self, subscription: NetlinkSubscription) -> Option<SocketType> {
         debug!(
-            "Attempting to connect to family '{}', group '{}'",
-            family, group
+            "Opening data socket for family '{}' ({}), group '{}' ({})",
+            self.family, subscription.family_id, self.group, subscription.group_id
         );
-
-        // Try to use existing netlink resolver first
-        let group_id = if let Some(ref mut resolver) = self.nl_resolver {
-            match netlink_utils::resolve_multicast_group(resolver, family, group) {
-                Ok(id) => {
-                    info!(
-                        "Resolved group ID {} for family '{}', group '{}' (using netlink resolver)",
-                        id, family, group
-                    );
-                    id
-                }
-                Err(e) => {
-                    info!(
-                        "Failed to resolve group with netlink resolver: {:?}, recreating resolver",
-                        e
-                    );
-                    // Resolver might be stale, recreate it
-                    self.nl_resolver = Self::create_nl_resolver();
-
-                    // Try again with new resolver
-                    if let Some(ref mut resolver) = self.nl_resolver {
-                        match netlink_utils::resolve_multicast_group(resolver, family, group) {
-                            Ok(id) => {
-                                info!("Resolved group ID {} for family '{}', group '{}' (using new netlink resolver)", id, family, group);
-                                id
-                            }
-                            Err(e) => {
-                                warn!("Failed to resolve group id for family '{}', group '{}' with new netlink resolver: {:?}", family, group, e);
-                                warn!(
-                                    "This suggests the family '{}' is not registered in the kernel",
-                                    family
-                                );
-                                return None;
-                            }
-                        }
-                    } else {
-                        // Fallback to creating temporary socket
-                        return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
-                    }
-                }
-            }
-        } else {
-            // Create netlink resolver if not available
-            self.nl_resolver = Self::create_nl_resolver();
-
-            if let Some(ref mut resolver) = self.nl_resolver {
-                match netlink_utils::resolve_multicast_group(resolver, family, group) {
-                    Ok(id) => {
-                        info!("Resolved group ID {} for family '{}', group '{}' (using new netlink resolver)", id, family, group);
-                        id
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to resolve group id for family '{}', group '{}': {:?}",
-                            family, group, e
-                        );
-                        warn!(
-                            "This suggests the family '{}' is not registered in the kernel",
-                            family
-                        );
-                        return None;
-                    }
-                }
-            } else {
-                // Fallback to creating temporary socket
-                return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
-            }
-        };
-
-        debug!(
-            "Creating socket for family '{}' with group_id {}",
-            family, group_id
-        );
-
-        // Create a raw netlink socket using netlink-sys
         let mut socket = match Socket::new(NETLINK_GENERIC) {
             Ok(s) => s,
             Err(e) => {
@@ -608,14 +591,11 @@ impl DataNetlinkActor {
 
         netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
 
-        debug!("Adding multicast membership for group_id {}", group_id);
-        if let Err(e) = socket.add_membership(group_id) {
+        if let Err(e) = socket.add_membership(subscription.group_id) {
             warn!(
                 "Failed to add mcast membership for group_id {}: {:?}",
-                group_id, e
+                subscription.group_id, e
             );
-            // Explicitly drop the socket to ensure it's closed
-            drop(socket);
             return None;
         }
 
@@ -626,29 +606,30 @@ impl DataNetlinkActor {
         }
 
         info!(
-            "Successfully connected to family '{}', group '{}' with group_id: {}",
-            family, group, group_id
-        );
-        debug!(
-            "Socket created successfully, ready to receive multicast messages on group_id: {}",
-            group_id
+            "Connected data socket to family '{}' ({}), group '{}' ({})",
+            self.family, subscription.family_id, self.group, subscription.group_id
         );
         Some(socket)
     }
 
-    /// Mock connection method using shared router for testing.
     #[cfg(test)]
-    fn connect_with_nl_resolver(&mut self, family: &str, group: &str) -> Option<SocketType> {
+    fn open_socket(&self, subscription: NetlinkSubscription) -> Option<SocketType> {
         test::record_connection_attempt();
-        let Some((family_id, group_id)) = test::resolve_mock_family(family, group) else {
+        if test::fail_socket_open() {
+            return None;
+        }
+        let Some((family_id, group_id)) = test::resolve_mock_family(&self.family, &self.group) else {
             debug!(
                 "Test: family '{}', group '{}' is unavailable, connection failed",
-                family, group
+                self.family, self.group
             );
             return None;
         };
+        if (family_id, group_id) != (subscription.family_id, subscription.group_id) {
+            return None;
+        }
 
-        let sock = SocketType::new(family, group, family_id, group_id);
+        let sock = SocketType::new(&self.family, &self.group, family_id, group_id);
         if sock.valid {
             debug!("Test: Created new valid MockSocket");
             Some(sock)
@@ -658,206 +639,61 @@ impl DataNetlinkActor {
         }
     }
 
-    /// Fallback connection method when shared router is not available.
     #[cfg(not(test))]
-    fn connect_fallback(
-        family: &str,
-        group: &str,
-        netlink_rcvbuf_bytes: usize,
-    ) -> Option<SocketType> {
-        debug!(
-            "Using fallback connection for family '{}', group '{}'",
-            family, group
-        );
-
-        // Create a temporary netlink socket for resolution
-        let mut temp_socket = match Socket::new(NETLINK_GENERIC) {
-            Ok(mut s) => {
-                let addr = SocketAddr::new(0, 0);
-                if let Err(e) = s.bind(&addr) {
-                    warn!("Failed to bind temporary socket: {:?}", e);
-                    return None;
-                }
-                if let Err(e) = netlink_utils::set_socket_recv_timeout(&s, Duration::from_secs(2)) {
-                    warn!("Failed to set temporary resolver receive timeout: {:?}", e);
-                    return None;
-                }
-                s
-            }
-            Err(e) => {
-                warn!("Failed to create temporary netlink socket: {:?}", e);
-                warn!("Possible causes: insufficient permissions, netlink not supported, or kernel module not loaded");
-                return None;
-            }
+    fn has_membership(socket: &SocketType, group_id: u32) -> bool {
+        let mut groups = [0u32; 32];
+        let mut length = std::mem::size_of_val(&groups) as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_NETLINK,
+                libc::NETLINK_LIST_MEMBERSHIPS,
+                groups.as_mut_ptr().cast(),
+                &mut length,
+            )
         };
-
-        debug!(
-            "Temporary socket created, resolving group ID for family '{}', group '{}'",
-            family, group
-        );
-        let group_id = match netlink_utils::resolve_multicast_group(&mut temp_socket, family, group)
-        {
-            Ok(id) => {
-                debug!(
-                    "Resolved group ID {} for family '{}', group '{}'",
-                    id, family, group
-                );
-                id
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to resolve group id for family '{}', group '{}': {:?}",
-                    family, group, e
-                );
-                warn!(
-                    "This suggests the family '{}' is not registered in the kernel",
-                    family
-                );
-                return None;
-            }
-        };
-
-        debug!(
-            "Creating socket for family '{}' with group_id {}",
-            family, group_id
-        );
-
-        // Create a raw netlink socket
-        let mut socket = match Socket::new(NETLINK_GENERIC) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to create netlink socket: {:?}", e);
-                return None;
-            }
-        };
-
-        // Bind the socket
-        let addr = SocketAddr::new(0, 0);
-        if let Err(e) = socket.bind(&addr) {
-            warn!("Failed to bind socket: {:?}", e);
-            return None;
+        if result < 0 {
+            warn!("Failed to inspect data netlink memberships: {}", io::Error::last_os_error());
+            return false;
         }
-
-        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
-
-        debug!("Adding multicast membership for group_id {}", group_id);
-        if let Err(e) = socket.add_membership(group_id) {
-            warn!(
-                "Failed to add mcast membership for group_id {}: {:?}",
-                group_id, e
-            );
-            return None;
-        }
-
-        // Set non-blocking mode
-        if let Err(e) = socket.set_non_blocking(true) {
-            warn!("Failed to set non-blocking mode: {:?}", e);
-            return None;
-        }
-
-        info!(
-            "Successfully connected to family '{}', group '{}' with group_id: {}",
-            family, group, group_id
-        );
-        debug!(
-            "Socket created successfully, ready to receive multicast messages on group_id: {}",
-            group_id
-        );
-        Some(socket)
+        let count = length as usize / std::mem::size_of::<u32>();
+        Self::membership_is_set(&groups[..count.min(groups.len())], group_id)
     }
 
-    /// Attempts to establish a connection on demand.
-    ///
-    /// This will be called when receiving a Reconnect or SoftReconnect command from ControlNetlinkActor.
-    ///
-    /// # Arguments
-    ///
-    /// * `force` - If true, always reconnect regardless of socket health status.
-    ///             If false, only reconnect if socket is unhealthy (no data received recently).
-    ///
-    /// # Behavior
-    ///
-    /// - `force=true` (Reconnect): Always closes current socket and creates new connection
-    /// - `force=false` (SoftReconnect): Only reconnects if socket hasn't received data for SOCKET_HEALTH_TIMEOUT_SECS
-    fn connect(&mut self, force: bool) {
-        // Check if current socket is healthy (only when not forcing reconnection)
-        if !force {
-            if let Some(_socket) = &self.socket {
-                let time_since_last_data = Instant::now().duration_since(self.last_data_time);
-                if time_since_last_data >= Duration::from_secs(SOCKET_HEALTH_TIMEOUT_SECS) {
-                    warn!(
-                        "Socket unhealthy - no data received for {} seconds, forcing reconnection",
-                        time_since_last_data.as_secs()
-                    );
-                    // Close the unhealthy socket
-                    self.socket = None;
-                } else {
-                    info!(
-                        "Socket healthy - data received {} seconds ago, skipping reconnect",
-                        time_since_last_data.as_secs()
-                    );
-                    return;
-                }
-            }
-        } else {
-            // Force reconnection: close current socket if exists
-            if self.socket.is_some() {
-                info!("Force reconnection requested, closing current socket");
-                self.socket = None;
-            }
+    #[cfg(test)]
+    fn has_membership(socket: &SocketType, group_id: u32) -> bool {
+        test::socket_has_membership(socket.socket_id, group_id)
+    }
+
+    fn connect(&mut self, subscription: NetlinkSubscription) {
+        if self.socket.as_ref().is_some_and(|socket| {
+            self.subscription == Some(subscription)
+                && Self::has_membership(socket, subscription.group_id)
+        }) {
+            debug!("Data socket already has the requested subscription");
+            return;
         }
 
-        info!(
-            "Establishing new connection for family '{}', group '{}'",
-            self.family, self.group
-        );
-        self.socket = self.connect_with_nl_resolver(&self.family.clone(), &self.group.clone());
-        if self.socket.is_some() {
-            info!(
-                "Successfully connected to family '{}', group '{}'",
-                self.family, self.group
-            );
-            self.last_data_time = Instant::now(); // Reset data time for new socket
-        } else {
+        self.socket = None;
+        self.subscription = Some(subscription);
+        self.socket = self.open_socket(subscription);
+        if self.socket.is_none() {
             warn!(
-                "Failed to connect to family '{}', group '{}'",
-                self.family, self.group
+                "Failed to open data socket for family '{}' ({}), group '{}' ({})",
+                self.family, subscription.family_id, self.group, subscription.group_id
             );
-            // Clear the resolver as it might be stale
-            self.nl_resolver = None;
         }
     }
 
-    /// Disconnects the current socket.
-    ///
-    /// This will be called when there's a socket error, to clean up the connection
-    /// and wait for ControlNetlinkActor to send a reconnect command.
     fn disconnect(&mut self) {
-        if self.socket.is_some() {
-            debug!(
-                "Disconnecting socket for family '{}', group '{}'",
-                self.family, self.group
-            );
-            self.socket = None;
-            // Clear the resolver as it might be stale
-            self.nl_resolver = None;
-        }
+        self.socket = None;
+        self.subscription = None;
     }
 
-    /// Resets the actor's configuration and attempts to connect.
-    ///
-    /// # Arguments
-    ///
-    /// * `family` - New family name to use
-    /// * `group` - New group name to use  
-    fn reset(&mut self, family: &str, group: &str) {
-        debug!(
-            "Resetting connection: family '{}' -> '{}', group '{}' -> '{}'",
-            self.family, family, self.group, group
-        );
-        self.family = family.to_string();
-        self.group = group.to_string();
-        self.connect(true); // Force reconnection on reset
+    fn reconnect(&mut self, subscription: NetlinkSubscription) {
+        self.socket = None;
+        self.subscription = Some(subscription);
+        self.socket = self.open_socket(subscription);
     }
 
     /// Attempts to receive messages from the netlink socket.
@@ -872,7 +708,8 @@ impl DataNetlinkActor {
     fn try_recv(
         socket: &mut SocketType,
         message_parser: &mut NetlinkMessageParser,
-    ) -> Result<Vec<SocketBufferMessage>, io::Error> {
+        expected_family_id: u16,
+    ) -> Result<ParseOutcome, io::Error> {
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
         let recv_result = Self::recv_netlink_datagram(socket);
@@ -895,14 +732,15 @@ impl DataNetlinkActor {
                 }
 
                 // Parse buffer which may contain multiple messages and/or incomplete messages
-                let messages = message_parser.parse_buffer(&buffer)?;
+                let outcome = message_parser.parse_buffer(&buffer, expected_family_id)?;
                 debug!(
-                    "Parsed {} complete messages from {} bytes of data",
-                    messages.len(),
+                    "Parsed {} complete messages and dropped {} from {} bytes of data",
+                    outcome.messages.len(),
+                    outcome.dropped_messages,
                     size
                 );
 
-                Ok(messages)
+                Ok(outcome)
             }
             Err(err) => {
                 // WouldBlock is expected for non-blocking sockets with no data
@@ -921,19 +759,60 @@ impl DataNetlinkActor {
 
     fn handle_command(&mut self, command: NetlinkCommand) -> bool {
         match command {
-            NetlinkCommand::SocketConnect(SocketConnect { family, group }) => {
-                self.reset(&family, &group);
-            }
-            NetlinkCommand::Reconnect => {
-                self.connect(true);
-            }
-            NetlinkCommand::SoftReconnect => {
-                self.connect(false);
-            }
+            NetlinkCommand::Connect(subscription) => self.connect(subscription),
+            NetlinkCommand::Reconnect(subscription) => self.reconnect(subscription),
+            NetlinkCommand::Disconnect => self.disconnect(),
             NetlinkCommand::Close => return false,
         }
 
         true
+    }
+
+    async fn send_to_recipients(&mut self, message: &SocketBufferMessage) -> bool {
+        let mut index = 0;
+        while index < self.buffer_recipients.len() {
+            match self.buffer_recipients[index].send(message.clone()).await {
+                Ok(()) => index += 1,
+                Err(error) => {
+                    warn!("Removing closed data recipient {}: {:?}", index + 1, error);
+                    self.buffer_recipients.remove(index);
+                }
+            }
+        }
+        !self.buffer_recipients.is_empty()
+    }
+
+    fn register_with_backoff(
+        &mut self,
+        retry_secs: &mut u64,
+        retry_at: &mut Instant,
+        last_logged_delay: &mut Option<u64>,
+    ) -> Option<AsyncFd<SocketType>> {
+        match self.register_active_socket() {
+            Ok(socket) => {
+                *retry_secs = SOCKET_REGISTRATION_RETRY_SECS;
+                *last_logged_delay = None;
+                *retry_at = Instant::now() + Duration::from_secs(*retry_secs);
+                socket
+            }
+            Err(error) => {
+                let next_delay = if last_logged_delay.is_some() {
+                    (*retry_secs * 2).min(MAX_SOCKET_REGISTRATION_RETRY_SECS)
+                } else {
+                    *retry_secs
+                };
+                if *last_logged_delay != Some(next_delay) {
+                    warn!(
+                        "{}; retrying registration in {} second(s)",
+                        error, next_delay
+                    );
+                    *last_logged_delay = Some(next_delay);
+                }
+                *retry_secs = next_delay;
+                *retry_at = Instant::now() + Duration::from_secs(next_delay);
+                None
+            }
+        }
     }
 
     /// Continuously processes incoming netlink messages and control commands.
@@ -945,7 +824,7 @@ impl DataNetlinkActor {
     pub async fn run(mut actor: DataNetlinkActor) {
         enum ActorEvent {
             Command(Option<NetlinkCommand>),
-            SocketRead(Result<Option<Vec<SocketBufferMessage>>, io::Error>),
+            SocketRead(Result<Option<ParseOutcome>, io::Error>),
             Heartbeat,
         }
 
@@ -957,7 +836,17 @@ impl DataNetlinkActor {
         let mut heartbeat_interval = interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
         heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         heartbeat_interval.tick().await;
-        let mut socket = actor.register_active_socket();
+        let mut registration_retry_secs = SOCKET_REGISTRATION_RETRY_SECS;
+        let mut registration_retry_at =
+            Instant::now() + Duration::from_secs(registration_retry_secs);
+        let mut last_registration_warning_delay = None;
+        let mut enobufs_warnings = WarningLimiter::new();
+        let mut invalid_data_warnings = WarningLimiter::new();
+        let mut socket = actor.register_with_backoff(
+            &mut registration_retry_secs,
+            &mut registration_retry_at,
+            &mut last_registration_warning_delay,
+        );
 
         loop {
             if socket.is_none() {
@@ -966,6 +855,11 @@ impl DataNetlinkActor {
                         let Some(command) = command else {
                             break;
                         };
+                        if matches!(command, NetlinkCommand::Connect(subscription)
+                            if actor.subscription == Some(subscription))
+                        {
+                            continue;
+                        }
                         record_comm_stats(
                             ChannelLabel::ControlNetlinkToDataNetlink,
                             actor.command_recipient.len(),
@@ -973,14 +867,32 @@ impl DataNetlinkActor {
                         if !actor.handle_command(command) {
                             break;
                         }
-                        socket = actor.register_active_socket();
+                        socket = actor.register_with_backoff(
+                            &mut registration_retry_secs,
+                            &mut registration_retry_at,
+                            &mut last_registration_warning_delay,
+                        );
                         consecutive_failures = 0;
                     }
                     _ = heartbeat_interval.tick() => {
                         info!("DataNetlinkActor is running without a data socket - waiting for reconnect");
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(SOCKET_REGISTRATION_RETRY_SECS)), if actor.socket.is_some() => {
-                        socket = actor.register_active_socket();
+                    _ = sleep_until(registration_retry_at), if actor.subscription.is_some() => {
+                        if actor.socket.is_none() {
+                            actor.socket = actor.open_socket(actor.subscription.unwrap());
+                            if actor.socket.is_none() {
+                                registration_retry_secs =
+                                    (registration_retry_secs * 2).min(MAX_SOCKET_REGISTRATION_RETRY_SECS);
+                                registration_retry_at = Instant::now()
+                                    + Duration::from_secs(registration_retry_secs);
+                                continue;
+                            }
+                        }
+                        socket = actor.register_with_backoff(
+                            &mut registration_retry_secs,
+                            &mut registration_retry_at,
+                            &mut last_registration_warning_delay,
+                        );
                     }
                 }
                 continue;
@@ -995,7 +907,15 @@ impl DataNetlinkActor {
                     .ready_mut(Interest::READABLE | Interest::ERROR) => {
                     match readiness {
                         Ok(mut guard) => {
-                            match Self::try_recv(guard.get_inner_mut(), &mut actor.message_parser) {
+                            let family_id = actor
+                                .subscription
+                                .expect("registered socket has a subscription")
+                                .family_id;
+                            match Self::try_recv(
+                                guard.get_inner_mut(),
+                                &mut actor.message_parser,
+                                family_id,
+                            ) {
                                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                     guard.clear_ready_matching(TokioReady::READABLE);
                                     guard.clear_ready_matching(TokioReady::ERROR);
@@ -1019,10 +939,19 @@ impl DataNetlinkActor {
 
             match event {
                 ActorEvent::Command(command) => {
-                    actor.socket = Self::unregister_socket(&mut socket);
                     let Some(command) = command else {
                         break;
                     };
+                    if matches!(command, NetlinkCommand::Connect(subscription)
+                        if actor.subscription == Some(subscription)
+                            && Self::has_membership(
+                                socket.as_ref().unwrap().get_ref(),
+                                subscription.group_id,
+                            ))
+                    {
+                        continue;
+                    }
+                    actor.socket = Self::unregister_socket(&mut socket);
                     record_comm_stats(
                         ChannelLabel::ControlNetlinkToDataNetlink,
                         actor.command_recipient.len(),
@@ -1030,30 +959,49 @@ impl DataNetlinkActor {
                     if !actor.handle_command(command) {
                         break;
                     }
-                    socket = actor.register_active_socket();
+                    socket = actor.register_with_backoff(
+                        &mut registration_retry_secs,
+                        &mut registration_retry_at,
+                        &mut last_registration_warning_delay,
+                    );
                     consecutive_failures = 0;
                 }
                 ActorEvent::SocketRead(result) => {
                     match result {
-                        Ok(Some(messages)) => {
+                        Ok(Some(outcome)) => {
                             consecutive_failures = 0;
-                            actor.last_data_time = Instant::now();
+                            if outcome.dropped_messages > 0 {
+                                if let Some(suppressed) =
+                                    invalid_data_warnings.record(outcome.dropped_messages)
+                                {
+                                    warn!(
+                                        "Dropped {} invalid netlink message(s): {}{}",
+                                        outcome.dropped_messages,
+                                        outcome.first_error.as_deref().unwrap_or("invalid data"),
+                                        if suppressed > 0 {
+                                            format!("; {suppressed} additional message(s) suppressed")
+                                        } else {
+                                            String::new()
+                                        }
+                                    );
+                                }
+                            }
 
-                            if messages.is_empty() {
+                            if outcome.messages.is_empty() {
                                 debug!("Received netlink datagram but no complete payload was extracted");
                             } else {
                                 debug!(
                                     "Successfully parsed {} complete netlink messages",
-                                    messages.len()
+                                    outcome.messages.len()
                                 );
 
-                                for (i, message) in messages.iter().enumerate() {
+                                for (i, message) in outcome.messages.iter().enumerate() {
                                     if log::log_enabled!(log::Level::Debug) {
                                         let hex_dump = format_hex_lines(message.as_ref());
                                         debug!(
                                             "Outgoing netlink payload {}/{} ({} bytes):\n{}",
                                             i + 1,
-                                            messages.len(),
+                                            outcome.messages.len(),
                                             message.len(),
                                             hex_dump
                                         );
@@ -1061,52 +1009,61 @@ impl DataNetlinkActor {
                                     debug!(
                                         "Processing netlink message {}/{}: {} bytes",
                                         i + 1,
-                                        messages.len(),
+                                        outcome.messages.len(),
                                         message.len()
                                     );
 
-                                    for (j, recipient) in actor.buffer_recipients.iter().enumerate()
-                                    {
-                                        debug!(
-                                            "Sending netlink message {}/{} to recipient {}",
-                                            i + 1,
-                                            messages.len(),
-                                            j + 1
-                                        );
-                                        if let Err(e) = recipient.send(message.clone()).await {
-                                            warn!("Failed to send netlink message {}/{} to recipient {}: {:?}",
-                                              i + 1, messages.len(), j + 1, e);
-                                        } else {
-                                            debug!("Successfully sent netlink message {}/{} ({} bytes) to recipient {}",
-                                               i + 1, messages.len(), message.len(), j + 1);
-                                        }
+                                    if !actor.send_to_recipients(message).await {
+                                        warn!("DataNetlinkActor has no live recipients; terminating");
+                                        return;
                                     }
                                 }
 
-                                debug!("Completed processing {} netlink messages, each sent individually", messages.len());
+                                debug!("Completed processing {} netlink messages, each sent individually", outcome.messages.len());
                             }
                         }
                         Ok(None) => {}
                         Err(e) if e.raw_os_error() == Some(ENOBUFS) => {
-                            warn!(
-                            "Netlink receive buffer full (ENOBUFS). Consider increasing --netlink-rcvbuf or reducing HFT load. Error: {:?}",
-                            e
-                        );
+                            if let Some(suppressed) = enobufs_warnings.record(1) {
+                                warn!(
+                                    "Netlink receive buffer full (ENOBUFS); {} prior notification(s) suppressed. Consider increasing --netlink-rcvbuf or reducing HFT load: {:?}",
+                                    suppressed, e
+                                );
+                            }
                         }
                         Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                            warn!("Dropping invalid netlink datagram: {:?}", e);
+                            if let Some(suppressed) = invalid_data_warnings.record(1) {
+                                warn!(
+                                    "Dropping invalid netlink datagram; {} prior event(s) suppressed: {:?}",
+                                    suppressed, e
+                                );
+                            }
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                            if let Some(suppressed) = invalid_data_warnings.record(1) {
+                                warn!(
+                                    "Dropping non-kernel netlink datagram; {} prior event(s) suppressed: {:?}",
+                                    suppressed, e
+                                );
+                            }
                         }
                         Err(e) => {
                             warn!("Failed to receive message: {:?}", e);
-                            if actor.socket.is_none() {
+                            if socket.is_some() {
                                 actor.socket = Self::unregister_socket(&mut socket);
                             }
-                            actor.disconnect();
+                            actor.socket = None;
                             consecutive_failures += 1;
                             if consecutive_failures <= MAX_LOCAL_RECONNECT_ATTEMPTS {
                                 debug!("Attempting quick reconnect #{}", consecutive_failures);
-                                actor.connect(true);
-                                socket = actor.register_active_socket();
+                                if let Some(subscription) = actor.subscription {
+                                    actor.reconnect(subscription);
+                                    socket = actor.register_with_backoff(
+                                        &mut registration_retry_secs,
+                                        &mut registration_retry_at,
+                                        &mut last_registration_warning_delay,
+                                    );
+                                }
                             } else {
                                 debug!("Too many consecutive failures, waiting for reconnect command from ControlNetlinkActor");
                             }
@@ -1147,7 +1104,7 @@ pub mod test {
     // Helper function to create a properly sized message vector
     fn create_test_message_for_family(payload: &[u8], family_id: u16) -> Vec<u8> {
         let mut msg = create_mock_netlink_message(payload);
-        msg[4..6].copy_from_slice(&family_id.to_le_bytes());
+        msg[4..6].copy_from_slice(&family_id.to_ne_bytes());
         let actual_len = 20 + payload.len(); // 16 (nlmsg) + 4 (genl) + payload
         msg[..actual_len].to_vec()
     }
@@ -1155,8 +1112,8 @@ pub mod test {
     fn create_large_mock_netlink_message(payload: &[u8]) -> Vec<u8> {
         let total_len = 20 + payload.len();
         let mut msg = vec![0u8; total_len];
-        msg[0..4].copy_from_slice(&(total_len as u32).to_le_bytes());
-        msg[4..6].copy_from_slice(&0x10u16.to_le_bytes());
+        msg[0..4].copy_from_slice(&(total_len as u32).to_ne_bytes());
+        msg[4..6].copy_from_slice(&0x10u16.to_ne_bytes());
         msg[16] = 0x01;
         msg[20..].copy_from_slice(payload);
         msg
@@ -1225,6 +1182,9 @@ pub mod test {
     static NEXT_SOCKET_ID: AtomicUsize = AtomicUsize::new(1);
     static AUTO_SEED_SOCKETS: AtomicBool = AtomicBool::new(true);
     static FAIL_SOCKET_ID: AtomicUsize = AtomicUsize::new(0);
+    static NEXT_RECV_ERRNO: AtomicUsize = AtomicUsize::new(0);
+    static SOCKET_REGISTRATION_FAILURES: AtomicUsize = AtomicUsize::new(0);
+    static SOCKET_OPEN_FAILURES: AtomicUsize = AtomicUsize::new(0);
     static MOCK_KERNEL_FAMILY: Mutex<Option<MockFamily>> = Mutex::new(None);
     static ALLOW_ANY_FAMILY: AtomicBool = AtomicBool::new(true);
     static LIVE_SUBSCRIPTIONS: Mutex<Vec<MockSubscription>> = Mutex::new(Vec::new());
@@ -1253,7 +1213,7 @@ pub mod test {
         CONNECTION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub(super) fn resolve_mock_family(family: &str, group: &str) -> Option<(u16, u32)> {
+    pub(crate) fn resolve_mock_family(family: &str, group: &str) -> Option<(u16, u32)> {
         if ALLOW_ANY_FAMILY.load(Ordering::SeqCst) {
             return Some((0x20, 0x100));
         }
@@ -1280,6 +1240,9 @@ pub mod test {
         CONNECTION_ATTEMPTS.store(0, Ordering::SeqCst);
         AUTO_SEED_SOCKETS.store(true, Ordering::SeqCst);
         FAIL_SOCKET_ID.store(0, Ordering::SeqCst);
+        NEXT_RECV_ERRNO.store(0, Ordering::SeqCst);
+        SOCKET_REGISTRATION_FAILURES.store(0, Ordering::SeqCst);
+        SOCKET_OPEN_FAILURES.store(0, Ordering::SeqCst);
         ALLOW_ANY_FAMILY.store(true, Ordering::SeqCst);
         *MOCK_KERNEL_FAMILY.lock().unwrap() = None;
         SUCCESSFUL_CONNECTIONS.lock().unwrap().clear();
@@ -1309,18 +1272,10 @@ pub mod test {
         {
             *registry = None;
         }
-    }
-
-    pub(crate) fn mock_family_exists(family: &str) -> bool {
-        if ALLOW_ANY_FAMILY.load(Ordering::SeqCst) {
-            return true;
-        }
-
-        MOCK_KERNEL_FAMILY
+        LIVE_SUBSCRIPTIONS
             .lock()
             .unwrap()
-            .as_ref()
-            .is_some_and(|entry| entry.name == family)
+            .retain(|subscription| subscription.family_id != family_id);
     }
 
     pub(crate) fn connection_attempts() -> usize {
@@ -1370,13 +1325,54 @@ pub mod test {
         FAIL_SOCKET_ID.store(socket_id, Ordering::SeqCst);
     }
 
+    fn fail_next_recv_with_errno(errno: i32) {
+        NEXT_RECV_ERRNO.store(errno as usize, Ordering::SeqCst);
+    }
+
+    pub(super) fn fail_socket_registration() -> bool {
+        SOCKET_REGISTRATION_FAILURES
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+    }
+
+    pub(super) fn fail_socket_open() -> bool {
+        SOCKET_OPEN_FAILURES
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+    }
+
+    pub(super) fn socket_has_membership(socket_id: usize, group_id: u32) -> bool {
+        LIVE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|subscription| {
+                subscription.socket_id == socket_id && subscription.group_id == group_id
+            })
+    }
+
+    fn send_raw_to_current_socket(datagram: &[u8]) {
+        LIVE_SUBSCRIPTIONS
+            .lock()
+            .unwrap()
+            .last()
+            .expect("mock socket sender is available")
+            .sender
+            .send(datagram)
+            .expect("send raw mock datagram");
+    }
+
     /// Mock socket backed by a real datagram fd so tests exercise Tokio readiness registration.
     pub struct MockSocket {
         pub valid: bool,
         socket: UnixDatagram,
         _sender: UnixDatagram,
         fail_on_recv: bool,
-        socket_id: usize,
+        pub(super) socket_id: usize,
     }
 
     impl AsRawFd for MockSocket {
@@ -1434,6 +1430,10 @@ pub mod test {
 
         pub(super) fn prepare_recv(&mut self) -> Result<(), io::Error> {
             RECV_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+            let errno = NEXT_RECV_ERRNO.swap(0, Ordering::SeqCst) as i32;
+            if errno != 0 {
+                return Err(io::Error::from_raw_os_error(errno));
+            }
             let injected_failure = FAIL_SOCKET_ID
                 .compare_exchange(self.socket_id, 0, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok();
@@ -1512,16 +1512,26 @@ pub mod test {
 
         let task = spawn(DataNetlinkActor::run(actor));
 
+        let first = NetlinkSubscription {
+            family_id: 0x20,
+            group_id: 0x100,
+        };
+        command_sender
+            .send(NetlinkCommand::Connect(first))
+            .await
+            .unwrap();
+
         assert_eq!(
             recv_payload(&mut buffer_receiver).await,
             "family-1/group-1/socket-1"
         );
 
         command_sender
-            .send(NetlinkCommand::SoftReconnect)
+            .send(NetlinkCommand::Connect(first))
             .await
             .unwrap();
-        wait_for_socket_registrations(2).await;
+        tokio::task::yield_now().await;
+        assert_eq!(REGISTERED_SOCKET_COUNT.load(Ordering::SeqCst), 1);
         assert_eq!(SOCKET_COUNT.load(Ordering::SeqCst), 1);
         send_to_current_socket(b"after-soft-reconnect");
         assert_eq!(
@@ -1530,50 +1540,35 @@ pub mod test {
         );
 
         command_sender
-            .send(NetlinkCommand::SocketConnect(SocketConnect {
-                family: "family-2".to_string(),
-                group: "group-2".to_string(),
-            }))
+            .send(NetlinkCommand::Reconnect(first))
             .await
             .unwrap();
         assert_eq!(
             recv_payload(&mut buffer_receiver).await,
-            "family-2/group-2/socket-2"
-        );
-
-        command_sender
-            .send(NetlinkCommand::SocketConnect(SocketConnect {
-                family: "family-3".to_string(),
-                group: "group-3".to_string(),
-            }))
-            .await
-            .unwrap();
-        assert_eq!(
-            recv_payload(&mut buffer_receiver).await,
-            "family-3/group-3/socket-3"
+            "family-1/group-1/socket-2"
         );
 
         FAIL_NEXT_SOCKET.store(true, Ordering::SeqCst);
         command_sender
-            .send(NetlinkCommand::Reconnect)
+            .send(NetlinkCommand::Reconnect(first))
             .await
             .unwrap();
         assert_eq!(
             recv_payload(&mut buffer_receiver).await,
-            "family-3/group-3/socket-5"
+            "family-1/group-1/socket-4"
         );
 
         command_sender
-            .send(NetlinkCommand::Reconnect)
+            .send(NetlinkCommand::Reconnect(first))
             .await
             .unwrap();
         assert_eq!(
             recv_payload(&mut buffer_receiver).await,
-            "family-3/group-3/socket-6"
+            "family-1/group-1/socket-5"
         );
 
         let socket_count = SOCKET_COUNT.load(Ordering::SeqCst);
-        assert_eq!(socket_count, 6);
+        assert_eq!(socket_count, 5);
 
         command_sender
             .send(NetlinkCommand::Close)
@@ -1592,6 +1587,13 @@ pub mod test {
         let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
         actor.add_recipient(buffer_sender);
         let task = spawn(DataNetlinkActor::run(actor));
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
 
         for message_index in 1..=3 {
             assert_eq!(
@@ -1612,7 +1614,7 @@ pub mod test {
         task.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[serial_test::serial]
     async fn test_data_netlink_wakes_after_idle_without_polling() {
         reset_mock_state(true, 1);
@@ -1623,13 +1625,212 @@ pub mod test {
         actor.add_recipient(buffer_sender);
         let task = spawn(DataNetlinkActor::run(actor));
 
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
+
         wait_for_socket_registrations(1).await;
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        for _ in 0..60 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+        }
         assert!(RECV_ATTEMPTS.load(Ordering::SeqCst) <= 1);
 
         send_to_current_socket(b"after-idle");
         assert_eq!(recv_payload(&mut buffer_receiver).await, "after-idle");
 
+        command_sender.send(NetlinkCommand::Close).await.unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_enobufs_keeps_socket_and_drains_queued_data() {
+        reset_mock_state(true, 1);
+        let (command_sender, command_receiver) = channel(2);
+        let (buffer_sender, mut buffer_receiver) = channel(1);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        actor.add_recipient(buffer_sender);
+        let task = spawn(DataNetlinkActor::run(actor));
+        let subscription = NetlinkSubscription {
+            family_id: 0x20,
+            group_id: 0x100,
+        };
+        command_sender
+            .send(NetlinkCommand::Connect(subscription))
+            .await
+            .unwrap();
+        wait_for_socket_registrations(1).await;
+
+        fail_next_recv_with_errno(ENOBUFS);
+        send_to_current_socket(b"after-enobufs");
+        assert_eq!(recv_payload(&mut buffer_receiver).await, "after-enobufs");
+        assert_eq!(CONNECTION_ATTEMPTS.load(Ordering::SeqCst), 1);
+        assert_eq!(live_socket_count(), 1);
+
+        command_sender.send(NetlinkCommand::Close).await.unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_invalid_datagram_keeps_socket_and_quiesces() {
+        reset_mock_state(true, 1);
+        let (command_sender, command_receiver) = channel(2);
+        let (buffer_sender, mut buffer_receiver) = channel(1);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        actor.add_recipient(buffer_sender);
+        let task = spawn(DataNetlinkActor::run(actor));
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
+        wait_for_socket_registrations(1).await;
+
+        send_raw_to_current_socket(&[1, 2, 3, 4]);
+        for _ in 0..100 {
+            if RECV_ATTEMPTS.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let attempts = RECV_ATTEMPTS.load(Ordering::SeqCst);
+        tokio::time::advance(Duration::from_secs(60)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(RECV_ATTEMPTS.load(Ordering::SeqCst), attempts);
+        assert_eq!(CONNECTION_ATTEMPTS.load(Ordering::SeqCst), 1);
+
+        send_to_current_socket(b"after-invalid");
+        assert_eq!(recv_payload(&mut buffer_receiver).await, "after-invalid");
+        command_sender.send(NetlinkCommand::Close).await.unwrap();
+        task.await.unwrap();
+    }
+
+    #[test]
+    fn test_wrong_family_message_is_dropped() {
+        let mut parser = NetlinkMessageParser::new();
+        let message = create_test_message_for_family(b"wrong-family", 0x21);
+        let outcome = parser.parse_buffer(&message, 0x20).unwrap();
+
+        assert!(outcome.messages.is_empty());
+        assert_eq!(outcome.dropped_messages, 1);
+    }
+
+    #[test]
+    fn test_membership_bitmap_uses_one_based_group_ids() {
+        assert!(DataNetlinkActor::membership_is_set(&[1], 1));
+        assert!(DataNetlinkActor::membership_is_set(&[1 << 29], 30));
+        assert!(DataNetlinkActor::membership_is_set(&[0, 1], 33));
+        assert!(!DataNetlinkActor::membership_is_set(&[30], 30));
+        assert!(!DataNetlinkActor::membership_is_set(&[u32::MAX], 0));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_closed_recipient_is_removed_while_live_recipient_continues() {
+        reset_mock_state(true, 1);
+        let (command_sender, command_receiver) = channel(2);
+        let (closed_sender, closed_receiver) = channel(1);
+        let (live_sender, mut live_receiver) = channel(1);
+        drop(closed_receiver);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        actor.add_recipient(closed_sender);
+        actor.add_recipient(live_sender);
+        let task = spawn(DataNetlinkActor::run(actor));
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
+        wait_for_socket_registrations(1).await;
+
+        send_to_current_socket(b"live-recipient");
+        assert_eq!(recv_payload(&mut live_receiver).await, "live-recipient");
+
+        command_sender.send(NetlinkCommand::Close).await.unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_socket_registration_retries_with_backoff() {
+        reset_mock_state(true, 1);
+        SOCKET_REGISTRATION_FAILURES.store(3, Ordering::SeqCst);
+        let (command_sender, command_receiver) = channel(2);
+        let (buffer_sender, mut buffer_receiver) = channel(1);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        actor.add_recipient(buffer_sender);
+        let task = spawn(DataNetlinkActor::run(actor));
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
+
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        for _ in 0..8 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+        }
+        wait_for_socket_registrations(1).await;
+        send_to_current_socket(b"after-registration-retry");
+        assert_eq!(
+            recv_payload(&mut buffer_receiver).await,
+            "after-registration-retry"
+        );
+
+        command_sender.send(NetlinkCommand::Close).await.unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
+    async fn test_socket_open_failure_is_retried() {
+        reset_mock_state(true, 1);
+        SOCKET_OPEN_FAILURES.store(2, Ordering::SeqCst);
+        let (command_sender, command_receiver) = channel(2);
+        let (buffer_sender, mut buffer_receiver) = channel(1);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        actor.add_recipient(buffer_sender);
+        let task = spawn(DataNetlinkActor::run(actor));
+        command_sender
+            .send(NetlinkCommand::Connect(NetlinkSubscription {
+                family_id: 0x20,
+                group_id: 0x100,
+            }))
+            .await
+            .unwrap();
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(CONNECTION_ATTEMPTS.load(Ordering::SeqCst), 1);
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(CONNECTION_ATTEMPTS.load(Ordering::SeqCst), 2);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        wait_for_socket_registrations(1).await;
+        assert_eq!(CONNECTION_ATTEMPTS.load(Ordering::SeqCst), 3);
+
+        send_to_current_socket(b"after-open-retry");
+        assert_eq!(recv_payload(&mut buffer_receiver).await, "after-open-retry");
         command_sender.send(NetlinkCommand::Close).await.unwrap();
         task.await.unwrap();
     }
@@ -1642,7 +1843,7 @@ pub mod test {
         let actual_len = 20 + b"TEST_PAYLOAD".len(); // 16 (nlmsg) + 4 (genl) + payload
         let mut parser = NetlinkMessageParser::new();
 
-        let result = parser.parse_buffer(&mock_msg[..actual_len]);
+        let result = parser.parse_test_buffer(&mock_msg[..actual_len]);
         assert!(result.is_ok());
 
         let messages = result.unwrap();
@@ -1661,7 +1862,7 @@ pub mod test {
         let actual_len = 20; // Only headers: 16 (nlmsg) + 4 (genl)
         let mut parser = NetlinkMessageParser::new();
 
-        let result = parser.parse_buffer(&mock_msg[..actual_len]);
+        let result = parser.parse_test_buffer(&mock_msg[..actual_len]);
         assert!(result.is_ok());
 
         let messages = result.unwrap();
@@ -1676,7 +1877,7 @@ pub mod test {
         let buffer = vec![0u8; 10];
         let mut parser = NetlinkMessageParser::new();
 
-        let result = parser.parse_buffer(&buffer);
+        let result = parser.parse_test_buffer(&buffer);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
@@ -1697,7 +1898,7 @@ pub mod test {
         combined_buffer.extend_from_slice(&msg2[..msg2_len]);
 
         let mut parser = NetlinkMessageParser::new();
-        let result = parser.parse_buffer(&combined_buffer);
+        let result = parser.parse_test_buffer(&combined_buffer);
         assert!(result.is_ok());
 
         let messages = result.unwrap();
@@ -1719,7 +1920,7 @@ pub mod test {
         append_aligned_mock_netlink_message(&mut combined_buffer, b"SECOND");
 
         let mut parser = NetlinkMessageParser::new();
-        let result = parser.parse_buffer(&combined_buffer);
+        let result = parser.parse_test_buffer(&combined_buffer);
         assert!(result.is_ok());
 
         let messages = result.unwrap();
@@ -1735,7 +1936,7 @@ pub mod test {
         buffer.extend_from_slice(&[0; 4]);
 
         let mut parser = NetlinkMessageParser::new();
-        let messages = parser.parse_buffer(&buffer).unwrap();
+        let messages = parser.parse_test_buffer(&buffer).unwrap();
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].as_ref(), b"COMPLETE");
@@ -1744,7 +1945,7 @@ pub mod test {
     #[test]
     fn test_zero_bytes_larger_than_alignment_padding_are_rejected() {
         let mut parser = NetlinkMessageParser::new();
-        let result = parser.parse_buffer(&[0; 4]);
+        let result = parser.parse_test_buffer(&[0; 4]);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
@@ -1762,11 +1963,11 @@ pub mod test {
         let second_datagram = create_large_mock_netlink_message(b"SECOND_DATAGRAM");
         let mut parser = NetlinkMessageParser::new();
 
-        let result1 = parser.parse_buffer(&first_datagram[..BUFFER_SIZE]);
+        let result1 = parser.parse_test_buffer(&first_datagram[..BUFFER_SIZE]);
         assert!(result1.is_err());
         assert_eq!(result1.unwrap_err().kind(), io::ErrorKind::InvalidData);
 
-        let result2 = parser.parse_buffer(&second_datagram);
+        let result2 = parser.parse_test_buffer(&second_datagram);
         assert!(result2.is_ok());
         let messages2 = result2.unwrap();
         assert_eq!(messages2.len(), 1);
@@ -1789,14 +1990,14 @@ pub mod test {
         combined_buffer.extend_from_slice(&msg2[..25]); // Only part of second message
 
         let mut parser = NetlinkMessageParser::new();
-        let result = parser.parse_buffer(&combined_buffer);
+        let result = parser.parse_test_buffer(&combined_buffer);
         assert!(result.is_ok());
         let messages = result.unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].as_ref(), b"COMPLETE");
 
         // The next datagram must be parsed independently, not as a continuation.
-        let result = parser.parse_buffer(&msg2[..msg2_len]);
+        let result = parser.parse_test_buffer(&msg2[..msg2_len]);
         assert!(result.is_ok());
         let messages = result.unwrap();
         assert_eq!(messages.len(), 1);
@@ -1865,7 +2066,8 @@ pub mod test {
         tx.send(&payload).unwrap();
 
         let mut buffer = vec![0u8; BUFFER_SIZE];
-        let (size, flags) = DataNetlinkActor::recvmsg_into(rx.as_raw_fd(), &mut buffer, 0).unwrap();
+        let (size, flags, _) =
+            DataNetlinkActor::recvmsg_into(rx.as_raw_fd(), &mut buffer, 0).unwrap();
 
         assert_eq!(size, BUFFER_SIZE);
         assert_ne!(flags & libc::MSG_TRUNC, 0);
@@ -1885,15 +2087,13 @@ pub mod test {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
     }
 
-    /// Tests the get_genl_family_group function with a valid constants file.
+    /// Tests exact values are read rather than silently replaced with defaults.
     #[test]
     fn test_get_genl_family_group() {
-        // Use the test constants file since the production file might not exist
-        let result = get_genl_family_group_from_path_safe("tests/data/constants.yml");
-        assert!(result.is_ok());
-        let (family, group) = result.unwrap();
-        assert!(!family.is_empty());
-        assert!(!group.is_empty());
+        assert_eq!(
+            get_genl_family_group_from_path_safe("tests/data/constants.yml").unwrap(),
+            ("test_family".to_string(), "test_group".to_string())
+        );
     }
 
     /// Tests the get_genl_family_group_from_path function with a test file.
@@ -1906,41 +2106,16 @@ pub mod test {
             .contains("Failed to open constants file"));
     }
 
-    /// Tests the get_genl_family_group_from_path function with the test constants file.
-    #[test]
-    fn test_get_genl_family_group_from_test_file() {
-        let result = get_genl_family_group_from_path_safe("tests/data/constants.yml");
-        assert!(result.is_ok());
-        let (family, group) = result.unwrap();
-        assert!(!family.is_empty());
-        assert!(!group.is_empty());
-    }
-
-    /// Tests that get_genl_family_group returns default values when config file is missing.
+    /// Tests invalid configuration is reported and the public wrapper falls back.
     #[test]
     fn test_get_genl_family_group_defaults() {
-        // Create a temporary SONIC_CONSTANTS path that doesn't exist
-        let _original_path = SONIC_CONSTANTS;
-
-        // Use the safe function to test default behavior
-        let result = get_genl_family_group_from_path_safe("/non/existent/path/constants.yml");
-        assert!(result.is_err());
-
-        // Test the main function - it should not panic and should return defaults
-        // when the config file is missing (simulated by the safe function)
-        let (family, group) = get_genl_family_group();
-
-        // The function should return defaults since the production config file likely doesn't exist in test env
-        // Default values should be "sonic_stel" and "ipfix"
-        if family == "sonic_stel" && group == "ipfix" {
-            // This means it fell back to defaults
-            assert_eq!(family, "sonic_stel");
-            assert_eq!(group, "ipfix");
-        } else {
-            // If config file exists and is valid, we should get some values
-            assert!(!family.is_empty());
-            assert!(!group.is_empty());
-        }
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "constants:\n  high_frequency_telemetry:\n    genl_family: 7\n").unwrap();
+        assert!(get_genl_family_group_from_path_safe(file.path().to_str().unwrap()).is_err());
+        assert_eq!(
+            get_genl_family_group_from_path(file.path().to_str().unwrap()),
+            (DEFAULT_FAMILY.to_string(), DEFAULT_GROUP.to_string())
+        );
     }
 
     #[test]
@@ -1967,23 +2142,22 @@ pub mod test {
 /// If the configuration file cannot be read or parsed, this function will
 /// use default values: ("sonic_stel", "ipfix")
 pub fn get_genl_family_group() -> (String, String) {
-    // Default values
-    const DEFAULT_FAMILY: &str = "sonic_stel";
-    const DEFAULT_GROUP: &str = "ipfix";
+    get_genl_family_group_from_path(SONIC_CONSTANTS)
+}
 
-    // Try to read from config file, use defaults if it fails
-    match get_genl_family_group_from_path_safe(SONIC_CONSTANTS) {
+fn get_genl_family_group_from_path(path: &str) -> (String, String) {
+    match get_genl_family_group_from_path_safe(path) {
         Ok((family, group)) => {
             debug!(
                 "Loaded netlink config from '{}': family='{}', group='{}'",
-                SONIC_CONSTANTS, family, group
+                path, family, group
             );
             (family, group)
         }
         Err(e) => {
             warn!(
                 "Failed to load config from '{}': {}. Using defaults: family='{}', group='{}'",
-                SONIC_CONSTANTS, e, DEFAULT_FAMILY, DEFAULT_GROUP
+                path, e, DEFAULT_FAMILY, DEFAULT_GROUP
             );
             (DEFAULT_FAMILY.to_string(), DEFAULT_GROUP.to_string())
         }
@@ -2028,16 +2202,15 @@ fn get_genl_family_group_from_path_safe(path: &str) -> Result<(String, String), 
 
     let yaml = &yaml_docs[0];
 
-    // Extract family and group with default fallback
-    let family = yaml["constants"]["high_frequency_telemetry"]["genl_family"]
+    let hft = &yaml["constants"]["high_frequency_telemetry"];
+    let family = hft["genl_family"]
         .as_str()
-        .unwrap_or("sonic_stel")
-        .to_string();
-
-    let group = yaml["constants"]["high_frequency_telemetry"]["genl_multicast_group"]
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Missing or invalid genl_family in '{path}'"))?;
+    let group = hft["genl_multicast_group"]
         .as_str()
-        .unwrap_or("ipfix")
-        .to_string();
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Missing or invalid genl_multicast_group in '{path}'"))?;
 
-    Ok((family, group))
+    Ok((family.to_string(), group.to_string()))
 }

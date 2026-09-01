@@ -10,7 +10,9 @@ a fresh kernel-generated payload after every reload.
 ## Requirements
 
 - An exclusive disposable Linux host or VM. Do not run it on a shared kernel.
-- glibc 2.33 or newer for allocator leak measurements.
+- glibc 2.33 or newer in both build and runtime environments. The example links
+  the `mallinfo2` symbol; this is a binary symbol requirement, not just a preferred
+  measurement backend.
 - Root privileges.
 - `CONFIG_PSAMPLE=m` and `CONFIG_NET_ACT_SAMPLE=m`.
 - `iproute2` (`ip` and `tc`) and `kmod` (`modprobe`, `modinfo`, and `rmmod`).
@@ -35,6 +37,10 @@ duration plus 128 measured cycles rotating through `100ms`, `1s`, `10s`, `30s`,
 `1h`, `1d`, `1w`, `1mo`, and `1y`. Durations use Tokio virtual time; module and
 packet operations remain real.
 
+Wall-clock runtime is host-dependent because module, link, and packet operations
+remain synchronous and real. Successful runs report `elapsed_wall`; measure a full
+run on the target host rather than inferring runtime from the virtual outages.
+
 For local debugging only, a shorter run can bypass the minimum of 101 measured
 reloads:
 
@@ -53,3 +59,36 @@ sudo env \
 
 Normal `cargo test` does not execute this test. `cargo check --all-targets` still
 compiles it so source regressions are caught in CI.
+
+## Coverage Boundaries
+
+The current-thread Tokio virtual-time harness serializes synchronous host operations
+with actor execution. It therefore does not cover teardown races possible in the
+production multi-threaded runtime.
+
+FD snapshots prove endpoint cardinality and detect unbounded FD growth at observed
+checkpoints. They do not prove socket identity stability or absence of churn. Data
+sockets intentionally change on each reload, and family/group helper resolution
+creates expected socket churn, so raw socket inode identities are not tracked.
+
+## Cleanup After an Abnormal Exit
+
+Use these steps only on the exclusive disposable host or VM dedicated to this test.
+The veth names are `pst<hex-pid>` and `psr<hex-pid>`: `pst` is the transmit endpoint,
+`psr` is the receive endpoint, and the suffix is the test process PID rendered in
+lowercase hexadecimal. Inspect `ip -brief link show` if the old PID is unknown.
+
+Delete either stale veth endpoint first; deleting one removes the pair. Then unload
+`act_sample` before its `psample` dependency. For example, for a known decimal PID:
+
+```bash
+old_pid=12345
+sudo ip link delete "pst$(printf '%x' "$old_pid")"
+sudo rmmod act_sample
+sudo rmmod psample
+```
+
+If only the `psr` name remains visible, use that endpoint in the `ip link delete`
+command instead. The test may also have introduced `cls_matchall`, `sch_ingress`,
+and `veth`; after removing the pair and sampling modules, unload those helpers in
+that order only if this disposable host had none of them loaded before the test.

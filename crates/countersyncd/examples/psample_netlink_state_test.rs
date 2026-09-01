@@ -6,6 +6,8 @@
 //!
 //! This is intentionally an example instead of a Cargo test: normal CI compiles it via
 //! `cargo check --all-targets`, but does not execute host-wide module unload/reload operations.
+//! The current-thread virtual-time harness serializes synchronous host operations with actor
+//! execution and therefore does not cover production multi-threaded teardown races.
 
 use std::{
     collections::BTreeMap,
@@ -28,7 +30,7 @@ use log::LevelFilter;
 use tokio::{
     io::unix::AsyncFd,
     runtime::Builder,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
     time::advance,
 };
@@ -38,10 +40,12 @@ const GROUP: &str = "packets";
 const SAMPLE_GROUP: u32 = 0x5a17;
 const DEFAULT_RELOADS: usize = 128;
 const MIN_RELOADS: usize = 101;
-const MAX_RSS_GROWTH_KIB: u64 = 32 * 1024;
-const MAX_HEAP_GROWTH_BYTES: usize = 2 * 1024 * 1024;
-const MAX_HEAP_TREND_BYTES: u64 = 512 * 1024;
-const MAX_RSS_TREND_KIB: u64 = 8 * 1024;
+const DATA_CHANNEL_CAPACITY: usize = 32;
+// Observed full runs stay below these bounds; modest headroom allows allocator/RSS noise.
+const MAX_RSS_GROWTH_KIB: u64 = 1024;
+const MAX_RSS_TREND_KIB: u64 = 512;
+const MAX_HEAP_GROWTH_BYTES: usize = 512 * 1024;
+const MAX_HEAP_TREND_BYTES: u64 = 128 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const PSAMPLE_ATTR_SAMPLE_GROUP: u16 = 3;
 const PSAMPLE_ATTR_DATA: u16 = 6;
@@ -75,10 +79,19 @@ struct Cleanup {
 
 struct StressStats {
     reloads: usize,
+    baseline_fds: usize,
+    final_fds: usize,
     max_fds: usize,
+    baseline_rss: u64,
     final_rss: u64,
     max_rss: u64,
+    rss_first_median: u64,
+    rss_last_median: u64,
+    baseline_heap: usize,
+    final_heap: usize,
     max_heap: usize,
+    heap_first_median: u64,
+    heap_last_median: u64,
 }
 
 struct WallTimer(AsyncFd<OwnedFd>);
@@ -143,6 +156,7 @@ impl WallTimer {
 
 impl AutoAdvanceGuard {
     async fn new() -> Self {
+        // This parked blocking task inhibits Tokio paused-time auto-advance and must stay alive.
         let (release, receiver) = std::sync::mpsc::channel();
         let task = tokio::task::spawn_blocking(move || {
             let _ = receiver.recv();
@@ -214,6 +228,7 @@ fn main() -> Result<(), DynError> {
 }
 
 async fn run_test() -> Result<(), DynError> {
+    let wall_started = WallInstant::now();
     let _ = env_logger::builder()
         .filter_module("countersyncd::actor::control_netlink", LevelFilter::Error)
         .filter_module("countersyncd::actor::data_netlink", LevelFilter::Error)
@@ -296,14 +311,28 @@ async fn run_test() -> Result<(), DynError> {
     let stats = stats.expect("stress stats are present when no failures were recorded");
 
     println!(
-        "passed {} reloads; max_fds={}, final_rss_kib={}, max_rss_kib={}, max_heap_bytes={}",
-        stats.reloads, stats.max_fds, stats.final_rss, stats.max_rss, stats.max_heap
+        "passed {} reloads; elapsed_wall={:?}; fds(baseline/final/max)={}/{}/{}; rss_kib(baseline/final/max)={}/{}/{}; rss_trend_median_kib(first/last)={}/{}; heap_bytes(baseline/final/max)={}/{}/{}; heap_trend_median_bytes(first/last)={}/{}",
+        stats.reloads,
+        wall_started.elapsed(),
+        stats.baseline_fds,
+        stats.final_fds,
+        stats.max_fds,
+        stats.baseline_rss,
+        stats.final_rss,
+        stats.max_rss,
+        stats.rss_first_median,
+        stats.rss_last_median,
+        stats.baseline_heap,
+        stats.final_heap,
+        stats.max_heap,
+        stats.heap_first_median,
+        stats.heap_last_median
     );
     Ok(())
 }
 
 async fn run_stress(actors: &mut Actors, reloads: usize) -> Result<StressStats, DynError> {
-    verify_sample(actors, b"initial-psample").await?;
+    verify_sample(actors, "initial-psample").await?;
 
     println!("warming all outage durations before leak baselining");
     for &(name, outage) in OUTAGES {
@@ -318,6 +347,9 @@ async fn run_stress(actors: &mut Actors, reloads: usize) -> Result<StressStats, 
     let mut max_fds = baseline_fd_count;
     let mut max_rss = baseline_rss;
     let mut max_heap = baseline_heap;
+    let mut final_fds = baseline_fd_count;
+    let mut final_rss = baseline_rss;
+    let mut final_heap = baseline_heap;
     let mut rss_samples = Vec::with_capacity(reloads);
     let mut heap_samples = Vec::with_capacity(reloads);
 
@@ -337,6 +369,9 @@ async fn run_stress(actors: &mut Actors, reloads: usize) -> Result<StressStats, 
         max_fds = max_fds.max(current_fd_count);
         max_rss = max_rss.max(current_rss);
         max_heap = max_heap.max(current_heap);
+        final_fds = current_fd_count;
+        final_rss = current_rss;
+        final_heap = current_heap;
         rss_samples.push(current_rss);
         heap_samples.push(current_heap as u64);
 
@@ -365,18 +400,29 @@ async fn run_stress(actors: &mut Actors, reloads: usize) -> Result<StressStats, 
         );
     }
 
-    check_growth_trend("RSS", &rss_samples, MAX_RSS_TREND_KIB)?;
-    check_growth_trend("heap", &heap_samples, MAX_HEAP_TREND_BYTES)?;
+    let (rss_first_median, rss_last_median) =
+        check_growth_trend("RSS", &rss_samples, MAX_RSS_TREND_KIB)?;
+    let (heap_first_median, heap_last_median) =
+        check_growth_trend("heap", &heap_samples, MAX_HEAP_TREND_BYTES)?;
     Ok(StressStats {
         reloads: reloads + OUTAGES.len(),
+        baseline_fds: baseline_fd_count,
+        final_fds,
         max_fds,
-        final_rss: *rss_samples.last().unwrap_or(&baseline_rss),
+        baseline_rss,
+        final_rss,
         max_rss,
+        rss_first_median,
+        rss_last_median,
+        baseline_heap,
+        final_heap,
         max_heap,
+        heap_first_median,
+        heap_last_median,
     })
 }
 
-fn check_growth_trend(name: &str, samples: &[u64], limit: u64) -> Result<(), DynError> {
+fn check_growth_trend(name: &str, samples: &[u64], limit: u64) -> Result<(u64, u64), DynError> {
     let window = (samples.len() / 4).max(1);
     let first = median(&samples[..window]);
     let last = median(&samples[samples.len() - window..]);
@@ -386,7 +432,7 @@ fn check_growth_trend(name: &str, samples: &[u64], limit: u64) -> Result<(), Dyn
         )
         .into());
     }
-    Ok(())
+    Ok((first, last))
 }
 
 fn median(samples: &[u64]) -> u64 {
@@ -422,7 +468,7 @@ async fn cycle_family(
     advance_in_steps(Duration::from_millis(100)).await;
 
     let marker = format!("psample-{iteration}-{outage_name}");
-    verify_sample(actors, marker.as_bytes()).await?;
+    verify_sample(actors, &marker).await?;
     println!(
         "  {outage_name}: family/group IDs {:?} -> {:?}",
         old_ids, new_ids
@@ -432,11 +478,11 @@ async fn cycle_family(
 
 fn start_actors() -> Actors {
     let (command_sender, command_receiver) = channel(32);
-    let (data_sender, data_receiver) = channel(32);
+    let (data_sender, data_receiver) = channel(DATA_CHANNEL_CAPACITY);
 
     let mut data_actor = DataNetlinkActor::new(FAMILY, GROUP, command_receiver, 4 * 1024 * 1024);
     data_actor.add_recipient(data_sender);
-    let control_actor = ControlNetlinkActor::new(FAMILY, command_sender.clone());
+    let control_actor = ControlNetlinkActor::new(FAMILY, GROUP, command_sender.clone());
 
     Actors {
         command_sender,
@@ -491,32 +537,101 @@ async fn wait_for_data_socket(actors: &mut Actors) -> Result<(), DynError> {
         }
         wall_timeout(
             Duration::from_secs(1),
-            actors.command_sender.send(NetlinkCommand::Reconnect),
+            async {
+                let (family_id, group_id) = resolve_ids()?;
+                actors
+                    .command_sender
+                    .send(NetlinkCommand::Reconnect(
+                        countersyncd::message::netlink::NetlinkSubscription {
+                            family_id,
+                            group_id,
+                        },
+                    ))
+                    .await
+                    .map_err(|error| format!("send startup reconnect: {error}"))?;
+                Ok::<(), DynError>(())
+            },
         )
-        .await?
-        .map_err(|e| format!("request startup reconnect: {e}"))?;
+        .await??;
         settle().await;
     }
     Err("data actor did not receive psample data during startup".into())
 }
 
-async fn verify_sample(actors: &mut Actors, marker: &[u8]) -> Result<(), DynError> {
-    for _ in 0..20 {
-        send_marker(marker)?;
-        let result = wall_timeout(Duration::from_millis(250), actors.data_receiver.recv()).await;
-        if let Ok(Some(message)) = result {
-            if sample_contains(&message, marker)? {
-                return Ok(());
+async fn verify_sample(actors: &mut Actors, marker: &str) -> Result<(), DynError> {
+    let mut delayed_samples = drain_pending_samples(&mut actors.data_receiver, marker)?;
+    if delayed_samples >= DATA_CHANNEL_CAPACITY {
+        return Err(format!(
+            "sample backlog saturated while verifying {marker:?}: drained {delayed_samples} pending samples"
+        )
+        .into());
+    }
+    for attempt in 1..=20 {
+        let attempt_marker = format!("{marker}-attempt-{attempt}");
+        send_marker(attempt_marker.as_bytes())?;
+        let mut skipped = 0usize;
+        let result = wall_timeout(Duration::from_millis(250), async {
+            loop {
+                let message = actors
+                    .data_receiver
+                    .recv()
+                    .await
+                    .ok_or("data actor channel closed while verifying sample")?;
+                if sample_contains(&message, attempt_marker.as_bytes())? {
+                    return Ok::<(), DynError>(());
+                }
+                skipped += 1;
+                if actors.data_receiver.len() >= DATA_CHANNEL_CAPACITY - 1 {
+                    return Err(format!(
+                        "sample backlog saturated while verifying {marker:?}: receiver reached capacity"
+                    )
+                    .into());
+                }
             }
+        })
+        .await;
+        delayed_samples += skipped;
+        if let Ok(received) = result {
+            received?;
+            if delayed_samples != 0 {
+                eprintln!(
+                    "marker {marker:?}: discarded {delayed_samples} delayed sample(s) before verification"
+                );
+            }
+            return Ok(());
         }
         settle().await;
     }
 
     Err(format!(
-        "data actor did not receive marker {:?} after psample reload",
-        String::from_utf8_lossy(marker)
+        "data actor did not receive marker {marker:?} after psample reload; discarded {delayed_samples} delayed sample(s)"
     )
     .into())
+}
+
+fn drain_pending_samples(
+    receiver: &mut Receiver<SocketBufferMessage>,
+    context: &str,
+) -> Result<usize, DynError> {
+    let started_len = receiver.len();
+    if started_len >= DATA_CHANNEL_CAPACITY {
+        return Err(format!(
+            "{context}: sample backlog saturated the {DATA_CHANNEL_CAPACITY}-message data channel"
+        )
+        .into());
+    }
+    let mut drained = 0usize;
+    loop {
+        match receiver.try_recv() {
+            Ok(_) => {
+                drained += 1;
+            }
+            Err(TryRecvError::Empty) => return Ok(drained),
+            Err(TryRecvError::Disconnected) => {
+                return Err(format!("{context}: data actor channel closed").into());
+            }
+        }
+    }
 }
 
 fn sample_contains(message: &SocketBufferMessage, marker: &[u8]) -> Result<bool, DynError> {
@@ -726,9 +841,8 @@ fn expect_family(expected: bool) -> Result<(), DynError> {
 }
 
 fn family_exists() -> Result<bool, DynError> {
-    let mut socket = countersyncd::actor::netlink_utils::create_nl_resolver()
-        .ok_or("create Generic Netlink resolver")?;
-    match countersyncd::actor::netlink_utils::resolve_family_id(&mut socket, FAMILY) {
+    let mut socket = countersyncd::actor::netlink_utils::create_nl_resolver()?;
+    match countersyncd::actor::netlink_utils::resolve_family_group(&mut socket, FAMILY, GROUP) {
         Ok(_) => Ok(true),
         Err(error) if error.raw_os_error() == Some(libc::ENOENT) => Ok(false),
         Err(error) => Err(format!("resolve psample family: {error}").into()),
@@ -736,19 +850,10 @@ fn family_exists() -> Result<bool, DynError> {
 }
 
 fn resolve_ids() -> Result<(u16, u32), DynError> {
-    let mut family_socket = countersyncd::actor::netlink_utils::create_nl_resolver()
-        .ok_or("create Generic Netlink family resolver")?;
-    let family_id =
-        countersyncd::actor::netlink_utils::resolve_family_id(&mut family_socket, FAMILY)?;
-
-    let mut group_socket = countersyncd::actor::netlink_utils::create_nl_resolver()
-        .ok_or("create Generic Netlink group resolver")?;
-    let group_id = countersyncd::actor::netlink_utils::resolve_multicast_group(
-        &mut group_socket,
-        FAMILY,
-        GROUP,
-    )?;
-    Ok((family_id, group_id))
+    let mut socket = countersyncd::actor::netlink_utils::create_nl_resolver()?;
+    let subscription =
+        countersyncd::actor::netlink_utils::resolve_family_group(&mut socket, FAMILY, GROUP)?;
+    Ok((subscription.family_id, subscription.group_id))
 }
 
 fn module_loaded(module: &str) -> Result<bool, DynError> {
@@ -800,6 +905,9 @@ fn reloads() -> Result<usize, DynError> {
 }
 
 fn fd_snapshot() -> Result<BTreeMap<String, usize>, DynError> {
+    // Equal snapshots prove endpoint cardinality did not grow at checkpoints, not socket identity
+    // stability or absence of churn. Reloaded data sockets and resolver helpers churn by design, so
+    // raw socket inode identities are intentionally normalized away.
     let mut snapshot = BTreeMap::new();
     for entry in fs::read_dir("/proc/self/fd")? {
         let entry = entry?;

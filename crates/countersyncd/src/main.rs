@@ -366,7 +366,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     data_netlink.add_recipient(ipfix_record_sender);
 
-    let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
+    let control_netlink =
+        ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
 
