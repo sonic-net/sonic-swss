@@ -6428,27 +6428,30 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         {
             if (gMySwitchType == "voq")
             {
-                // Multi-ASIC VoQ aliases use <hostname>|<asic>|<local-alias>.
+                // VoQ LAG aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
                 const auto alias_tokens = tokenize(lag_alias, '|');
                 std::string port_hostname = alias_tokens.empty() ? lag_alias : alias_tokens[0];
                 if (gMyHostName == port_hostname)
                 {
-                    if (!gMultiAsicVoq)
+                    if (isChassisDbInUse())
+                    {
+                        std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                        std::string lower_port_asic = port_asic;
+                        std::string lower_my_asic = gMyAsicName;
+                        boost::algorithm::to_lower(lower_port_asic);
+                        boost::algorithm::to_lower(lower_my_asic);
+                        SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
+                                       lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+                        if (lower_port_asic == lower_my_asic)
+                        {
+                            SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                    }
+                    else
                     {
                         SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (single-asic voq)", lag_alias.c_str());
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
-                    std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
-                    std::string lower_port_asic = port_asic;
-                    std::string lower_my_asic = gMyAsicName;
-                    boost::algorithm::to_lower(lower_port_asic);
-                    boost::algorithm::to_lower(lower_my_asic);
-                    SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
-                                   lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
-                    if (lower_port_asic == lower_my_asic)
-                    {
-                        SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }

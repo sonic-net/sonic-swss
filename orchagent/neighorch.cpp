@@ -27,7 +27,6 @@ extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
 extern string gMyAsicName;
-extern bool gMultiAsicVoq;
 
 extern bool isChassisDbInUse();
 
@@ -2251,27 +2250,20 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        // Multi-ASIC VoQ aliases use <hostname>|<asic>|<local-alias>.
+        // VoQ aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
         const auto alias_tokens = tokenize(alias, '|');
         std::string port_hostname = alias_tokens.empty() ? alias : alias_tokens[0];
         bool is_local_by_host_asic = false;
-        if (gMySwitchType == "voq" && gMyHostName == port_hostname)
+        if (gMySwitchType == "voq" && isChassisDbInUse() && gMyHostName == port_hostname)
         {
-            if (!gMultiAsicVoq)
-            {
-                is_local_by_host_asic = true;
-            }
-            else
-            {
-                std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
-                std::string lower_port_asic = port_asic;
-                std::string lower_my_asic = gMyAsicName;
-                boost::algorithm::to_lower(lower_port_asic);
-                boost::algorithm::to_lower(lower_my_asic);
-                SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
-                               alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
-                is_local_by_host_asic = (lower_port_asic == lower_my_asic);
-            }
+            std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+            std::string lower_port_asic = port_asic;
+            std::string lower_my_asic = gMyAsicName;
+            boost::algorithm::to_lower(lower_port_asic);
+            boost::algorithm::to_lower(lower_my_asic);
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
+                           alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+            is_local_by_host_asic = (lower_port_asic == lower_my_asic);
         }
         bool is_local_intf = gIntfsOrch->isLocalSystemPortIntf(alias);
         if(is_local_intf || is_local_by_host_asic)
