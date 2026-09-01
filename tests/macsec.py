@@ -141,45 +141,88 @@ class TestMacsecHelper:
             print(f"Cleanup encountered error: {e}")
 
     @staticmethod
-    def verify_macsec_in_gb_asic_db(dvs, should_exist=True):
+    def verify_macsec_for_port_in_gb_asic_db(dvs, port_name, should_exist=True):
         """
-        Verify MACsec objects exist (or don't exist) in GB_ASIC_DB
+        Verify MACsec objects for a specific port exist (or don't exist) in GB_ASIC_DB.
+
+        This method checks if the specified port's MACsec configuration is present
+        in GB_ASIC_DB by mapping port name to line-side OID via GB_COUNTERS_DB and
+        checking if any MACSEC_PORT entry references that port OID.
 
         Args:
             dvs: Docker Virtual Switch instance
+            port_name: Name of the port to check (e.g., "Ethernet4")
             should_exist: True if objects should exist, False otherwise
 
         Returns:
             bool: True if verification passes
         """
-
         gb_asic_db = DVSDatabase(swsscommon.GB_ASIC_DB, dvs.redis_sock)
+        gb_counters_db = DVSDatabase(swsscommon.GB_COUNTERS_DB, dvs.redis_sock)
 
-        macsec_keys = gb_asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC")
+        # Get port's line-side OID from GB_COUNTERS_DB
+        # Gearbox ports are stored with "_line" suffix for line-side port
+        port_map = gb_counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
+        line_port_key = f"{port_name}_line"
+        expected_port_oid = port_map.get(line_port_key)
+
+        if not expected_port_oid:
+            # Port not found in GB_COUNTERS_DB (not a gearbox port)
+            return not should_exist
+
+        # Check if any MACSEC_PORT entry references this port OID
+        macsec_port_keys = gb_asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC_PORT")
+        port_found = any(
+            gb_asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC_PORT", key).get(
+                "SAI_MACSEC_PORT_ATTR_PORT_ID"
+            ) == expected_port_oid
+            for key in macsec_port_keys
+        )
 
         if should_exist:
-            return len(macsec_keys) > 0  # Should have at least one object
+            return port_found
         else:
-            return len(macsec_keys) == 0  # Should have no objects
+            return not port_found
 
     @staticmethod
-    def verify_macsec_in_asic_db(dvs, should_exist=True):
+    def verify_macsec_for_port_in_asic_db(dvs, port_name, should_exist=True):
         """
-        Verify MACsec objects exist (or don't exist) in ASIC_DB (NPU)
+        Verify MACsec objects for a specific port exist (or don't exist) in ASIC_DB (NPU).
+
+        This method checks if the specified port's MACsec configuration is present
+        in ASIC_DB by mapping port name to OID via COUNTERS_DB and checking if any
+        MACSEC_PORT entry references that port OID.
 
         Args:
             dvs: Docker Virtual Switch instance
+            port_name: Name of the port to check (e.g., "Ethernet0")
             should_exist: True if objects should exist, False otherwise
 
         Returns:
             bool: True if verification passes
         """
         asic_db = dvs.get_asic_db()
+        counters_db = dvs.get_counters_db()
 
-        macsec_keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC")
+        # Get port OID from COUNTERS_DB port name map
+        port_map = counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
+        expected_port_oid = port_map.get(port_name)
+
+        if not expected_port_oid:
+            # Port not found in COUNTERS_DB
+            return not should_exist
+
+        # Check if any MACSEC_PORT entry references this port OID
+        macsec_port_keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC_PORT")
+        port_found = any(
+            asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_MACSEC_PORT", key).get(
+                "SAI_MACSEC_PORT_ATTR_PORT_ID"
+            ) == expected_port_oid
+            for key in macsec_port_keys
+        )
 
         if should_exist:
-            return len(macsec_keys) > 0
+            return port_found
         else:
-            return len(macsec_keys) == 0
+            return not port_found
 
