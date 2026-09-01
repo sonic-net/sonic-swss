@@ -386,6 +386,48 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanMemberTaggingModeUpdate(self, dvs):
+
+        vlan = "2"
+        interface = "Ethernet0"
+
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+
+        try:
+            self.dvs_vlan.create_vlan_member(vlan, interface, "untagged")
+            self.dvs_vlan.verify_vlan_member(vlan_oid, interface, "SAI_VLAN_TAGGING_MODE_UNTAGGED")
+
+            member_port = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                                          dvs.asic_db.port_name_map[interface])
+            assert member_port.get("SAI_PORT_ATTR_PORT_VLAN_ID") == vlan
+
+            # Update tagging_mode on the existing member (no remove/re-add via config), which
+            # should be applied end-to-end without being treated as a duplicate.
+            self.dvs_vlan.update_vlan_member_tagging_mode(vlan, interface, "tagged")
+
+            # orchagent implements the mode change as remove+recreate, so the VLAN member
+            # SAI object is expected to be replaced with one that has the new tagging mode.
+            self.dvs_vlan.get_and_verify_vlan_member_ids(1)
+            self.dvs_vlan.verify_vlan_member(vlan_oid, interface, "SAI_VLAN_TAGGING_MODE_TAGGED")
+
+            # PVID should be restored to the default VLAN once the port is no longer untagged.
+            self.dvs_vlan.asic_db.wait_for_field_match(
+                "ASIC_STATE:SAI_OBJECT_TYPE_PORT", dvs.asic_db.port_name_map[interface],
+                {"SAI_PORT_ATTR_PORT_VLAN_ID": "1"})
+
+            state_key = self.dvs_vlan.state_db.wait_for_n_keys("VLAN_MEMBER_TABLE", 1)[0]
+            fvs = self.dvs_vlan.state_db.wait_for_entry("VLAN_MEMBER_TABLE", state_key)
+            assert fvs.get("tagging_mode") == "tagged"
+        finally:
+            # Always clean up, even on assertion failure, so a broken assertion above
+            # doesn't leak this VLAN/member into every other test in this module.
+            self.dvs_vlan.remove_vlan_member(vlan, interface)
+            self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+
+            self.dvs_vlan.remove_vlan(vlan)
+            self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     @pytest.mark.skip(reason="AddMaxVlan takes too long to execute")
     def test_AddMaxVlan(self, dvs):
 
