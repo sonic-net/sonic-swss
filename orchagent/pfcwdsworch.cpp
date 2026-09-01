@@ -29,8 +29,6 @@ extern event_handle_t g_events_handle;
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
-
-
 template <typename DropHandler, typename ForwardHandler>
 task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         const vector<FieldValueTuple>& data)
@@ -128,6 +126,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto &it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -135,17 +134,16 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        // Get lossless TCs for this port
-        set<uint8_t> losslessTc;
-        if (!getLosslessTcsForPort(port, losslessTc))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_DEBUG("No lossless TC found on port %s", port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
+            return;
         }
 
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             sai_object_id_t queueId = port.m_queue_ids[i];
-            if (losslessTc.find(i) == losslessTc.end() && m_entryMap.find(queueId) == m_entryMap.end())
+            if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
             {
                 continue;
             }
@@ -172,6 +170,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto & it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -179,26 +178,23 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        // Get lossless TCs for this port
-        set<uint8_t> losslessTc;
-        if (!getLosslessTcsForPort(port, losslessTc))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_DEBUG("No lossless TC found on port %s", port.m_alias.c_str());
-            continue;
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
+            return;
         }
 
-        for (auto i : losslessTc)
+        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
+            if ((pfcMask & (1 << i)) == 0)
+            {
+                continue;
+            }
+
             sai_object_id_t queueId = port.m_queue_ids[i];
             string queueIdStr = sai_serialize_object_id(queueId);
 
-            auto ret = m_brsEntryMap.emplace(queueId, PfcWdQueueEntry(PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, i, port.m_alias));
-            if (!ret.second)
-            {
-                // Entry already exists, update it
-                ret.first->second = PfcWdQueueEntry(PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, i, port.m_alias);
-            }
-            auto entry = ret.first;
+            auto entry = m_brsEntryMap.emplace(queueId, PfcWdQueueEntry(PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, i, port.m_alias)).first;
 
             if (entry->second.handler== nullptr)
             {
@@ -262,7 +258,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 {
     SWSS_LOG_ENTER();
 
-    // Get lossless TCs for this port
     set<uint8_t> losslessTc;
     if (!getLosslessTcsForPort(port, losslessTc))
     {
@@ -312,12 +307,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
             }
         }
 
-        auto ret = m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
-        if (!ret.second)
-        {
-            // Entry already exists, update it
-            ret.first->second = PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias);
-        }
+        // Create internal entry
+        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
@@ -411,6 +402,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 
         m_pfcWdSwStateTable->del(port.m_alias + ":" + to_string(i));
     }
+
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -480,11 +472,6 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto ssConsumer = new Consumer(ssTable, this, APP_PFC_WD_TABLE_NAME);
     Orch::addExecutor(ssConsumer);
-
-    // Write to STATE_DB to indicate software-based PFC watchdog recovery
-    this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_SOFTWARE);
-
-    SWSS_LOG_NOTICE("PFC Watchdog software-based recovery mechanism registered in STATE_DB");
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -718,8 +705,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
         {
             if (entry->second.handler == nullptr)
             {
-                this->report_pfc_storm(entry->first, entry->second.portId,
-                                      entry->second.index, entry->second.portAlias, info);
+                report_pfc_storm(entry->first, entry->second.portId, entry->second.index, entry->second.portAlias, info);
 
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
@@ -747,8 +733,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
         {
             if (entry->second.handler == nullptr)
             {
-                this->report_pfc_storm(entry->first, entry->second.portId,
-                                      entry->second.index, entry->second.portAlias, info);
+                report_pfc_storm(entry->first, entry->second.portId, entry->second.index, entry->second.portAlias, info);
 
                 entry->second.handler = make_shared<DropHandler>(
                         entry->second.portId,
@@ -776,8 +761,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
         {
             if (entry->second.handler == nullptr)
             {
-                this->report_pfc_storm(entry->first, entry->second.portId,
-                                      entry->second.index, entry->second.portAlias, info);
+                report_pfc_storm(entry->first, entry->second.portId, entry->second.index, entry->second.portAlias, info);
 
                 entry->second.handler = make_shared<ForwardHandler>(
                         entry->second.portId,
@@ -811,8 +795,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
     {
         if (entry->second.handler != nullptr)
         {
-            this->report_pfc_restored(entry->first, entry->second.portId,
-                                     entry->second.index, entry->second.portAlias);
+            report_pfc_restored(entry->first, entry->second.portId, entry->second.index, entry->second.portAlias);
 
             entry->second.handler->commitCounters();
             entry->second.handler = nullptr;
