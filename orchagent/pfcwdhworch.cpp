@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <set>
 
+#define PFC_WD_COUNTER_POLL_TIMEOUT_SEC  1
+#define PFC_HW_WD_POLL_MSECS 50
+
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t* sai_port_api;
@@ -108,6 +111,26 @@ void PfcWdHwOrch::registerCallbacks()
 {
     SWSS_LOG_ENTER();
 
+    // FlexCounter manager for PFC_WD queue statistics
+    m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
+        PFC_WD_FLEX_COUNTER_GROUP,
+        StatsMode::READ,
+        PFC_HW_WD_POLL_MSECS,
+        true,
+        make_pair("", ""));
+
+    SWSS_LOG_NOTICE("Initialized FlexCounter for hardware PFC watchdog with %d ms poll interval",
+                   PFC_HW_WD_POLL_MSECS);
+
+    // Create timer for periodic counter updates
+    auto interv = timespec { .tv_sec = PFC_WD_COUNTER_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this, "PFC_WD_HW_COUNTERS_POLL");
+    Orch::addExecutor(executor);
+    timer->start();
+    SWSS_LOG_NOTICE("Started periodic counter update timer with %d second interval",
+                   PFC_WD_COUNTER_POLL_TIMEOUT_SEC);
+
     // Register PFC deadlock notification callback
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
@@ -181,8 +204,10 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             // Initialize counters on storm detection
             if (port_found)
             {
-                m_stormedQueues.insert(notification.queue_id);
-                SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " entered storm", notification.queue_id);
+                string queueIdStr = sai_serialize_object_id(notification.queue_id);
+                initQueueCounters(queueIdStr, notification.queue_id, queue_index);
+                SWSS_LOG_DEBUG("PfcWdHwOrch: Initialized counters for queue 0x%" PRIx64 " on storm detection",
+                              notification.queue_id);
 
                 this->report_pfc_storm(notification.queue_id, port_id,
                                       queue_index, port_alias, "");
@@ -200,8 +225,13 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             // Update counters on recovery
             if (port_found)
             {
-                m_stormedQueues.erase(notification.queue_id);
-                SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " left storm", notification.queue_id);
+                string queueIdStr = sai_serialize_object_id(notification.queue_id);
+                updateQueueCounters(queueIdStr, notification.queue_id, queue_index, false);  // false = not periodic (recovery)
+                SWSS_LOG_DEBUG("PfcWdHwOrch: Updated counters for queue 0x%" PRIx64 " on storm restoration",
+                              notification.queue_id);
+
+                // Remove baseline stats
+                m_queueBaselineStats.erase(notification.queue_id);
 
                 this->report_pfc_restored(notification.queue_id, port_id,
                                          queue_index, port_alias);
@@ -217,6 +247,99 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
                           notification.event, notification.queue_id);
         }
     }
+}
+
+PfcWdHwOrch::PfcWdQueueStats PfcWdHwOrch::getQueueStats(const string &queueIdStr)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    stats.operational = true;
+    vector<FieldValueTuple> fieldValues;
+
+    if (!this->getCountersTable()->get(queueIdStr, fieldValues))
+    {
+        // Return zeros if entry doesn't exist
+        return stats;
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+        if (field == "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED")
+        {
+            stats.detectCount = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED")
+        {
+            stats.restoreCount = stoul(value);
+        }
+        else if (field == "PFC_WD_STATUS")
+        {
+            stats.operational = (value == "operational");
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_TX_PACKETS")
+        {
+            stats.txPkt = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS")
+        {
+            stats.txDropPkt = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_RX_PACKETS")
+        {
+            stats.rxPkt = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS")
+        {
+            stats.rxDropPkt = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_TX_PACKETS_LAST")
+        {
+            stats.txPktLast = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST")
+        {
+            stats.txDropPktLast = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_RX_PACKETS_LAST")
+        {
+            stats.rxPktLast = stoul(value);
+        }
+        else if (field == "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST")
+        {
+            stats.rxDropPktLast = stoul(value);
+        }
+    }
+
+    return stats;
+}
+
+void PfcWdHwOrch::updateQueueStats(const string &queueIdStr, const PfcWdQueueStats &stats)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> resultFvValues;
+
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED", to_string(stats.detectCount));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED", to_string(stats.restoreCount));
+
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_TX_PACKETS", to_string(stats.txPkt));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS", to_string(stats.txDropPkt));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_RX_PACKETS", to_string(stats.rxPkt));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS", to_string(stats.rxDropPkt));
+
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_TX_PACKETS_LAST", to_string(stats.txPktLast));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST", to_string(stats.txDropPktLast));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_RX_PACKETS_LAST", to_string(stats.rxPktLast));
+    resultFvValues.emplace_back("PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST", to_string(stats.rxDropPktLast));
+
+    resultFvValues.emplace_back("PFC_WD_STATUS", stats.operational ? "operational" : "stormed");
+
+    this->getCountersTable()->set(queueIdStr, resultFvValues);
 }
 
 task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
@@ -445,7 +568,7 @@ bool PfcWdHwOrch::startWdOnPort(const Port& port,
 	SWSS_LOG_ENTER();
 
 	// For hardware-based watchdog, all hardware programming and flex counter
-	// registration are handled in configureHwWatchdog().
+	// registration are handled in configureHwWatchdog()/initializeQueueStats().
 	// Any existing configuration is cleaned up via stopWdOnPort() before this
 	// function is invoked from createEntry().
 	return configureHwWatchdog(port, detectionTime, restorationTime, action);
@@ -456,6 +579,28 @@ bool PfcWdHwOrch::stopWdOnPort(const Port& port)
     SWSS_LOG_ENTER();
 
     return disableHwWatchdog(port);
+}
+
+void PfcWdHwOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    // Update counters for queues in storm
+    for (auto& entry : m_queueBaselineStats)
+    {
+        sai_object_id_t queueId = entry.first;
+        auto it = m_queueToPortMap.find(queueId);
+        if (it != m_queueToPortMap.end())
+        {
+            string queueIdStr = sai_serialize_object_id(queueId);
+            updateQueueCounters(queueIdStr, queueId, it->second.queue_index, true);  // true = periodic
+            SWSS_LOG_DEBUG("Periodic counter update for queue 0x%" PRIx64, queueId);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Queue 0x%" PRIx64 " has baseline stats but no port mapping", queueId);
+        }
+    }
 }
 
 bool PfcWdHwOrch::startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info)
@@ -470,6 +615,8 @@ bool PfcWdHwOrch::startWdActionOnQueue(const string &event, sai_object_id_t queu
 
     return false;
 }
+
+
 
 bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
                                      const set<uint8_t>& losslessTc, uint32_t expected,
@@ -558,6 +705,7 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     }
 
     // Initialize queue statistics in COUNTERS_DB
+    initializeQueueStats(port, losslessTc);
 
     // Track this port
     m_hwWdPorts.insert(port.m_alias);
@@ -730,6 +878,100 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
     return true;
 }
 
+void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+
+    // For each lossless queue, register PFC_WD FlexCounters, initialize
+    // watchdog counters, and populate the queue→port mapping.
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+        string queueIdStr = sai_serialize_object_id(queueId);
+
+        // Register queue stats/attributes in the dedicated PFC_WD FlexCounter group.
+        if (m_pfcwdFlexCounterManager)
+        {
+            if (!c_queueStatIds.empty())
+            {
+                auto queueStatIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+                if (queueStatIdSet.empty())
+                {
+                    SWSS_LOG_WARN("Failed to convert queue stat IDs for queue 0x%" PRIx64 " on port %s",
+                                  queueId, port.m_alias.c_str());
+                }
+                else
+                {
+                    m_pfcwdFlexCounterManager->setCounterIdList(queueId,
+                                                                 CounterType::QUEUE,
+                                                                 queueStatIdSet,
+                                                                 SAI_OBJECT_TYPE_QUEUE);
+                    SWSS_LOG_DEBUG("Registered %zu queue stats for queue 0x%" PRIx64 " on port %s",
+                                   queueStatIdSet.size(), queueId, port.m_alias.c_str());
+                }
+            }
+
+            if (!c_queueAttrIds.empty())
+            {
+                auto queueAttrIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+                if (queueAttrIdSet.empty())
+                {
+                    SWSS_LOG_WARN("Failed to convert queue attr IDs for queue 0x%" PRIx64 " on port %s",
+                                  queueId, port.m_alias.c_str());
+                }
+                else
+                {
+                    auto *fcMgr = dynamic_cast<FlexCounterManager*>(m_pfcwdFlexCounterManager.get());
+                    if (fcMgr)
+                    {
+                        fcMgr->setCounterIdList(queueId,
+                                                CounterType::QUEUE_ATTR,
+                                                queueAttrIdSet);
+                        SWSS_LOG_DEBUG("Registered %zu queue attrs for queue 0x%" PRIx64 " on port %s",
+                                       queueAttrIdSet.size(), queueId, port.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("PFC WD FlexCounter manager is not FlexCounterManager for queue 0x%" PRIx64 " on port %s",
+                                      queueId, port.m_alias.c_str());
+                    }
+                }
+            }
+        }
+
+        // Add to queue→port mapping for fast lookup in the notification callback.
+        PortQueueInfo info;
+        info.port_id = port.m_port_id;
+        info.port_alias = port.m_alias;
+        info.queue_index = tc;
+        m_queueToPortMap[queueId] = info;
+
+        // Initialize PFC WD counters in COUNTERS_DB (status operational, packet counters cleared).
+        // Preserve existing detect/restore counts from warm-reboot if present.
+        auto stats = getQueueStats(queueIdStr);
+        stats.operational = true;
+        stats.txPkt = 0;
+        stats.txDropPkt = 0;
+        stats.rxPkt = 0;
+        stats.rxDropPkt = 0;
+        stats.txPktLast = 0;
+        stats.txDropPktLast = 0;
+        stats.rxPktLast = 0;
+        stats.rxDropPktLast = 0;
+        updateQueueStats(queueIdStr, stats);
+
+        // Baseline stats will be created on-demand when storm is detected.
+
+        SWSS_LOG_NOTICE("Initialized PFC watchdog for queue 0x%" PRIx64 " on port %s TC %d",
+                       queueId, port.m_alias.c_str(), tc);
+    }
+}
+
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 {
     SWSS_LOG_ENTER();
@@ -771,10 +1013,20 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
                          port.m_alias.c_str(), tc, queueId);
         }
 
+        // Clear this queue's registration in the dedicated PFC_WD FlexCounter group.
+        if (m_pfcwdFlexCounterManager)
+        {
+            m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
+            SWSS_LOG_DEBUG("Cleared FlexCounter registration for queue 0x%" PRIx64 " on port %s",
+                           queueId, port.m_alias.c_str());
+        }
+
         // Remove from queue→port mapping
         m_queueToPortMap.erase(queueId);
 
-        m_stormedQueues.erase(queueId);
+        // Remove baseline stats
+        m_queueBaselineStats.erase(queueId);
+        SWSS_LOG_DEBUG("Removed baseline stats for queue 0x%" PRIx64, queueId);
     }
 
     // Clear detection and restoration intervals on port level
@@ -858,8 +1110,13 @@ bool PfcWdHwOrch::isPortInStormedState(const Port& port)
         }
 
         sai_object_id_t queueId = port.m_queue_ids[i];
+        string queueIdStr = sai_serialize_object_id(queueId);
 
-        if (m_stormedQueues.count(queueId) != 0)
+        // Get queue statistics
+        auto stats = getQueueStats(queueIdStr);
+
+        // If operational is false, the queue is in stormed state
+        if (!stats.operational)
         {
             SWSS_LOG_WARN("Port %s has queue %d (0x%" PRIx64 ") in stormed state",
                          port.m_alias.c_str(), i, queueId);
@@ -870,3 +1127,208 @@ bool PfcWdHwOrch::isPortInStormedState(const Port& port)
     return false;
 }
 
+bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, uint8_t queueIndex, PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // For HW PFC watchdog, read queue/PG counters from COUNTERS_DB (via FlexCounter)
+    // instead of querying SAI directly.
+
+    string queueIdStr = sai_serialize_object_id(queueId);
+    vector<FieldValueTuple> fieldValues;
+
+    auto countersTable = getCountersTable();
+    if (!countersTable || !countersTable->get(queueIdStr, fieldValues))
+    {
+        SWSS_LOG_DEBUG("No counter entry found for queue 0x%" PRIx64, queueId);
+        memset(&counters, 0, sizeof(PfcWdHwStats));
+        return true;
+    }
+
+    // Initialize to zero
+    counters.txPkt = 0;
+    counters.txDropPkt = 0;
+    counters.rxPkt = 0;
+    counters.rxDropPkt = 0;
+
+    // Read TX counters (queue stats)
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+        if (field == "SAI_QUEUE_STAT_PACKETS")
+        {
+            counters.txPkt = stoull(value);
+        }
+        else if (field == "SAI_QUEUE_STAT_DROPPED_PACKETS")
+        {
+            counters.txDropPkt = stoull(value);
+        }
+    }
+
+    // Read RX counters from the priority group mapped to this queue.
+    Port portInstance;
+    auto it = m_queueToPortMap.find(queueId);
+    if (it == m_queueToPortMap.end())
+    {
+        SWSS_LOG_ERROR("Queue 0x%" PRIx64 " not found in queue-to-port map", queueId);
+        return false;
+    }
+
+    if (!gPortsOrch->getPort(it->second.port_id, portInstance))
+    {
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, it->second.port_id);
+        return false;
+    }
+
+    if (queueIndex >= portInstance.m_priority_group_ids.size())
+    {
+        SWSS_LOG_ERROR("Invalid queue index %u for port 0x%" PRIx64, queueIndex, it->second.port_id);
+        return false;
+    }
+
+    sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast<size_t>(queueIndex)];
+    string pgIdStr = sai_serialize_object_id(pg);
+
+    fieldValues.clear();
+    if (countersTable->get(pgIdStr, fieldValues))
+    {
+        for (const auto& fv : fieldValues)
+        {
+            const auto field = fvField(fv);
+            const auto value = fvValue(fv);
+
+            if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS")
+            {
+                counters.rxPkt = stoull(value);
+            }
+            else if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS")
+            {
+                counters.rxDropPkt = stoull(value);
+            }
+        }
+    }
+
+    SWSS_LOG_DEBUG("Read HW counters for queue 0x%" PRIx64 ": txPkt=%" PRIu64 ", txDropPkt=%" PRIu64 ", rxPkt=%" PRIu64 ", rxDropPkt=%" PRIu64,
+                   queueId, counters.txPkt, counters.txDropPkt, counters.rxPkt, counters.rxDropPkt);
+
+    return true;
+}
+
+void PfcWdHwOrch::initQueueCounters(const string& queueIdStr, sai_object_id_t queueId, uint8_t queueIndex)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdHwStats hwStats;
+    if (!readHwCounters(queueId, queueIndex, hwStats))
+    {
+        return;
+    }
+
+    // Read current stats from COUNTERS_DB
+    auto wdQueueStats = getQueueStats(queueIdStr);
+
+    // Only bump detectCount for a new storm; if storm persisted across
+    // warm-reboot (detectCount > restoreCount), keep counters as-is.
+    if (!(wdQueueStats.detectCount > wdQueueStats.restoreCount))
+    {
+        wdQueueStats.detectCount++;
+        wdQueueStats.txPktLast = 0;
+        wdQueueStats.txDropPktLast = 0;
+        wdQueueStats.rxPktLast = 0;
+        wdQueueStats.rxDropPktLast = 0;
+    }
+    wdQueueStats.operational = false;
+
+    // Store baseline for delta calculation
+    m_queueBaselineStats[queueId] = hwStats;
+
+    // Write to COUNTERS_DB
+    updateQueueStats(queueIdStr, wdQueueStats);
+}
+
+void PfcWdHwOrch::updateQueueCounters(const string& queueIdStr, sai_object_id_t queueId,
+                                      uint8_t queueIndex, bool periodic)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdHwStats hwStats;
+    if (!readHwCounters(queueId, queueIndex, hwStats))
+    {
+        return;
+    }
+
+    auto finalStats = getQueueStats(queueIdStr);
+
+    if (!periodic)
+    {
+        finalStats.restoreCount++;
+    }
+    finalStats.operational = !periodic;
+
+    // Get baseline (stored in initQueueCounters or previous update)
+    auto it = m_queueBaselineStats.find(queueId);
+    if (it == m_queueBaselineStats.end())
+    {
+        SWSS_LOG_WARN("No baseline stats found for queue 0x%" PRIx64 ", initializing", queueId);
+        m_queueBaselineStats[queueId] = hwStats;
+        updateQueueStats(queueIdStr, finalStats);
+        return;
+    }
+
+    auto& baseline = it->second;
+
+    // Calculate deltas with underflow protection
+    // If hardware counters are less than baseline, it means counters were reset
+    // In this case, skip the update to avoid huge negative values
+    if (hwStats.txPkt >= baseline.txPkt)
+    {
+        finalStats.txPktLast += hwStats.txPkt - baseline.txPkt;
+        finalStats.txPkt += hwStats.txPkt - baseline.txPkt;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Counter reset detected for queue 0x%" PRIx64 ": txPkt went from %" PRIu64 " to %" PRIu64,
+                     queueId, baseline.txPkt, hwStats.txPkt);
+    }
+
+    if (hwStats.txDropPkt >= baseline.txDropPkt)
+    {
+        finalStats.txDropPktLast += hwStats.txDropPkt - baseline.txDropPkt;
+        finalStats.txDropPkt += hwStats.txDropPkt - baseline.txDropPkt;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Counter reset detected for queue 0x%" PRIx64 ": txDropPkt went from %" PRIu64 " to %" PRIu64,
+                     queueId, baseline.txDropPkt, hwStats.txDropPkt);
+    }
+
+    if (hwStats.rxPkt >= baseline.rxPkt)
+    {
+        finalStats.rxPktLast += hwStats.rxPkt - baseline.rxPkt;
+        finalStats.rxPkt += hwStats.rxPkt - baseline.rxPkt;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Counter reset detected for queue 0x%" PRIx64 ": rxPkt went from %" PRIu64 " to %" PRIu64,
+                     queueId, baseline.rxPkt, hwStats.rxPkt);
+    }
+
+    if (hwStats.rxDropPkt >= baseline.rxDropPkt)
+    {
+        finalStats.rxDropPktLast += hwStats.rxDropPkt - baseline.rxDropPkt;
+        finalStats.rxDropPkt += hwStats.rxDropPkt - baseline.rxDropPkt;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Counter reset detected for queue 0x%" PRIx64 ": rxDropPkt went from %" PRIu64 " to %" PRIu64,
+                     queueId, baseline.rxDropPkt, hwStats.rxDropPkt);
+    }
+
+    // Update baseline
+    baseline = hwStats;
+
+    // Write to COUNTERS_DB
+    updateQueueStats(queueIdStr, finalStats);
+}

@@ -6662,4 +6662,177 @@ TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
     resetPfcWdFailureFlags();
 }
 
+TEST_F(PfcWdHwOrchTest, CallbackRegistered)
+{
+    // Verify callback was registered during PfcWdHwOrch construction
+    ASSERT_NE(_sai_captured_deadlock_callback, nullptr);
+
+    // Verify callback can be invoked
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    // Invoke the captured callback directly
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id = queueId;
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+
+    _sai_captured_deadlock_callback(1, &data);
+
+    // Verify callback executed successfully (stats updated)
+    string queueIdStr = sai_serialize_object_id(queueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, DeadlockLifecycle)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    string queueIdStr = sai_serialize_object_id(queueId);
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = queueId;
+    data.app_managed_recovery = true;
+
+    // Simulate DETECTED event from hardware
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Verify stats after detection
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_FALSE(stats.operational);
+
+    // Simulate RECOVERED event from hardware
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Verify stats after recovery
+    stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_EQ(stats.restoreCount, 1u);
+    ASSERT_TRUE(stats.operational);
+}
+
+TEST_F(PfcWdHwOrchTest, DeadlockCountsAccumulate)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+    string queueIdStr = sai_serialize_object_id(queueId);
+
+    // Storm DETECTED and RECOVERED three times each
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id = queueId;
+    data.app_managed_recovery = true;
+
+    for (int i = 0; i < 3; i++)
+    {
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+        gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+        gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    }
+
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount,  3u);
+    ASSERT_EQ(stats.restoreCount, 3u);
+}
+
+TEST_F(PfcWdHwOrchTest, UnknownQueueHandled)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Use a queue ID that is not in m_queueToPortMap
+    sai_object_id_t unknownQueueId = 0xDEADBEEF;
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(unknownQueueId), 0u);
+
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = unknownQueueId;
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+
+    // Must not crash, stats will not be created but no port info
+    ASSERT_NO_FATAL_FAILURE(gPfcWdHwOrch->onQueuePfcDeadlock(1, &data));
+
+    string queueIdStr = sai_serialize_object_id(unknownQueueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, MultipleEventsHandled)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId3 = port.m_queue_ids[3];
+    sai_object_id_t queueId4 = port.m_queue_ids[4];
+
+    // Single callback invocation with two events
+    sai_queue_deadlock_notification_data_t data[2];
+    data[0].queue_id           = queueId3;
+    data[0].event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data[0].app_managed_recovery = true;
+    data[1].queue_id           = queueId4;
+    data[1].event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data[1].app_managed_recovery = true;
+
+    gPfcWdHwOrch->onQueuePfcDeadlock(2, data);
+
+    auto stats3 = gPfcWdHwOrch->getQueueStats(sai_serialize_object_id(queueId3));
+    auto stats4 = gPfcWdHwOrch->getQueueStats(sai_serialize_object_id(queueId4));
+    ASSERT_EQ(stats3.detectCount, 1u);
+    ASSERT_EQ(stats4.detectCount, 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, StatsPreservedOnReconfig)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    // Record a detection event
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = queueId;
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Reconfigure
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "300" }, { "restoration_time", "300" } });
+
+    // detectCount must survive the reconfigure
+    string queueIdStr = sai_serialize_object_id(queueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_EQ(stats.restoreCount, 1u);
+}
+
 }

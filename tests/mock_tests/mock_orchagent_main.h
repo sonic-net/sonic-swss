@@ -24,6 +24,7 @@
 #include "pfcwdorch.h"
 #include "pfcwdhworch.h"
 #include "pfcwdsworch.h"
+#include "pfcwdhworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"
