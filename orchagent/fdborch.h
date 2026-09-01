@@ -171,6 +171,7 @@ private:
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);
     void doTask(swss::SelectableTimer& timer) override;
+    void handleNotification(NotificationConsumer& consumer, const KeyOpFieldsValuesTuple& entry);
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);

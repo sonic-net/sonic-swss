@@ -7,6 +7,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "namelabelmapper.h"
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
@@ -78,6 +79,7 @@ ShlOrch *gShlOrch;
 EvpnMhOrch *gEvpnMhOrch;
 L2NhgOrch *gL2NhgOrch;
 
+NameLabelMapper *gLabelMapper;
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
@@ -189,6 +191,7 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+    gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
@@ -328,6 +331,7 @@ bool OrchDaemon::init()
 
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
+    gNeighOrch->attach(gBfdOrch);
 
     const int fgnhgorch_pri = 15;
 
@@ -363,7 +367,7 @@ bool OrchDaemon::init()
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
     auto enable_route_zmq = get_route_perf_zmq_enabled();
-    auto route_zmq_server = enable_route_zmq ? m_zmqServer : nullptr;
+    auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
@@ -821,8 +825,17 @@ bool OrchDaemon::init()
             }
         }
 
+        // Complete hardware recovery needs deadlock detection and recovery in
+        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        if (gSwitchOrch->checkPfcDldrEnable())
+        {
+            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+        }
+
         if(pfcDlrInit)
         {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -833,6 +846,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -970,6 +984,90 @@ void OrchDaemon::logRotate() {
 }
 
 
+void OrchDaemon::initTaskStatsChannel()
+{
+    SWSS_LOG_ENTER();
+
+    m_taskStatsDb = std::make_unique<swss::DBConnector>("APPL_DB", 0);
+    m_taskStatsQuery = std::make_unique<swss::NotificationConsumer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_QUERY");
+    m_taskStatsReply = std::make_unique<swss::NotificationProducer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_REPLY");
+
+    m_select->addSelectable(m_taskStatsQuery.get());
+}
+
+void OrchDaemon::handleTaskStatsQuery()
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> req_values;
+    m_taskStatsQuery->pop(op, data, req_values);
+
+    std::vector<swss::FieldValueTuple> reply_values;
+
+    if (op == "show")
+    {
+        reply_values.reserve(m_taskStats.size());
+        // Helper: round a P^2 double estimate to a non-negative uint64.
+        auto round_p2 = [](double v) -> uint64_t
+        {
+            return static_cast<uint64_t>(v < 0.0 ? 0.0 : v + 0.5);
+        };
+
+        for (auto &kv : m_taskStats)
+        {
+            auto &s = kv.second;
+            // Pipe-separated, 14 fields:
+            //   count | total_run_ns
+            //   | median_run_ns | q1_run_ns | q3_run_ns | max_run_ns
+            //   | high_outliers | low_outliers
+            //   | sched_count | total_sched_ns
+            //   | median_sched_ns | q1_sched_ns | q3_sched_ns | max_sched_ns
+            // Empty slots emit zeros so the CLI can format them as "-".
+            uint64_t med_run = (s.count == 0) ? 0 : round_p2(s.median.value());
+            uint64_t q1_run  = (s.count == 0) ? 0 : round_p2(s.q1.value());
+            uint64_t q3_run  = (s.count == 0) ? 0 : round_p2(s.q3.value());
+
+            uint64_t med_sched = (s.sched_count == 0) ? 0 : round_p2(s.sched_median.value());
+            uint64_t q1_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q1.value());
+            uint64_t q3_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q3.value());
+
+            std::string v = std::to_string(s.count) + "|"
+                          + std::to_string(s.total_ns) + "|"
+                          + std::to_string(med_run) + "|"
+                          + std::to_string(q1_run) + "|"
+                          + std::to_string(q3_run) + "|"
+                          + std::to_string(s.max_ns) + "|"
+                          + std::to_string(s.high_outliers) + "|"
+                          + std::to_string(s.low_outliers) + "|"
+                          + std::to_string(s.sched_count) + "|"
+                          + std::to_string(s.total_sched_ns) + "|"
+                          + std::to_string(med_sched) + "|"
+                          + std::to_string(q1_sched) + "|"
+                          + std::to_string(q3_sched) + "|"
+                          + std::to_string(s.sched_max_ns);
+            reply_values.emplace_back(kv.first, v);
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else if (op == "clear")
+    {
+        for (auto &kv : m_taskStats)
+        {
+            kv.second.reset();
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else
+    {
+        SWSS_LOG_WARN("ORCH_TASK_STATS_QUERY: unknown op '%s'", op.c_str());
+        m_taskStatsReply->send("error", "unknown op", reply_values);
+    }
+}
+
 void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
@@ -982,6 +1080,8 @@ void OrchDaemon::start(long heartBeatInterval)
     {
         m_select->addSelectables(o->getSelectables());
     }
+
+    initTaskStatsChannel();
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
@@ -1013,6 +1113,7 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             tstart = std::chrono::high_resolution_clock::now();
 
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
             /*
              * Log an error message periodically if a previous SAI API call failed with
              * an unrecoverable error.
@@ -1044,7 +1145,7 @@ void OrchDaemon::start(long heartBeatInterval)
              * accumulated. Still it is possible that small amount of
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
-            flush();
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
 
             if (gRingBuffer)
             {
@@ -1067,11 +1168,17 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             SWSS_LOG_NOTICE("Performing %s log rotate", Recorder::Instance().sairedis.getName().c_str());
             Recorder::Instance().sairedis.setRotate(false);
-            logRotate();
+            { TaskTimer t(m_taskStats["logRotate"]); logRotate(); }
+        }
+
+        if (s == m_taskStatsQuery.get())
+        {
+            handleTaskStatsQuery();
+            continue;
         }
 
         auto *c = (Executor *)s;
-        c->execute();
+        { TaskTimer t(m_taskStats[c->getName()]); c->execute(); }
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -1119,7 +1226,7 @@ void OrchDaemon::start(long heartBeatInterval)
                     }
 
                     // Flush sairedis's redis pipeline
-                    flush();
+                    { TaskTimer t(m_taskStats["flush"]); flush(); }
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     freezeAndHeartBeat(UINT_MAX, heartBeatInterval);
@@ -1127,6 +1234,39 @@ void OrchDaemon::start(long heartBeatInterval)
             }
         }
     }
+}
+
+#ifdef GCOV_ENABLED
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+#endif
+
+void exit_if_graceful_shutdown_requested(void (*exit_fn)(int))
+{
+    if (gOrchShutdownRequested == 0)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Exiting on graceful shutdown request (signal %d) without running destructors", gOrchShutdownRequested);
+
+    /*
+     * Drain the async swss recorder before exiting: setAsync(false) stops the
+     * recorder worker only after any queued records have been written out.
+     */
+    Recorder::Instance().swss.setAsync(false);
+
+#ifdef GCOV_ENABLED
+    /*
+     * _exit() skips libgcov's exit hook, so persist coverage data explicitly.
+     * Reset the counters afterwards so a unit-test caller passing a
+     * non-exiting exit_fn still dumps the remainder of its run at exit.
+     */
+    __gcov_dump();
+    __gcov_reset(); // LCOV_EXCL_LINE (resets its own arc counter, so it can never self-report)
+#endif
+
+    exit_fn(0);
 }
 
 /*
@@ -1138,6 +1278,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     SWSS_LOG_ENTER();
 
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
+
+    // Configure response publisher before warm-boot starts.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/true);
 
     for (Orch *o : m_orchList)
     {
@@ -1182,6 +1325,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
     gAclOrch->doTask();
+
+    // Configure response publisher after warm-boot completes.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/false);
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and
@@ -1289,6 +1435,25 @@ void OrchDaemon::addOrchList(Orch *o)
 {
     m_orchList.push_back(o);
 }
+
+void OrchDaemon::configureResponsePublisherForWarmBoot(bool warm_boot_start)
+{
+     for (Orch *o : m_orchList)
+     {
+        /* During warmboot, we will enable setWarmbootStateOnFailure, so that
+         * failure during warmboot will update the warmboot state to FAILED
+         * indicating that the reconciliation process failed. */
+        o->setWarmbootStateOnFailure("orchagent", warm_boot_start);
+
+        /* During warmboot, we will disable setEnableNotify, so that no
+         * response notification will be generated when processing warmboot
+         * entries. The response notification is not needed during warmboot as
+         * there is no application client receiving the response during
+         * warmboot. */
+        o->setEnableNotify(!warm_boot_start);
+     }
+}
+
 
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {

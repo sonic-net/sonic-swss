@@ -13,6 +13,7 @@
 
 #define private public
 #define protected public
+#include "high_frequency_telemetry/hftelorch.h"
 #include "high_frequency_telemetry/hftelprofile.h"
 #undef private
 #undef protected
@@ -367,6 +368,21 @@ namespace hftelprofile_ut
                   set<sai_stat_id_t>({SAI_PORT_STAT_IF_OUT_OCTETS}));
     }
 
+    TEST_F(SetStatsIDsTest, DelObjectSAIIDMissingTypeDoesNotInsertMap)
+    {
+        SetStatsIDsStub s;
+        s.init();
+
+        HFTelGroup group("port");
+        group.updateObjects({"Ethernet0"});
+        group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
+
+        EXPECT_TRUE(s.p->m_name_sai_map.empty());
+        EXPECT_FALSE(s.p->delObjectSAIID(SAI_OBJECT_TYPE_PORT, "Ethernet0"));
+        EXPECT_TRUE(s.p->m_name_sai_map.empty());
+    }
+
     struct SaiAttrTest : public ::testing::Test
     {
         sai_tam_api_t ut_api;
@@ -502,5 +518,141 @@ namespace hftelprofile_ut
         });
         ASSERT_NE(itr, counter_attrs.end());
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
+    }
+
+    struct LocallyNotifyStartedProfileTest : public ::testing::Test
+    {
+        struct ProfileStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+                p->m_poll_interval = 0;
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs)
+                    decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states)
+                    decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+
+                HFTelGroup group("port");
+                group.updateObjects({"Ethernet0"});
+                group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS});
+                p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
+                constexpr sai_object_id_t port_oid = 0x1000000000001ULL;
+                p->m_name_sai_map[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = port_oid;
+                p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT][port_oid][SAI_PORT_STAT_IF_IN_OCTETS] =
+                    make_shared<sai_object_id_t>(0x300);
+
+                auto guard = make_shared<sai_object_id_t>(0x200);
+                p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = guard;
+                p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+            }
+
+            ~ProfileStub()
+            {
+                if (!p) return;
+                using ProfileName = decay_t<decltype(p->m_profile_name)>;
+                using Groups = decay_t<decltype(p->m_groups)>;
+                using NameSaiMap = decay_t<decltype(p->m_name_sai_map)>;
+                using CounterSubscriptionObjs = decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>;
+                using TelTypeObjs = decay_t<decltype(p->m_sai_tam_tel_type_objs)>;
+                using TelTypeStates = decay_t<decltype(p->m_sai_tam_tel_type_states)>;
+
+                p->m_profile_name.~ProfileName();
+                p->m_groups.~Groups();
+                p->m_name_sai_map.~NameSaiMap();
+                p->m_sai_tam_counter_subscription_objs.~CounterSubscriptionObjs();
+                p->m_sai_tam_tel_type_objs.~TelTypeObjs();
+                p->m_sai_tam_tel_type_states.~TelTypeStates();
+                p = nullptr;
+            }
+        };
+
+        struct OrchStub
+        {
+            alignas(HFTelOrch) unsigned char buf[sizeof(HFTelOrch)];
+            HFTelOrch *p = nullptr;
+
+            void init(const shared_ptr<HFTelProfile> &profile)
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelOrch *>(static_cast<void *>(buf));
+
+                new (&p->m_type_profile_mapping) decay_t<decltype(p->m_type_profile_mapping)>();
+                new (&p->m_counter_name_cache) decay_t<decltype(p->m_counter_name_cache)>();
+                p->m_type_profile_mapping[SAI_OBJECT_TYPE_PORT].insert(profile);
+            }
+
+            ~OrchStub()
+            {
+                if (!p) return;
+                using TypeProfileMapping = decay_t<decltype(p->m_type_profile_mapping)>;
+                using CounterNameCacheType = decay_t<decltype(p->m_counter_name_cache)>;
+
+                p->m_type_profile_mapping.~TypeProfileMapping();
+                p->m_counter_name_cache.~CounterNameCacheType();
+                p = nullptr;
+            }
+        };
+    };
+
+    TEST_F(LocallyNotifyStartedProfileTest, UnrelatedObjectUpdateDoesNotRecommitStartedProfile)
+    {
+        ProfileStub profileStub;
+        profileStub.init();
+
+        ASSERT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        ASSERT_TRUE(profileStub.p->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        ASSERT_TRUE(profileStub.p->canBeUpdated(SAI_OBJECT_TYPE_PORT));
+        ASSERT_THROW(profileStub.p->tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
+
+        shared_ptr<HFTelProfile> profile(profileStub.p, [](HFTelProfile *) {});
+        OrchStub orchStub;
+        orchStub.init(profile);
+
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = "COUNTERS_PORT_NAME_MAP";
+        msg.m_operation = CounterNameMapUpdater::SET;
+        msg.m_counter_name = "Ethernet4";
+        msg.m_oid = 0x1000000000002ULL;
+
+        EXPECT_NO_THROW(orchStub.p->locallyNotify(msg));
+        EXPECT_EQ(orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"], msg.m_oid);
+        EXPECT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+    }
+
+    TEST_F(LocallyNotifyStartedProfileTest, UnrelatedObjectDeleteDoesNotRecommitStartedProfile)
+    {
+        ProfileStub profileStub;
+        profileStub.init();
+
+        ASSERT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        ASSERT_TRUE(profileStub.p->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        ASSERT_TRUE(profileStub.p->canBeUpdated(SAI_OBJECT_TYPE_PORT));
+        ASSERT_THROW(profileStub.p->tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
+
+        shared_ptr<HFTelProfile> profile(profileStub.p, [](HFTelProfile *) {});
+        OrchStub orchStub;
+        orchStub.init(profile);
+        orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"] = 0x1000000000002ULL;
+
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = "COUNTERS_PORT_NAME_MAP";
+        msg.m_operation = CounterNameMapUpdater::DEL;
+        msg.m_counter_name = "Ethernet4";
+
+        EXPECT_NO_THROW(orchStub.p->locallyNotify(msg));
+        EXPECT_EQ(orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT].count("Ethernet4"), 0);
+        EXPECT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
     }
 }
