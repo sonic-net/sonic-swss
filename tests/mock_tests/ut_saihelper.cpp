@@ -70,6 +70,7 @@ namespace ut_helper
         sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
         sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&sai_virtual_router_api);
         sai_api_query(SAI_API_SAMPLEPACKET, (void **)&sai_samplepacket_api);
+        sai_api_query(SAI_API_MIRROR, (void **)&sai_mirror_api);
         sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
         sai_api_query(SAI_API_LAG, (void **)&sai_lag_api);
         sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
@@ -93,6 +94,7 @@ namespace ut_helper
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
         sai_api_query(SAI_API_ICMP_ECHO, (void**)&sai_icmp_echo_api);
+        sai_api_query(SAI_API_BFD, (void**)&sai_bfd_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
@@ -126,6 +128,7 @@ namespace ut_helper
         sai_bridge_api = nullptr;
         sai_virtual_router_api = nullptr;
         sai_port_api = nullptr;
+        sai_mirror_api = nullptr;
         sai_lag_api = nullptr;
         sai_vlan_api = nullptr;
         sai_router_intfs_api = nullptr;
@@ -141,6 +144,7 @@ namespace ut_helper
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
         sai_icmp_echo_api = nullptr;
+        sai_bfd_api = nullptr;
         sai_twamp_api = nullptr;
         sai_tam_api = nullptr;
         sai_dash_vip_api = nullptr;

@@ -5286,3 +5286,70 @@ TEST_F(FpmSyncdResponseTest, TestRouteTagYamlMalformedFile)
     std::remove(tmp_yaml);
 }
 
+// ============================================================================
+// ZMQ wrapper field-set contract
+// ============================================================================
+// The ZMQ route path relies on every SET carrying the complete field set:
+// downstream (ZmqRouteConsumer) applies whole-tuple replace semantics when
+// coalescing same-key updates, so a wrapper that starts omitting a field
+// (as happened with nexthop weight in sonic-swss#3636) would reintroduce
+// warm-upgrade inconsistencies. Pin the exact per-wrapper field list here so
+// any such change fails CI instead of surfacing on a device.
+TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
+{
+    auto fieldNames = [](vector<FieldValueTuple> fvs) {
+        vector<string> names;
+        for (const auto& fv : fvs)
+        {
+            names.push_back(fvField(fv));
+        }
+        return names;
+    };
+
+    RouteTableFieldValueTupleWrapper route{"10.1.1.0/24", "bgp", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(route.fieldValueTupleVector()),
+              (vector<string>{"protocol", "blackhole", "nexthop", "ifname",
+                              "nexthop_group", "mpls_nh", "weight", "vni_label",
+                              "router_mac", "segment", "seg_src"}));
+
+    LabelRouteTableFieldValueTupleWrapper label{"100", "bgp", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(label.fieldValueTupleVector()),
+              (vector<string>{"protocol", "blackhole", "nexthop", "ifname",
+                              "mpls_nh", "mpls_pop"}));
+
+    VnetRouteTableFieldValueTupleWrapper vnet{"Vnet1:10.1.1.0/24", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(vnet.fieldValueTupleVector()),
+              (vector<string>{"nexthop", "ifname"}));
+
+    VnetTunnelTableFieldValueTupleWrapper vnetTunnel{"Vnet1:10.1.1.0/24", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(vnetTunnel.fieldValueTupleVector()),
+              (vector<string>{"endpoint"}));
+
+    NextHopGroupTableFieldValueTupleWrapper nhg{"ID1", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(nhg.fieldValueTupleVector()),
+              (vector<string>{"nexthop", "ifname", "weight"}));
+
+    Srv6MySidTableFieldValueTupleWrapper mysid{"fc00:0:1::/48", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(mysid.fieldValueTupleVector()),
+              (vector<string>{"action", "vrf", "adj"}));
+
+    Srv6SidListTableFieldValueTupleWrapper sidlist{"sl1", /*nbZmqEnabled=*/true};
+    EXPECT_EQ(fieldNames(sidlist.fieldValueTupleVector()),
+              (vector<string>{"path"}));
+
+    // On the ZMQ path a producer set() is exactly one complete SET -- no DEL
+    // prelude -- so the consumer sees one op per key per set(). (The non-ZMQ
+    // path emits DEL+SET to clear stale hash fields in redis; whole-tuple
+    // replace makes that prelude unnecessary.)
+    RouteTableFieldValueTupleWrapper zmqRoute{"10.1.2.0/24", "bgp", /*nbZmqEnabled=*/true};
+    auto zmqKfvs = zmqRoute.KeyOpFieldsValuesTupleVector();
+    ASSERT_EQ(zmqKfvs.size(), 1u);
+    EXPECT_EQ(kfvOp(zmqKfvs[0]), SET_COMMAND);
+    EXPECT_EQ(kfvFieldsValues(zmqKfvs[0]).size(), 11u);
+
+    RouteTableFieldValueTupleWrapper redisRoute{"10.1.2.0/24", "bgp", /*nbZmqEnabled=*/false};
+    auto redisKfvs = redisRoute.KeyOpFieldsValuesTupleVector();
+    ASSERT_EQ(redisKfvs.size(), 2u);
+    EXPECT_EQ(kfvOp(redisKfvs[0]), DEL_COMMAND);
+    EXPECT_EQ(kfvOp(redisKfvs[1]), SET_COMMAND);
+}

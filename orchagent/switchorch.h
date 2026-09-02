@@ -17,6 +17,8 @@
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE                       "PFC_DLDR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE                   "BFD_NEXT_HOP_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE                   "PATH_TRACING_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE                   "ICMP_OFFLOAD_CAPABLE"
@@ -33,6 +35,9 @@
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE            "PORT_INGRESS_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE  "PORT_INGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE   "PORT_EGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE     "SAMPLEPACKET_TRUNCATION_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
@@ -58,6 +63,9 @@ public:
     bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
     bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
     void set_switch_pfc_dlr_init_capability();
+    bool checkPfcDldrEnable() { return m_PfcDldrEnable; }
+    void set_switch_pfc_dldr_capability();
+    void set_switch_bfd_next_hop_capability();
 
     // Return reference to ACL group created for each stage and the bind point is
     // the switch
@@ -88,6 +96,9 @@ public:
     // Mirror capability interface for MirrorOrch
     bool isPortIngressMirrorSupported() const { return m_portIngressMirrorSupported; }
     bool isPortEgressMirrorSupported() const { return m_portEgressMirrorSupported; }
+    bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
+    bool isPortEgressSampleMirrorSupported() const { return m_portEgressSampleMirrorSupported; }
+    bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -102,6 +113,7 @@ private:
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
     void querySwitchPortMirrorCapability();
+    void querySwitchSamplePacketCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
@@ -180,10 +192,14 @@ private:
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
+    bool m_PfcDldrEnable = false;
 
     // Port mirror capabilities
     bool m_portIngressMirrorSupported = false;
     bool m_portEgressMirrorSupported = false;
+    bool m_portIngressSampleMirrorSupported = false;
+    bool m_portEgressSampleMirrorSupported = false;
+    bool m_samplepacketTruncationSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;

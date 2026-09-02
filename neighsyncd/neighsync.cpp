@@ -290,6 +290,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         std::string zero_mac = "00:00:00:00:00:00";
         strncpy(macStr, zero_mac.c_str(), zero_mac.length());
+        macStr[zero_mac.length()] = '\0';
     }
     else
     {

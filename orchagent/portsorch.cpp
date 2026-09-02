@@ -429,10 +429,28 @@ const vector<sai_port_stat_t> wred_port_stat_ids =
     SAI_PORT_STAT_WRED_DROPPED_PACKETS
 };
 
+/* Used on platforms where WRED stats are exposed at the egress queue
+ * object (SAI_QUEUE_TYPE_UNICAST/MULTICAST/ALL). On these platforms
+ * the egress queue maintains both WRED-drop counters
+ * (SAI_QUEUE_STAT_WRED_DROPPED_*) and WRED-ECN-marked counters
+ * (SAI_QUEUE_STAT_WRED_ECN_MARKED_*) for packets and bytes. */
 static const vector<sai_queue_stat_t> wred_queue_stat_ids =
 {
     SAI_QUEUE_STAT_WRED_ECN_MARKED_PACKETS,
     SAI_QUEUE_STAT_WRED_ECN_MARKED_BYTES,
+    SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_WRED_DROPPED_BYTES
+};
+
+/* Used on platforms where WRED stats are exposed at the
+ * virtual-output-queue object (SAI_QUEUE_TYPE_UNICAST_VOQ). On these
+ * platforms WRED drops are counted at the ingress VOQ, so the
+ * WRED-drop counters (SAI_QUEUE_STAT_WRED_DROPPED_*) are exposed on
+ * the VOQ object. WRED ECN marking is performed at egress and the
+ * WRED-ECN-marked counters are exposed only on the egress queue
+ * object — not on the VOQ — and are therefore not registered here. */
+static const vector<sai_queue_stat_t> wred_voq_stat_ids =
+{
     SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
     SAI_QUEUE_STAT_WRED_DROPPED_BYTES
 };
@@ -570,6 +588,16 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfi
     if (serdes.rxpolarity.is_set)
     {
         map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(serdes.rxpolarity.value);
+    }
+
+    if (serdes.tx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PRECODING] = SerdesValue(serdes.tx_precoding.value);
+    }
+
+    if (serdes.rx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_PRECODING] = SerdesValue(serdes.rx_precoding.value);
     }
 }
 
@@ -3817,6 +3845,33 @@ ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
                                                         sai_redis_link_event_damping_algo_aied_config_t &config) {
 
     SWSS_LOG_ENTER();
+
+    // Validate decay_half_life must not exceed max_suppress_time
+    if (config.decay_half_life > config.max_suppress_time)
+    {
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "decay_half_life (%u ms) must not exceed max_suppress_time (%u ms)",
+                      port.m_alias.c_str(), config.decay_half_life, config.max_suppress_time);
+    }
+
+    // Validate suppress_threshold must be greater than reuse_threshold
+    if (config.suppress_threshold <= config.reuse_threshold)
+    {
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "suppress_threshold (%u) must be greater than reuse_threshold (%u)",
+                      port.m_alias.c_str(), config.suppress_threshold, config.reuse_threshold);
+    }
+
+    // Validate flap_penalty is reasonable relative to suppress_threshold
+    // A single flap should not immediately trigger suppression, so flap_penalty should be less than suppress_threshold
+    if (config.flap_penalty >= config.suppress_threshold)
+    {
+        SWSS_LOG_WARN("Link event damping configuration for port %s: "
+                      "flap_penalty (%u) is greater than or equal to suppress_threshold (%u). "
+                      "A single flap will immediately trigger suppression.",
+                      port.m_alias.c_str(), config.flap_penalty, config.suppress_threshold);
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGO_AIED_CONFIG;
     attr.value.ptr = (void *) &config;
@@ -4733,12 +4788,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    // Invalid config for this port: drop the task and stop
+                    // tracking it as pending, so one bad port can't keep
+                    // allPortsReady() false and block every other port.
+                    SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
 
                 if (!m_portHlpr.validatePortConfig(pCfg))
                 {
+                    SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4753,6 +4815,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!parsePortFvs(fvMap))
                 {
+                    SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
+                    m_pendingPortSet.erase(key);
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -5969,12 +6033,17 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         string op = kfvOp(t);
 
-        assert(m_portList.find(vlan_alias) != m_portList.end());
         Port vlan, port;
 
         /* When VLAN member is to be created before VLAN is created */
         if (!getPort(vlan_alias, vlan))
         {
+            if (op == DEL_COMMAND)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
             it++;
             continue;
@@ -6010,6 +6079,15 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
                 it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Defer vlan member add while port is still a LAG member in orchagent */
+            if (isValidPortTypeForLagMember(port) && port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Port %s is still a LAG member (lmid:%" PRIx64 "), delaying vlan member add",
+                               port.m_alias.c_str(), port.m_lag_member_id);
+                it++;
                 continue;
             }
 
@@ -6140,6 +6218,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             int32_t switch_id = -1;
             string tpid_string;
             uint16_t tpid = 0;
+            bool invalid_field = false;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -6155,8 +6234,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (cit == learn_mode_map.cend())
                     {
                         SWSS_LOG_ERROR("Invalid MAC learn mode: %s", learn_mode_str.c_str());
-                        it++;
-                        continue;
+                        invalid_field = true;
+                        break;
                     }
 
                     learn_mode = cit->second;
@@ -6167,8 +6246,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (!string_oper_status.count(operation_status))
                     {
                         SWSS_LOG_ERROR("Invalid operation status value:%s", operation_status.c_str());
-                        it++;
-                        continue;
+                        invalid_field = true;
+                        break;
                     }
                 }
                 else if (fvField(i) == "lag_id")
@@ -6187,6 +6266,12 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     tpid = (uint16_t)stoi(tpid_string, 0, 16);
                     SWSS_LOG_DEBUG("reading TPID string:%s to uint16: 0x%x", tpid_string.c_str(), tpid);
                  }
+            }
+
+            if (invalid_field)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
@@ -7417,9 +7502,8 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
-    //Flush all FDB entires corresponding to the port (including static entries
-    //on tunnel/nexthop_group bridge ports)
-    gFdbOrch->flushAllFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
@@ -9630,9 +9714,13 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
-*  Description: Top level API to Set WRED flex counters for Queues
+*  Description: Top level API to Set WRED flex counters for Queues.
+*               On VOQ systems, WRED drop counters are exposed at the
+*               ingress VOQ object. This function therefore registers both
+*               egress queue OIDs and (on VOQ switches) the per-port VOQ
+*               OIDs for WRED stats collection.
 **/
 void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
 {
@@ -9667,7 +9755,22 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
                 }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
-            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
+            if (gMySwitchType == "voq")
+            {
+                addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
+            }
+        }
+
+        if (it.second.m_type == Port::SYSTEM)
+        {
+            if (!queuesStateVector.count(it.second.m_alias))
+            {
+                auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
+            }
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
         }
     }
 
@@ -9676,25 +9779,37 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
 
 /****
 *  Func Name  : addWredQueueFlexCountersPerPort
-*  Parameters : port and Queuestate
+*  Parameters : port, Queuestate, voq (true for VOQ stats, false for egress queue stats)
 *  Returns    : void
-*  Description: Port level API to program flexcounter for queues
+*  Description: Port level API to program flexcounter for queues.
+*               When voq=true, registers VOQ OIDs (m_port_voq_ids) for stats.
+*               When voq=false, registers egress queue OIDs (m_queue_ids) for stats.
 **/
-void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState)
+void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
 {
-    /* Add stat counters to flex_counter */
+    std::vector<sai_object_id_t> queue_ids;
 
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    if (voq)
+    {
+        queue_ids = m_port_voq_ids[port.m_alias];
+    }
+    else
+    {
+        queue_ids = port.m_queue_ids;
+    }
+
+    for (size_t queueIndex = 0; queueIndex < queue_ids.size(); ++queueIndex)
     {
         sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
-        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        if (getQueueTypeAndIndex(queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            // VOQ counters are always enabled in VOQ systems
+            if ((gMySwitchType != "voq") && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, voq, queueType);
         }
     }
 }
@@ -9710,7 +9825,12 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
 
-    for (const auto& it: wred_queue_stat_ids)
+    /* Pick the stats list that matches where this platform exposes WRED
+     * counters: on VOQ chassis the WRED drop counters live at the VOQ
+     * object; on platforms that expose WRED at the egress queue the
+     * egress queue carries both WRED drop and WRED ECN-marked counters. */
+    const auto& stat_ids = voq ? wred_voq_stat_ids : wred_queue_stat_ids;
+    for (const auto& it: stat_ids)
     {
         counter_stats.emplace(sai_serialize_queue_stat(it));
     }
@@ -9836,6 +9956,12 @@ void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsVa
 
             /* update m_portList */
             m_portList[port.m_alias] = port;
+
+            if (gP4Orch)
+            {
+                // Process port_state_change in P4Orch after PortsOrch
+                gP4Orch->handlePortStatusUpdate(port.m_alias, status);
+            }
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
@@ -10283,6 +10409,23 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
     {
+        // Remove old mapping from memory map
+        m_portIdToSerdesId.erase(port_id);
+
+        // Remove old mapping from COUNTERS_DB
+        m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
+        SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
+                     port_attr.value.oid);
+
+        // Clear the phy port serdes countersIDList
+        Port p;
+        if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
+            flex_counters_orch->getPortPhySerdesAttrCountersState())
+        {
+            port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
+        }
+
+        // Remove SAI port serdes object
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -10292,24 +10435,6 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
-            }
-        }
-        else
-        {
-            // Remove old mapping from memory map
-            m_portIdToSerdesId.erase(port_id);
-
-            // Remove old mapping from COUNTERS_DB
-            m_portSerdesIdToPortIdTable->hdel("", sai_serialize_object_id(port_attr.value.oid));
-            SWSS_LOG_INFO("Removed old COUNTERS_PORT_SERDES_ID_TO_PORT_ID_MAP entry: serdes_id:0x%" PRIx64,
-                         port_attr.value.oid);
-
-            //clear the phy port serdes countersIDList
-            Port p;
-            if (getPort(port_id, p) && p.m_type == Port::Type::PHY &&
-                flex_counters_orch->getPortPhySerdesAttrCountersState())
-            {
-                port_phy_serdes_attr_manager.clearCounterIdList(port_attr.value.oid);
             }
         }
     }
