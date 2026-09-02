@@ -221,11 +221,17 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             // Initialize counters on storm detection
             if (port_found)
             {
-                m_stormedQueues.insert(notification.queue_id);
-                SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " entered storm", notification.queue_id);
+                // Report the storm only on the transition into it. The hardware
+                // repeats DETECTED while the queue stays deadlocked, and each
+                // report publishes a pfc-storm event, which would otherwise
+                // inflate anything counting storms downstream.
+                if (m_stormedQueues.insert(notification.queue_id).second)
+                {
+                    SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " entered storm", notification.queue_id);
 
-                this->report_pfc_storm(notification.queue_id, port_id,
-                                      queue_index, port_alias, "");
+                    this->report_pfc_storm(notification.queue_id, port_id,
+                                          queue_index, port_alias, "");
+                }
             }
             else
             {
@@ -240,11 +246,16 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             // Update counters on recovery
             if (port_found)
             {
-                m_stormedQueues.erase(notification.queue_id);
-                SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " left storm", notification.queue_id);
+                // Same as the detection side: report only the transition, so a
+                // repeated RECOVERED does not publish a restore for a queue that
+                // is not in storm.
+                if (m_stormedQueues.erase(notification.queue_id) != 0)
+                {
+                    SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " left storm", notification.queue_id);
 
-                this->report_pfc_restored(notification.queue_id, port_id,
-                                         queue_index, port_alias);
+                    this->report_pfc_restored(notification.queue_id, port_id,
+                                             queue_index, port_alias);
+                }
             }
             else
             {

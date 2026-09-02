@@ -6350,11 +6350,12 @@ TEST_F(PfcWdHwOrchTest, StateDbLifecycle)
 
 TEST_F(PfcWdHwOrchTest, StateDbGlobalRecoveryMechanism)
 {
-    auto stateTable = gPfcWdHwOrch->getStateTable();
-    string fullKey = stateTable->getTableName() + stateTable->getTableNameSeparator() + "PFC_WD";
-    auto value = gPfcWdHwOrch->getStateDb()->hget(fullKey, PFC_WD_RECOVERY_MECHANISM);
-    ASSERT_NE(value, nullptr);
-    ASSERT_EQ(*value, PFC_WD_RECOVERY_HARDWARE);
+    // mock_table.cpp mocks Table writes into an in-memory map, so a read on the
+    // connector cannot see what updateStateTable() wrote through m_stateTable.
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
 }
 
 TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
