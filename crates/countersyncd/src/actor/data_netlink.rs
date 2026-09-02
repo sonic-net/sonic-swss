@@ -420,7 +420,7 @@ impl DataNetlinkActor {
         fd: std::os::unix::io::RawFd,
         buffer: &mut [u8],
         flags: i32,
-    ) -> Result<(usize, i32, u32), io::Error> {
+    ) -> Result<(usize, i32), io::Error> {
         let mut iov = libc::iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
@@ -428,16 +428,15 @@ impl DataNetlinkActor {
         let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
-        let mut source: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
-        msg.msg_name = (&mut source as *mut libc::sockaddr_nl).cast();
-        msg.msg_namelen = std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
 
+        // SAI vendors may publish Generic Netlink data from either kernel or userspace.
+        // The parser validates nlmsg_type against the currently resolved family ID instead.
         // Safe on the Tokio worker because the fd is configured as non-blocking by connect().
         let size = unsafe { libc::recvmsg(fd, &mut msg, flags) };
         if size < 0 {
             Err(io::Error::last_os_error())
         } else {
-            Ok((size as usize, msg.msg_flags, source.nl_pid))
+            Ok((size as usize, msg.msg_flags))
         }
     }
 
@@ -450,16 +449,8 @@ impl DataNetlinkActor {
         // Peek first to size the receive buffer exactly and to make truncation observable. A fixed
         // large buffer would either waste memory in the hot path or still silently truncate when a
         // producer emits a larger datagram than expected.
-        let (needed, peek_flags, peek_source) =
+        let (needed, peek_flags) =
             Self::recvmsg_into(fd, &mut peek_buffer, libc::MSG_PEEK | libc::MSG_TRUNC)?;
-        if peek_source != 0 {
-            let mut drain_buffer = [0u8; 1];
-            let _ = Self::recvmsg_into(fd, &mut drain_buffer, libc::MSG_TRUNC);
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("Data netlink datagram came from userspace port {peek_source}"),
-            ));
-        }
 
         if needed == 0 {
             let _ = Self::recvmsg_into(fd, &mut peek_buffer, 0);
@@ -490,13 +481,7 @@ impl DataNetlinkActor {
         }
 
         buffer.resize(needed, 0);
-        let (size, flags, source) = Self::recvmsg_into(fd, buffer, 0)?;
-        if source != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("Data netlink datagram came from userspace port {source}"),
-            ));
-        }
+        let (size, flags) = Self::recvmsg_into(fd, buffer, 0)?;
         if flags & libc::MSG_TRUNC != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -732,19 +717,18 @@ impl DataNetlinkActor {
     /// 1. Single complete message in one recv
     /// 2. Multiple complete messages in one recv
     /// 3. Truncated or malformed datagrams, which are rejected without splicing future recv data
-    fn try_recv(
-        socket: &mut SocketType,
-        message_parser: &mut NetlinkMessageParser,
-        expected_family_id: u16,
-        receive_buffer: &mut Vec<u8>,
-    ) -> Result<ParseOutcome, io::Error> {
+    fn try_recv(&mut self, socket: &mut SocketType) -> Result<ParseOutcome, io::Error> {
+        let expected_family_id = self
+            .subscription
+            .expect("registered socket has a subscription")
+            .family_id;
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
-        let recv_result = Self::recv_netlink_datagram(socket, receive_buffer);
+        let recv_result = Self::recv_netlink_datagram(socket, &mut self.receive_buffer);
 
         match recv_result {
             Ok(()) => {
-                let size = receive_buffer.len();
+                let size = self.receive_buffer.len();
                 debug!("Received netlink data, size: {} bytes", size);
 
                 if size == 0 {
@@ -755,12 +739,14 @@ impl DataNetlinkActor {
                 }
 
                 if log::log_enabled!(log::Level::Debug) {
-                    let hex_dump = format_hex_lines(receive_buffer);
+                    let hex_dump = format_hex_lines(&self.receive_buffer);
                     debug!("Raw netlink recv buffer ({} bytes):\n{}", size, hex_dump);
                 }
 
                 // Parse buffer which may contain multiple messages and/or incomplete messages
-                let outcome = message_parser.parse_buffer(receive_buffer, expected_family_id)?;
+                let outcome = self
+                    .message_parser
+                    .parse_buffer(&self.receive_buffer, expected_family_id)?;
                 debug!(
                     "Parsed {} complete messages and dropped {} from {} bytes of data",
                     outcome.messages.len(),
@@ -935,16 +921,7 @@ impl DataNetlinkActor {
                     .ready_mut(Interest::READABLE | Interest::ERROR) => {
                     match readiness {
                         Ok(mut guard) => {
-                            let family_id = actor
-                                .subscription
-                                .expect("registered socket has a subscription")
-                                .family_id;
-                            match Self::try_recv(
-                                guard.get_inner_mut(),
-                                &mut actor.message_parser,
-                                family_id,
-                                &mut actor.receive_buffer,
-                            ) {
+                            match actor.try_recv(guard.get_inner_mut()) {
                                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                     guard.clear_ready_matching(TokioReady::READABLE);
                                     guard.clear_ready_matching(TokioReady::ERROR);
@@ -1078,19 +1055,6 @@ impl DataNetlinkActor {
                                 );
                             }
                         }
-                        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                            if let Some(suppressed) = invalid_data_warnings.record(1) {
-                                warn!(
-                                    "Dropping non-kernel netlink datagram{}: {:?}",
-                                    if suppressed > 0 {
-                                        format!("; {suppressed} prior event(s) suppressed")
-                                    } else {
-                                        String::new()
-                                    },
-                                    e
-                                );
-                            }
-                        }
                         Err(e) => {
                             warn!("Failed to receive message: {:?}", e);
                             if socket.is_some() {
@@ -1138,6 +1102,8 @@ impl Drop for DataNetlinkActor {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use netlink_sys::{protocols::NETLINK_USERSOCK, Socket};
     use std::os::unix::net::UnixDatagram;
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -2103,11 +2069,32 @@ pub mod test {
         tx.send(&payload).unwrap();
 
         let mut buffer = vec![0u8; BUFFER_SIZE];
-        let (size, flags, _) =
-            DataNetlinkActor::recvmsg_into(rx.as_raw_fd(), &mut buffer, 0).unwrap();
+        let (size, flags) = DataNetlinkActor::recvmsg_into(rx.as_raw_fd(), &mut buffer, 0).unwrap();
 
         assert_eq!(size, BUFFER_SIZE);
         assert_ne!(flags & libc::MSG_TRUNC, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_datagram_accepts_userspace_netlink_sender() {
+        let mut receiver = Socket::new(NETLINK_USERSOCK).unwrap();
+        let receiver_address = receiver.bind_auto().unwrap();
+        let mut sender = Socket::new(NETLINK_USERSOCK).unwrap();
+        let sender_address = sender.bind_auto().unwrap();
+        assert_ne!(sender_address.port_number(), 0);
+
+        let datagram = create_test_message_for_family(b"userspace-data", 0x20);
+        sender.send_to(&datagram, &receiver_address, 0).unwrap();
+
+        let received =
+            DataNetlinkActor::recv_datagram_fd(receiver.as_raw_fd(), BUFFER_SIZE).unwrap();
+        let mut parser = NetlinkMessageParser::new();
+        let outcome = parser.parse_buffer(&received, 0x20).unwrap();
+
+        assert_eq!(outcome.messages.len(), 1);
+        assert_eq!(outcome.messages[0].as_ref(), b"userspace-data");
+        assert_eq!(outcome.dropped_messages, 0);
     }
 
     #[cfg(target_os = "linux")]
