@@ -2,6 +2,7 @@
 
 #include "nhgbase.h"
 #include "nexthopkey.h"
+#include "memory"
 #include "vector"
 
 using namespace std;
@@ -9,16 +10,30 @@ using namespace std;
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
+/* Defined in nhgorch.h, which includes this header. */
+class NextHopGroup;
+
 enum class ProtNhgRole
 {
     PRIMARY,
     STANDBY
 };
 
-/* What a protection member resolves its SAI next hop ID from. */
+/*
+ * What a protection member resolves its SAI next hop ID from.
+ *
+ * OWNED_NHG and SHARED_NHG differ only in who controls the nested group's
+ * lifetime, and that difference is the reason both exist. A shared group is
+ * one NhgOrch already holds under an APP_DB index; several protection groups
+ * can point at it, but its membership can be updated underneath them and some
+ * of those updates replace the SAI object (see NextHopGroup::update()). An
+ * owned group has exactly one referent, so nothing else can update or replace
+ * it and its SAI ID is stable for as long as the member lives.
+ */
 enum class ProtNhgMemberType
 {
     NEXT_HOP,     /* An individual next hop, resolved through NeighOrch. */
+    OWNED_NHG,    /* A nested NHG created and destroyed with this member. */
     SHARED_NHG,   /* A nested NHG held by NhgOrch, referenced by its index. */
 };
 
@@ -47,6 +62,13 @@ public:
      * synced, so NhgOrch will refuse to remove it out from under us.
      */
     static ProtNhgMember sharedNhg(ProtNhgRole role, const string &nhg_index);
+
+    /*
+     * A member backed by a nested NHG this member owns outright. The group is
+     * created by the caller, destroyed with the member, and referenced by
+     * nothing else.
+     */
+    static ProtNhgMember ownedNhg(ProtNhgRole role, unique_ptr<NextHopGroup> nhg);
 
     ProtNhgMember(ProtNhgMember &&nhgm);
 
@@ -87,6 +109,14 @@ public:
      */
     bool updateNhId();
 
+    /*
+     * Push a newly resolved next hop into an owned nested group. An owned
+     * group is not in NhgOrch's map, so nothing else ever walks it and this is
+     * the only path that resolves its members. A no-op for the other member
+     * types, and for a next hop the group does not contain.
+     */
+    bool validateOwnedNextHop(const NextHopKey &nh_key);
+
     /* Query the hardware-observed role (active/inactive) from SAI. */
     bool getObservedRole(sai_next_hop_group_member_observed_role_t &observed_role) const;
 
@@ -96,12 +126,14 @@ private:
     ProtNhgMember(ProtNhgRole role,
                   ProtNhgMemberType type,
                   const NextHopKey &nh_key,
-                  const string &nhg_index);
+                  const string &nhg_index,
+                  unique_ptr<NextHopGroup> owned_nhg);
 
     ProtNhgMemberType m_type;
 
-    NextHopKey m_nh_key;    /* NEXT_HOP only. */
-    string m_nhg_index;     /* SHARED_NHG only. */
+    NextHopKey m_nh_key;                    /* NEXT_HOP only. */
+    string m_nhg_index;                     /* SHARED_NHG only. */
+    unique_ptr<NextHopGroup> m_owned_nhg;   /* OWNED_NHG only. */
 
     /* The next hop ID currently programmed into the SAI member. */
     sai_object_id_t m_programmed_nh_id;
@@ -130,8 +162,8 @@ private:
  * Attaching or detaching the monitored object moves the group between the two
  * modes in place; it never recreates the SAI group.
  *
- * Multi-primary (N:M) is expressed by giving either role a nested NHG member;
- * the two legs need not be the same member type.
+ * Multi-primary (N:M) is expressed by giving either role a nested NHG member,
+ * owned or shared; the two legs need not be the same member type.
  */
 class ProtNhg : public NhgCommon<string, ProtNhgRole, ProtNhgMember>
 {
@@ -149,7 +181,7 @@ public:
 
     ProtNhg(ProtNhg &&nhg);
 
-    ~ProtNhg() { SWSS_LOG_ENTER(); remove(); }
+    ~ProtNhg();
 
     bool sync() override;
     bool remove() override;

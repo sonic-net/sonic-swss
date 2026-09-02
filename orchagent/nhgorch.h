@@ -172,7 +172,7 @@ public:
 
     /* Create a protection NHG as a strict pair: one primary and one standby
      * next hop. Individual NHs are resolved via NeighOrch at sync time.
-     * For N:M, give a role a nested NHG with createProtNhgShared() below.
+     * For N:M, give a role a nested NHG with one of the overloads below.
      */
     bool createProtNhg(const string &key,
                        const NextHopKey &primary_nh,
@@ -198,8 +198,11 @@ public:
     bool createProtNhgShared(const string &primary_nhg_index,
                              const string &standby_nhg_index);
 
-    /* Create a protection NHG where each role is an existing ECMP NHG.
-     * NHG OIDs are dynamically resolved via NhgOrch at sync time.
+    /* Create a protection NHG that builds a nested NHG for each role and owns
+     * it outright. The groups are not registered with NhgOrch, so nothing else
+     * can reference, update or replace them, and their SAI IDs are stable for
+     * the life of the protection group. Use createProtNhgShared() instead when
+     * the legs have to be shared.
      */
     bool createProtNhg(const string &key,
                        const NextHopGroupKey &primary_nhg_key,
@@ -281,6 +284,12 @@ private:
 
     /* Room for count more next hop groups, ECMP and protection alike. */
     bool hasNhgCapacity(unsigned count) const;
+
+    /* Build a nested NHG for a protection leg to own. Returned even when it
+     * could not sync, so its members can resolve later. */
+    unique_ptr<NextHopGroup> createOwnedNhg(const NextHopGroupKey &nhg_key,
+                                            const string &prot_key,
+                                            const char *role);
 
     /*
      * Re-point the protection members that reference the NHG at nhg_index.

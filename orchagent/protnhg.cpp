@@ -15,11 +15,13 @@ static inline const char* roleToString(ProtNhgRole role)
 ProtNhgMember::ProtNhgMember(ProtNhgRole role,
                              ProtNhgMemberType type,
                              const NextHopKey &nh_key,
-                             const string &nhg_index) :
+                             const string &nhg_index,
+                             unique_ptr<NextHopGroup> owned_nhg) :
     NhgMember(role),
     m_type(type),
     m_nh_key(nh_key),
     m_nhg_index(nhg_index),
+    m_owned_nhg(move(owned_nhg)),
     m_programmed_nh_id(SAI_NULL_OBJECT_ID),
     m_monitored_oid(SAI_NULL_OBJECT_ID)
 {
@@ -30,7 +32,7 @@ ProtNhgMember ProtNhgMember::nextHop(ProtNhgRole role, const NextHopKey &nh_key)
 {
     SWSS_LOG_ENTER();
 
-    return ProtNhgMember(role, ProtNhgMemberType::NEXT_HOP, nh_key, "");
+    return ProtNhgMember(role, ProtNhgMemberType::NEXT_HOP, nh_key, "", nullptr);
 }
 
 ProtNhgMember ProtNhgMember::sharedNhg(ProtNhgRole role, const string &nhg_index)
@@ -38,7 +40,16 @@ ProtNhgMember ProtNhgMember::sharedNhg(ProtNhgRole role, const string &nhg_index
     SWSS_LOG_ENTER();
 
     return ProtNhgMember(role, ProtNhgMemberType::SHARED_NHG, NextHopKey(),
-                         nhg_index);
+                         nhg_index, nullptr);
+}
+
+ProtNhgMember ProtNhgMember::ownedNhg(ProtNhgRole role,
+                                      unique_ptr<NextHopGroup> nhg)
+{
+    SWSS_LOG_ENTER();
+
+    return ProtNhgMember(role, ProtNhgMemberType::OWNED_NHG, NextHopKey(), "",
+                         move(nhg));
 }
 
 ProtNhgMember::ProtNhgMember(ProtNhgMember &&nhgm) :
@@ -46,6 +57,7 @@ ProtNhgMember::ProtNhgMember(ProtNhgMember &&nhgm) :
     m_type(nhgm.m_type),
     m_nh_key(move(nhgm.m_nh_key)),
     m_nhg_index(move(nhgm.m_nhg_index)),
+    m_owned_nhg(move(nhgm.m_owned_nhg)),
     m_programmed_nh_id(nhgm.m_programmed_nh_id),
     m_monitored_oid(nhgm.m_monitored_oid)
 {
@@ -89,6 +101,10 @@ void ProtNhgMember::sync(sai_object_id_t gm_id)
                               m_nhg_index.c_str(), to_string().c_str());
             }
             break;
+
+        case ProtNhgMemberType::OWNED_NHG:
+            /* Nothing to reference: the group's lifetime is this member's. */
+            break;
     }
 }
 
@@ -112,6 +128,9 @@ void ProtNhgMember::remove()
             {
                 gNhgOrch->decNhgRefCount(m_nhg_index);
             }
+            break;
+
+        case ProtNhgMemberType::OWNED_NHG:
             break;
     }
 
@@ -138,6 +157,15 @@ sai_object_id_t ProtNhgMember::getNhId() const
             }
             SWSS_LOG_WARN("Shared NHG %s not found for %s member",
                           m_nhg_index.c_str(), roleToString(m_key));
+            return SAI_NULL_OBJECT_ID;
+
+        case ProtNhgMemberType::OWNED_NHG:
+            if (m_owned_nhg && m_owned_nhg->isSynced())
+            {
+                return m_owned_nhg->getId();
+            }
+            SWSS_LOG_WARN("Owned NHG for %s member is not synced",
+                          roleToString(m_key));
             return SAI_NULL_OBJECT_ID;
     }
 
@@ -225,6 +253,33 @@ bool ProtNhgMember::updateNhId()
     return true;
 }
 
+bool ProtNhgMember::validateOwnedNextHop(const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_type != ProtNhgMemberType::OWNED_NHG || !m_owned_nhg)
+    {
+        return true;
+    }
+
+    if (!m_owned_nhg->hasMember(nh_key))
+    {
+        return true;
+    }
+
+    /*
+     * The group may have failed to sync when the protection group was created,
+     * e.g. because none of its next hops were resolved yet. Retry now that one
+     * of them is.
+     */
+    if (!m_owned_nhg->isSynced())
+    {
+        return m_owned_nhg->sync();
+    }
+
+    return m_owned_nhg->validateNextHop(nh_key);
+}
+
 bool ProtNhgMember::getObservedRole(
     sai_next_hop_group_member_observed_role_t &observed_role) const
 {
@@ -268,6 +323,11 @@ string ProtNhgMember::to_string() const
 
         case ProtNhgMemberType::SHARED_NHG:
             target = "shared NHG " + m_nhg_index;
+            break;
+
+        case ProtNhgMemberType::OWNED_NHG:
+            target = "owned NHG " +
+                     (m_owned_nhg ? m_owned_nhg->to_string() : string("(null)"));
             break;
     }
 
@@ -315,6 +375,15 @@ ProtNhg::ProtNhg(ProtNhg &&nhg) :
     NhgCommon(move(nhg))
 {
     SWSS_LOG_ENTER();
+}
+
+ProtNhg::~ProtNhg()
+{
+    SWSS_LOG_ENTER();
+
+    /* Tear the protection group down before m_members drops any owned nested
+     * group, so we never remove a NHG that a live SAI member still points at. */
+    remove();
 }
 
 bool ProtNhg::sync()
@@ -416,20 +485,33 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
     }
 
     set<ProtNhgRole> to_sync;
+    bool success = true;
 
-    for (const auto &entry : m_members)
+    for (auto &entry : m_members)
     {
-        const ProtNhgMember &mbr = entry.second;
-
-        if (mbr.isSynced())
-        {
-            continue;
-        }
+        ProtNhgMember &mbr = entry.second;
 
         switch (mbr.getType())
         {
             case ProtNhgMemberType::NEXT_HOP:
                 if (mbr.getNextHopKey() == nh_key)
+                {
+                    to_sync.insert(entry.first);
+                }
+                break;
+
+            case ProtNhgMemberType::OWNED_NHG:
+                /*
+                 * An owned group is walked by nobody else, so resolving its
+                 * members is our job -- and it has to happen even when this
+                 * member is already synced.
+                 */
+                if (!mbr.validateOwnedNextHop(nh_key))
+                {
+                    success = false;
+                }
+                else if (!mbr.isSynced() &&
+                         mbr.getNhId() != SAI_NULL_OBJECT_ID)
                 {
                     to_sync.insert(entry.first);
                 }
@@ -441,7 +523,7 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
                  * map. All that can be left for us is a member we could not
                  * sync earlier because the group was not ready yet.
                  */
-                if (mbr.getNhId() != SAI_NULL_OBJECT_ID)
+                if (!mbr.isSynced() && mbr.getNhId() != SAI_NULL_OBJECT_ID)
                 {
                     to_sync.insert(entry.first);
                 }
@@ -449,12 +531,12 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
         }
     }
 
-    if (to_sync.empty())
+    if (!to_sync.empty() && !syncMembers(to_sync))
     {
-        return true;
+        success = false;
     }
 
-    return syncMembers(to_sync);
+    return success;
 }
 
 bool ProtNhg::updateSharedMember(const string &nhg_index)

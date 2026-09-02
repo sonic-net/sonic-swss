@@ -1040,13 +1040,6 @@ namespace protnhg_test
             index, NhgEntry<NextHopGroup>(move(nhg)));
     }
 
-    /* Register under the membership string, which is what the
-     * NextHopGroupKey-pair create overload looks the legs up by. */
-    static void addEcmpNhg(const NextHopGroupKey &nhg_key)
-    {
-        addEcmpNhg(nhg_key.to_string(), nhg_key);
-    }
-
     static void removeEcmpNhg(const string &index)
     {
         auto it = gNhgOrch->m_syncdNextHopGroups.find(index);
@@ -1057,54 +1050,119 @@ namespace protnhg_test
         }
     }
 
-    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeys)
+    /* --- Owned member groups: the protection group creates its own legs --- */
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithOwnedNhgs)
     {
+        NextHopKey p1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey p2(IpAddress("10.0.0.2"), string("Ethernet0"));
+        NextHopKey s1(IpAddress("10.0.0.100"), string("Ethernet4"));
+        NextHopKey s2(IpAddress("10.0.0.101"), string("Ethernet4"));
+        registerNextHop(p1);
+        registerNextHop(p2);
+        registerNextHop(s1);
+        registerNextHop(s2);
+
         NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4,10.0.0.101@Ethernet4");
 
-        addEcmpNhg(primary_nhg_key);
-        addEcmpNhg(standby_nhg_key);
+        uint32_t grp_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP);
 
-        string key = "prot_nhg_keys";
+        string key = "prot_nhg_owned";
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
         EXPECT_NE(gNhgOrch->getProtNhgId(key), SAI_NULL_OBJECT_ID);
 
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        EXPECT_EQ(primary->getType(), ProtNhgMemberType::OWNED_NHG);
+        EXPECT_TRUE(primary->isRecursive());
+        EXPECT_TRUE(primary->isSynced());
+        EXPECT_NE(primary->getNhId(), SAI_NULL_OBJECT_ID);
+
+        const ProtNhgMember *standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_EQ(standby->getType(), ProtNhgMemberType::OWNED_NHG);
+        EXPECT_NE(standby->getNhId(), primary->getNhId());
+
+        /* Owned legs belong to the protection group alone, so they are not
+         * registered with NhgOrch under any index -- least of all their own
+         * membership string. */
+        EXPECT_FALSE(gNhgOrch->hasNhg(primary_nhg_key.to_string()));
+        EXPECT_FALSE(gNhgOrch->hasNhg(standby_nhg_key.to_string()));
+
+        /* Two owned ECMP groups plus the protection group itself. */
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before + 3);
+
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
 
-        removeEcmpNhg(primary_nhg_key.to_string());
-        removeEcmpNhg(standby_nhg_key.to_string());
+        /* Removing the protection group takes its owned legs with it. */
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before);
+
+        unregisterNextHop(p1);
+        unregisterNextHop(p2);
+        unregisterNextHop(s1);
+        unregisterNextHop(s2);
     }
 
-    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysPrimaryNotFound)
+    /*
+     * Owned legs are independent groups, so legs that share a next hop are no
+     * longer a problem. The old constructor keyed each member on
+     * *nhg_key.getNextHops().begin() and collapsed in this case.
+     */
+    TEST_F(ProtNhgTest, OwnedNhgsMayOverlapInMembership)
     {
-        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        NextHopKey shared_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey p2(IpAddress("10.0.0.2"), string("Ethernet0"));
+        NextHopKey s2(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(shared_nh);
+        registerNextHop(p2);
+        registerNextHop(s2);
 
-        addEcmpNhg(standby_nhg_key);
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.1@Ethernet0,10.0.0.100@Ethernet4");
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_no_primary",
-                                              primary_nhg_key,
-                                              standby_nhg_key));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_primary"));
+        string key = "prot_nhg_owned_overlap";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
 
-        removeEcmpNhg(standby_nhg_key.to_string());
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getSize(), 2u);
+        EXPECT_NE(nhg.getPrimaryMember()->getNhId(),
+                  nhg.getStandbyMember()->getNhId());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(shared_nh);
+        unregisterNextHop(p2);
+        unregisterNextHop(s2);
     }
 
-    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysStandbyNotFound)
+    /*
+     * Identical legs protect nothing. ProtNhg::sync() catches this by
+     * comparing resolved SAI IDs, but owning the legs gives two distinct
+     * groups with different IDs, so the pair has to be rejected up front.
+     */
+    TEST_F(ProtNhgTest, CreateProtNhgWithIdenticalOwnedLegsFails)
     {
-        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        NextHopKey nh1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey nh2(IpAddress("10.0.0.2"), string("Ethernet0"));
+        registerNextHop(nh1);
+        registerNextHop(nh2);
 
-        addEcmpNhg(primary_nhg_key);
+        NextHopGroupKey nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_no_standby",
-                                              primary_nhg_key,
-                                              standby_nhg_key));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_standby"));
+        uint32_t grp_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP);
 
-        removeEcmpNhg(primary_nhg_key.to_string());
+        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_identical_legs",
+                                              nhg_key, nhg_key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_identical_legs"));
+
+        /* Rejected before anything was built, so nothing to clean up. */
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before);
+
+        unregisterNextHop(nh1);
+        unregisterNextHop(nh2);
     }
 
     TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysEmptyPrimary)
@@ -1125,34 +1183,6 @@ namespace protnhg_test
         EXPECT_FALSE(gNhgOrch->createProtNhg("prot_empty_standby",
                                               primary_nhg_key,
                                               empty_standby));
-    }
-
-    /*
-     * Two recursive legs sharing a next hop used to collapse into a single
-     * member, because each member was keyed on *nhg_key.getNextHops().begin()
-     * and both groups here start with 10.0.0.1@Ethernet0. Keying by role
-     * instead makes the pair structural, and overlapping membership is just
-     * two distinct nested groups.
-     */
-    TEST_F(ProtNhgTest, RecursiveLegsMayOverlapInMembership)
-    {
-        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.1@Ethernet0,10.0.0.100@Ethernet4");
-
-        addEcmpNhg(primary_nhg_key);
-        addEcmpNhg(standby_nhg_key);
-
-        string key = "prot_nhg_keys_overlap";
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
-
-        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
-        EXPECT_EQ(nhg.getSize(), 2u);
-        EXPECT_NE(nhg.getPrimaryMember()->getNhId(),
-                  nhg.getStandbyMember()->getNhId());
-
-        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        removeEcmpNhg(primary_nhg_key.to_string());
-        removeEcmpNhg(standby_nhg_key.to_string());
     }
 
     /* --- Shared member groups: referenced by their NhgOrch index --- */
@@ -1435,11 +1465,13 @@ namespace protnhg_test
 
     TEST_F(ProtNhgTest, CreateProtNhgAutoKeyWithNhgKeys)
     {
-        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        NextHopKey p1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey s1(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(p1);
+        registerNextHop(s1);
 
-        addEcmpNhg(primary_nhg_key);
-        addEcmpNhg(standby_nhg_key);
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
 
         string expected_key = NhgOrch::buildProtNhgKey(primary_nhg_key,
                                                        standby_nhg_key);
@@ -1450,13 +1482,13 @@ namespace protnhg_test
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(expected_key));
 
-        removeEcmpNhg(primary_nhg_key.to_string());
-        removeEcmpNhg(standby_nhg_key.to_string());
+        unregisterNextHop(p1);
+        unregisterNextHop(s1);
     }
 
-    /* Indices and membership are different key spaces, so the keys built from
-     * them must not collide. */
-    TEST_F(ProtNhgTest, SharedAndMembershipKeysDoNotCollide)
+    /* Owning a leg and sharing one are different key spaces, so the keys built
+     * from them must not collide. */
+    TEST_F(ProtNhgTest, OwnedAndSharedKeysDoNotCollide)
     {
         NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
         NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
@@ -1526,6 +1558,49 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
+    }
+
+    TEST_F(ProtNhgTest, OwnedLegCompletedByValidateNextHop)
+    {
+        NextHopKey p1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey p2(IpAddress("10.0.0.2"), string("Ethernet0"));
+        NextHopKey s1(IpAddress("10.0.0.100"), string("Ethernet4"));
+
+        /* The standby leg is unresolved at create time. It holds a single next
+         * hop, so the leg takes no SAI ID of its own until that next hop turns
+         * up -- which is what leaves the protection member unsynced. */
+        registerNextHop(p1);
+        registerNextHop(p2);
+
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        string key = "prot_owned_deferred";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getSize(), 2u);
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+
+        const ProtNhgMember *standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_FALSE(standby->isSynced());
+        EXPECT_EQ(standby->getNhId(), SAI_NULL_OBJECT_ID);
+
+        /* The standby leg's next hop turns up; NeighOrch::addNextHop() would
+         * call gNhgOrch->validateNextHop() at this point. */
+        registerNextHop(s1);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(s1));
+
+        standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_TRUE(standby->isSynced());
+        EXPECT_NE(standby->getNhId(), SAI_NULL_OBJECT_ID);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(p1);
+        unregisterNextHop(p2);
+        unregisterNextHop(s1);
     }
 
     TEST_F(ProtNhgTest, SharedLegResolvesThroughItsIndex)

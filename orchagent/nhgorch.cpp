@@ -1429,9 +1429,8 @@ string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
 }
 
 /* Indices live in a different key space than membership, so they get their own
- * prefix: two protection groups built from the same next hops, one naming its
- * legs by index and one by membership, are different objects and must not
- * collide. */
+ * prefix: two protection groups built from the same next hops, one owning its
+ * legs and one sharing them, are different objects and must not collide. */
 string NhgOrch::buildProtNhgSharedKey(const string &primary_nhg_index,
                                        const string &standby_nhg_index)
 {
@@ -1451,6 +1450,25 @@ bool NhgOrch::hasNhgCapacity(unsigned count) const
 
     return gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() + count <=
            gRouteOrch->getMaxNhgCount();
+}
+
+unique_ptr<NextHopGroup> NhgOrch::createOwnedNhg(const NextHopGroupKey &nhg_key,
+                                                  const string &prot_key,
+                                                  const char *role)
+{
+    SWSS_LOG_ENTER();
+
+    auto nhg = make_unique<NextHopGroup>(nhg_key, false);
+
+    if (!nhg->sync())
+    {
+        SWSS_LOG_WARN("Owned %s NHG %s of protection NHG %s is not fully "
+                      "resolved yet; it will be completed as its next hops "
+                      "are validated",
+                      role, nhg_key.to_string().c_str(), prot_key.c_str());
+    }
+
+    return nhg;
 }
 
 void NhgOrch::updateProtNhgMembers(const string &nhg_index)
@@ -1524,13 +1542,58 @@ bool NhgOrch::createProtNhg(const string &key,
     }
 
     /*
-     * The legs are named by their membership strings, which NhgOrch only
-     * resolves for a caller that registered its groups under those strings.
-     * An index is the general way to name a nested group.
+     * Owning the legs means identical membership produces two distinct SAI
+     * groups with different IDs, which ProtNhg::sync()'s same-ID check cannot
+     * see. Reject it here instead: legs carrying the same next hops protect
+     * nothing.
      */
-    return createProtNhgShared(key,
-                               primary_nhg_key.to_string(),
-                               standby_nhg_key.to_string());
+    if (primary_nhg_key == standby_nhg_key)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s primary and standby group keys are "
+                       "identical", key.c_str());
+        return false;
+    }
+
+    /* Idempotent re-create: short-circuit before capacity checks so a repeat
+     * call still returns success, matching the individual-NH overload's
+     * contract. */
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
+    }
+
+    if (!isProtectionSupported())
+    {
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
+        return false;
+    }
+
+    /*
+     * Three groups: one per owned leg, plus the protection group itself. A
+     * single-next-hop leg may end up aliasing its next hop instead of taking a
+     * group, so this can over-reserve, but under-reserving would fail halfway
+     * through and leave the caller with nothing usable.
+     */
+    if (!hasNhgCapacity(3))
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s "
+                       "with owned member groups", key.c_str());
+        return false;
+    }
+
+    auto primary_nhg = createOwnedNhg(primary_nhg_key, key, "primary");
+    auto standby_nhg = createOwnedNhg(standby_nhg_key, key, "standby");
+
+    auto nhg = make_unique<ProtNhg>(
+        key,
+        ProtNhgMember::ownedNhg(ProtNhgRole::PRIMARY, move(primary_nhg)),
+        ProtNhgMember::ownedNhg(ProtNhgRole::STANDBY, move(standby_nhg)));
+
+    return finalizeProtNhg(key, move(nhg),
+                           "owned primary NHG: " + primary_nhg_key.to_string() +
+                           ", owned standby NHG: " + standby_nhg_key.to_string());
 }
 
 bool NhgOrch::createProtNhgShared(const string &key,
