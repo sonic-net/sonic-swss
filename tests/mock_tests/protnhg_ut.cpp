@@ -465,7 +465,7 @@ namespace protnhg_test
 
     TEST_F(ProtNhgTest, AllObservedRolesNonExistentNhgFails)
     {
-        map<NextHopKey, sai_next_hop_group_member_observed_role_t> roles;
+        map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> roles;
         EXPECT_FALSE(gNhgOrch->getProtNhgAllObservedRoles("no_such_key", roles));
     }
 
@@ -518,13 +518,12 @@ namespace protnhg_test
         registerNextHop(nh);
 
         /*
-         * Primary and standby resolve to the same NextHopKey, so the
-         * constructor's second m_members.emplace() is a no-op (map keys
-         * must be unique) and the group ends up with a single member.
-         * sync() must reject this rather than silently creating a
-         * degenerate 1-member "protection" group.
+         * Members are keyed by role, so both legs are present here -- but they
+         * resolve to the same next hop, which is a protection group that cannot
+         * protect anything. sync() must reject it.
          */
         ProtNhg nhg("prot_nhg_dup_nh", nh, nh);
+        EXPECT_EQ(nhg.getSize(), 2u);
         EXPECT_FALSE(nhg.sync());
         EXPECT_FALSE(nhg.isSynced());
 
@@ -630,7 +629,7 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         ProtNhg &nhg = *gNhgOrch->m_protNhgs.at(key).nhg;
 
-        ASSERT_FALSE(nhg.hasMember(unrelated_nh));
+        /* No member resolves to unrelated_nh, so this must be a no-op. */
         EXPECT_TRUE(nhg.validateNextHop(unrelated_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
@@ -853,7 +852,7 @@ namespace protnhg_test
                 return SAI_STATUS_SUCCESS;
             };
 
-        map<NextHopKey, sai_next_hop_group_member_observed_role_t> roles;
+        map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> roles;
         EXPECT_TRUE(gNhgOrch->getProtNhgAllObservedRoles(key, roles));
         EXPECT_EQ(roles.size(), 2u);
 
@@ -882,7 +881,7 @@ namespace protnhg_test
                 return SAI_STATUS_FAILURE;
             };
 
-        map<NextHopKey, sai_next_hop_group_member_observed_role_t> roles;
+        map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> roles;
         EXPECT_FALSE(gNhgOrch->getProtNhgAllObservedRoles(key, roles));
         EXPECT_TRUE(roles.empty());
 
@@ -966,7 +965,7 @@ namespace protnhg_test
     TEST_F(ProtNhgTest, MemberRemoveUnsynced)
     {
         NextHopKey nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        ProtNhgMember member(nh, ProtNhgRole::PRIMARY);
+        ProtNhgMember member(ProtNhgRole::PRIMARY, nh);
 
         EXPECT_FALSE(member.isSynced());
         member.remove();
@@ -1097,29 +1096,30 @@ namespace protnhg_test
                                               empty_standby));
     }
 
-    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysFailsWhenRepresentativesCollide)
+    /*
+     * Two recursive legs sharing a next hop used to collapse into a single
+     * member, because each member was keyed on *nhg_key.getNextHops().begin()
+     * and both groups here start with 10.0.0.1@Ethernet0. Keying by role
+     * instead makes the pair structural, and overlapping membership is just
+     * two distinct nested groups.
+     */
+    TEST_F(ProtNhgTest, RecursiveLegsMayOverlapInMembership)
     {
-        /*
-         * The ProtNhg(NextHopGroupKey, NextHopGroupKey) constructor keys each
-         * member on *nhg_key.getNextHops().begin(), not the full group key.
-         * Here the primary and standby groups both contain 10.0.0.1@Ethernet0,
-         * which sorts first in both, so the second m_members.emplace() is a
-         * no-op and the group would collapse to a single member if sync()
-         * didn't reject it (see SyncFailsWhenPrimaryAndStandbyAreIdentical for
-         * the equivalent direct-NextHopKey-overload case).
-         */
         NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
         NextHopGroupKey standby_nhg_key("10.0.0.1@Ethernet0,10.0.0.100@Ethernet4");
 
         addEcmpNhg(primary_nhg_key);
         addEcmpNhg(standby_nhg_key);
 
-        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+        string key = "prot_nhg_keys_overlap";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
 
-        string key = "prot_nhg_keys_rep_collision";
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getSize(), 2u);
+        EXPECT_NE(nhg.getPrimaryMember()->getNhId(),
+                  nhg.getStandbyMember()->getNhId());
 
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         removeEcmpNhg(primary_nhg_key.to_string());
         removeEcmpNhg(standby_nhg_key.to_string());
     }

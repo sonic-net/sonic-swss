@@ -227,14 +227,24 @@ public:
      * and forwarding is unaffected, since both legs are already programmed.
      */
     bool attachProtNhgMonitoredObject(const string &key,
+                                      ProtNhgRole role,
+                                      sai_object_id_t monitored_oid);
+
+    /* Convenience form for a group whose legs are individual next hops; a
+     * recursive leg has no next hop of its own and must be addressed by role. */
+    bool attachProtNhgMonitoredObject(const string &key,
                                       const NextHopKey &nh_key,
                                       sai_object_id_t monitored_oid);
 
     /* Detach the monitored object, demoting the group back to SW-driven. */
+    bool detachProtNhgMonitoredObject(const string &key, ProtNhgRole role);
     bool detachProtNhgMonitoredObject(const string &key,
                                       const NextHopKey &nh_key);
 
     /* Query the hardware-observed role (active/inactive) of a protection NHG member. */
+    bool getProtNhgMemberObservedRole(const string &key,
+                                      ProtNhgRole role,
+                                      sai_next_hop_group_member_observed_role_t &observed_role) const;
     bool getProtNhgMemberObservedRole(const string &key,
                                       const NextHopKey &nh_key,
                                       sai_next_hop_group_member_observed_role_t &observed_role) const;
@@ -242,7 +252,7 @@ public:
     /* Query observed roles for all synced members of a protection NHG. */
     bool getProtNhgAllObservedRoles(
         const string &key,
-        map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const;
+        map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> &observed_roles) const;
 
     /* Ref counting for protection NHGs. */
     void incProtNhgRefCount(const string &key);

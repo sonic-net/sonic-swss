@@ -502,15 +502,15 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
     {
         auto& nhg = it.second.nhg;
 
-        if (nhg->hasMember(nh_key))
+        /* Members are keyed by role, so there is no membership test to make
+         * here: the group decides for itself which of its members, if any,
+         * this next hop unblocks. */
+        if (!nhg->validateNextHop(nh_key))
         {
-            if (!nhg->validateNextHop(nh_key))
-            {
-                SWSS_LOG_ERROR("Failed to validate next hop %s in protection group %s",
-                                nh_key.to_string().c_str(),
-                                it.first.c_str());
-                return false;
-            }
+            SWSS_LOG_ERROR("Failed to validate next hop %s in protection group %s",
+                            nh_key.to_string().c_str(),
+                            it.first.c_str());
+            return false;
         }
     }
 
@@ -1634,7 +1634,7 @@ bool NhgOrch::setProtNhgSwitchover(const string &key, bool enable)
 }
 
 bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
-                                            const NextHopKey &nh_key,
+                                            ProtNhgRole role,
                                             sai_object_id_t monitored_oid)
 {
     SWSS_LOG_ENTER();
@@ -1679,21 +1679,46 @@ bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
         return false;
     }
 
-    if (!nhg.updateMemberMonitoredObject(nh_key, monitored_oid))
+    if (!nhg.updateMemberMonitoredObject(role, monitored_oid))
     {
         return false;
     }
 
-    SWSS_LOG_NOTICE("Attached monitored object %s to member %s of protection "
+    SWSS_LOG_NOTICE("Attached monitored object %s to the %s member of protection "
                     "NHG %s; switchover is now HW-autonomous",
                     sai_serialize_object_id(monitored_oid).c_str(),
-                    nh_key.to_string().c_str(), key.c_str());
+                    (role == ProtNhgRole::PRIMARY) ? "primary" : "standby",
+                    key.c_str());
 
     return true;
 }
 
-bool NhgOrch::detachProtNhgMonitoredObject(const string &key,
-                                            const NextHopKey &nh_key)
+bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key,
+                                            sai_object_id_t monitored_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    ProtNhgRole role;
+
+    if (!it->second.nhg->getMemberRole(nh_key, role))
+    {
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), key.c_str());
+        return false;
+    }
+
+    return attachProtNhgMonitoredObject(key, role, monitored_oid);
+}
+
+bool NhgOrch::detachProtNhgMonitoredObject(const string &key, ProtNhgRole role)
 {
     SWSS_LOG_ENTER();
 
@@ -1718,16 +1743,58 @@ bool NhgOrch::detachProtNhgMonitoredObject(const string &key,
         return false;
     }
 
-    if (!nhg.updateMemberMonitoredObject(nh_key, SAI_NULL_OBJECT_ID))
+    if (!nhg.updateMemberMonitoredObject(role, SAI_NULL_OBJECT_ID))
     {
         return false;
     }
 
-    SWSS_LOG_NOTICE("Detached monitored object from member %s of protection "
+    SWSS_LOG_NOTICE("Detached monitored object from the %s member of protection "
                     "NHG %s; switchover is now SW-driven",
-                    nh_key.to_string().c_str(), key.c_str());
+                    (role == ProtNhgRole::PRIMARY) ? "primary" : "standby",
+                    key.c_str());
 
     return true;
+}
+
+bool NhgOrch::detachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    ProtNhgRole role;
+
+    if (!it->second.nhg->getMemberRole(nh_key, role))
+    {
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), key.c_str());
+        return false;
+    }
+
+    return detachProtNhgMonitoredObject(key, role);
+}
+
+bool NhgOrch::getProtNhgMemberObservedRole(
+    const string &key,
+    ProtNhgRole role,
+    sai_next_hop_group_member_observed_role_t &observed_role) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getMemberObservedRole(role, observed_role);
 }
 
 bool NhgOrch::getProtNhgMemberObservedRole(
@@ -1749,7 +1816,7 @@ bool NhgOrch::getProtNhgMemberObservedRole(
 
 bool NhgOrch::getProtNhgAllObservedRoles(
     const string &key,
-    map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const
+    map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> &observed_roles) const
 {
     SWSS_LOG_ENTER();
 

@@ -7,21 +7,26 @@
 extern NeighOrch *gNeighOrch;
 extern NhgOrch *gNhgOrch;
 
-ProtNhgMember::ProtNhgMember(const NextHopKey &key, ProtNhgRole role,
+static inline const char* roleToString(ProtNhgRole role)
+{
+    return (role == ProtNhgRole::PRIMARY) ? "primary" : "standby";
+}
+
+ProtNhgMember::ProtNhgMember(ProtNhgRole role, const NextHopKey &nh_key,
                              const string &nhg_key) :
-    NhgMember(key),
-    m_role(role),
-    m_monitored_oid(SAI_NULL_OBJECT_ID),
-    m_nhg_key(nhg_key)
+    NhgMember(role),
+    m_nh_key(nh_key),
+    m_nhg_key(nhg_key),
+    m_monitored_oid(SAI_NULL_OBJECT_ID)
 {
     SWSS_LOG_ENTER();
 }
 
 ProtNhgMember::ProtNhgMember(ProtNhgMember &&nhgm) :
     NhgMember(move(nhgm)),
-    m_role(nhgm.m_role),
-    m_monitored_oid(nhgm.m_monitored_oid),
-    m_nhg_key(move(nhgm.m_nhg_key))
+    m_nh_key(move(nhgm.m_nh_key)),
+    m_nhg_key(move(nhgm.m_nhg_key)),
+    m_monitored_oid(nhgm.m_monitored_oid)
 {
     SWSS_LOG_ENTER();
     nhgm.m_monitored_oid = SAI_NULL_OBJECT_ID;
@@ -43,7 +48,7 @@ void ProtNhgMember::sync(sai_object_id_t gm_id)
     }
     else
     {
-        gNeighOrch->increaseNextHopRefCount(m_key);
+        gNeighOrch->increaseNextHopRefCount(m_nh_key);
     }
 }
 
@@ -62,7 +67,7 @@ void ProtNhgMember::remove()
     }
     else
     {
-        gNeighOrch->decreaseNextHopRefCount(m_key);
+        gNeighOrch->decreaseNextHopRefCount(m_nh_key);
     }
     NhgMember::remove();
 }
@@ -77,14 +82,15 @@ sai_object_id_t ProtNhgMember::getNhId() const
         {
             return gNhgOrch->getNhg(m_nhg_key).getId();
         }
-        SWSS_LOG_WARN("Recursive NHG %s not found for member %s",
-                       m_nhg_key.c_str(), m_key.to_string().c_str());
+
+        SWSS_LOG_WARN("Recursive NHG %s not found for %s member",
+                       m_nhg_key.c_str(), roleToString(m_key));
         return SAI_NULL_OBJECT_ID;
     }
 
-    if (gNeighOrch->hasNextHop(m_key))
+    if (gNeighOrch->hasNextHop(m_nh_key))
     {
-        return gNeighOrch->getNextHopId(m_key);
+        return gNeighOrch->getNextHopId(m_nh_key);
     }
 
     return SAI_NULL_OBJECT_ID;
@@ -126,7 +132,7 @@ bool ProtNhgMember::getObservedRole(
     if (!isSynced())
     {
         SWSS_LOG_WARN("Cannot query observed role on unsynced member %s",
-                       m_key.to_string().c_str());
+                       to_string().c_str());
         return false;
     }
 
@@ -139,7 +145,7 @@ bool ProtNhgMember::getObservedRole(
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get observed role for member %s, rv: %d",
-                       m_key.to_string().c_str(), status);
+                       to_string().c_str(), status);
         return false;
     }
 
@@ -151,8 +157,10 @@ bool ProtNhgMember::getObservedRole(
 
 string ProtNhgMember::to_string() const
 {
-    string role_str = (m_role == ProtNhgRole::PRIMARY) ? "primary" : "standby";
-    return m_key.to_string() + " [" + role_str + "], SAI ID: " + std::to_string(m_gm_id);
+    string target = isRecursive() ? ("NHG " + m_nhg_key) : m_nh_key.to_string();
+
+    return target + " [" + roleToString(m_key) + "], SAI ID: " +
+           std::to_string(m_gm_id);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -164,10 +172,10 @@ ProtNhg::ProtNhg(const string &key,
 {
     SWSS_LOG_ENTER();
 
-    m_members.emplace(primary_nh,
-                      ProtNhgMember(primary_nh, ProtNhgRole::PRIMARY));
-    m_members.emplace(standby_nh,
-                      ProtNhgMember(standby_nh, ProtNhgRole::STANDBY));
+    m_members.emplace(ProtNhgRole::PRIMARY,
+                      ProtNhgMember(ProtNhgRole::PRIMARY, primary_nh));
+    m_members.emplace(ProtNhgRole::STANDBY,
+                      ProtNhgMember(ProtNhgRole::STANDBY, standby_nh));
 }
 
 ProtNhg::ProtNhg(const string &key,
@@ -177,14 +185,11 @@ ProtNhg::ProtNhg(const string &key,
 {
     SWSS_LOG_ENTER();
 
-    const NextHopKey &primary_rep = *primary_nhg_key.getNextHops().begin();
-    const NextHopKey &standby_rep = *standby_nhg_key.getNextHops().begin();
-
-    m_members.emplace(primary_rep,
-                      ProtNhgMember(primary_rep, ProtNhgRole::PRIMARY,
+    m_members.emplace(ProtNhgRole::PRIMARY,
+                      ProtNhgMember(ProtNhgRole::PRIMARY, NextHopKey(),
                                     primary_nhg_key.to_string()));
-    m_members.emplace(standby_rep,
-                      ProtNhgMember(standby_rep, ProtNhgRole::STANDBY,
+    m_members.emplace(ProtNhgRole::STANDBY,
+                      ProtNhgMember(ProtNhgRole::STANDBY, NextHopKey(),
                                     standby_nhg_key.to_string()));
 }
 
@@ -203,30 +208,32 @@ bool ProtNhg::sync()
         return true;
     }
 
-    /* Count by role: a primary/standby NextHopKey collision would silently
-     * collapse m_members to a single entry (emplace() no-ops on duplicate
-     * keys), which size() alone wouldn't catch. */
-    size_t primary_count = 0;
-    size_t standby_count = 0;
+    /* Members are keyed by role, so a primary/standby collision cannot produce
+     * two members of the same role -- it produces a missing one instead. */
+    auto primary_it = m_members.find(ProtNhgRole::PRIMARY);
+    auto standby_it = m_members.find(ProtNhgRole::STANDBY);
 
-    for (const auto &mbr : m_members)
-    {
-        if (mbr.second.getRole() == ProtNhgRole::PRIMARY)
-        {
-            ++primary_count;
-        }
-        else
-        {
-            ++standby_count;
-        }
-    }
-
-    if (primary_count != 1 || standby_count != 1)
+    if (primary_it == m_members.end() || standby_it == m_members.end())
     {
         SWSS_LOG_ERROR("Protection NHG %s must have exactly one primary and one "
-                       "standby member, has %zu primary and %zu standby "
-                       "(primary and standby next hop may be identical)",
-                       m_key.c_str(), primary_count, standby_count);
+                       "standby member, has %zu member(s)",
+                       m_key.c_str(), m_members.size());
+        return false;
+    }
+
+    /*
+     * Both legs resolving to the same SAI object would be a protection group
+     * that cannot protect anything.  Comparing the resolved IDs catches this
+     * whatever the members are made of.  Two unresolved members both read as
+     * null, which is not a collision, so require a real ID first.
+     */
+    sai_object_id_t primary_nh_id = primary_it->second.getNhId();
+
+    if (primary_nh_id != SAI_NULL_OBJECT_ID &&
+        primary_nh_id == standby_it->second.getNhId())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s has the same next hop for its primary "
+                       "and standby members", m_key.c_str());
         return false;
     }
 
@@ -253,7 +260,7 @@ bool ProtNhg::sync()
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     incSyncedCount();
 
-    set<NextHopKey> member_keys;
+    set<ProtNhgRole> member_keys;
     for (const auto &mbr : m_members)
     {
         member_keys.insert(mbr.first);
@@ -280,7 +287,7 @@ bool ProtNhg::remove()
     return NhgCommon::remove();
 }
 
-/* Sync the member for nh_key once its next hop is resolved. */
+/* Sync whichever members nh_key becoming resolved has unblocked. */
 bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
 {
     SWSS_LOG_ENTER();
@@ -290,13 +297,42 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
         return true;
     }
 
-    /* syncMembers() assumes nh_key is already in m_members. */
-    if (!hasMember(nh_key))
+    set<ProtNhgRole> to_sync;
+
+    for (const auto &entry : m_members)
+    {
+        const ProtNhgMember &mbr = entry.second;
+
+        if (mbr.isSynced())
+        {
+            continue;
+        }
+
+        /*
+         * A member backed by an individual next hop is unblocked by that next
+         * hop alone.  A recursive member resolves through NhgOrch instead, so
+         * there is no next hop of its own to match: retry it whenever it has
+         * become resolvable.
+         */
+        if (mbr.isRecursive())
+        {
+            if (mbr.getNhId() != SAI_NULL_OBJECT_ID)
+            {
+                to_sync.insert(entry.first);
+            }
+        }
+        else if (mbr.getNextHopKey() == nh_key)
+        {
+            to_sync.insert(entry.first);
+        }
+    }
+
+    if (to_sync.empty())
     {
         return true;
     }
 
-    return syncMembers({nh_key});
+    return syncMembers(to_sync);
 }
 
 bool ProtNhg::isHwAutonomous() const
@@ -389,29 +425,82 @@ bool ProtNhg::setSwitchover(bool enable)
     return true;
 }
 
-bool ProtNhg::updateMemberMonitoredObject(const NextHopKey &nh_key,
+bool ProtNhg::updateMemberMonitoredObject(ProtNhgRole role,
                                            sai_object_id_t monitored_oid)
 {
     SWSS_LOG_ENTER();
 
-    auto it = m_members.find(nh_key);
+    auto it = m_members.find(role);
     if (it == m_members.end())
     {
-        SWSS_LOG_ERROR("Member %s not found in protection NHG %s",
-                       nh_key.to_string().c_str(), m_key.c_str());
+        SWSS_LOG_ERROR("Protection NHG %s has no %s member",
+                       m_key.c_str(), roleToString(role));
         return false;
     }
 
     return it->second.updateMonitoredObject(monitored_oid);
 }
 
+bool ProtNhg::updateMemberMonitoredObject(const NextHopKey &nh_key,
+                                           sai_object_id_t monitored_oid)
+{
+    SWSS_LOG_ENTER();
+
+    ProtNhgMember *mbr = findMemberByNextHop(nh_key);
+
+    if (mbr == nullptr)
+    {
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), m_key.c_str());
+        return false;
+    }
+
+    return mbr->updateMonitoredObject(monitored_oid);
+}
+
+const ProtNhgMember* ProtNhg::getMember(ProtNhgRole role) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_members.find(role);
+
+    return (it == m_members.end()) ? nullptr : &it->second;
+}
+
 const ProtNhgMember* ProtNhg::getPrimaryMember() const
+{
+    SWSS_LOG_ENTER();
+    return getMember(ProtNhgRole::PRIMARY);
+}
+
+const ProtNhgMember* ProtNhg::getStandbyMember() const
+{
+    SWSS_LOG_ENTER();
+    return getMember(ProtNhgRole::STANDBY);
+}
+
+bool ProtNhg::getMemberRole(const NextHopKey &nh_key, ProtNhgRole &role) const
+{
+    SWSS_LOG_ENTER();
+
+    const ProtNhgMember *mbr = findMemberByNextHop(nh_key);
+
+    if (mbr == nullptr)
+    {
+        return false;
+    }
+
+    role = mbr->getRole();
+    return true;
+}
+
+const ProtNhgMember* ProtNhg::findMemberByNextHop(const NextHopKey &nh_key) const
 {
     SWSS_LOG_ENTER();
 
     for (const auto &mbr : m_members)
     {
-        if (mbr.second.getRole() == ProtNhgRole::PRIMARY)
+        if (!mbr.second.isRecursive() && mbr.second.getNextHopKey() == nh_key)
         {
             return &mbr.second;
         }
@@ -420,19 +509,30 @@ const ProtNhgMember* ProtNhg::getPrimaryMember() const
     return nullptr;
 }
 
-const ProtNhgMember* ProtNhg::getStandbyMember() const
+ProtNhgMember* ProtNhg::findMemberByNextHop(const NextHopKey &nh_key)
 {
     SWSS_LOG_ENTER();
 
-    for (const auto &mbr : m_members)
+    return const_cast<ProtNhgMember*>(
+        static_cast<const ProtNhg*>(this)->findMemberByNextHop(nh_key));
+}
+
+bool ProtNhg::getMemberObservedRole(
+    ProtNhgRole role,
+    sai_next_hop_group_member_observed_role_t &observed_role) const
+{
+    SWSS_LOG_ENTER();
+
+    const ProtNhgMember *mbr = getMember(role);
+
+    if (mbr == nullptr)
     {
-        if (mbr.second.getRole() == ProtNhgRole::STANDBY)
-        {
-            return &mbr.second;
-        }
+        SWSS_LOG_ERROR("Protection NHG %s has no %s member",
+                       m_key.c_str(), roleToString(role));
+        return false;
     }
 
-    return nullptr;
+    return mbr->getObservedRole(observed_role);
 }
 
 bool ProtNhg::getMemberObservedRole(
@@ -441,19 +541,20 @@ bool ProtNhg::getMemberObservedRole(
 {
     SWSS_LOG_ENTER();
 
-    auto it = m_members.find(nh_key);
-    if (it == m_members.end())
+    const ProtNhgMember *mbr = findMemberByNextHop(nh_key);
+
+    if (mbr == nullptr)
     {
-        SWSS_LOG_ERROR("Member %s not found in protection NHG %s",
-                       nh_key.to_string().c_str(), m_key.c_str());
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), m_key.c_str());
         return false;
     }
 
-    return it->second.getObservedRole(observed_role);
+    return mbr->getObservedRole(observed_role);
 }
 
 bool ProtNhg::getAllMemberObservedRoles(
-    map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const
+    map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> &observed_roles) const
 {
     SWSS_LOG_ENTER();
 
@@ -475,7 +576,7 @@ bool ProtNhg::getAllMemberObservedRoles(
         else
         {
             SWSS_LOG_WARN("Failed to get observed role for member %s in NHG %s",
-                          mbr.first.to_string().c_str(), m_key.c_str());
+                          mbr.second.to_string().c_str(), m_key.c_str());
             success = false;
         }
     }
@@ -483,22 +584,22 @@ bool ProtNhg::getAllMemberObservedRoles(
     return success;
 }
 
-bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
+bool ProtNhg::syncMembers(const set<ProtNhgRole> &member_keys)
 {
     SWSS_LOG_ENTER();
 
     ObjectBulker<sai_next_hop_group_api_t> bulker(sai_next_hop_group_api,
                                                    gSwitchId,
                                                    gMaxBulkSize);
-    map<NextHopKey, sai_object_id_t> syncing;
+    map<ProtNhgRole, sai_object_id_t> syncing;
 
     /* Unresolved members are skipped but still fail this call, so the
      * caller knows to retry them later via validateNextHop(). */
     bool success = true;
 
-    for (const auto &nh_key : member_keys)
+    for (const auto &role : member_keys)
     {
-        ProtNhgMember &nhgm = m_members.at(nh_key);
+        ProtNhgMember &nhgm = m_members.at(role);
 
         if (nhgm.isSynced())
         {
@@ -507,14 +608,14 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
 
         if (nhgm.getNhId() == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_WARN("Next hop %s not resolved for protection NHG %s",
-                          nh_key.to_string().c_str(), m_key.c_str());
+            SWSS_LOG_WARN("Member %s not resolved for protection NHG %s",
+                          nhgm.to_string().c_str(), m_key.c_str());
             success = false;
             continue;
         }
 
         vector<sai_attribute_t> attrs = createNhgmAttrs(nhgm);
-        bulker.create_entry(&syncing[nh_key],
+        bulker.create_entry(&syncing[role],
                             static_cast<uint32_t>(attrs.size()),
                             attrs.data());
     }
@@ -531,8 +632,8 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
     {
         if (entry.second == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("Failed to create member %s of protection NHG %s",
-                           entry.first.to_string().c_str(), m_key.c_str());
+            SWSS_LOG_ERROR("Failed to create %s member of protection NHG %s",
+                           roleToString(entry.first), m_key.c_str());
             success = false;
         }
         else
