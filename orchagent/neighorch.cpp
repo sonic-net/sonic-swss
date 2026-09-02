@@ -477,6 +477,13 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     gFgNhgOrch->validNextHopInNextHopGroup(nexthop);
 
+    /* Sync skipped group member(s); gNhgOrch may be null in unit tests. */
+    if (gNhgOrch && !gNhgOrch->validateNextHop(nexthop))
+    {
+        SWSS_LOG_WARN("Failed to validate next hop %s in next hop group(s)",
+                      nexthop.to_string().c_str());
+    }
+
     // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
     // flag should be set on it.
     // This scenario may happen under race condition where buffered neighbor event
@@ -568,6 +575,13 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     }
 
     gFgNhgOrch->validNextHopInNextHopGroup(nexthop);
+
+    /* Sync skipped group member(s); gNhgOrch may be null in unit tests. */
+    if (gNhgOrch && !gNhgOrch->validateNextHop(nexthop))
+    {
+        SWSS_LOG_WARN("Failed to validate next hop %s in next hop group(s)",
+                      nexthop.to_string().c_str());
+    }
 
     // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
     // flag should be set on it.
