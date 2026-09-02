@@ -38,6 +38,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
+    stpd_fd = -1;
 
     stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstInstTask = false;
 
@@ -868,7 +869,7 @@ void StpMgr::ipcInitStpd()
     unlink(STPMGRD_SOCK_NAME);
     // create socket
     stpd_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (!stpd_fd) {
+    if (stpd_fd < 0) {
 		SWSS_LOG_ERROR("socket error %s", strerror(errno));
 		return;
     }
@@ -883,6 +884,7 @@ void StpMgr::ipcInitStpd()
     {
 		SWSS_LOG_ERROR("ipc bind error %s", strerror(errno));
         close(stpd_fd);
+        stpd_fd = -1;
         return;
     }
 }
@@ -1221,6 +1223,12 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
 // Send Message to STPd
 int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 {
+    if (stpd_fd < 0)
+    {
+        SWSS_LOG_ERROR("STPd IPC socket not initialized, dropping msg type %d", msgType);
+        return -1;
+    }
+
     STP_IPC_MSG *tx_msg;
     size_t len = 0;
     struct sockaddr_un addr;
