@@ -3,10 +3,7 @@ mod end_to_end_tests {
     use serial_test::serial;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::{
-        spawn,
-        sync::mpsc::{channel, Sender},
-    };
+    use tokio::{spawn, sync::mpsc::channel};
 
     use countersyncd::actor::{
         ipfix::IpfixActor,
@@ -76,26 +73,8 @@ mod end_to_end_tests {
             // Data Record (26 bytes total)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8, // Field 1 (8 bytes) = 1000
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xD0, // Field 2 (8 bytes) = 2000
-            0x00, 0x01, // Field 3 (2 bytes) = 1
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0xA0, // Field 4 (8 bytes) = 4000
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0xA0, // Field 3 (8 bytes) = 4000
         ]
-    }
-
-    /// Helper function to create enhanced netlink actor for testing
-    async fn create_test_netlink_with_data(
-        socket_sender: Sender<Arc<Vec<u8>>>,
-        test_data: Vec<Vec<u8>>,
-    ) -> tokio::task::JoinHandle<()> {
-        spawn(async move {
-            // Simulate netlink receiving IPFIX data
-            for data in test_data {
-                if let Err(e) = socket_sender.send(Arc::new(data)).await {
-                    println!("Failed to send test netlink data: {}", e);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
     }
 
     /// End-to-end system test that validates the IPFIX processing pipeline:
@@ -111,7 +90,8 @@ mod end_to_end_tests {
         // Create communication channels
         let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
         let (socket_sender, socket_receiver) = channel(10);
-        let (saistats_sender, saistats_receiver) = channel(100);
+        let (saistats_sender, mut saistats_receiver) = channel(100);
+        let (reporter_sender, reporter_receiver) = channel(100);
 
         // Create test writer to capture output
         let test_writer = TestWriter::new();
@@ -120,6 +100,7 @@ mod end_to_end_tests {
         // Initialize actors
         let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
         ipfix.add_recipient(saistats_sender);
+        ipfix.add_recipient(reporter_sender);
 
         let reporter_config = StatsReporterConfig {
             interval: Duration::from_millis(100), // Fast reporting for test
@@ -127,7 +108,7 @@ mod end_to_end_tests {
             max_stats_per_report: Some(10),
         };
         let stats_reporter =
-            StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
+            StatsReporterActor::new(reporter_receiver, reporter_config, test_writer_clone);
 
         // Spawn actor tasks
         let _ipfix_handle = tokio::task::spawn_blocking(move || {
@@ -135,16 +116,15 @@ mod end_to_end_tests {
             let rt =
                 tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
             rt.block_on(async move {
-                IpfixActor::run(ipfix).await;
+                IpfixActor::run(ipfix)
+                    .await
+                    .expect_err("IPFIX actor should report closed input channels");
             });
         });
 
-        let _stats_handle = spawn(async move {
+        let stats_handle = spawn(async move {
             StatsReporterActor::run(stats_reporter).await;
         });
-
-        // Give actors time to start up
-        tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Step 1: Send IPFIX template (simulating SwssActor -> IpfixActor)
         let template_data = create_test_ipfix_template();
@@ -162,21 +142,43 @@ mod end_to_end_tests {
 
         println!("Sent IPFIX template to IpfixActor");
 
-        // Give time for template processing
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
         // Step 2: Send IPFIX data (simulating NetlinkActor -> IpfixActor)
         let ipfix_data_packets = vec![
             create_test_ipfix_data(),
             create_test_ipfix_data(), // Send multiple packets to see more stats
         ];
 
-        // Start simulated netlink data sender
-        let _netlink_handle =
-            create_test_netlink_with_data(socket_sender, ipfix_data_packets).await;
+        for data in ipfix_data_packets {
+            socket_sender
+                .send(Arc::new(data))
+                .await
+                .expect("Failed to send test netlink data");
+        }
 
-        // Give time for data processing and stats reporting
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let stats_collector = spawn(async move {
+            let mut logical_records = 0usize;
+            let mut counters = 0usize;
+            let mut observation_times = Vec::new();
+            while logical_records < 2 {
+                let batch = saistats_receiver
+                    .recv()
+                    .await
+                    .expect("SAI stats channel closed early");
+                for record in batch.iter() {
+                    logical_records += 1;
+                    counters += record.stats.len();
+                    observation_times.push(record.observation_time);
+                }
+            }
+            assert_eq!(counters, 4);
+            assert_eq!(observation_times, vec![1000, 1000]);
+        });
+        stats_collector.await.expect("stats collector should join");
+
+        drop(socket_sender);
+        drop(ipfix_template_sender);
+        _ipfix_handle.await.expect("IPFIX task should join");
+        stats_handle.await.expect("stats reporter should join");
 
         // Step 3: Check that stats were generated and reported
         let messages = test_writer.get_messages();
@@ -187,26 +189,12 @@ mod end_to_end_tests {
             println!("Message {}: {}", i, msg);
         }
 
-        // Step 4: Test session deletion
-        let delete_message = countersyncd::message::ipfix::IPFixTemplatesMessage::delete(
-            "test_session|PORT".to_string(),
-        );
-        // Note: This might fail if actors have already shut down, which is expected in tests
-        let _ = ipfix_template_sender.send(delete_message).await;
-
-        // Give time for deletion processing
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Verify that deletion was processed by checking messages again
-        let final_messages = test_writer.get_messages();
-        println!("Final message count: {}", final_messages.len());
-
         // For a complete test, we should see:
         // 1. Template processing messages
         // 2. Data processing messages
         // 3. SAI stats generation
         assert!(
-            final_messages.len() > 0,
+            !messages.is_empty(),
             "Should have received some stats messages"
         );
 
@@ -219,7 +207,8 @@ mod end_to_end_tests {
         // This test focuses on the IPFIX -> SAI stats portion of the pipeline
         let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
         let (socket_sender, socket_receiver) = channel(10);
-        let (saistats_sender, saistats_receiver) = channel(100);
+        let (saistats_sender, mut saistats_receiver) = channel(100);
+        let (reporter_sender, reporter_receiver) = channel(100);
 
         let test_writer = TestWriter::new();
         let test_writer_clone = test_writer.clone();
@@ -227,6 +216,7 @@ mod end_to_end_tests {
         // Setup IPFIX actor
         let mut ipfix = IpfixActor::new(ipfix_template_receiver, socket_receiver);
         ipfix.add_recipient(saistats_sender);
+        ipfix.add_recipient(reporter_sender);
 
         // Setup stats reporter
         let reporter_config = StatsReporterConfig {
@@ -235,24 +225,23 @@ mod end_to_end_tests {
             max_stats_per_report: Some(5),
         };
         let stats_reporter =
-            StatsReporterActor::new(saistats_receiver, reporter_config, test_writer_clone);
+            StatsReporterActor::new(reporter_receiver, reporter_config, test_writer_clone);
 
         // Spawn actors
-        let _ipfix_handle = tokio::task::spawn_blocking(move || {
+        let ipfix_handle = tokio::task::spawn_blocking(move || {
             // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
             let rt =
                 tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
             rt.block_on(async move {
-                IpfixActor::run(ipfix).await;
+                IpfixActor::run(ipfix)
+                    .await
+                    .expect_err("IPFIX actor should report closed input channels");
             });
         });
 
-        let _stats_handle = spawn(async move {
+        let stats_handle = spawn(async move {
             StatsReporterActor::run(stats_reporter).await;
         });
-
-        // Give actors time to start
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Step 1: Send IPFIX template
         let template_data = create_test_ipfix_template();
@@ -268,16 +257,26 @@ mod end_to_end_tests {
             .await
             .expect("Failed to send template message");
 
-        // Give time for template processing
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
         // Step 2: Send IPFIX data
         let data = create_test_ipfix_data();
-        // Note: This might fail if actors have already shut down, which is expected in tests
-        let _ = socket_sender.send(Arc::new(data)).await;
+        socket_sender
+            .send(Arc::new(data))
+            .await
+            .expect("IPFIX data should be sent");
 
-        // Give time for data processing and stats reporting
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let batch = saistats_receiver
+            .recv()
+            .await
+            .expect("should receive a SAI stats batch");
+        let records: Vec<_> = batch.iter().collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].stats.len(), 2);
+        assert_eq!(records[0].observation_time, 1000);
+
+        drop(socket_sender);
+        drop(ipfix_template_sender);
+        ipfix_handle.await.expect("IPFIX task should join");
+        stats_handle.await.expect("stats reporter should join");
 
         // Step 3: Verify results
         let messages = test_writer.get_messages();

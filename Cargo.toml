@@ -32,10 +32,8 @@ netlink-packet-core = "0.7"
 netlink-packet-generic = "0.3"
 netlink-sys = "0.8"
 
-# IPFIX parser for traffic flow analysis
-ipfixrw = "0.1.0"
+# IPFIX/HFT wire decoding
 ahash = "0.8.11"
-binrw = "0.15.0"
 byteorder = "1.5.0"
 
 # Configuration and serialization
@@ -58,7 +56,6 @@ clap = { version = "4", features = ["derive", "cargo", "wrap_help", "unicode", "
 color-eyre = "0.6"
 
 # Utilities
-rand = "0.8.5"
 once_cell = "1.18.0"
 lazy_static = "1.4"
 regex = "1"

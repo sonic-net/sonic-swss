@@ -1,5 +1,8 @@
 use byteorder::{ByteOrder, NetworkEndian};
 
+const IPFIX_HEADER_LEN: usize = 16;
+const BENCH_PORT_COUNT: usize = 64;
+
 /// Build a single IPFIX template message for testing/benchmarks.
 /// Layout follows the described template format: one observationTimeNanoseconds
 /// field plus `counters_count` enterprise fields (element IDs are 1-based with
@@ -8,6 +11,23 @@ use byteorder::{ByteOrder, NetworkEndian};
 pub fn max_counters_per_template() -> usize {
     // message_length = 16 (msg hdr) + 12 (set + template header + obs field) + 8*N <= 65535
     ((u16::MAX as usize - 28) / 8) as usize
+}
+
+/// Build complete object metadata for the labels emitted by
+/// `generate_ipfix_templates`.
+pub fn generate_object_metadata(counters_count: usize) -> (Vec<String>, Vec<u16>) {
+    let counters_count = if counters_count == 0 {
+        max_counters_per_template()
+    } else {
+        counters_count
+    };
+
+    let object_names = (0..counters_count)
+        .map(|idx| format!("Ethernet{}", idx % BENCH_PORT_COUNT))
+        .collect();
+    let object_ids = (1..=counters_count as u16).collect();
+
+    (object_names, object_ids)
 }
 
 pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<u8> {
@@ -21,8 +41,11 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
     };
 
     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
-    let message_length = 16 + set_length;
-    assert!(message_length <= u16::MAX as usize, "template too large for a single IPFIX message");
+    let message_length = IPFIX_HEADER_LEN + set_length;
+    assert!(
+        message_length <= u16::MAX as usize,
+        "template too large for a single IPFIX message"
+    );
 
     let mut buf = Vec::with_capacity(message_length);
 
@@ -70,8 +93,9 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
     let mut sequence: u32 = 0;
 
     while offset + 4 <= ipfix_templates.len() {
-        let message_len = match get_ipfix_message_length(&ipfix_templates[offset..]) {
-            Ok(len) if offset + len as usize <= ipfix_templates.len() => len as usize,
+        let remaining = &ipfix_templates[offset..];
+        let message_len = match get_ipfix_message_length(remaining) {
+            Ok(len) if len <= remaining.len() => len,
             _ => break,
         };
 
@@ -131,7 +155,7 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
 
             let counters_count = field_count.saturating_sub(1);
             let data_set_length = 4 + 8 + counters_count * 8;
-            let message_length = 16 + data_set_length;
+            let message_length = IPFIX_HEADER_LEN + data_set_length;
             if message_length > u16::MAX as usize {
                 continue;
             }
@@ -165,9 +189,29 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
     records
 }
 
-fn get_ipfix_message_length(data: &[u8]) -> Result<u16, &'static str> {
+fn get_ipfix_message_length(data: &[u8]) -> Result<usize, &'static str> {
     if data.len() < 4 {
         return Err("Data too short for IPFIX header");
     }
-    Ok(NetworkEndian::read_u16(&data[2..4]))
+    let message_length = NetworkEndian::read_u16(&data[2..4]) as usize;
+    if message_length < IPFIX_HEADER_LEN {
+        return Err("Invalid IPFIX message length");
+    }
+    Ok(message_length)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn short_declared_lengths_do_not_stall_record_generation() {
+        for declared_length in 0..super::IPFIX_HEADER_LEN as u16 {
+            let mut message = [0u8; super::IPFIX_HEADER_LEN];
+            message[0..2].copy_from_slice(&10u16.to_be_bytes());
+            message[2..4].copy_from_slice(&declared_length.to_be_bytes());
+            assert!(
+                super::generate_ipfix_records(&message).is_empty(),
+                "declared length {declared_length}"
+            );
+        }
+    }
 }

@@ -1,9 +1,9 @@
 use super::super::message::ipfix::IPFixTemplatesMessage;
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
-use log::{debug, error, info, warn};
-use std::{collections::HashMap, sync::Arc, thread};
+use log::{debug, error, info};
 use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
@@ -32,8 +32,13 @@ pub struct SwssActor {
 
 #[derive(Debug)]
 enum SwssEvent {
-    Update { key: String, session_data: SessionData },
-    Delete { key: String },
+    Update {
+        key: String,
+        session_data: SessionData,
+    },
+    Delete {
+        key: String,
+    },
 }
 
 impl SwssActor {
@@ -194,9 +199,7 @@ impl SwssActor {
         }
     }
 
-    fn parse_session_data(
-        field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> SessionData {
+    fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
         let mut session_data = SessionData::default();
 
         for (field, value) in field_values {
@@ -260,15 +263,13 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
+        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await
+        {
             error!("Failed to process session {}: {}", key, e);
         }
     }
 
-    async fn process_session_delete(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-    ) {
+    async fn process_session_delete(template_recipient: &Sender<IPFixTemplatesMessage>, key: &str) {
         info!("Session deleted: {}", key);
 
         let delete_message = IPFixTemplatesMessage::delete(key.to_string());
@@ -309,18 +310,24 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
-        // Only process enabled sessions with ipfix type
+        // A disabled or repurposed row deactivates any previously installed IPFIX session.
         if session_data.stream_status != "enabled" {
-            debug!("Skipping disabled session: {}", key);
-            return Ok(());
+            debug!("Deactivating disabled session: {}", key);
+            return template_recipient
+                .send(IPFixTemplatesMessage::delete(key.to_string()))
+                .await
+                .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
 
         if session_data.session_type != "ipfix" {
             debug!(
-                "Skipping non-IPFIX session: {} (type: {})",
+                "Deactivating non-IPFIX session: {} (type: {})",
                 key, session_data.session_type
             );
-            return Ok(());
+            return template_recipient
+                .send(IPFixTemplatesMessage::delete(key.to_string()))
+                .await
+                .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
 
         if session_data.session_config.is_empty() {
@@ -332,67 +339,49 @@ impl SwssActor {
             key, session_data.object_names, session_data.object_ids
         );
 
-        let templates = Arc::new(session_data.session_config.clone());
+        let object_names: Vec<String> = session_data
+            .object_names
+            .split(',')
+            .map(str::trim)
+            .map(str::to_string)
+            .collect();
+        if object_names.is_empty() || object_names.iter().any(String::is_empty) {
+            return Err("object_names must contain non-empty names".to_string());
+        }
 
-        // Parse object_names if present
-        let object_names: Option<Vec<String>> = if session_data.object_names.is_empty() {
-            None
-        } else {
-            Some(
-                session_data
-                    .object_names
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            )
-        };
-
-        let object_ids = if session_data.object_ids.is_empty() {
-            None
-        } else {
-            let mut parsed_object_ids = Vec::new();
-            for token in session_data.object_ids.split(',') {
-                let trimmed = token.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                match trimmed.parse::<u16>() {
-                    Ok(object_id) => parsed_object_ids.push(object_id),
-                    Err(e) => {
-                        warn!(
-                            "Invalid object_ids entry '{}' for session {}: {}. Ignoring object_ids for this update",
-                            trimmed,
-                            key,
-                            e
-                        );
-                        parsed_object_ids.clear();
-                        break;
-                    }
-                }
+        let mut object_ids = Vec::new();
+        let mut unique_ids = std::collections::HashSet::new();
+        for token in session_data.object_ids.split(',') {
+            let trimmed = token.trim();
+            let object_id = trimmed
+                .parse::<u16>()
+                .map_err(|e| format!("Invalid object ID '{}' for {}: {}", trimmed, key, e))?;
+            if !(1..=0x7fff).contains(&object_id) {
+                return Err(format!(
+                    "Object ID {} for {} is outside the IPFIX 15-bit IE range",
+                    object_id, key
+                ));
             }
-
-            if parsed_object_ids.is_empty() {
-                None
-            } else if let Some(names) = object_names.as_ref() {
-                if names.len() != parsed_object_ids.len() {
-                    warn!(
-                        "object_ids/object_names length mismatch for session {}: {} ids vs {} names. Ignoring object_ids for this update",
-                        key,
-                        parsed_object_ids.len(),
-                        names.len()
-                    );
-                    None
-                } else {
-                    Some(parsed_object_ids)
-                }
-            } else {
-                Some(parsed_object_ids)
+            if !unique_ids.insert(object_id) {
+                return Err(format!("Duplicate object ID {} for {}", object_id, key));
             }
-        };
+            object_ids.push(object_id);
+        }
+        if object_ids.len() != object_names.len() {
+            return Err(format!(
+                "object_ids/object_names length mismatch for {}: {} ids vs {} names",
+                key,
+                object_ids.len(),
+                object_names.len()
+            ));
+        }
 
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
+        let message = IPFixTemplatesMessage::new(
+            key.to_string(),
+            Arc::new(session_data.session_config.clone()),
+            Some(object_names),
+            Some(object_ids),
+        );
 
         template_recipient
             .send(message)
@@ -519,15 +508,7 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify the message was sent
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a message");
-        assert_eq!(received_message.key, "test_session|PORT");
-        assert!(!received_message.is_delete);
-        assert!(received_message.templates.is_some());
-        assert!(received_message.object_names.is_none());
-        assert_eq!(received_message.object_ids, Some(vec![1]));
+        assert!(template_receiver.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -567,8 +548,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("deactivation message");
+        assert!(message.is_delete);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -587,8 +569,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("deactivation message");
+        assert!(message.is_delete);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -611,15 +594,34 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify the message was sent with None object_names
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a message");
-        assert_eq!(received_message.key, "empty_names_session|PORT");
-        assert!(!received_message.is_delete);
-        assert!(received_message.templates.is_some());
-        assert!(received_message.object_names.is_none());
-        assert_eq!(received_message.object_ids, Some(vec![1]));
+        assert!(template_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_hft_metadata_is_not_forwarded() {
+        async fn rejects(names: &str, ids: &str) {
+            let (template_sender, mut template_receiver) = channel(1);
+            let session = SessionData {
+                stream_status: "enabled".to_string(),
+                session_type: "ipfix".to_string(),
+                object_names: names.to_string(),
+                object_ids: ids.to_string(),
+                session_config: vec![1],
+            };
+            assert!(
+                SwssActor::validate_and_send_session(&template_sender, "test|PORT", &session)
+                    .await
+                    .is_err()
+            );
+            assert!(template_receiver.try_recv().is_err());
+        }
+
+        rejects("Ethernet0", "0").await;
+        rejects("Ethernet0", "32768").await;
+        rejects("Ethernet0,Ethernet4", "1,1").await;
+        rejects("Ethernet0,Ethernet4", "1").await;
+        rejects("Ethernet0,,Ethernet4", "1,2,3").await;
+        rejects("Ethernet0", "not-a-number").await;
     }
 
     #[test]
