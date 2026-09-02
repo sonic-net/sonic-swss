@@ -807,6 +807,7 @@ bool OrchDaemon::init()
         };
 
         bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
+        bool pfcDldrEnable = gSwitchOrch->checkPfcDldrEnable();
 
         // Override pfcDlrInit if needed, and this change is only for PFC tests.
         if(getenv("PFC_DLR_INIT_ENABLE"))
@@ -820,6 +821,13 @@ bool OrchDaemon::init()
             else if(envPfcDlrInit == "0")
             {
                 pfcDlrInit = false;
+                // Asking for a software handler also rules out the hardware
+                // watchdog, which would otherwise take precedence below. The
+                // virtual switch advertises every queue attribute, DLDR
+                // included, so without this the software handlers are
+                // unreachable there and the tests that set this variable cannot
+                // exercise them.
+                pfcDldrEnable = false;
                 SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
             }
         }
@@ -829,7 +837,7 @@ bool OrchDaemon::init()
         // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT, and a platform
         // that reports DLDR may report DLR init too, so DLDR is checked first:
         // starting a software handler there would duplicate the hardware.
-        if (gSwitchOrch->checkPfcDldrEnable())
+        if (pfcDldrEnable)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
             m_orchList.push_back(new PfcWdHwOrch(
