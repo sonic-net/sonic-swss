@@ -8,6 +8,9 @@ documentation.workspace = true
 keywords.workspace = true
 edition.workspace = true
 
+[features]
+benchmark = []
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
@@ -97,3 +100,8 @@ harness = false
 [[bench]]
 name = "counter_db_actor_perf"
 harness = false
+
+[[bench]]
+name = "data_netlink_perf"
+harness = false
+required-features = ["benchmark"]

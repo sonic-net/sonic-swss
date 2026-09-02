@@ -339,6 +339,18 @@ impl NetlinkMessageParser {
     }
 }
 
+#[cfg(all(feature = "benchmark", not(test)))]
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn benchmark_parse_datagram(
+    datagram: &[u8],
+    expected_family_id: u16,
+) -> io::Result<Vec<SocketBufferMessage>> {
+    NetlinkMessageParser::new()
+        .parse_buffer(datagram, expected_family_id)
+        .map(|outcome| outcome.messages)
+}
+
 /// Actor responsible for managing the data netlink socket and message distribution.
 ///
 /// The DataNetlinkActor handles:
@@ -556,6 +568,23 @@ impl DataNetlinkActor {
     /// * `recipient` - Channel sender for distributing received messages
     pub fn add_recipient(&mut self, recipient: Sender<SocketBufferMessage>) {
         self.buffer_recipients.push(recipient);
+    }
+
+    #[cfg(all(feature = "benchmark", not(test)))]
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub fn new_benchmark(
+        socket: Socket,
+        command_recipient: Receiver<NetlinkCommand>,
+        family_id: u16,
+    ) -> Self {
+        let mut actor = Self::new("bench-family", "bench-group", command_recipient, 0);
+        actor.socket = Some(socket);
+        actor.subscription = Some(NetlinkSubscription {
+            family_id,
+            group_id: 1,
+        });
+        actor
     }
 
     #[cfg(not(test))]
