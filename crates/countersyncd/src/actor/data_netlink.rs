@@ -1057,24 +1057,39 @@ impl DataNetlinkActor {
                         Err(e) if e.raw_os_error() == Some(ENOBUFS) => {
                             if let Some(suppressed) = enobufs_warnings.record(1) {
                                 warn!(
-                                    "Netlink receive buffer full (ENOBUFS); {} prior notification(s) suppressed. Consider increasing --netlink-rcvbuf or reducing HFT load: {:?}",
-                                    suppressed, e
+                                    "Netlink receive buffer full (ENOBUFS){}. Consider increasing --netlink-rcvbuf or reducing HFT load: {:?}",
+                                    if suppressed > 0 {
+                                        format!("; {suppressed} prior notification(s) suppressed")
+                                    } else {
+                                        String::new()
+                                    },
+                                    e
                                 );
                             }
                         }
                         Err(e) if e.kind() == io::ErrorKind::InvalidData => {
                             if let Some(suppressed) = invalid_data_warnings.record(1) {
                                 warn!(
-                                    "Dropping invalid netlink datagram; {} prior event(s) suppressed: {:?}",
-                                    suppressed, e
+                                    "Dropping invalid netlink datagram{}: {:?}",
+                                    if suppressed > 0 {
+                                        format!("; {suppressed} prior event(s) suppressed")
+                                    } else {
+                                        String::new()
+                                    },
+                                    e
                                 );
                             }
                         }
                         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
                             if let Some(suppressed) = invalid_data_warnings.record(1) {
                                 warn!(
-                                    "Dropping non-kernel netlink datagram; {} prior event(s) suppressed: {:?}",
-                                    suppressed, e
+                                    "Dropping non-kernel netlink datagram{}: {:?}",
+                                    if suppressed > 0 {
+                                        format!("; {suppressed} prior event(s) suppressed")
+                                    } else {
+                                        String::new()
+                                    },
+                                    e
                                 );
                             }
                         }
