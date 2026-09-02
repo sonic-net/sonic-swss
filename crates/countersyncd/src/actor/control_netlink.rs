@@ -176,7 +176,12 @@ impl ControlNetlinkActor {
             (Some(resolver), result)
         })
         .await
-        .map_err(|error| io::Error::other(format!("resolver task failed: {error}")))?;
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("resolver task failed: {error}"),
+            )
+        })?;
         self.resolver = resolver;
 
         match result {
@@ -567,7 +572,7 @@ impl ControlNetlinkActor {
                                         _ => None,
                                     };
                                     if matches!(final_event, FamilyEvent::Unregistered(_))
-                                        && current_id.is_none_or(|id| id == event_id)
+                                        && current_id.map_or(true, |id| id == event_id)
                                         && !actor.apply_state(&mut state, SubscriptionState::Absent, false).await
                                     {
                                         break;

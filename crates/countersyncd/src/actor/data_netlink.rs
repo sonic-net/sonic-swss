@@ -53,6 +53,7 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 5 * 60;
 const SOCKET_REGISTRATION_RETRY_SECS: u64 = 1;
 const MAX_SOCKET_REGISTRATION_RETRY_SECS: u64 = 60;
 const WARNING_SUMMARY_INTERVAL_SECS: u64 = 60;
+const MAX_MEMBERSHIP_BITMAP_BYTES: usize = 1024 * 1024;
 
 /// Maximum supported size for a single netlink datagram/message.
 /// This bounds userspace allocation after peeking the datagram length.
@@ -84,7 +85,7 @@ impl WarningLimiter {
 
     fn record(&mut self, count: usize) -> Option<usize> {
         let now = tokio::time::Instant::now();
-        if self.last_log.is_none_or(|last| {
+        if self.last_log.map_or(true, |last| {
             now.duration_since(last) >= Duration::from_secs(WARNING_SUMMARY_INTERVAL_SECS)
         }) {
             let suppressed = self.suppressed;
@@ -396,6 +397,12 @@ impl DataNetlinkActor {
         word < groups.len() && groups[word] & (1 << (bit % u32::BITS)) != 0
     }
 
+    fn membership_word_count(group_id: u32) -> Option<usize> {
+        let bit = group_id.checked_sub(1)? as usize;
+        let words = bit / u32::BITS as usize + 1;
+        (words <= MAX_MEMBERSHIP_BITMAP_BYTES / std::mem::size_of::<u32>()).then_some(words)
+    }
+
     fn register_active_socket(&mut self) -> Result<Option<AsyncFd<SocketType>>, io::Error> {
         let Some(socket) = self.socket.take() else {
             return Ok(None);
@@ -404,7 +411,10 @@ impl DataNetlinkActor {
         #[cfg(test)]
         if test::fail_socket_registration() {
             self.socket = Some(socket);
-            return Err(io::Error::other("simulated socket registration failure"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "simulated socket registration failure",
+            ));
         }
         match AsyncFd::try_with_interest(socket, Interest::READABLE | Interest::ERROR) {
             Ok(socket) => {
@@ -658,23 +668,47 @@ impl DataNetlinkActor {
 
     #[cfg(not(test))]
     fn has_membership(socket: &SocketType, group_id: u32) -> bool {
-        let mut groups = [0u32; 32];
-        let mut length = std::mem::size_of_val(&groups) as libc::socklen_t;
-        let result = unsafe {
-            libc::getsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_NETLINK,
-                libc::NETLINK_LIST_MEMBERSHIPS,
-                groups.as_mut_ptr().cast(),
-                &mut length,
-            )
-        };
-        if result < 0 {
-            warn!("Failed to inspect data netlink memberships: {}", io::Error::last_os_error());
+        let Some(word_count) = Self::membership_word_count(group_id) else {
+            warn!(
+                "Netlink group ID {} exceeds the supported membership bitmap limit",
+                group_id
+            );
             return false;
+        };
+        let mut groups = vec![0u32; word_count];
+
+        loop {
+            let capacity = groups.len() * std::mem::size_of::<u32>();
+            let mut length = capacity as libc::socklen_t;
+            let result = unsafe {
+                libc::getsockopt(
+                    socket.as_raw_fd(),
+                    libc::SOL_NETLINK,
+                    libc::NETLINK_LIST_MEMBERSHIPS,
+                    groups.as_mut_ptr().cast(),
+                    &mut length,
+                )
+            };
+            if result < 0 {
+                warn!(
+                    "Failed to inspect data netlink memberships: {}",
+                    io::Error::last_os_error()
+                );
+                return false;
+            }
+
+            let required = length as usize;
+            if required > capacity && required <= MAX_MEMBERSHIP_BITMAP_BYTES {
+                let word_size = std::mem::size_of::<u32>();
+                groups.resize((required + word_size - 1) / word_size, 0);
+                continue;
+            }
+
+            let words = groups
+                .len()
+                .min(required / std::mem::size_of::<u32>());
+            return Self::membership_is_set(&groups[..words], group_id);
         }
-        let count = length as usize / std::mem::size_of::<u32>();
-        Self::membership_is_set(&groups[..count.min(groups.len())], group_id)
     }
 
     #[cfg(test)]
@@ -1749,6 +1783,9 @@ pub mod test {
         assert!(DataNetlinkActor::membership_is_set(&[0, 1], 33));
         assert!(!DataNetlinkActor::membership_is_set(&[30], 30));
         assert!(!DataNetlinkActor::membership_is_set(&[u32::MAX], 0));
+        assert_eq!(DataNetlinkActor::membership_word_count(1), Some(1));
+        assert_eq!(DataNetlinkActor::membership_word_count(1025), Some(33));
+        assert!(DataNetlinkActor::membership_word_count(u32::MAX).is_none());
     }
 
     #[tokio::test]
