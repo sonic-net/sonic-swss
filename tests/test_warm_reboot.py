@@ -2630,7 +2630,7 @@ class TestSrv6MySidWarmRestart(object):
         assert exitcode == 0
         assert result == "RESTARTCHECK succeeded\n"
 
-        pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        marker = dvs.add_log_marker("/var/log/syslog")
         dvs.stop_swss()
         dvs.start_swss()
         dvs.check_swss_ready()
@@ -2643,9 +2643,12 @@ class TestSrv6MySidWarmRestart(object):
 
         assert self.snapshot_table(app_mysid_view) == app_before
         self.assert_asic_state_preserved(asic_before, self.snapshot_table(asic_mysid))
-        nadd, ndel = dvs.CountSubscribedObjects(pubsub)
-        assert nadd == 0
-        assert ndel == 0
+        _, output = dvs.runcmd([
+            "sh",
+            "-c",
+            "awk '/{}/,ENDFILE {{ if ($0 ~ /executeOperationsOnAsic: .*SAI_OBJECT_TYPE_MY_SID_ENTRY/) count++ }} END {{ print count+0 }}' /var/log/syslog".format(marker),
+        ])
+        assert int(output.strip()) == 0
 
     def test_fpmsyncd_static_mysid_timer_replay(self, dvs, request):
         _, output = dvs.runcmd("vtysh -c 'show zebra dplane providers'")
