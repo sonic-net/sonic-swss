@@ -63,6 +63,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
                     key.to_string(),
                     Arc::new(bytes.clone()),
                     Some(vec!["Obj0".to_string(), "Obj1".to_string()]),
+                    Some(vec![1, 2]),
                 ))
                 .await
                 .expect("template send should succeed");
@@ -164,6 +165,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             delete_key.to_string(),
             Arc::new(readd_templates_bytes.clone()),
             Some(vec!["ObjA".to_string(), "ObjB".to_string()]),
+            Some(vec![1, 2]),
         ))
         .await
         .expect("template re-add should succeed");

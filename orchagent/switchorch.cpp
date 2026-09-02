@@ -26,6 +26,7 @@ extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
+extern string gMySwitchType;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -51,7 +52,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
     {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
-    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
+    {"credit_watchdog",                     SAI_SWITCH_ATTR_CREDIT_WD},
+    {"credit_watchdog_timer",               SAI_SWITCH_ATTR_CREDIT_WD_TIMER}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -124,6 +127,30 @@ static std::unordered_set<std::string> serializeSwitchCounterStats(const std::ve
 
 // Switch OA ----------------------------------------------------------------------------------------------------------
 
+void SwitchOrch::set_switch_pfc_dldr_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLDR capability. SAI_QUEUE_ATTR_ENABLE_PFC_DLDR covers both
+     * deadlock detection and recovery in hardware, so it distinguishes a
+     * complete hardware watchdog from a hybrid one, which only supports
+     * SAI_QUEUE_ATTR_PFC_DLR_INIT. */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_ENABLE_PFC_DLDR);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is not supported");
+        m_PfcDldrEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is supported");
+        m_PfcDldrEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -136,12 +163,49 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
-    else 
+    else
     {
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
         m_PfcDlrInitEnable = true;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
     }
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::set_switch_bfd_next_hop_capability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_attr_capability_t use_next_hop_cap;
+    sai_attr_capability_t next_hop_id_cap;
+    bool capable = false;
+
+    sai_status_t use_nh_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                                SAI_BFD_SESSION_ATTR_USE_NEXT_HOP,
+                                                                &use_next_hop_cap);
+    sai_status_t nh_id_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                               SAI_BFD_SESSION_ATTR_NEXT_HOP_ID,
+                                                               &next_hop_id_cap);
+    if (use_nh_status == SAI_STATUS_SUCCESS && nh_id_status == SAI_STATUS_SUCCESS &&
+        use_next_hop_cap.create_implemented &&
+        next_hop_id_cap.create_implemented && next_hop_id_cap.set_implemented)
+    {
+        capable = true;
+        SWSS_LOG_INFO("SAI_BFD nexthop injection (USE_NEXT_HOP and NEXT_HOP_ID) are implemented");
+    }
+    else
+    {
+        if (use_nh_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_USE_NEXT_HOP %x", use_nh_status);
+        }
+        if (nh_id_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_NEXT_HOP_ID %x", nh_id_status);
+        }
+        SWSS_LOG_INFO("SAI_BFD nexthop injection is not fully implemented");
+    }
+
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, capable ? "true" : "false");
     set_switch_capability(fvVector);
 }
 
@@ -162,10 +226,13 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_pfc_dldr_capability();
+    set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchPortMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
@@ -699,6 +766,35 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         else
                         {
                             attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD:
+                        // SAI gates this attribute to VOQ switches (validonly
+                        // SAI_SWITCH_ATTR_TYPE == SAI_SWITCH_TYPE_VOQ). Skip on
+                        // non-VOQ rather than letting SAI return NOT_SUPPORTED.
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.booldata = to_uint<bool>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD_TIMER:
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog_timer is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u32 = to_uint<uint32_t>(value);
                         }
                         break;
 
@@ -1952,6 +2048,87 @@ void SwitchOrch::querySwitchPortMirrorCapability()
             m_portEgressMirrorSupported = false;
         }
         SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchSamplePacketCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling samplepacket truncation
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SAMPLEPACKET,
+                            SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query samplepacket truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+        m_samplepacketTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "true");
+            m_samplepacketTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+            m_samplepacketTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
     set_switch_capability(fvVector);
