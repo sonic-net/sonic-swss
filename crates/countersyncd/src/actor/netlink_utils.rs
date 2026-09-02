@@ -3,6 +3,7 @@
 /// This module provides common functionality used by both ControlNetlinkActor
 /// and DataNetlinkActor to avoid code duplication.
 
+#[cfg(not(test))]
 use netlink_sys::Socket;
 
 #[cfg(not(test))]
@@ -125,16 +126,6 @@ pub fn create_nl_resolver() -> io::Result<Socket> {
     set_socket_recv_timeout(&socket, RESOLVER_TIMEOUT)?;
     debug!("Created netlink socket for family/group resolution (blocking mode)");
     Ok(socket)
-}
-
-/// Mock netlink resolver for testing.
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn create_nl_resolver() -> Result<Socket, std::io::Error> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "mock resolver is provided by the actor tests",
-    ))
 }
 
 #[cfg(not(test))]

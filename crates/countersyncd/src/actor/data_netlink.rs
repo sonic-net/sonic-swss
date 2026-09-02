@@ -634,14 +634,12 @@ impl DataNetlinkActor {
             return None;
         }
 
-        let sock = SocketType::new(&self.family, &self.group, family_id, group_id);
-        if sock.valid {
-            debug!("Test: Created new valid MockSocket");
-            Some(sock)
-        } else {
-            debug!("Test: MockSocket reports invalid, connection failed");
-            None
-        }
+        Some(SocketType::new(
+            &self.family,
+            &self.group,
+            family_id,
+            group_id,
+        ))
     }
 
     #[cfg(not(test))]
@@ -1414,7 +1412,6 @@ pub mod test {
 
     /// Mock socket backed by a real datagram fd so tests exercise Tokio readiness registration.
     pub struct MockSocket {
-        pub valid: bool,
         socket: UnixDatagram,
         _sender: UnixDatagram,
         fail_on_recv: bool,
@@ -1466,7 +1463,6 @@ pub mod test {
             }
 
             Self {
-                valid: true,
                 socket,
                 _sender: sender,
                 fail_on_recv,
@@ -2056,8 +2052,6 @@ pub mod test {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_recv_datagram_larger_than_default_buffer() {
-        use std::os::unix::net::UnixDatagram;
-
         let (tx, rx) = UnixDatagram::pair().unwrap();
         let payload = vec![0xab; BUFFER_SIZE + 4096];
         tx.send(&payload).unwrap();
@@ -2071,8 +2065,6 @@ pub mod test {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_recv_datagram_larger_than_max_size_is_drained() {
-        use std::os::unix::net::UnixDatagram;
-
         let (tx, rx) = UnixDatagram::pair().unwrap();
         let payload = vec![0xef; BUFFER_SIZE + 4096];
         let next_payload = b"NEXT";
@@ -2090,8 +2082,6 @@ pub mod test {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_recv_datagram_empty_is_invalid_and_drained() {
-        use std::os::unix::net::UnixDatagram;
-
         let (tx, rx) = UnixDatagram::pair().unwrap();
         let next_payload = b"NEXT";
         tx.send(&[]).unwrap();
@@ -2108,8 +2098,6 @@ pub mod test {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_plain_recvmsg_reports_truncation() {
-        use std::os::unix::net::UnixDatagram;
-
         let (tx, rx) = UnixDatagram::pair().unwrap();
         let payload = vec![0xcd; BUFFER_SIZE + 4096];
         tx.send(&payload).unwrap();
@@ -2125,8 +2113,6 @@ pub mod test {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_recv_datagram_fd_propagates_wouldblock() {
-        use std::os::unix::net::UnixDatagram;
-
         let (_tx, rx) = UnixDatagram::pair().unwrap();
         rx.set_nonblocking(true).unwrap();
 

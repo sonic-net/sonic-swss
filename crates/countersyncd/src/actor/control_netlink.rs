@@ -16,8 +16,6 @@ use netlink_packet_utils::{
 
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
-#[cfg(test)]
-use netlink_sys::SocketAddr;
 use tokio::{
     io::unix::AsyncFd,
     select,
@@ -190,20 +188,6 @@ impl ControlNetlinkActor {
         Ok(test::resolved_subscription())
     }
 
-    #[cfg(not(test))]
-    fn recv_control_datagram(
-        socket: &mut SocketType,
-    ) -> Result<(Vec<u8>, SocketAddr), io::Error> {
-        socket.recv_from_full()
-    }
-
-    #[cfg(test)]
-    fn recv_control_datagram(
-        socket: &mut SocketType,
-    ) -> Result<(Vec<u8>, SocketAddr), io::Error> {
-        socket.recv_from_full()
-    }
-
     /// Attempts to receive a control message from the control socket.
     ///
     /// Returns all target-family changes found in one receive,
@@ -216,7 +200,7 @@ impl ControlNetlinkActor {
         let mut events = Vec::new();
 
         for _ in 0..MAX_CONTROL_DATAGRAMS_PER_WAKE {
-            match Self::recv_control_datagram(socket) {
+            match socket.recv_from_full() {
                 Ok((buffer, source)) => {
                     if buffer.is_empty() {
                         return Err(io::Error::new(
@@ -615,7 +599,6 @@ pub mod test {
             atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
             Mutex,
         },
-        time::Duration,
     };
     use tokio::{
         spawn,

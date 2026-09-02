@@ -572,7 +572,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
 
     fn parse(args: &[&str]) -> Result<Args, clap::Error> {
         Args::try_parse_from(args)
