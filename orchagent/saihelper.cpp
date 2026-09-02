@@ -9,6 +9,7 @@ extern "C" {
 #include <inttypes.h>
 #include <string.h>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <logger.h>
 #include <sairedis.h>
@@ -1026,6 +1027,57 @@ void setFlexCounterGroupPollInterval(const string &group,
     notifySyncdCounterOperation(is_gearbox, attr);
 }
 
+void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
+                                            const std::string &secondary_poll_factor,
+                                            bool is_gearbox)
+{
+    if (secondary_poll_factor.empty() ||
+        secondary_poll_factor.find_first_not_of("0123456789") != std::string::npos)
+    {
+        SWSS_LOG_ERROR("Invalid secondary poll factor '%s'", secondary_poll_factor.c_str());
+        return;
+    }
+
+    try
+    {
+        // syncd currently parses this field with stoi(), so keep the value in
+        // that parser's non-negative range and reject input that could terminate
+        // flex-counter processing there.
+        if (std::stoull(secondary_poll_factor) >
+            static_cast<unsigned long long>(std::numeric_limits<int>::max()))
+        {
+            SWSS_LOG_ERROR("Secondary poll factor '%s' is out of range", secondary_poll_factor.c_str());
+            return;
+        }
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Invalid secondary poll factor '%s': %s",
+                       secondary_poll_factor.c_str(), e.what());
+        return;
+    }
+
+    if (gTraditionalFlexCounter)
+    {
+        std::vector<FieldValueTuple> values = {
+            {SECONDARY_POLL_FACTOR_FIELD, secondary_poll_factor}
+        };
+        auto &table = is_gearbox ? gGearBoxFlexCounterGroupTable : gFlexCounterGroupTable;
+        table->set(group, values);
+        return;
+    }
+
+    sai_redis_flex_counter_group_secondary_poll_factor_parameter_t param{};
+    initSaiRedisCounterParameterFromString(param.counter_group_name, group);
+    initSaiRedisCounterParameterFromString(param.secondary_poll_factor, secondary_poll_factor);
+
+    sai_attribute_t attr{};
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP_SECONDARY_POLL_FACTOR;
+    attr.value.ptr = &param;
+
+    notifySyncdCounterOperation(is_gearbox, attr);
+}
+
 void setFlexCounterGroupStatsMode(const std::string &group,
                                   const std::string &stats_mode,
                                   bool is_gearbox)
@@ -1267,4 +1319,3 @@ bool getSaiFailureStatus(std::string& error)
     }
     return true;
 }
-

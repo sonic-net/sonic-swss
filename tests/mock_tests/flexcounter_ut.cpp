@@ -1,3 +1,4 @@
+#include "schema.h"
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
 #undef private
@@ -142,6 +143,31 @@ namespace flexcounter_test
         return SAI_STATUS_SUCCESS;
     }
 
+    sai_status_t mockFlexCounterGroupSecondaryPollFactorOperation(
+        sai_object_id_t objectId,
+        const sai_attribute_t *attr)
+    {
+        if (objectId != gSwitchId)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+
+        auto *param = reinterpret_cast<
+            sai_redis_flex_counter_group_secondary_poll_factor_parameter_t *>(attr->value.ptr);
+        std::string key(
+            reinterpret_cast<const char *>(param->counter_group_name.list),
+            param->counter_group_name.count);
+        std::string factor(
+            reinterpret_cast<const char *>(param->secondary_poll_factor.list),
+            param->secondary_poll_factor.count);
+
+        mockFlexCounterGroupTable->set(
+            key,
+            {{SECONDARY_POLL_FACTOR_FIELD, factor}});
+
+        return SAI_STATUS_SUCCESS;
+    }
+
     bool _checkFlexCounterTableContent(std::shared_ptr<swss::Table> table, const std::string key, std::vector<swss::FieldValueTuple> entries)
     {
         vector<FieldValueTuple> fieldValues;
@@ -252,6 +278,10 @@ namespace flexcounter_test
         if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP)
         {
             mockFlexCounterGroupOperation(switch_id, attr);
+        }
+        else if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP_SECONDARY_POLL_FACTOR)
+        {
+            mockFlexCounterGroupSecondaryPollFactorOperation(switch_id, attr);
         }
         else if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER)
         {
@@ -528,6 +558,7 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PORT_PLUGIN_FIELD, ""}
                                           }));
@@ -640,7 +671,10 @@ namespace flexcounter_test
         flexCounterCfg.set("QUEUE", values);
         flexCounterCfg.set("PORT_BUFFER_DROP", values);
         flexCounterCfg.set("PG_DROP", values);
-        flexCounterCfg.set("PORT", values);
+        flexCounterCfg.set("PORT", {
+            {FLEX_COUNTER_STATUS_FIELD, "enable"},
+            {SECONDARY_POLL_FACTOR_FIELD, "240"}
+        });
         flexCounterCfg.set("BUFFER_POOL_WATERMARK", values);
         flexCounterCfg.set("PFCWD", values);
 
@@ -699,6 +733,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "1000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "240"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {PORT_PLUGIN_FIELD, ""}

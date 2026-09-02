@@ -906,6 +906,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                                  PG_PLUGIN_FIELD,
                                  pgWmSha);
 
+    // Configure the factor before installing the PORT plugins so port_flr.lua
+    // receives ARGV[4] on its first invocation.
+    setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                           PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR);
+
     setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
                                  STATS_MODE_READ,
