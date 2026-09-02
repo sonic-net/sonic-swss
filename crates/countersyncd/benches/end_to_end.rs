@@ -1,5 +1,8 @@
 use std::process::{Command, Stdio};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use std::{net::SocketAddr, thread};
 
@@ -7,19 +10,20 @@ use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criteri
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tokio::task::spawn_blocking;
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::{Request, Response, Status};
 use tonic::transport::Server;
+use tonic::{Request, Response, Status};
 
 use countersyncd::actor::counter_db::{CounterDBActor, CounterDBConfig};
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
 use countersyncd::actor::stats_reporter::{OutputWriter, StatsReporterActor, StatsReporterConfig};
-use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsMessage};
+use countersyncd::message::{
+    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
+};
 
 mod ipfix_bench_data;
-use ipfix_bench_data::{PreparedDataset, datasets, randomize_record, rng_for_template};
+use ipfix_bench_data::{datasets, PreparedDataset};
 
 const COUNTERS_DB_ID: i32 = 2;
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
@@ -36,18 +40,30 @@ struct MockMetricsService {
 }
 
 #[tonic::async_trait]
-impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsService for MockMetricsService {
+impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsService
+    for MockMetricsService
+{
     async fn export(
         &self,
-        _request: Request<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest>,
-    ) -> Result<Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>, Status> {
+        _request: Request<
+            opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest,
+        >,
+    ) -> Result<
+        Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>,
+        Status,
+    > {
         self.exports.fetch_add(1, Ordering::Relaxed);
         Ok(Response::new(Default::default()))
     }
 }
 
 /// Start a mock OTLP collector on an ephemeral port, returning its endpoint and a shutdown handle.
-fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()>, Arc<AtomicU64>) {
+fn start_mock_collector() -> (
+    String,
+    oneshot::Sender<()>,
+    thread::JoinHandle<()>,
+    Arc<AtomicU64>,
+) {
     let (addr_tx, addr_rx) = std::sync::mpsc::channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let exports = Arc::new(AtomicU64::new(0));
@@ -62,7 +78,9 @@ fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()
             let addr = listener.local_addr().expect("collector addr");
             addr_tx.send(addr).expect("send collector addr");
 
-            let svc = MockMetricsService { exports: exports_clone };
+            let svc = MockMetricsService {
+                exports: exports_clone,
+            };
             let incoming = TcpListenerStream::new(listener);
 
             Server::builder()
@@ -113,32 +131,62 @@ fn seed_port_name_map(port_count: usize) {
     }
 }
 
-async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_counter: Arc<AtomicU64>) -> (Duration, usize, u64) {
-    let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
+async fn run_end_to_end(
+    prepared: PreparedDataset,
+    endpoint: String,
+    exports_counter: Arc<AtomicU64>,
+) -> (Duration, usize, u64) {
+    let (template_tx, template_rx) =
+        mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
-    let (counter_tx, counter_rx) = mpsc::channel::<SAIStatsMessage>(1024);
-    let (otel_tx, otel_rx) = mpsc::channel::<SAIStatsMessage>(1024);
-    let (stats_tx, stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
+    let (counter_tx, mut counter_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
+    let (otel_tx, mut otel_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
+    let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
+    let (readiness_tx, mut readiness_rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
     let (otel_done_tx, otel_done_rx) = oneshot::channel();
 
     let mut ipfix = IpfixActor::new(template_rx, buffer_rx);
-    ipfix.add_recipient(counter_tx.clone());
-    ipfix.add_recipient(otel_tx.clone());
-    ipfix.add_recipient(stats_tx.clone());
+    ipfix.add_recipient(counter_tx);
+    ipfix.add_recipient(otel_tx);
+    ipfix.add_recipient(stats_tx);
+    ipfix.add_recipient(readiness_tx);
 
-    // Run IpfixActor on a dedicated thread with its own runtime to satisfy thread-local requirements
-    let ipfix_handle = spawn_blocking(move || {
-        let rt = tokio::runtime::Runtime::new().expect("ipfix runtime");
-        rt.block_on(async move {
-            IpfixActor::run(ipfix).await;
-        });
-    });
+    let ipfix_handle = tokio::spawn(IpfixActor::run(ipfix));
+
+    for message in &prepared.template_messages {
+        template_tx
+            .send(message.clone())
+            .await
+            .expect("template send should succeed");
+    }
+
+    buffer_tx
+        .send(Arc::clone(&prepared.readiness_record))
+        .await
+        .expect("readiness probe send should succeed");
+    let probe_batch = readiness_rx
+        .recv()
+        .await
+        .expect("readiness probe should produce a batch");
+    assert_eq!(probe_batch.record_count(), 1);
+    assert_eq!(probe_batch.counter_count(), 1);
+    for probe in [
+        counter_rx.recv().await.expect("CounterDB probe delivery"),
+        otel_rx.recv().await.expect("OTel probe delivery"),
+        stats_rx
+            .recv()
+            .await
+            .expect("stats reporter probe delivery"),
+    ] {
+        assert_eq!(probe.record_count(), 1);
+        assert_eq!(probe.counter_count(), 1);
+    }
 
     let counter_cfg = CounterDBConfig {
         interval: Duration::from_millis(100),
     };
-    let counter_interval = counter_cfg.interval;
-    let counter_actor = CounterDBActor::new(counter_rx, counter_cfg).expect("create counter db actor");
+    let counter_actor =
+        CounterDBActor::new(counter_rx, counter_cfg).expect("create counter db actor");
     let counter_handle = tokio::spawn(async move { counter_actor.run().await });
 
     let otel_cfg = OtelActorConfig {
@@ -159,19 +207,28 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     let reporter = StatsReporterActor::new(stats_rx, reporter_cfg, BenchNullWriter);
     let reporter_handle = tokio::spawn(async move { StatsReporterActor::run(reporter).await });
 
-    for message in &prepared.template_messages {
-        template_tx
-            .send(message.clone())
-            .await
-            .expect("template send should succeed");
-    }
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     let expected_messages = prepared.expected_messages;
     let expected_counters = prepared.expected_counters;
-
-    let start = Instant::now();
+    let (workload_done_tx, workload_done_rx) = oneshot::channel();
+    let readiness_drain = tokio::spawn(async move {
+        let mut records = 0usize;
+        let mut counters = 0usize;
+        let mut workload_done_tx = Some(workload_done_tx);
+        while let Some(batch) = readiness_rx.recv().await {
+            for record in batch.iter() {
+                records += 1;
+                counters += record.stats.len();
+            }
+            if records >= expected_messages {
+                assert_eq!(records, expected_messages);
+                assert_eq!(counters, expected_counters);
+                if let Some(done) = workload_done_tx.take() {
+                    let _ = done.send(());
+                }
+            }
+        }
+        (records, counters)
+    });
 
     let sender_tasks: Vec<_> = prepared
         .templates
@@ -180,11 +237,9 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
         .map(|tmpl| {
             let tx = buffer_tx.clone();
             let base_record = tmpl.base_record.clone();
-            let mut rng = rng_for_template(&tmpl.spec);
             tokio::spawn(async move {
-                for seq in 0..tmpl.records {
-                    let msg = randomize_record(&base_record, seq as u64, &mut rng);
-                    if tx.send(msg).await.is_err() {
+                for _ in 0..tmpl.records {
+                    if tx.send(Arc::clone(&base_record)).await.is_err() {
                         break;
                     }
                 }
@@ -192,29 +247,56 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
         })
         .collect();
 
+    let start = Instant::now();
+
     for task in sender_tasks {
-        let _ = task.await;
+        task.await.expect("record sender should join");
     }
+    workload_done_rx
+        .await
+        .expect("IPFIX output should include the full workload");
 
     drop(buffer_tx);
     drop(template_tx);
 
-    let _ = ipfix_handle.await.expect("ipfix join");
+    ipfix_handle
+        .await
+        .expect("ipfix join")
+        .expect_err("IPFIX actor should report closed input channels");
+    let (observed_records, observed_counters) =
+        readiness_drain.await.expect("readiness drain should join");
+    assert_eq!(observed_records, expected_messages);
+    assert_eq!(observed_counters, expected_counters);
 
-    // Allow at least one counter DB write tick before closing the channel
-    tokio::time::sleep(counter_interval * 2).await;
-    drop(counter_tx);
-
-    drop(otel_tx);
-    drop(stats_tx);
-
-    let _ = counter_handle.await;
+    counter_handle.await.expect("CounterDB actor should join");
+    let counters_key_count = Command::new("redis-cli")
+        .args([
+            "-s",
+            SOCK_PATH,
+            "-n",
+            &COUNTERS_DB_ID.to_string(),
+            "EXISTS",
+            "COUNTERS:oid:0x1000000000000",
+        ])
+        .output()
+        .expect("query counters DB output");
+    assert!(counters_key_count.status.success());
+    assert_ne!(
+        String::from_utf8_lossy(&counters_key_count.stdout).trim(),
+        "0",
+        "CounterDB actor should flush counters before shutdown"
+    );
 
     // Wait for otel to finish and notify
-    let _ = otel_handle.await;
-    let _ = otel_done_rx.await;
+    otel_handle
+        .await
+        .expect("OTel actor should join")
+        .expect("OTel actor should finish successfully");
+    otel_done_rx
+        .await
+        .expect("OTel actor should signal shutdown");
 
-    let _ = reporter_handle.await;
+    reporter_handle.await.expect("stats reporter should join");
 
     let elapsed = start.elapsed();
     let exports = exports_counter.load(Ordering::Relaxed);
@@ -233,11 +315,10 @@ fn bench_end_to_end(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(60));
 
-    for spec in datasets()
-    {
+    for spec in datasets() {
         let bench_id = BenchmarkId::from_parameter(spec.name);
         group.throughput(Throughput::Elements(
-            spec.total_counters_per_iteration() as u64,
+            spec.total_counters_per_iteration() as u64
         ));
 
         let bench_spec = Arc::new(spec.clone());

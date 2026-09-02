@@ -3,13 +3,59 @@ mod ipfix_test_helpers;
 use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::mpsc::channel;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{timeout, Duration};
 
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
-    buffer::SocketBufferMessage,
-    ipfix::IPFixTemplatesMessage,
+    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
 };
+
+type ReceivedRecord = (u64, Vec<(u32, u32, u64)>);
+
+fn template_message(key: &str, templates: Vec<u8>, counters: usize) -> IPFixTemplatesMessage {
+    let (object_names, object_ids) = ipfix_test_helpers::generate_object_metadata(counters);
+    IPFixTemplatesMessage::new(
+        key.to_string(),
+        Arc::new(templates),
+        Some(object_names),
+        Some(object_ids),
+    )
+}
+
+async fn receive_records(
+    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
+    expected_records: usize,
+) -> Vec<ReceivedRecord> {
+    let mut records = Vec::with_capacity(expected_records);
+
+    while records.len() < expected_records {
+        let batch = timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("timed out waiting for SAI stats batch")
+            .expect("SAI stats channel closed early");
+        let batch_counter_count = batch.counter_count();
+        let mut iterated_counters = 0usize;
+        for record in batch.iter() {
+            iterated_counters += record.stats.len();
+            records.push((
+                record.observation_time,
+                record
+                    .stats
+                    .iter()
+                    .map(|stat| (stat.type_id, stat.stat_id, stat.counter))
+                    .collect(),
+            ));
+        }
+        assert_eq!(batch_counter_count, iterated_counters);
+    }
+
+    assert_eq!(
+        records.len(),
+        expected_records,
+        "unexpected logical record count"
+    );
+    records
+}
 
 #[tokio::test]
 async fn ipfix_templates_delete_and_readd_schema_change() {
@@ -20,9 +66,7 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
 
-    let actor_handle = tokio::spawn(async move {
-        IpfixActor::run(actor).await;
-    });
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
     let max_counters = ipfix_test_helpers::max_counters_per_template();
     // Prepare five templates across three keys with varying counter counts (small → max)
@@ -51,27 +95,33 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             .extend_from_slice(&template);
     }
 
-    let deleted_key_templates = templates_by_key
-        .get(delete_key)
-        .cloned()
-        .unwrap_or_default();
-
     for key in key_order {
         if let Some(bytes) = templates_by_key.get(key) {
+            let max_counters = template_defs
+                .iter()
+                .filter(|(template_key, _, _)| template_key == &key)
+                .map(|(_, _, counters)| *counters)
+                .max()
+                .expect("key has a template");
             template_sender
-                .send(IPFixTemplatesMessage::new(
-                    key.to_string(),
-                    Arc::new(bytes.clone()),
-                    Some(vec!["Obj0".to_string(), "Obj1".to_string()]),
-                    Some(vec![1, 2]),
-                ))
+                .send(template_message(key, bytes.clone(), max_counters))
                 .await
                 .expect("template send should succeed");
         }
     }
 
-    // Allow actor to process templates
-    sleep(Duration::from_millis(50)).await;
+    let readiness_template = ipfix_test_helpers::generate_ipfix_templates(1, 305);
+    let readiness_record = ipfix_test_helpers::generate_ipfix_records(&readiness_template);
+    template_sender
+        .send(template_message("initial_readiness", readiness_template, 1))
+        .await
+        .expect("readiness template send should succeed");
+    buffer_sender
+        .send(Arc::new(readiness_record))
+        .await
+        .expect("readiness record send should succeed");
+    let readiness = receive_records(&mut saistats_receiver, 1).await;
+    assert_eq!(readiness[0].1.len(), 1);
 
     // Generate matching records for all templates across all keys
     let records = ipfix_test_helpers::generate_ipfix_records(&all_templates_bytes);
@@ -82,30 +132,31 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
 
     let expected_counts: Vec<usize> = template_defs.iter().map(|(_, _, c)| *c).collect();
 
-    let mut received = Vec::new();
-    for _ in 0..expected_counts.len() {
-        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
-            let stats = Arc::try_unwrap(stats_msg).expect("unwrap stats Arc");
-            received.push(stats);
-        } else {
-            break;
-        }
-    }
+    let received = receive_records(&mut saistats_receiver, expected_counts.len()).await;
 
-    assert_eq!(received.len(), expected_counts.len(), "should receive one stats message per template");
+    assert_eq!(
+        received.len(),
+        expected_counts.len(),
+        "should receive one logical record per template"
+    );
 
-    for (i, stats) in received.iter().enumerate() {
+    for (i, (observation_time, stats)) in received.iter().enumerate() {
         let expected_count = expected_counts[i];
         let expected_obs_time = (i as u64) + 1;
 
-        assert_eq!(stats.observation_time, expected_obs_time, "observation time mismatch for message {}", i);
-        assert_eq!(stats.stats.len(), expected_count, "counter count mismatch for message {}", i);
+        assert_eq!(
+            *observation_time, expected_obs_time,
+            "observation time mismatch for message {}",
+            i
+        );
+        assert_eq!(
+            stats.len(),
+            expected_count,
+            "counter count mismatch for message {}",
+            i
+        );
 
-        let mut got: Vec<(u32, u32, u64)> = stats
-            .stats
-            .iter()
-            .map(|s| (s.type_id, s.stat_id, s.counter))
-            .collect();
+        let mut got = stats.clone();
         got.sort_by(|a, b| a.1.cmp(&b.1));
 
         let mut probe_indices = vec![0];
@@ -121,9 +172,23 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             let (type_id, stat_id, counter) = got[idx];
             let expected_idx = (idx + 1) as u32;
 
-            assert_eq!(type_id, expected_idx, "type_id mismatch at stat {} for message {}", idx, i);
-            assert_eq!(stat_id, expected_idx, "stat_id mismatch at stat {} for message {}", idx, i);
-            assert_eq!(counter, expected_obs_time + idx as u64, "counter mismatch at stat {} for message {}", idx, i);
+            assert_eq!(
+                type_id, expected_idx,
+                "type_id mismatch at stat {} for message {}",
+                idx, i
+            );
+            assert_eq!(
+                stat_id, expected_idx,
+                "stat_id mismatch at stat {} for message {}",
+                idx, i
+            );
+            assert_eq!(
+                counter,
+                expected_obs_time + idx as u64,
+                "counter mismatch at stat {} for message {}",
+                idx,
+                i
+            );
         }
     }
 
@@ -133,26 +198,25 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .await
         .expect("template delete should succeed");
 
-    sleep(Duration::from_millis(20)).await;
-
-    let deleted_records = ipfix_test_helpers::generate_ipfix_records(&deleted_key_templates);
-    buffer_sender
-        .send(Arc::new(deleted_records))
+    // The new template follows the delete on the same channel. Its output is a
+    // causal barrier even if the data arrives first and is briefly buffered.
+    let barrier_template = ipfix_test_helpers::generate_ipfix_templates(1, 306);
+    let barrier_record = ipfix_test_helpers::generate_ipfix_records(&barrier_template);
+    template_sender
+        .send(template_message("delete_barrier", barrier_template, 1))
         .await
-        .expect("record send after delete should succeed");
+        .expect("barrier template send should succeed");
+    buffer_sender
+        .send(Arc::new(barrier_record))
+        .await
+        .expect("barrier record send should succeed");
 
-    // Give the actor a moment to process, then ensure no stats arrive
-    sleep(Duration::from_millis(50)).await;
-    assert!(
-        saistats_receiver.try_recv().is_err(),
-        "records for deleted templates should be dropped"
-    );
+    let barrier = receive_records(&mut saistats_receiver, 1).await;
+    assert_eq!(barrier[0].1.len(), 1);
 
-    // Re-add the deleted key with the same template IDs but different shapes
-    let readd_template_defs = vec![
-        (delete_key, 302u16, 4usize),
-        (delete_key, 303u16, 6usize),
-    ];
+    // A changed schema must use new IDs so queued old data cannot be decoded
+    // under a different definition after the delete/re-add boundary.
+    let readd_template_defs = vec![(delete_key, 307u16, 4usize), (delete_key, 308u16, 6usize)];
 
     let mut readd_templates_bytes = Vec::new();
     for (_, template_id, counters) in &readd_template_defs {
@@ -161,16 +225,17 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     }
 
     template_sender
-        .send(IPFixTemplatesMessage::new(
-            delete_key.to_string(),
-            Arc::new(readd_templates_bytes.clone()),
-            Some(vec!["ObjA".to_string(), "ObjB".to_string()]),
-            Some(vec![1, 2]),
+        .send(template_message(
+            delete_key,
+            readd_templates_bytes.clone(),
+            readd_template_defs
+                .iter()
+                .map(|(_, _, counters)| *counters)
+                .max()
+                .expect("re-added templates are non-empty"),
         ))
         .await
         .expect("template re-add should succeed");
-
-    sleep(Duration::from_millis(50)).await;
 
     let readd_records = ipfix_test_helpers::generate_ipfix_records(&readd_templates_bytes);
     buffer_sender
@@ -178,16 +243,9 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .await
         .expect("record send after re-add should succeed");
 
-    let expected_readd_counts: Vec<usize> = readd_template_defs.iter().map(|(_, _, c)| *c).collect();
-    let mut readd_received = Vec::new();
-    for _ in 0..expected_readd_counts.len() {
-        if let Ok(Some(stats_msg)) = timeout(Duration::from_secs(2), saistats_receiver.recv()).await {
-            let stats = Arc::try_unwrap(stats_msg).expect("unwrap stats Arc");
-            readd_received.push(stats);
-        } else {
-            break;
-        }
-    }
+    let expected_readd_counts: Vec<usize> =
+        readd_template_defs.iter().map(|(_, _, c)| *c).collect();
+    let readd_received = receive_records(&mut saistats_receiver, expected_readd_counts.len()).await;
 
     assert_eq!(
         readd_received.len(),
@@ -195,18 +253,23 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         "should receive one stats message per re-added template"
     );
 
-    for (i, stats) in readd_received.iter().enumerate() {
+    for (i, (observation_time, stats)) in readd_received.iter().enumerate() {
         let expected_count = expected_readd_counts[i];
         let expected_obs_time = (i as u64) + 1;
 
-        assert_eq!(stats.observation_time, expected_obs_time, "observation time mismatch after re-add for message {}", i);
-        assert_eq!(stats.stats.len(), expected_count, "counter count mismatch after re-add for message {}", i);
+        assert_eq!(
+            *observation_time, expected_obs_time,
+            "observation time mismatch after re-add for message {}",
+            i
+        );
+        assert_eq!(
+            stats.len(),
+            expected_count,
+            "counter count mismatch after re-add for message {}",
+            i
+        );
 
-        let mut got: Vec<(u32, u32, u64)> = stats
-            .stats
-            .iter()
-            .map(|s| (s.type_id, s.stat_id, s.counter))
-            .collect();
+        let mut got = stats.clone();
         got.sort_by(|a, b| a.1.cmp(&b.1));
 
         let mut probe_indices = vec![0];
@@ -222,9 +285,23 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
             let (type_id, stat_id, counter) = got[idx];
             let expected_idx = (idx + 1) as u32;
 
-            assert_eq!(type_id, expected_idx, "type_id mismatch at stat {} after re-add for message {}", idx, i);
-            assert_eq!(stat_id, expected_idx, "stat_id mismatch at stat {} after re-add for message {}", idx, i);
-            assert_eq!(counter, expected_obs_time + idx as u64, "counter mismatch at stat {} after re-add for message {}", idx, i);
+            assert_eq!(
+                type_id, expected_idx,
+                "type_id mismatch at stat {} after re-add for message {}",
+                idx, i
+            );
+            assert_eq!(
+                stat_id, expected_idx,
+                "stat_id mismatch at stat {} after re-add for message {}",
+                idx, i
+            );
+            assert_eq!(
+                counter,
+                expected_obs_time + idx as u64,
+                "counter mismatch at stat {} after re-add for message {}",
+                idx,
+                i
+            );
         }
     }
 
@@ -232,5 +309,8 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     drop(template_sender);
     drop(saistats_receiver);
 
-    actor_handle.await.expect("actor should finish");
+    actor_handle
+        .await
+        .expect("actor task should join")
+        .expect_err("actor should report closed input channels");
 }

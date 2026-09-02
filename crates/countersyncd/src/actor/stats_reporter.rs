@@ -1,7 +1,8 @@
 use chrono::DateTime;
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use ahash::{HashMap, HashMapExt};
 use log::{debug, info};
 use tokio::{
     select,
@@ -9,7 +10,7 @@ use tokio::{
     time::{interval, Interval},
 };
 
-use super::super::message::saistats::SAIStatsMessage;
+use super::super::message::saistats::SAIStatsBatchMessage;
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
@@ -19,13 +20,13 @@ use crate::utilities::{record_comm_stats, ChannelLabel};
 /// (object_name, type_id, stat_id)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CounterKey {
-    pub object_name: String,
+    pub object_name: Arc<str>,
     pub type_id: u32,
     pub stat_id: u32,
 }
 
 impl CounterKey {
-    pub fn new(object_name: String, type_id: u32, stat_id: u32) -> Self {
+    pub fn new(object_name: Arc<str>, type_id: u32, stat_id: u32) -> Self {
         Self {
             object_name,
             type_id,
@@ -111,7 +112,7 @@ impl Default for StatsReporterConfig {
 /// - Formatted output to terminal with optional detail levels
 pub struct StatsReporterActor<W: OutputWriter> {
     /// Channel for receiving SAI statistics messages
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<SAIStatsBatchMessage>,
     /// Configuration for reporting behavior
     config: StatsReporterConfig,
     /// Timer for periodic reporting
@@ -120,7 +121,7 @@ pub struct StatsReporterActor<W: OutputWriter> {
     latest_counters: HashMap<CounterKey, CounterInfo>,
     /// Message count per counter key for current reporting period
     messages_per_counter: HashMap<CounterKey, u64>,
-    /// Total messages received across all counters
+    /// Total records received
     total_messages_received: u64,
     /// Counter for total reports generated
     reports_generated: u64,
@@ -141,7 +142,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     ///
     /// A new StatsReporterActor instance
     pub fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<SAIStatsBatchMessage>,
         config: StatsReporterConfig,
         writer: W,
     ) -> Self {
@@ -175,7 +176,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     /// A new StatsReporterActor instance with default settings
     #[allow(dead_code)]
     pub fn new_with_defaults(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<SAIStatsBatchMessage>,
     ) -> StatsReporterActor<ConsoleWriter> {
         StatsReporterActor::new(
             stats_receiver,
@@ -286,35 +287,32 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     ///
     /// # Arguments
     ///
-    /// * `stats_msg` - New SAI statistics message to process
-    fn update_stats(&mut self, stats_msg: SAIStatsMessage) {
-        self.total_messages_received += 1;
+    /// * `stats_batch` - New batch of SAI statistics records to process
+    fn update_stats(&mut self, stats_batch: SAIStatsBatchMessage) {
+        for stats in stats_batch.iter() {
+            self.total_messages_received += 1;
 
-        // Extract SAIStats from Arc
-        let stats = match std::sync::Arc::try_unwrap(stats_msg) {
-            Ok(stats) => stats,
-            Err(arc_stats) => (*arc_stats).clone(),
-        };
+            debug!(
+                "Received SAI stats with {} entries, observation_time: {}",
+                stats.stats.len(),
+                stats.observation_time
+            );
 
-        debug!(
-            "Received SAI stats with {} entries, observation_time: {}",
-            stats.stats.len(),
-            stats.observation_time
-        );
+            // Process each statistic in the message
+            for stat in stats.stats {
+                let key =
+                    CounterKey::new(Arc::clone(&stat.object_name), stat.type_id, stat.stat_id);
 
-        // Process each statistic in the message
-        for stat in stats.stats {
-            let key = CounterKey::new(stat.object_name, stat.type_id, stat.stat_id);
+                // Update latest counter value
+                let counter_info = CounterInfo {
+                    counter: stat.counter,
+                    last_observation_time: stats.observation_time,
+                };
+                self.latest_counters.insert(key.clone(), counter_info);
 
-            // Update latest counter value
-            let counter_info = CounterInfo {
-                counter: stat.counter,
-                last_observation_time: stats.observation_time,
-            };
-            self.latest_counters.insert(key.clone(), counter_info);
-
-            // Increment message count for this counter key
-            *self.messages_per_counter.entry(key).or_insert(0) += 1;
+                // Increment message count for this counter key
+                *self.messages_per_counter.entry(key).or_insert(0) += 1;
+            }
         }
     }
 
@@ -429,8 +427,11 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             }
         } else if !self.config.detailed && !self.latest_counters.is_empty() {
             // Summary mode - show aggregate information
-            let total_counter_value: u64 =
-                self.latest_counters.values().map(|info| info.counter).sum();
+            let total_counter_value: u128 = self
+                .latest_counters
+                .values()
+                .map(|info| info.counter as u128)
+                .sum();
             let unique_types = self
                 .latest_counters
                 .keys()
@@ -525,16 +526,18 @@ mod tests {
     use std::sync::Arc;
     use tokio::{spawn, sync::mpsc::channel, time::sleep};
 
-    use crate::message::saistats::{SAIStat, SAIStats};
+    use crate::message::saistats::{SAIStat, SAIStats, SAIStatsBatch};
 
     /// Helper function to create test SAI statistics
     fn create_test_stats(observation_time: u64, stat_count: usize) -> SAIStats {
         let stats = (0..stat_count)
-            .map(|i| SAIStat {
-                object_name: format!("Ethernet{}", i),
-                type_id: (i * 100) as u32,
-                stat_id: (i * 10) as u32,
-                counter: (i * 1000) as u64,
+            .map(|i| {
+                SAIStat::new(
+                    format!("Ethernet{}", i),
+                    (i * 100) as u32,
+                    (i * 10) as u32,
+                    (i * 1000) as u64,
+                )
             })
             .collect();
 
@@ -542,6 +545,25 @@ mod tests {
             observation_time,
             stats,
         }
+    }
+
+    #[tokio::test]
+    async fn test_update_stats_counts_and_processes_batch_records_in_order() {
+        let (_sender, receiver) = channel(1);
+        let mut actor =
+            StatsReporterActor::new(receiver, StatsReporterConfig::default(), TestWriter::new());
+        let mut batch = SAIStatsBatch::with_capacity(2, 2);
+        batch.push_record(10, [SAIStat::new("Ethernet0", 1, 2, 100)]);
+        batch.push_record(20, [SAIStat::new("Ethernet0", 1, 2, 200)]);
+
+        actor.update_stats(Arc::new(batch));
+
+        let key = CounterKey::new("Ethernet0".into(), 1, 2);
+        assert_eq!(actor.total_messages_received, 2);
+        assert_eq!(actor.messages_per_counter.get(&key), Some(&2));
+        let latest = actor.latest_counters.get(&key).unwrap();
+        assert_eq!(latest.counter, 200);
+        assert_eq!(latest.last_observation_time, 20);
     }
 
     #[tokio::test]
@@ -561,7 +583,10 @@ mod tests {
 
         // Send test statistics
         let test_stats = create_test_stats(12345, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
+            .await
+            .unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -571,7 +596,10 @@ mod tests {
 
         // Send another set of statistics
         let test_stats2 = create_test_stats(67890, 2);
-        sender.send(Arc::new(test_stats2)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats2)))
+            .await
+            .unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -627,7 +655,10 @@ mod tests {
 
         // Send test statistics
         let test_stats = create_test_stats(12345, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
+            .await
+            .unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -637,7 +668,10 @@ mod tests {
 
         // Send another set of statistics
         let test_stats2 = create_test_stats(67890, 2);
-        sender.send(Arc::new(test_stats2)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats2)))
+            .await
+            .unwrap();
 
         // Wait for processing
         sleep(Duration::from_millis(50)).await;
@@ -727,7 +761,10 @@ mod tests {
 
         // Send test statistics with known values
         let test_stats = create_test_stats(99999, 3);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
+            .await
+            .unwrap();
 
         // Wait for processing and one report
         sleep(Duration::from_millis(150)).await;
@@ -889,7 +926,10 @@ mod tests {
 
         // Send stats with more entries than the limit
         let test_stats = create_test_stats(55555, 5);
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
+            .await
+            .unwrap();
 
         // Wait for processing but not long enough for multiple reports
         sleep(Duration::from_millis(50)).await;
@@ -986,18 +1026,8 @@ mod tests {
 
         // Create stats with known SAI types and stat IDs
         let stats = vec![
-            SAIStat {
-                object_name: "Ethernet0".to_string(),
-                type_id: 1, // Port
-                stat_id: 0, // IfInOctets
-                counter: 832,
-            },
-            SAIStat {
-                object_name: "Ethernet16".to_string(),
-                type_id: 1, // Port
-                stat_id: 1, // IfInUcastPkts
-                counter: 1664,
-            },
+            SAIStat::new("Ethernet0", 1, 0, 832),   // Port, IfInOctets
+            SAIStat::new("Ethernet16", 1, 1, 1664), // Port, IfInUcastPkts
         ];
 
         let test_stats = SAIStats {
@@ -1005,7 +1035,10 @@ mod tests {
             stats,
         };
 
-        sender.send(Arc::new(test_stats)).await.unwrap();
+        sender
+            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
+            .await
+            .unwrap();
 
         // Wait for processing and one report
         sleep(Duration::from_millis(150)).await;

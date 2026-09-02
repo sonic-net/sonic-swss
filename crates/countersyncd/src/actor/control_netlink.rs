@@ -4,7 +4,10 @@ use log::{debug, info, warn};
 
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
-use tokio::{sync::mpsc::Sender, time::{interval, MissedTickBehavior}};
+use tokio::{
+    sync::mpsc::Sender,
+    time::{interval, MissedTickBehavior},
+};
 
 use std::io;
 
@@ -465,7 +468,11 @@ impl ControlNetlinkActor {
                     {
                         debug!("Sending periodic soft reconnect command to check data socket health (counter: {}, last: {}, interval: {})", 
                                heartbeat_counter, last_periodic_reconnect_counter, PERIODIC_RECONNECT_INTERVAL);
-                        if let Err(e) = actor.command_sender.send(NetlinkCommand::SoftReconnect).await {
+                        if let Err(e) = actor
+                            .command_sender
+                            .send(NetlinkCommand::SoftReconnect)
+                            .await
+                        {
                             warn!("Failed to send periodic soft reconnect command: {:?}", e);
                             break; // Channel is closed, exit
                         }
@@ -497,7 +504,11 @@ pub mod test {
     pub struct MockSocket;
 
     impl MockSocket {
-        pub fn recv_from(&mut self, _buf: &mut [u8], _flags: i32) -> Result<(usize, SocketAddr), io::Error> {
+        pub fn recv_from(
+            &mut self,
+            _buf: &mut [u8],
+            _flags: i32,
+        ) -> Result<(usize, SocketAddr), io::Error> {
             // Always return WouldBlock to simulate no control messages
             Err(io::Error::new(
                 io::ErrorKind::WouldBlock,

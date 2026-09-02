@@ -1,8 +1,5 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
-
-use byteorder::{ByteOrder, NetworkEndian};
-use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage};
 
@@ -10,6 +7,7 @@ use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMe
 mod ipfix_test_helpers;
 
 const TARGET_TOTAL_COUNTERS: usize = 4_000_000;
+const READINESS_TEMPLATE_ID: u16 = u16::MAX;
 
 #[derive(Clone, Debug)]
 pub struct TemplateSpec {
@@ -25,22 +23,21 @@ pub struct DatasetSpec {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct PreparedTemplate {
     pub spec: TemplateSpec,
-    #[allow(dead_code)]
     pub base_record: Arc<Vec<u8>>,
     pub records: usize,
 }
 
+#[allow(dead_code)]
 pub struct PreparedDataset {
-    #[allow(dead_code)]
     pub spec: DatasetSpec,
     pub templates: Vec<PreparedTemplate>,
-    #[allow(dead_code)]
     pub template_messages: Vec<IPFixTemplatesMessage>,
-    #[allow(dead_code)]
     pub expected_messages: usize,
     pub expected_counters: usize,
+    pub readiness_record: SocketBufferMessage,
 }
 
 impl DatasetSpec {
@@ -57,20 +54,19 @@ impl DatasetSpec {
 impl PreparedDataset {
     pub fn new(spec: DatasetSpec) -> Self {
         let mut templates = Vec::with_capacity(spec.templates.len());
-        let mut key_to_templates: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut key_to_templates: BTreeMap<String, (Vec<u8>, usize)> = BTreeMap::new();
 
         let (records_per_template, expected_messages, expected_counters) =
             compute_distribution(&spec);
 
         for (idx, tmpl) in spec.templates.iter().enumerate() {
-            let tmpl_bytes = ipfix_test_helpers::generate_ipfix_templates(
-                tmpl.counters,
-                tmpl.template_id,
-            );
-            key_to_templates
+            let tmpl_bytes =
+                ipfix_test_helpers::generate_ipfix_templates(tmpl.counters, tmpl.template_id);
+            let (template_bytes, max_counters) = key_to_templates
                 .entry(tmpl.key.clone())
-                .or_default()
-                .extend_from_slice(&tmpl_bytes);
+                .or_insert_with(|| (Vec::new(), 0));
+            template_bytes.extend_from_slice(&tmpl_bytes);
+            *max_counters = (*max_counters).max(tmpl.counters);
 
             let base_record = ipfix_test_helpers::generate_ipfix_records(&tmpl_bytes);
 
@@ -81,10 +77,41 @@ impl PreparedDataset {
             });
         }
 
-        let template_messages = key_to_templates
+        let mut template_messages: Vec<_> = key_to_templates
             .into_iter()
-            .map(|(key, bytes)| IPFixTemplatesMessage::new(key, Arc::new(bytes), None, None))
+            .map(|(key, (bytes, counters))| {
+                let (object_names, object_ids) =
+                    ipfix_test_helpers::generate_object_metadata(counters);
+                IPFixTemplatesMessage::new(
+                    key,
+                    Arc::new(bytes),
+                    Some(object_names),
+                    Some(object_ids),
+                )
+            })
             .collect();
+
+        let readiness_template_id = (256..=READINESS_TEMPLATE_ID)
+            .rev()
+            .find(|candidate| {
+                spec.templates
+                    .iter()
+                    .all(|template| template.template_id != *candidate)
+            })
+            .expect("dataset must leave one template ID for the readiness probe");
+        let readiness_template_bytes =
+            ipfix_test_helpers::generate_ipfix_templates(1, readiness_template_id);
+        let readiness_record = Arc::new(ipfix_test_helpers::generate_ipfix_records(
+            &readiness_template_bytes,
+        ));
+        let (readiness_names, readiness_ids) = ipfix_test_helpers::generate_object_metadata(1);
+        let readiness_template = IPFixTemplatesMessage::new(
+            "__benchmark_readiness_probe".to_string(),
+            Arc::new(readiness_template_bytes),
+            Some(readiness_names),
+            Some(readiness_ids),
+        );
+        template_messages.push(readiness_template);
 
         Self {
             spec,
@@ -92,6 +119,7 @@ impl PreparedDataset {
             template_messages,
             expected_messages,
             expected_counters,
+            readiness_record,
         }
     }
 }
@@ -160,12 +188,6 @@ pub fn datasets() -> Vec<DatasetSpec> {
     ]
 }
 
-#[allow(dead_code)]
-pub fn rng_for_template(spec: &TemplateSpec) -> StdRng {
-    let seed = ((spec.template_id as u64) << 32) ^ (spec.counters as u64) ^ 0x5a5a_5a5a_5a5a_5a5a;
-    StdRng::seed_from_u64(seed)
-}
-
 fn compute_distribution(spec: &DatasetSpec) -> (Vec<usize>, usize, usize) {
     if spec.templates.is_empty() {
         return (Vec::new(), 0, 0);
@@ -200,24 +222,4 @@ fn compute_distribution(spec: &DatasetSpec) -> (Vec<usize>, usize, usize) {
     }
 
     (records, total_messages, total_counters)
-}
-
-#[allow(dead_code)]
-pub fn randomize_record(base: &[u8], seq: u64, rng: &mut StdRng) -> SocketBufferMessage {
-    let mut record = base.to_vec();
-    if record.len() < 28 {
-        return Arc::new(record);
-    }
-
-    let obs_time = rng.next_u64().wrapping_add(seq + 1);
-    NetworkEndian::write_u64(&mut record[20..28], obs_time);
-
-    let mut offset = 28;
-    while offset + 8 <= record.len() {
-        let counter = rng.next_u64().wrapping_add(obs_time);
-        NetworkEndian::write_u64(&mut record[offset..offset + 8], counter);
-        offset += 8;
-    }
-
-    Arc::new(record)
 }

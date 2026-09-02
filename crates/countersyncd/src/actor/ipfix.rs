@@ -1,1559 +1,1802 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{
+    collections::VecDeque,
+    error::Error,
+    fmt::{Display, Formatter},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use ahash::{HashMap, HashMapExt};
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use byteorder::{ByteOrder, NetworkEndian};
-use log::{debug, warn};
+use log::{debug, error, warn};
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
 };
 
-use ipfixrw::{
-    information_elements::Formatter,
-    parse_ipfix_message,
-    parser::{DataRecord, DataRecordKey, DataRecordValue, Message},
-    template_store::TemplateStore,
-};
-
 use super::super::message::{
     buffer::SocketBufferMessage,
     ipfix::IPFixTemplatesMessage,
-    saistats::{SAIStat, SAIStats, SAIStatsMessage},
+    saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
-/// Helper functions for debug logging formatting
-impl IpfixActor {
-    /// Formats IPFIX template data in human-readable format for debug logging.
-    /// Only performs formatting if debug logging is enabled to avoid performance impact.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates_data` - Raw IPFIX template bytes
-    /// * `key` - Template key for context
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the templates
-    fn format_templates_for_debug(templates_data: &[u8], key: &str) -> String {
-        let mut result = format!(
-            "IPFIX Templates for key '{}' (size: {} bytes):\n",
-            key,
-            templates_data.len()
-        );
-        let mut read_size: usize = 0;
-        let mut template_count = 0;
+const IPFIX_VERSION: u16 = 10;
+const IPFIX_HEADER_LEN: usize = 16;
+const SET_HEADER_LEN: usize = 4;
+const TEMPLATE_SET_ID: u16 = 2;
+const MIN_DATA_SET_ID: u16 = 256;
+const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
+const HFT_FIELD_LEN: u16 = 8;
+const MAX_UNKNOWN_SETS: usize = 256;
+const MAX_UNKNOWN_SET_BYTES: usize = 4 * 1024 * 1024;
+const UNKNOWN_SET_TTL: Duration = Duration::from_secs(5);
+const MAX_RETIRED_TEMPLATES: usize = 4096;
+const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
+const MAX_TEMPLATES_PER_UPDATE: usize = 1024;
+const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
+const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
+const MAX_COUNTERS_PER_BATCH: usize = 8192;
+const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
 
-        while read_size < templates_data.len() {
-            match get_ipfix_message_length(&templates_data[read_size..]) {
-                Ok(len) => {
-                    let len = len as usize;
-                    if read_size + len > templates_data.len() {
-                        break;
-                    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TemplateKey {
+    observation_domain_id: u32,
+    template_id: u16,
+}
 
-                    let template_data = &templates_data[read_size..read_size + len];
-                    result.push_str(&format!(
-                        "  Template Message {} (offset: {}, length: {}):\n",
-                        template_count + 1,
-                        read_size,
-                        len
-                    ));
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledCounter {
+    offset: usize,
+    object_name: Arc<str>,
+    type_id: u32,
+    stat_id: u32,
+}
 
-                    // Format header information
-                    if template_data.len() >= 16 {
-                        let version = NetworkEndian::read_u16(&template_data[0..2]);
-                        let length = NetworkEndian::read_u16(&template_data[2..4]);
-                        let export_time = NetworkEndian::read_u32(&template_data[4..8]);
-                        let sequence_number = NetworkEndian::read_u32(&template_data[8..12]);
-                        let observation_domain_id = NetworkEndian::read_u32(&template_data[12..16]);
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledTemplate {
+    key: TemplateKey,
+    owner: Arc<str>,
+    observation_time_offset: usize,
+    counters: Arc<[CompiledCounter]>,
+    record_len: usize,
+}
 
-                        result.push_str(&format!("    Header: version={}, length={}, export_time={}, seq={}, domain_id={}\n",
-                                               version, length, export_time, sequence_number, observation_domain_id));
-                    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TemplateGeneration {
+    owner: Arc<str>,
+    templates: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+}
 
-                    // Try to parse and format the template data in human-readable format
-                    if let Ok(parsed_templates) =
-                        Self::try_parse_ipfix_message_for_debug(template_data)
-                    {
-                        result.push_str(&format!("    Parsed Template Details:\n"));
-                        result.push_str(&parsed_templates);
-                    } else {
-                        // Fallback to sets parsing if detailed parsing fails
-                        result.push_str(&Self::format_ipfix_sets_for_debug(template_data));
-                    }
+impl TemplateGeneration {
+    fn equivalent(&self, other: &Self) -> bool {
+        self.templates == other.templates
+    }
+}
 
-                    read_size += len;
-                    template_count += 1;
-                }
-                Err(e) => {
-                    result.push_str(&format!(
-                        "  Error parsing message length at offset {}: {}\n",
-                        read_size, e
-                    ));
-                    break;
-                }
-            }
+#[derive(Debug, Default)]
+struct SessionTemplates {
+    active: Option<TemplateGeneration>,
+    pending: Option<TemplateGeneration>,
+}
+
+#[derive(Debug, Clone)]
+struct BufferedSet {
+    key: TemplateKey,
+    bytes: Arc<[u8]>,
+    received_at: Instant,
+}
+
+#[derive(Debug, Default)]
+struct DeferredSetBuffer {
+    sets: VecDeque<BufferedSet>,
+    bytes: usize,
+    dropped: u64,
+}
+
+impl DeferredSetBuffer {
+    fn expire(&mut self, now: Instant) -> u64 {
+        let dropped_before = self.dropped;
+        while self
+            .sets
+            .front()
+            .is_some_and(|set| now.duration_since(set.received_at) >= UNKNOWN_SET_TTL)
+        {
+            let expired = self.sets.pop_front().expect("front checked above");
+            self.bytes = self.bytes.saturating_sub(expired.bytes.len());
+            self.dropped = self.dropped.saturating_add(1);
         }
-
-        result.push_str(&format!(
-            "  Total templates processed: {}\n",
-            template_count
-        ));
-        result
+        self.dropped - dropped_before
     }
 
-    /// Formats IPFIX sets within a message for debug logging.
-    /// Parses and displays set headers (set ID, length) and basic content information.
-    ///
-    /// # Arguments
-    ///
-    /// * `message_data` - Raw IPFIX message bytes including header
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the sets within the message
-    fn format_ipfix_sets_for_debug(message_data: &[u8]) -> String {
-        let mut result = String::new();
-
-        // Skip IPFIX message header (16 bytes) to get to sets
-        if message_data.len() < 16 {
-            result.push_str("    Error: Message too short for IPFIX header\n");
-            return result;
+    fn push(&mut self, set: BufferedSet) -> u64 {
+        let dropped_before = self.dropped;
+        let len = set.bytes.len();
+        if len > MAX_UNKNOWN_SET_BYTES {
+            self.dropped = self.dropped.saturating_add(1);
+            return self.dropped - dropped_before;
         }
-
-        let mut offset = 16; // Start after IPFIX header
-        let mut set_count = 0;
-
-        result.push_str("    Sets within message:\n");
-
-        while offset + 4 <= message_data.len() {
-            // Each set starts with 4-byte header: set_id (2 bytes) + length (2 bytes)
-            let set_id = NetworkEndian::read_u16(&message_data[offset..offset + 2]);
-            let set_length = NetworkEndian::read_u16(&message_data[offset + 2..offset + 4]);
-
-            set_count += 1;
-
-            // Validate set length
-            if set_length < 4 {
-                result.push_str(&format!(
-                    "      Set {}: INVALID (set_id={}, length={} < 4)\n",
-                    set_count, set_id, set_length
-                ));
+        while self.sets.len() >= MAX_UNKNOWN_SETS
+            || self.bytes.saturating_add(len) > MAX_UNKNOWN_SET_BYTES
+        {
+            let Some(oldest) = self.sets.pop_front() else {
                 break;
-            }
-
-            if offset + set_length as usize > message_data.len() {
-                result.push_str(&format!(
-                    "      Set {}: TRUNCATED (set_id={}, length={}, exceeds message boundary)\n",
-                    set_count, set_id, set_length
-                ));
-                break;
-            }
-
-            // Determine set type based on set_id
-            let set_type = if set_id == 2 {
-                "Template Set"
-            } else if set_id == 3 {
-                "Options Template Set"
-            } else if set_id >= 256 {
-                "Data Set"
-            } else {
-                "Reserved/Unknown"
             };
-
-            result.push_str(&format!(
-                "      Set {} (offset: {}, set_id: {}, length: {} bytes, type: {})\n",
-                set_count, offset, set_id, set_length, set_type
-            ));
-
-            // For data sets, show complete structure info
-            if set_id >= 256 && set_length > 4 {
-                let data_length = set_length as usize - 4; // Exclude 4-byte set header
-                let data_start = offset + 4;
-                result.push_str(&format!("        Data payload: {} bytes", data_length));
-
-                // Show complete data payload
-                if data_length > 0 {
-                    let data_bytes = &message_data[data_start..data_start + data_length];
-                    let hex_data = data_bytes
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-
-                    // Format with line breaks for better readability if data is long
-                    if data_length <= 32 {
-                        // Short data on single line
-                        result.push_str(&format!(" [{}]\n", hex_data));
-                    } else {
-                        // Long data with line breaks every 16 bytes
-                        result.push_str(":\n");
-                        for (i, chunk) in data_bytes.chunks(16).enumerate() {
-                            let chunk_hex = chunk
-                                .iter()
-                                .map(|b| format!("{:02x}", b))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            result.push_str(&format!("          {:04x}: {}\n", i * 16, chunk_hex));
-                        }
-                    }
-                } else {
-                    result.push_str("\n");
-                }
-            }
-
-            // Move to next set
-            offset += set_length as usize;
+            self.bytes = self.bytes.saturating_sub(oldest.bytes.len());
+            self.dropped = self.dropped.saturating_add(1);
         }
-
-        if set_count == 0 {
-            result.push_str("      No valid sets found\n");
-        } else {
-            result.push_str(&format!("      Total sets: {}\n", set_count));
-        }
-
-        result
+        self.bytes += len;
+        self.sets.push_back(set);
+        self.dropped - dropped_before
     }
 
-    /// Formats IPFIX data records in human-readable format for debug logging.
-    /// Only performs formatting if debug logging is enabled to avoid performance impact.
-    ///
-    /// # Arguments
-    ///
-    /// * `records_data` - Raw IPFIX data record bytes
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the data records
-    fn format_records_for_debug(records_data: &[u8]) -> String {
-        let mut result = format!("IPFIX Data Records (size: {} bytes):\n", records_data.len());
-        let mut read_size: usize = 0;
-        let mut message_count = 0;
-
-        while read_size < records_data.len() {
-            match get_ipfix_message_length(&records_data[read_size..]) {
-                Ok(len) => {
-                    let len = len as usize;
-                    if read_size + len > records_data.len() {
-                        break;
-                    }
-
-                    let message_data = &records_data[read_size..read_size + len];
-                    result.push_str(&format!(
-                        "  Data Message {} (offset: {}, length: {}):\n",
-                        message_count + 1,
-                        read_size,
-                        len
-                    ));
-
-                    // Format header information
-                    if message_data.len() >= 16 {
-                        let version = NetworkEndian::read_u16(&message_data[0..2]);
-                        let length = NetworkEndian::read_u16(&message_data[2..4]);
-                        let export_time = NetworkEndian::read_u32(&message_data[4..8]);
-                        let sequence_number = NetworkEndian::read_u32(&message_data[8..12]);
-                        let observation_domain_id = NetworkEndian::read_u32(&message_data[12..16]);
-
-                        result.push_str(&format!("    Header: version={}, length={}, export_time={}, seq={}, domain_id={}\n",
-                                               version, length, export_time, sequence_number, observation_domain_id));
-                    }
-
-                    // Try to parse and format the data records in human-readable format
-                    if let Ok(parsed_message) =
-                        Self::try_parse_ipfix_message_for_debug(message_data)
-                    {
-                        result.push_str(&format!("    Parsed Data Records:\n"));
-                        result.push_str(&parsed_message);
-                    } else {
-                        // Fallback to sets parsing if detailed parsing fails
-                        result.push_str(&Self::format_ipfix_sets_for_debug(message_data));
-                    }
-
-                    read_size += len;
-                    message_count += 1;
-                }
-                Err(e) => {
-                    result.push_str(&format!(
-                        "  Error parsing message length at offset {}: {}\n",
-                        read_size, e
-                    ));
-                    break;
-                }
-            }
-        }
-
-        result.push_str(&format!("  Total messages processed: {}\n", message_count));
-        result
+    fn pop_front(&mut self) -> Option<BufferedSet> {
+        let set = self.sets.pop_front()?;
+        self.bytes = self.bytes.saturating_sub(set.bytes.len());
+        Some(set)
     }
 
-    /// Attempts to parse an IPFIX message for debug formatting purposes.
-    /// Returns a human-readable representation of the data records if successful.
-    ///
-    /// # Arguments
-    ///
-    /// * `message_data` - Raw IPFIX message bytes
-    ///
-    /// # Returns
-    ///
-    /// Result containing formatted string if parsing succeeds, error otherwise
-    fn try_parse_ipfix_message_for_debug(message_data: &[u8]) -> Result<String, &'static str> {
-        // Create a separate temporary cache for debug parsing to avoid borrowing conflicts
-        let temp_cache = IpfixCache::new();
-
-        // Try to parse the IPFIX message
-        let parsed_message = parse_ipfix_message(
-            &message_data,
-            temp_cache.templates.clone(),
-            temp_cache.formatter.clone(),
-        )
-        .map_err(|_| "Failed to parse IPFIX message")?;
-
-        let mut result = String::new();
-
-        // Format each set in the message
-        for (set_index, set) in parsed_message.sets.iter().enumerate() {
-            result.push_str(&format!(
-                "      Set {} (records type: {:?}):\n",
-                set_index + 1,
-                std::mem::discriminant(&set.records)
-            ));
-
-            match &set.records {
-                ipfixrw::parser::Records::Data { set_id, data } => {
-                    result.push_str(&format!(
-                        "        Type: Data Set (template_id: {})\n",
-                        set_id
-                    ));
-                    result.push_str(&format!("        Data records count: {}\n", data.len()));
-
-                    // Format each data record
-                    for (record_index, record) in data.iter().enumerate() {
-                        result.push_str(&format!(
-                            "        Record {} ({} fields):\n",
-                            record_index + 1,
-                            record.values.len()
-                        ));
-
-                        for (field_key, field_value) in &record.values {
-                            let field_desc = match field_key {
-                                DataRecordKey::Unrecognized(field_spec) => {
-                                    let enterprise = field_spec
-                                        .enterprise_number
-                                        .map_or("None".to_string(), |e| e.to_string());
-                                    format!(
-                                        "Field(id={}, enterprise={})",
-                                        field_spec.information_element_identifier, enterprise
-                                    )
-                                }
-                                DataRecordKey::Str(s) => format!("String Field: {}", s),
-                                DataRecordKey::Err(e) => format!("Error Field: {:?}", e),
-                            };
-
-                            let value_desc = match field_value {
-                                DataRecordValue::Bytes(bytes) => {
-                                    if bytes.len() <= 8 {
-                                        // Try to interpret as different numeric types
-                                        let hex_str = bytes
-                                            .iter()
-                                            .map(|b| format!("{:02x}", b))
-                                            .collect::<Vec<_>>()
-                                            .join(" ");
-                                        if bytes.len() == 1 {
-                                            format!("u8={}, hex=[{}]", bytes[0], hex_str)
-                                        } else if bytes.len() == 2 {
-                                            format!(
-                                                "u16={}, hex=[{}]",
-                                                NetworkEndian::read_u16(bytes),
-                                                hex_str
-                                            )
-                                        } else if bytes.len() == 4 {
-                                            format!(
-                                                "u32={}, hex=[{}]",
-                                                NetworkEndian::read_u32(bytes),
-                                                hex_str
-                                            )
-                                        } else if bytes.len() == 8 {
-                                            format!(
-                                                "u64={}, hex=[{}]",
-                                                NetworkEndian::read_u64(bytes),
-                                                hex_str
-                                            )
-                                        } else {
-                                            format!("bytes({})=[{}]", bytes.len(), hex_str)
-                                        }
-                                    } else {
-                                        // For longer byte arrays, just show length and first few bytes
-                                        let preview = bytes
-                                            .iter()
-                                            .take(8)
-                                            .map(|b| format!("{:02x}", b))
-                                            .collect::<Vec<_>>()
-                                            .join(" ");
-                                        format!("bytes({})=[{} ...]", bytes.len(), preview)
-                                    }
-                                }
-                                DataRecordValue::String(s) => format!("string=\"{}\"", s),
-                                DataRecordValue::U8(v) => format!("u8={}", v),
-                                DataRecordValue::U16(v) => format!("u16={}", v),
-                                DataRecordValue::U32(v) => format!("u32={}", v),
-                                DataRecordValue::U64(v) => format!("u64={}", v),
-                                DataRecordValue::I8(v) => format!("i8={}", v),
-                                DataRecordValue::I16(v) => format!("i16={}", v),
-                                DataRecordValue::I32(v) => format!("i32={}", v),
-                                DataRecordValue::I64(v) => format!("i64={}", v),
-                                DataRecordValue::F32(v) => format!("f32={}", v),
-                                DataRecordValue::F64(v) => format!("f64={}", v),
-                                _ => format!("unknown_value={:?}", field_value),
-                            };
-
-                            result.push_str(&format!("          {}: {}\n", field_desc, value_desc));
-                        }
-                    }
-                }
-                _ => {
-                    // For template sets and other types, show basic information
-                    result.push_str(&format!("        Type: Template or other set type\n"));
-                    // We can use the iterator methods to get template information if needed
-                    let template_count = parsed_message.iter_template_records().count();
-                    if template_count > 0 {
-                        result.push_str(&format!("        Templates found: {}\n", template_count));
-                        for (template_index, template) in
-                            parsed_message.iter_template_records().enumerate()
-                        {
-                            result.push_str(&format!(
-                                "        Template {} (ID: {}, field_count: {}):\n",
-                                template_index + 1,
-                                template.template_id,
-                                template.field_specifiers.len()
-                            ));
-                            for (field_index, field) in template.field_specifiers.iter().enumerate()
-                            {
-                                let enterprise = field
-                                    .enterprise_number
-                                    .map_or("None".to_string(), |e| e.to_string());
-                                result.push_str(&format!(
-                                    "          Field {}: ID={}, length={}, enterprise={}\n",
-                                    field_index + 1,
-                                    field.information_element_identifier,
-                                    field.field_length,
-                                    enterprise
-                                ));
-                            }
-                        }
-                    }
-                }
+    fn remove_keys(&mut self, keys: &HashSet<TemplateKey>) {
+        let mut retained = VecDeque::with_capacity(self.sets.len());
+        while let Some(set) = self.sets.pop_front() {
+            if keys.contains(&set.key) {
+                self.bytes = self.bytes.saturating_sub(set.bytes.len());
+            } else {
+                retained.push_back(set);
             }
         }
-
-        Ok(result)
+        self.sets = retained;
     }
 }
 
-/// Cache for IPFIX templates and formatting data
-struct IpfixCache {
-    pub templates: TemplateStore,
-    pub formatter: Rc<Formatter>,
-    pub last_observer_time: Option<u64>,
+#[derive(Debug)]
+struct RetiredTemplates {
+    keys: HashSet<TemplateKey>,
 }
 
-impl IpfixCache {
-    /// Creates a new IPFIX cache with current timestamp as initial observer time
-    pub fn new() -> Self {
-        let duration_since_epoch = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("System time should be after Unix epoch");
-
-        IpfixCache {
-            templates: Rc::new(RefCell::new(HashMap::new())),
-            formatter: Rc::new(Formatter::new()),
-            last_observer_time: Some(duration_since_epoch.as_nanos() as u64),
+impl Default for RetiredTemplates {
+    fn default() -> Self {
+        Self {
+            keys: HashSet::new(),
         }
     }
 }
 
-type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
+impl RetiredTemplates {
+    fn retire(&mut self, template: &CompiledTemplate) {
+        self.keys.insert(template.key);
+    }
 
-/// Actor responsible for processing IPFIX messages and converting them to SAI statistics.
-///
-/// The IpfixActor handles:
-/// - Processing IPFIX template messages to understand data structure
-/// - Parsing IPFIX data records and extracting SAI statistics
-/// - Managing template mappings between temporary and applied states
-/// - Distributing parsed statistics to multiple recipients
+    fn contains(&self, key: &TemplateKey) -> bool {
+        self.keys.contains(key)
+    }
+
+    fn validate_reactivation(&self, template: &CompiledTemplate) -> Result<(), IpfixError> {
+        if self.contains(&template.key) {
+            return Err(format!(
+                "template ({}, {}) cannot reuse a retired ID without an exporter generation boundary",
+                template.key.observation_domain_id, template.key.template_id
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpfixError(String);
+
+impl Display for IpfixError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for IpfixError {}
+
+impl From<&str> for IpfixError {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<String> for IpfixError {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+/// Decodes the fixed-width SONiC HFT IPFIX profile into SAI statistics.
 pub struct IpfixActor {
-    /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
-    /// Channel for receiving IPFIX template messages
+    saistats_recipients: Vec<Sender<SAIStatsBatchMessage>>,
     template_recipient: Receiver<IPFixTemplatesMessage>,
-    /// Channel for receiving IPFIX data records
     record_recipient: Receiver<SocketBufferMessage>,
-    /// Mapping from template ID to message key for temporary templates
-    temporary_templates_map: HashMap<u16, String>,
-    /// Mapping from message key to template IDs for applied templates
-    applied_templates_map: HashMap<String, Vec<u16>>,
-    /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
-    object_id_name_map: HashMap<String, HashMap<u16, String>>,
+    sessions: HashMap<Arc<str>, SessionTemplates>,
+    installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retired: RetiredTemplates,
+    deferred_sets: DeferredSetBuffer,
 }
 
 impl IpfixActor {
-    /// Creates a new IpfixActor instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `template_recipient` - Channel for receiving IPFIX template messages
-    /// * `record_recipient` - Channel for receiving IPFIX data records
-    ///
-    /// # Returns
-    ///
-    /// A new IpfixActor instance with empty recipient lists and template maps
     pub fn new(
         template_recipient: Receiver<IPFixTemplatesMessage>,
         record_recipient: Receiver<SocketBufferMessage>,
     ) -> Self {
-        IpfixActor {
-            saistats_recipients: LinkedList::new(),
+        Self {
+            saistats_recipients: Vec::new(),
             template_recipient,
             record_recipient,
-            temporary_templates_map: HashMap::new(),
-            applied_templates_map: HashMap::new(),
-            object_id_name_map: HashMap::new(),
+            sessions: HashMap::new(),
+            installed: HashMap::new(),
+            retired: RetiredTemplates::default(),
+            deferred_sets: DeferredSetBuffer::default(),
         }
     }
 
-    /// Adds a new recipient channel for receiving processed SAI statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
-        self.saistats_recipients.push_back(recipient);
+    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsBatchMessage>) {
+        self.saistats_recipients.push(recipient);
     }
 
-    /// Stores template information temporarily until it's applied to actual data.
-    ///
-    /// # Arguments
-    ///
-    /// * `msg_key` - Unique key identifying the template message
-    /// * `templates` - Parsed IPFIX template message containing template definitions
-    fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
-        templates.iter_template_records().for_each(|record| {
-            self.temporary_templates_map
-                .insert(record.template_id, msg_key.clone());
-        });
-    }
-
-    /// Returns true if the template is still known (temporary or applied).
-    fn is_template_known(&self, template_id: u16) -> bool {
-        self.temporary_templates_map.contains_key(&template_id)
-            || self
-                .applied_templates_map
-                .values()
-                .any(|ids| ids.contains(&template_id))
-    }
-
-    /// Moves a template from temporary to applied state when it's used in data records.
-    ///
-    /// # Arguments
-    ///
-    /// * `template_id` - ID of the template to apply
-    fn update_applied_template(&mut self, template_id: u16) {
-        if !self.temporary_templates_map.contains_key(&template_id) {
-            return;
+    fn compile_generation(
+        templates: &IPFixTemplatesMessage,
+    ) -> Result<TemplateGeneration, IpfixError> {
+        let bytes = templates
+            .templates
+            .as_deref()
+            .ok_or("template update has no template data")?;
+        if bytes.len() > MAX_TEMPLATE_CONFIG_BYTES {
+            return Err(format!(
+                "template update is {} bytes; maximum is {}",
+                bytes.len(),
+                MAX_TEMPLATE_CONFIG_BYTES
+            )
+            .into());
         }
-        let msg_key = self
-            .temporary_templates_map
-            .get(&template_id)
-            .expect("Template ID should exist in temporary map")
-            .clone();
-        let mut template_ids = Vec::new();
-        self.temporary_templates_map
+        let names = templates
+            .object_names
+            .as_ref()
+            .ok_or("HFT template update has no object_names")?;
+        let ids = templates
+            .object_ids
+            .as_ref()
+            .ok_or("HFT template update has no object_ids")?;
+
+        if names.len() != ids.len() || names.is_empty() {
+            return Err(format!(
+                "object_names/object_ids must be non-empty and equal length (names={}, ids={})",
+                names.len(),
+                ids.len()
+            )
+            .into());
+        }
+        if names.len() > MAX_OBJECTS_PER_UPDATE {
+            return Err(format!(
+                "template update has {} objects; maximum is {}",
+                names.len(),
+                MAX_OBJECTS_PER_UPDATE
+            )
+            .into());
+        }
+        let metadata_bytes = names
             .iter()
-            .filter(|(_, v)| **v == msg_key)
-            .for_each(|(&k, _)| {
-                template_ids.push(k);
-            });
-        self.temporary_templates_map.retain(|_, v| *v != msg_key);
-        self.applied_templates_map.insert(msg_key, template_ids);
-    }
+            .try_fold(0usize, |total, name| total.checked_add(name.len()))
+            .ok_or("object metadata size overflow")?;
+        if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+            return Err(format!(
+                "object metadata is {metadata_bytes} bytes; maximum is {MAX_OBJECT_METADATA_BYTES}"
+            )
+            .into());
+        }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
+        let mut object_names = HashMap::with_capacity(ids.len());
+        for (id, name) in ids.iter().copied().zip(names) {
+            if !(1..=0x7fff).contains(&id) {
+                return Err(format!("object ID {id} is outside the IPFIX 15-bit IE range").into());
+            }
+            if name.is_empty() {
+                return Err(format!("object ID {id} has an empty object name").into());
+            }
+            if object_names
+                .insert(id, Arc::<str>::from(name.as_str()))
+                .is_some()
+            {
+                return Err(format!("duplicate object ID {id}").into());
+            }
+        }
+
+        let owner = Arc::<str>::from(templates.key.as_str());
+        let mut compiled = HashMap::new();
+        for message in IpfixMessages::new(bytes) {
+            let message = message?;
+            let domain = NetworkEndian::read_u32(&message[12..16]);
+            let mut offset = IPFIX_HEADER_LEN;
+            while offset < message.len() {
+                let (set_id, set) = next_set(message, &mut offset)?;
+                if set.is_empty() {
+                    break;
+                }
+                if set_id != TEMPLATE_SET_ID {
+                    return Err(format!(
+                        "template channel only supports Template Set ID 2, got {set_id}"
+                    )
+                    .into());
+                }
+                compile_template_set(set, domain, &owner, &object_names, &mut compiled)?;
+            }
+        }
+        if compiled.is_empty() {
+            return Err("template update contains no HFT templates".into());
+        }
+
+        Ok(TemplateGeneration {
+            owner,
+            templates: compiled,
         })
     }
 
-    /// Processes IPFIX template messages and stores them for later use.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates` - IPFixTemplatesMessage containing template data and metadata
-    fn handle_template(&mut self, templates: IPFixTemplatesMessage) {
+    fn handle_template(
+        &mut self,
+        templates: IPFixTemplatesMessage,
+    ) -> Result<SAIStatsBatch, IpfixError> {
         if templates.is_delete {
-            // Handle template deletion
             self.handle_template_deletion(&templates.key);
+            return Ok(SAIStatsBatch::default());
+        }
+
+        let generation = match Self::compile_generation(&templates) {
+            Ok(generation) => generation,
+            Err(err) => {
+                error!(
+                    "Rejecting invalid HFT template update for {} and retaining the active generation: {}",
+                    templates.key, err
+                );
+                return Err(err);
+            }
+        };
+        let owner = Arc::clone(&generation.owner);
+
+        if let Some(conflict) = generation.templates.keys().find_map(|key| {
+            self.installed
+                .get(key)
+                .filter(|existing| existing.owner != owner)
+        }) {
+            return Err(format!(
+                "template ({}, {}) is already owned by session {}",
+                conflict.key.observation_domain_id, conflict.key.template_id, conflict.owner
+            )
+            .into());
+        }
+
+        let is_first_install = !self.sessions.contains_key(owner.as_ref());
+        if is_first_install {
+            validate_generation_reactivation(&generation, &self.retired)?;
+            validate_registry_capacity(&generation, &self.installed, &self.retired)?;
+            install_generation(&generation, &mut self.installed);
+            self.sessions.insert(
+                owner,
+                SessionTemplates {
+                    active: Some(generation),
+                    pending: None,
+                },
+            );
+            return self.finish_template_update();
+        }
+
+        let session = self
+            .sessions
+            .get_mut(owner.as_ref())
+            .expect("session existence checked above");
+        if session
+            .active
+            .as_ref()
+            .is_some_and(|active| active.equivalent(&generation))
+        {
+            if let Some(pending) = session.pending.take() {
+                retire_canceled_pending_generation(
+                    &pending,
+                    session.active.as_ref(),
+                    &mut self.installed,
+                    &mut self.retired,
+                );
+                debug!("Canceled pending HFT template generation for {owner}");
+            }
+            debug!("Refreshed unchanged HFT template generation for {owner}");
+        } else if session
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.equivalent(&generation))
+        {
+            debug!("Refreshed unchanged pending HFT template generation for {owner}");
+        } else {
+            let active = session.active.as_ref().expect("checked above");
+            for (key, candidate) in &generation.templates {
+                if let Some(current) = active.templates.get(key) {
+                    if current.as_ref() != candidate.as_ref() {
+                        return Err(format!(
+                            "session {owner} cannot change template ({}, {}) in place; use a new template ID",
+                            key.observation_domain_id, key.template_id
+                        )
+                        .into());
+                    }
+                }
+            }
+            if !generation
+                .templates
+                .keys()
+                .any(|key| !active.templates.contains_key(key))
+            {
+                return Err(format!(
+                    "session {owner} update has no new template ID to mark a lossless cutover"
+                )
+                .into());
+            }
+            validate_pending_replacement(
+                &generation,
+                session.pending.as_ref(),
+                &self.installed,
+                &self.retired,
+            )?;
+            if let Some(pending) = session.pending.take() {
+                retire_replaced_pending_generation(
+                    &pending,
+                    &generation,
+                    session.active.as_ref(),
+                    &mut self.installed,
+                    &mut self.retired,
+                );
+            }
+            install_generation(&generation, &mut self.installed);
+            session.pending = Some(generation);
+        }
+
+        self.finish_template_update()
+    }
+
+    fn finish_template_update(&mut self) -> Result<SAIStatsBatch, IpfixError> {
+        let mut batch = SAIStatsBatch::default();
+        self.drain_deferred_sets(&mut batch)?;
+        Ok(batch)
+    }
+
+    fn promote_pending_for(&mut self, key: TemplateKey) {
+        let Some(owner) = self
+            .installed
+            .get(&key)
+            .map(|template| Arc::clone(&template.owner))
+        else {
+            return;
+        };
+        let Some(session) = self.sessions.get_mut(&owner) else {
+            return;
+        };
+        let should_promote = session
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.templates.contains_key(&key))
+            && session
+                .active
+                .as_ref()
+                .is_some_and(|active| !active.templates.contains_key(&key));
+        if !should_promote {
             return;
         }
 
-        let templates_data = match templates.templates {
-            Some(data) => data,
-            None => {
-                warn!(
-                    "Received template message without template data for key: {}",
-                    templates.key
-                );
-                return;
-            }
-        };
-
-        debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
-            templates.key, templates.object_names, templates.object_ids
-        );
-
-        // Add detailed debug logging for template content if debug level is enabled
-        if log::log_enabled!(log::Level::Debug) {
-            let formatted_templates =
-                Self::format_templates_for_debug(&templates_data, &templates.key);
-            if !formatted_templates.is_empty() {
-                debug!("Received template details:\n{}", formatted_templates);
-            }
-        }
-
-        if let (Some(object_names), Some(object_ids)) =
-            (&templates.object_names, &templates.object_ids)
-        {
-            if object_ids.len() == object_names.len() {
-                let mut lookup = HashMap::with_capacity(object_ids.len());
-                let mut has_duplicate_object_id = false;
-
-                for (object_id, object_name) in
-                    object_ids.iter().copied().zip(object_names.iter().cloned())
-                {
-                    if let Some(previous_name) = lookup.insert(object_id, object_name.clone()) {
-                        warn!(
-                            "IPFIX template key {} contains duplicate object_id {} ({} -> {}). Skipping object_id_name_map entry to avoid ambiguous label resolution.",
-                            templates.key,
-                            object_id,
-                            previous_name,
-                            object_name
-                        );
-                        has_duplicate_object_id = true;
-                        break;
+        let pending = session.pending.take().expect("checked above");
+        if let Some(active) = session.active.replace(pending.clone()) {
+            for old_key in active.templates.keys() {
+                if !pending.templates.contains_key(old_key) {
+                    if let Some(old_template) = self.installed.remove(old_key) {
+                        self.retired.retire(&old_template);
                     }
                 }
-
-                if has_duplicate_object_id {
-                    self.object_id_name_map.remove(&templates.key);
-                } else {
-                    self.object_id_name_map
-                        .insert(templates.key.clone(), lookup);
-                }
-            } else {
-                warn!(
-                    "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",
-                    templates.key,
-                    object_ids.len(),
-                    object_names.len()
-                );
-                self.object_id_name_map.remove(&templates.key);
             }
-        } else {
-            self.object_id_name_map.remove(&templates.key);
         }
+        debug!("Promoted pending HFT template generation for {owner}");
+    }
 
-        let cache_ref = Self::get_cache();
-        let cache = cache_ref.borrow_mut();
-        let mut read_size: usize = 0;
-
-        while read_size < templates_data.len() {
-            let len = match get_ipfix_message_length(&templates_data[read_size..]) {
-                Ok(len) => len,
-                Err(e) => {
-                    warn!("Failed to parse IPFIX message length: {}", e);
-                    break;
+    fn handle_template_deletion(&mut self, key: &str) {
+        let Some((owner, session)) = self.sessions.remove_entry(key) else {
+            return;
+        };
+        let mut removed = HashSet::new();
+        for generation in [session.active, session.pending].into_iter().flatten() {
+            for template_key in generation.templates.keys() {
+                if self
+                    .installed
+                    .get(template_key)
+                    .is_some_and(|template| template.owner == owner)
+                {
+                    if let Some(template) = self.installed.remove(template_key) {
+                        self.retired.retire(&template);
+                    }
+                    removed.insert(*template_key);
                 }
-            };
+            }
+        }
+        self.deferred_sets.remove_keys(&removed);
+    }
 
-            // Check if the template header's length is larger than the remaining data
-            if read_size + len as usize > templates_data.len() {
-                warn!("IPFIX template header length {} exceeds remaining data size {} at offset {}, skipping this template group", 
-                      len, templates_data.len() - read_size, read_size);
+    #[cfg(test)]
+    fn handle_record(&mut self, records: &[u8]) -> Result<SAIStatsBatch, IpfixError> {
+        let mut batch = SAIStatsBatch::default();
+        if records.is_empty() {
+            return Err("empty IPFIX payload".into());
+        }
+        for message in IpfixMessages::new(records) {
+            let message = message?;
+            self.validate_data_message(message)?;
+            self.process_data_message(message, &mut batch)?;
+        }
+        Ok(batch)
+    }
+
+    fn validate_data_message(&self, message: &[u8]) -> Result<(), IpfixError> {
+        let domain = NetworkEndian::read_u32(&message[12..16]);
+        let mut offset = IPFIX_HEADER_LEN;
+        let mut set_count = 0usize;
+        while offset < message.len() {
+            let (set_id, set) = next_set(message, &mut offset)?;
+            if set.is_empty() {
                 break;
             }
-
-            let template = &templates_data[read_size..read_size + len as usize];
-            // Parse the template message - if this fails, log error and skip this template
-            let new_templates: ipfixrw::parser::Message = match parse_ipfix_message(
-                &template,
-                cache.templates.clone(),
-                cache.formatter.clone(),
-            ) {
-                Ok(templates) => templates,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse IPFIX template message for key {}: {}",
-                        templates.key, e
-                    );
-                    read_size += len as usize;
-                    continue;
-                }
+            if set_id < MIN_DATA_SET_ID {
+                return Err(format!("data channel contains non-data IPFIX Set ID {set_id}").into());
+            }
+            let key = TemplateKey {
+                observation_domain_id: domain,
+                template_id: set_id,
             };
-
-            self.insert_temporary_template(&templates.key, new_templates);
-            read_size += len as usize;
+            if let Some(template) = self.installed.get(&key) {
+                validate_data_set(template, set)?;
+            }
+            set_count += 1;
         }
-        debug!("Template handled successfully for key: {}", templates.key);
+        if set_count == 0 {
+            return Err("IPFIX data message contains no sets".into());
+        }
+        Ok(())
     }
 
-    /// Handles template deletion for a given key.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key of the template to delete
-    fn handle_template_deletion(&mut self, key: &str) {
-        debug!("Handling template deletion for key: {}", key);
-
-        // Remove from applied templates map and get template IDs
-        if let Some(template_ids) = self.applied_templates_map.remove(key) {
-            // Remove from temporary templates map
-            for template_id in &template_ids {
-                self.temporary_templates_map.remove(template_id);
+    fn process_data_message(
+        &mut self,
+        message: &[u8],
+        batch: &mut SAIStatsBatch,
+    ) -> Result<(), IpfixError> {
+        let domain = NetworkEndian::read_u32(&message[12..16]);
+        let mut offset = IPFIX_HEADER_LEN;
+        while offset < message.len() {
+            let (set_id, set) = next_set(message, &mut offset)?;
+            if set.is_empty() {
+                break;
             }
-            debug!("Removed {} templates for key: {}", template_ids.len(), key);
+            let key = TemplateKey {
+                observation_domain_id: domain,
+                template_id: set_id,
+            };
+            if !self.deferred_sets.sets.is_empty() {
+                let dropped = self.deferred_sets.push(BufferedSet {
+                    key,
+                    bytes: Arc::from(set),
+                    received_at: Instant::now(),
+                });
+                self.log_deferred_drops(dropped);
+            } else if let Some(template) = self.installed.get(&key) {
+                validate_data_set(template, set)?;
+                self.promote_pending_for(key);
+                if self.installed.contains_key(&key) {
+                    self.decode_set(key, set, batch)?;
+                }
+            } else if !self.retired.contains(&key) {
+                let dropped = self.deferred_sets.push(BufferedSet {
+                    key,
+                    bytes: Arc::from(set),
+                    received_at: Instant::now(),
+                });
+                self.log_deferred_drops(dropped);
+            }
         }
-
-        // Also check and remove any remaining entries in temporary_templates_map
-        self.temporary_templates_map
-            .retain(|_, msg_key| msg_key != key);
-
-        // Remove object metadata for this key
-        self.object_id_name_map.remove(key);
-
-        debug!("Template deletion completed for key: {}", key);
+        self.drain_deferred_sets(batch)?;
+        Ok(())
     }
 
-    /// Processes IPFIX data records and converts them to SAI statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `records` - Raw IPFIX data record bytes
-    ///
-    /// # Returns
-    ///
-    /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
-        let cache_ref = Self::get_cache();
-        let mut cache = cache_ref.borrow_mut();
-        let mut read_size: usize = 0;
-        let mut messages: Vec<SAIStatsMessage> = Vec::new();
+    fn drain_deferred_sets(&mut self, batch: &mut SAIStatsBatch) -> Result<(), IpfixError> {
+        let expired = self.deferred_sets.expire(Instant::now());
+        self.log_deferred_drops(expired);
 
-        debug!("Processing IPFIX records of length: {}", records.len());
-
-        while read_size < records.len() {
-            let len = get_ipfix_message_length(&records[read_size..]);
-            let len = match len {
-                Ok(len) => {
-                    if len as usize + read_size > records.len() {
-                        warn!(
-                            "Invalid IPFIX message length: {} at offset {}, exceeds buffer size {}",
-                            len,
-                            read_size,
-                            records.len()
-                        );
-                        break;
-                    }
-                    len
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to get IPFIX message length at offset {}: {}",
-                        read_size, e
-                    );
-                    break;
-                }
+        loop {
+            let Some(front) = self.deferred_sets.sets.front() else {
+                return Ok(());
             };
-
-            let data = &records[read_size..read_size + len as usize];
-            // Debug log the parsed records if debug logging is enabled
-            if log::log_enabled!(log::Level::Debug) {
-                let formatted_records = Self::format_records_for_debug(data);
-                debug!("Received IPFIX data records: {}", formatted_records);
-            }
-            let data_message =
-                parse_ipfix_message(&data, cache.templates.clone(), cache.formatter.clone());
-            let data_message = match data_message {
-                Ok(message) => message,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse IPFIX data message at offset {} : {}",
-                        read_size, e
-                    );
-                    read_size += len as usize;
-                    continue;
-                }
-            };
-
-            let mut should_drop_message = false;
-
-            data_message.sets.iter().for_each(|set| {
-                if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
-                    self.update_applied_template(set_id);
-                    if !self.is_template_known(set_id) {
-                        should_drop_message = true;
-                    }
-                }
-            });
-
-            if should_drop_message {
-                debug!("Dropping IPFIX data message because template was deleted or unknown");
-                read_size += len as usize;
+            if self.retired.contains(&front.key) {
+                self.deferred_sets.pop_front();
                 continue;
             }
-
-            for set in &data_message.sets {
-                let (template_id, datarecords) = match &set.records {
-                    ipfixrw::parser::Records::Data { set_id, data } => (*set_id, data),
-                    _ => continue,
-                };
-
-                let object_name_lookup = self
-                    .get_template_key(template_id)
-                    .and_then(|key| self.object_id_name_map.get(key));
-
-                let mut observation_time: Option<u64>;
-
-                for record in datarecords {
-                    observation_time = get_observation_time(record);
-                    if observation_time.is_none() {
-                        debug!(
-                            "No observation time in record, use the last observer time {:?}",
-                            cache.last_observer_time
-                        );
-                        observation_time = cache.last_observer_time;
-                    } else if let (Some(obs_time), Some(last_time)) =
-                        (observation_time, cache.last_observer_time)
-                    {
-                        if obs_time > last_time {
-                            cache.last_observer_time = observation_time;
-                        }
-                    } else {
-                        // If we have observation time but no last time, update it
-                        cache.last_observer_time = observation_time;
-                    }
-
-                    // If we still don't have observation time, skip this record
-                    if observation_time.is_none() {
-                        warn!("No observation time available for record, skipping");
-                        continue;
-                    }
-
-                    // Collect final stats directly
-                    let mut final_stats: Vec<SAIStat> = Vec::new();
-
-                    // Debug: Log all fields in the record to understand what we're getting
-                    debug!(
-                        "Processing record for template_id {} with {} fields:",
-                        template_id,
-                        record.values.len()
-                    );
-                    for (key, val) in record.values.iter() {
-                        match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                debug!(
-                                    "  Field ID: {}, Enterprise: {:?}, Length: {}, Value: {:?}",
-                                    field_spec.information_element_identifier,
-                                    field_spec.enterprise_number,
-                                    field_spec.field_length,
-                                    val
-                                );
-                            }
-                            _ => {
-                                debug!("  Key: {:?}, Value: {:?}", key, val);
-                            }
-                        }
-                    }
-
-                    for (key, val) in record.values.iter() {
-                        // Check if this is the observation time field or system time field
-                        let is_time_field = match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let field_id = field_spec.information_element_identifier;
-                                let is_standard_field = field_spec.enterprise_number.is_none();
-
-                                (field_id == OBSERVATION_TIME_NANOSECONDS
-                                    || field_id == OBSERVATION_TIME_SECONDS)
-                                    && is_standard_field
-                            }
-                            _ => false,
-                        };
-
-                        if is_time_field {
-                            if let DataRecordKey::Unrecognized(field_spec) = key {
-                                debug!(
-                                    "Skipping time field (ID: {})",
-                                    field_spec.information_element_identifier
-                                );
-                            }
-                            continue;
-                        }
-
-                        match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let stat = SAIStat::from_ipfix(field_spec, val, object_name_lookup);
-                                debug!("Created SAIStat: {:?}", stat);
-                                final_stats.push(stat);
-                            }
-                            _ => continue,
-                        }
-                    }
-
-                    let saistats = SAIStatsMessage::new(SAIStats {
-                        observation_time: observation_time
-                            .expect("observation_time should be Some at this point"),
-                        stats: final_stats,
-                    });
-
-                    messages.push(saistats.clone());
-                    debug!("Record parsed {:?}", saistats);
-                }
+            let Some(template) = self.installed.get(&front.key) else {
+                return Ok(());
+            };
+            if let Err(err) = validate_data_set(template, &front.bytes) {
+                let invalid = self.deferred_sets.pop_front().expect("front checked above");
+                warn!(
+                    "Dropping invalid deferred HFT data set ({}, {}): {}",
+                    invalid.key.observation_domain_id, invalid.key.template_id, err
+                );
+                continue;
             }
-            read_size += len as usize;
-            debug!(
-                "Consuming IPFIX message of length: {}, rest length: {}",
-                len,
-                records.len() - read_size
+            let counters = data_set_counter_count(template, &front.bytes)?;
+            if !batch.is_empty()
+                && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
+            {
+                return Ok(());
+            }
+
+            let ready = self.deferred_sets.pop_front().expect("front checked above");
+            self.promote_pending_for(ready.key);
+            if self.installed.contains_key(&ready.key) {
+                self.decode_set(ready.key, &ready.bytes, batch)?;
+            }
+        }
+    }
+
+    fn log_deferred_drops(&self, dropped: u64) {
+        if dropped > 0 {
+            warn!(
+                "HFT deferred-set buffer dropped {} set(s); total drops={}",
+                dropped, self.deferred_sets.dropped
             );
         }
-        messages
     }
 
-    thread_local! {
-        static IPFIX_CACHE: RefCell<IpfixCacheRef> = RefCell::new(Rc::new(RefCell::new(IpfixCache::new())));
+    fn decode_set(
+        &self,
+        key: TemplateKey,
+        set: &[u8],
+        batch: &mut SAIStatsBatch,
+    ) -> Result<(), IpfixError> {
+        let template = self
+            .installed
+            .get(&key)
+            .ok_or_else(|| format!("missing installed template {key:?}"))?;
+        if set.len() < SET_HEADER_LEN {
+            return Err("IPFIX set is shorter than its header".into());
+        }
+        validate_data_set(template, set)?;
+        let payload = &set[SET_HEADER_LEN..];
+        let record_bytes = payload.len() / template.record_len * template.record_len;
+        let record_count = record_bytes / template.record_len;
+        batch.reserve(record_count, record_count * template.counters.len());
+
+        for record in payload[..record_bytes].chunks_exact(template.record_len) {
+            let time_offset = template.observation_time_offset;
+            let observation_time = NetworkEndian::read_u64(&record[time_offset..time_offset + 8]);
+            batch.push_record(
+                observation_time,
+                template.counters.iter().map(|counter| SAIStat {
+                    object_name: Arc::clone(&counter.object_name),
+                    type_id: counter.type_id,
+                    stat_id: counter.stat_id,
+                    counter: NetworkEndian::read_u64(
+                        &record[counter.offset..counter.offset + HFT_FIELD_LEN as usize],
+                    ),
+                }),
+            );
+        }
+        Ok(())
     }
 
-    fn get_cache() -> IpfixCacheRef {
-        Self::IPFIX_CACHE.with(|cache| cache.borrow().clone())
+    async fn process_record_input(
+        &mut self,
+        records: &[u8],
+        batch: &mut SAIStatsBatch,
+    ) -> Result<(), IpfixError> {
+        if records.is_empty() {
+            return Err("empty IPFIX payload".into());
+        }
+        for message in IpfixMessages::new(records) {
+            let message = message?;
+            self.validate_data_message(message)?;
+            let counters = self.data_message_counter_count(message)?;
+            if !batch.is_empty()
+                && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
+            {
+                self.send_batch(std::mem::take(batch)).await?;
+            }
+            self.process_data_message(message, batch)?;
+            if batch.counter_count() >= MAX_COUNTERS_PER_BATCH {
+                self.send_batch(std::mem::take(batch)).await?;
+            }
+        }
+        Ok(())
     }
 
-    pub async fn run(mut actor: IpfixActor) {
+    fn data_message_counter_count(&self, message: &[u8]) -> Result<usize, IpfixError> {
+        let domain = NetworkEndian::read_u32(&message[12..16]);
+        let mut offset = IPFIX_HEADER_LEN;
+        let mut counters = 0usize;
+        while offset < message.len() {
+            let (set_id, set) = next_set(message, &mut offset)?;
+            if set.is_empty() {
+                break;
+            }
+            let key = TemplateKey {
+                observation_domain_id: domain,
+                template_id: set_id,
+            };
+            if self.deferred_sets.sets.is_empty() {
+                if let Some(template) = self.installed.get(&key) {
+                    counters = counters
+                        .checked_add(data_set_counter_count(template, set)?)
+                        .ok_or("decoded counter count overflow")?;
+                }
+            }
+        }
+        Ok(counters)
+    }
+
+    async fn send_batch(&self, batch: SAIStatsBatch) -> Result<(), IpfixError> {
+        if batch.is_empty() || self.saistats_recipients.is_empty() {
+            return Ok(());
+        }
+        let batch = Arc::new(batch);
+        let mut blocked = Vec::new();
+        for recipient in &self.saistats_recipients {
+            match recipient.try_reserve() {
+                Ok(permit) => permit.send(Arc::clone(&batch)),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => blocked.push(recipient),
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    return Err("SAI stats recipient closed".into())
+                }
+            }
+        }
+        let mut closed = 0usize;
+        for recipient in blocked {
+            if recipient.send(Arc::clone(&batch)).await.is_err() {
+                closed += 1;
+            }
+        }
+        if closed > 0 {
+            return Err(format!("{closed} SAI stats recipient(s) closed").into());
+        }
+        Ok(())
+    }
+
+    async fn send_batch_and_drain_deferred(
+        &mut self,
+        batch: SAIStatsBatch,
+    ) -> Result<(), IpfixError> {
+        self.send_batch(batch).await?;
+        loop {
+            let mut ready = SAIStatsBatch::default();
+            self.drain_deferred_sets(&mut ready)?;
+            if ready.is_empty() {
+                return Ok(());
+            }
+            self.send_batch(ready).await?;
+        }
+    }
+
+    pub async fn run(mut actor: IpfixActor) -> Result<(), IpfixError> {
         loop {
             select! {
-                templates = actor.template_recipient.recv() => {
-                    match templates {
-                        Some(templates) => {
-                            record_comm_stats(
-                                ChannelLabel::SwssToIpfixTemplates,
-                                actor.template_recipient.len(),
-                            );
-                            actor.handle_template(templates);
-                        },
-                        None => {
-                            break;
-                        }
-                    }
-                },
-                record = actor.record_recipient.recv() => {
-                    match record {
-                        Some(record) => {
-                            record_comm_stats(
-                                ChannelLabel::DataNetlinkToIpfixRecords,
-                                actor.record_recipient.len(),
-                            );
-                            let messages = actor.handle_record(record);
-                            for recipient in &actor.saistats_recipients {
-                                for message in &messages {
-                                    let _ = recipient.send(message.clone()).await;
-                                }
-                            }
-                        },
-                        None => {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Drop for IpfixActor {
-    fn drop(&mut self) {
-        self.template_recipient.close();
-    }
-}
-
-/// IPFIX Information Element ID for observationTimeNanoseconds (Field ID 325).
-///
-/// This field represents the absolute timestamp of the observation of the packet
-/// within a nanosecond resolution. The timestamp is based on the local time zone
-/// of the Exporter and is represented as nanoseconds since the UNIX epoch.
-///
-/// According to IANA IPFIX Information Elements Registry:
-/// - ElementId: 325
-/// - Data Type: dateTimeNanoseconds
-/// - Semantics: default
-/// - Status: current
-const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
-
-/// IPFIX Information Element ID for observationTimeSeconds (Field ID 322).
-///
-/// This field represents the absolute timestamp of the observation of the packet
-/// within a second resolution. The timestamp is based on the local time zone
-/// of the Exporter and is represented as seconds since the UNIX epoch.
-///
-/// According to IANA IPFIX Information Elements Registry:
-/// - ElementId: 322
-/// - Data Type: dateTimeSeconds  
-/// - Semantics: default
-/// - Status: current
-const OBSERVATION_TIME_SECONDS: u16 = 322;
-
-/// Extracts observation time from an IPFIX data record.
-///
-/// Converts timestamp to 64-bit nanoseconds following this priority:
-/// 1. If 64-bit nanoseconds field exists, use it directly
-/// 2. If 32-bit seconds and 32-bit nanoseconds fields exist, combine them
-/// 3. Otherwise, use current UTC time as 64-bit nanoseconds timestamp
-///
-/// # Arguments
-///
-/// * `data_record` - The IPFIX data record to extract time from
-///
-/// # Returns
-///
-/// Some(timestamp_in_nanoseconds) if observation time field is present, None otherwise
-fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
-    let mut seconds_value: Option<u32> = None;
-    let mut nanoseconds_value: Option<u32> = None;
-    let mut full_nanoseconds_value: Option<u64> = None;
-
-    // First pass: collect all time-related fields
-    for (key, val) in &data_record.values {
-        if let DataRecordKey::Unrecognized(field_spec) = key {
-            if field_spec.enterprise_number.is_none() {
-                match field_spec.information_element_identifier {
-                    OBSERVATION_TIME_NANOSECONDS => {
-                        debug!(
-                            "Found observation time nanoseconds field with value: {:?}",
-                            val
+                template = actor.template_recipient.recv() => match template {
+                    Some(template) => {
+                        record_comm_stats(
+                            ChannelLabel::SwssToIpfixTemplates,
+                            actor.template_recipient.len(),
                         );
-                        match val {
-                            DataRecordValue::Bytes(bytes) => {
-                                if bytes.len() == 8 {
-                                    full_nanoseconds_value = Some(NetworkEndian::read_u64(bytes));
-                                    debug!(
-                                        "Extracted 64-bit nanoseconds: {}",
-                                        full_nanoseconds_value.unwrap()
-                                    );
-                                } else if bytes.len() == 4 {
-                                    nanoseconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!(
-                                        "Extracted 32-bit nanoseconds: {}",
-                                        nanoseconds_value.unwrap()
-                                    );
-                                }
-                            }
-                            DataRecordValue::U64(val) => {
-                                full_nanoseconds_value = Some(*val);
-                                debug!("Extracted 64-bit nanoseconds (u64): {}", val);
-                            }
-                            DataRecordValue::U32(val) => {
-                                nanoseconds_value = Some(*val);
-                                debug!("Extracted 32-bit nanoseconds (u32): {}", val);
-                            }
-                            _ => {
-                                debug!("Observation time nanoseconds field has unexpected value type: {:?}", val);
-                            }
+                        match actor.handle_template(template) {
+                            Ok(batch) => actor.send_batch_and_drain_deferred(batch).await?,
+                            Err(err) => error!("HFT template update rejected: {err}"),
                         }
                     }
-                    OBSERVATION_TIME_SECONDS => {
-                        debug!("Found observation time seconds field with value: {:?}", val);
-                        match val {
-                            DataRecordValue::Bytes(bytes) => {
-                                if bytes.len() == 4 {
-                                    seconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!("Extracted 32-bit seconds: {}", seconds_value.unwrap());
-                                }
-                            }
-                            DataRecordValue::U32(val) => {
-                                seconds_value = Some(*val);
-                                debug!("Extracted 32-bit seconds (u32): {}", val);
-                            }
-                            _ => {
-                                debug!("Observation time seconds field has unexpected value type: {:?}", val);
+                    None => return Err("IPFIX template input channel closed".into()),
+                },
+                record = actor.record_recipient.recv() => match record {
+                    Some(record) => {
+                        record_comm_stats(
+                            ChannelLabel::DataNetlinkToIpfixRecords,
+                            actor.record_recipient.len(),
+                        );
+                        let mut batch = SAIStatsBatch::default();
+                        let mut input_count = 1usize;
+                        let mut input_bytes = record.len();
+                        if let Err(err) = actor.process_record_input(&record, &mut batch).await {
+                            warn!("Dropping invalid HFT IPFIX message: {err}");
+                        }
+                        while input_count < MAX_RECORD_INPUTS_PER_BATCH
+                            && input_bytes < MAX_RECORD_INPUT_BYTES_PER_BATCH
+                            && actor.template_recipient.is_empty()
+                        {
+                            let Ok(next) = actor.record_recipient.try_recv() else {
+                                break;
+                            };
+                            input_count += 1;
+                            input_bytes = input_bytes.saturating_add(next.len());
+                            if let Err(err) = actor.process_record_input(&next, &mut batch).await {
+                                warn!("Dropping invalid HFT IPFIX message: {err}");
                             }
                         }
+                        actor.send_batch_and_drain_deferred(batch).await?;
                     }
-                    _ => {} // Ignore other fields
+                    None => return Err("IPFIX record input channel closed".into()),
                 }
             }
         }
     }
-
-    // Priority 1: Use 64-bit nanoseconds directly if available
-    if let Some(nano_time) = full_nanoseconds_value {
-        debug!("Using 64-bit nanoseconds timestamp: {}", nano_time);
-        return Some(nano_time);
-    }
-
-    // Priority 2: Combine 32-bit seconds and 32-bit nanoseconds
-    if let (Some(seconds), Some(nanoseconds)) = (seconds_value, nanoseconds_value) {
-        let combined_timestamp = (seconds as u64) * 1_000_000_000 + (nanoseconds as u64);
-        debug!(
-            "Combined timestamp from seconds({}) and nanoseconds({}): {}",
-            seconds, nanoseconds, combined_timestamp
-        );
-        return Some(combined_timestamp);
-    }
-
-    // Priority 3: Use current UTC time
-    debug!("No complete observation time fields found, using current UTC time");
-    let current_time = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("System time should be after Unix epoch")
-        .as_nanos() as u64;
-    debug!(
-        "Using current UTC time as observation time: {}",
-        current_time
-    );
-    Some(current_time)
 }
 
-/// Parse IPFIX message length according to IPFIX RFC specification
-/// IPFIX message length is stored in bytes 2-3 of the message header (16-bit network byte order)
-fn get_ipfix_message_length(data: &[u8]) -> Result<u16, &'static str> {
-    if data.len() < 4 {
-        return Err("Data too short for IPFIX header");
+fn install_generation(
+    generation: &TemplateGeneration,
+    installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+) {
+    for (key, template) in &generation.templates {
+        installed.insert(*key, Arc::clone(template));
     }
-    // IPFIX message length is at byte positions 2-3 (0-indexed)
-    Ok(NetworkEndian::read_u16(&data[2..4]))
+}
+
+fn retire_canceled_pending_generation(
+    pending: &TemplateGeneration,
+    active: Option<&TemplateGeneration>,
+    installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retired: &mut RetiredTemplates,
+) {
+    for key in pending.templates.keys() {
+        if !active.is_some_and(|generation| generation.templates.contains_key(key)) {
+            if let Some(template) = installed.remove(key) {
+                retired.retire(&template);
+            }
+        }
+    }
+}
+
+fn retire_replaced_pending_generation(
+    pending: &TemplateGeneration,
+    replacement: &TemplateGeneration,
+    active: Option<&TemplateGeneration>,
+    installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retired: &mut RetiredTemplates,
+) {
+    for key in pending.templates.keys() {
+        if !active.is_some_and(|generation| generation.templates.contains_key(key))
+            && !replacement.templates.contains_key(key)
+        {
+            if let Some(template) = installed.remove(key) {
+                retired.retire(&template);
+            }
+        }
+    }
+}
+
+fn validate_pending_replacement(
+    replacement: &TemplateGeneration,
+    pending: Option<&TemplateGeneration>,
+    installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retired: &RetiredTemplates,
+) -> Result<(), IpfixError> {
+    for template in replacement.templates.values() {
+        if let Some(pending_template) =
+            pending.and_then(|generation| generation.templates.get(&template.key))
+        {
+            if pending_template.as_ref() != template.as_ref() {
+                return Err(format!(
+                    "pending template ({}, {}) cannot change in place; use a new template ID",
+                    template.key.observation_domain_id, template.key.template_id
+                )
+                .into());
+            }
+        } else if retired.contains(&template.key) {
+            retired.validate_reactivation(template)?;
+        }
+    }
+
+    let fresh_keys = replacement
+        .templates
+        .keys()
+        .filter(|key| !installed.contains_key(key) && !retired.contains(key))
+        .count();
+    if retired.keys.len() + installed.len() + fresh_keys > MAX_RETIRED_TEMPLATES {
+        return Err(format!(
+            "template key registry limit {} exceeded",
+            MAX_RETIRED_TEMPLATES
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_generation_reactivation(
+    generation: &TemplateGeneration,
+    retired: &RetiredTemplates,
+) -> Result<(), IpfixError> {
+    for template in generation.templates.values() {
+        retired.validate_reactivation(template)?;
+    }
+    Ok(())
+}
+
+fn validate_registry_capacity(
+    generation: &TemplateGeneration,
+    installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retired: &RetiredTemplates,
+) -> Result<(), IpfixError> {
+    let fresh_keys = generation
+        .templates
+        .keys()
+        .filter(|key| !installed.contains_key(key) && !retired.contains(key))
+        .count();
+    if retired.keys.len() + installed.len() + fresh_keys > MAX_RETIRED_TEMPLATES {
+        return Err(format!(
+            "template key registry limit {} exceeded",
+            MAX_RETIRED_TEMPLATES
+        )
+        .into());
+    }
+    Ok(())
+}
+
+struct IpfixMessages<'a> {
+    remaining: &'a [u8],
+    failed: bool,
+}
+
+impl<'a> IpfixMessages<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            remaining: bytes,
+            failed: false,
+        }
+    }
+}
+
+impl<'a> Iterator for IpfixMessages<'a> {
+    type Item = Result<&'a [u8], IpfixError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed || self.remaining.is_empty() {
+            return None;
+        }
+        if self.remaining.len() < IPFIX_HEADER_LEN {
+            self.failed = true;
+            return Some(Err(format!(
+                "IPFIX payload has {} trailing bytes, shorter than the 16-byte header",
+                self.remaining.len()
+            )
+            .into()));
+        }
+        let version = NetworkEndian::read_u16(&self.remaining[0..2]);
+        if version != IPFIX_VERSION {
+            self.failed = true;
+            return Some(Err(format!("unsupported IPFIX version {version}").into()));
+        }
+        let len = NetworkEndian::read_u16(&self.remaining[2..4]) as usize;
+        if len < IPFIX_HEADER_LEN {
+            self.failed = true;
+            return Some(Err(format!("invalid IPFIX message length {len}").into()));
+        }
+        if len > self.remaining.len() {
+            self.failed = true;
+            return Some(Err(format!(
+                "IPFIX message length {len} exceeds remaining payload {}",
+                self.remaining.len()
+            )
+            .into()));
+        }
+        let (message, remaining) = self.remaining.split_at(len);
+        self.remaining = remaining;
+        Some(Ok(message))
+    }
+}
+
+fn next_set<'a>(message: &'a [u8], offset: &mut usize) -> Result<(u16, &'a [u8]), IpfixError> {
+    if message.len().saturating_sub(*offset) < SET_HEADER_LEN {
+        if message[*offset..].iter().all(|byte| *byte == 0) {
+            *offset = message.len();
+            return Ok((0, &message[message.len()..]));
+        }
+        return Err("IPFIX message has a truncated set header".into());
+    }
+    let set_id = NetworkEndian::read_u16(&message[*offset..*offset + 2]);
+    let set_len = NetworkEndian::read_u16(&message[*offset + 2..*offset + 4]) as usize;
+    if set_len <= SET_HEADER_LEN {
+        return Err(format!("invalid IPFIX set length {set_len}").into());
+    }
+    let end = (*offset)
+        .checked_add(set_len)
+        .ok_or("IPFIX set length overflow")?;
+    if end > message.len() {
+        return Err(format!("IPFIX set length {set_len} exceeds message boundary").into());
+    }
+    let set = &message[*offset..end];
+    *offset = end;
+    Ok((set_id, set))
+}
+
+fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<(), IpfixError> {
+    if set.len() <= SET_HEADER_LEN {
+        return Err(format!("data set {} contains no records", template.key.template_id).into());
+    }
+    let payload = &set[SET_HEADER_LEN..];
+    let record_bytes = payload.len() / template.record_len * template.record_len;
+    if record_bytes == 0 {
+        return Err(format!(
+            "data set {} is shorter than its {}-byte record",
+            template.key.template_id, template.record_len
+        )
+        .into());
+    }
+    let padding = &payload[record_bytes..];
+    if padding.len() > 3 || padding.iter().any(|byte| *byte != 0) {
+        return Err(format!(
+            "data set {} has {} invalid trailing bytes",
+            template.key.template_id,
+            padding.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn data_set_counter_count(template: &CompiledTemplate, set: &[u8]) -> Result<usize, IpfixError> {
+    validate_data_set(template, set)?;
+    let record_count = (set.len() - SET_HEADER_LEN) / template.record_len;
+    record_count
+        .checked_mul(template.counters.len())
+        .ok_or_else(|| "decoded counter count overflow".into())
+}
+
+fn compile_template_set(
+    set: &[u8],
+    domain: u32,
+    owner: &Arc<str>,
+    object_names: &HashMap<u16, Arc<str>>,
+    output: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+) -> Result<(), IpfixError> {
+    let mut offset = SET_HEADER_LEN;
+    while offset < set.len() {
+        if set.len() - offset < 4 {
+            if set[offset..].iter().all(|byte| *byte == 0) {
+                break;
+            }
+            return Err("template set has a truncated template record".into());
+        }
+        let template_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+        let field_count = NetworkEndian::read_u16(&set[offset + 2..offset + 4]) as usize;
+        offset += 4;
+        if template_id < MIN_DATA_SET_ID {
+            return Err(format!("reserved template ID {template_id}").into());
+        }
+        if field_count == 0 {
+            return Err(format!(
+                "template withdrawal/zero-field template {template_id} is outside the HFT profile"
+            )
+            .into());
+        }
+
+        let mut counters = Vec::with_capacity(field_count.saturating_sub(1));
+        let mut observation_time_offset = None;
+        let mut observation_fields = 0usize;
+        let mut field_keys = HashSet::with_capacity(field_count);
+        for field_index in 0..field_count {
+            if set.len() - offset < 4 {
+                return Err(format!("template {template_id} has a truncated field").into());
+            }
+            let raw_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+            let field_len = NetworkEndian::read_u16(&set[offset + 2..offset + 4]);
+            offset += 4;
+            if field_len != HFT_FIELD_LEN {
+                return Err(format!(
+                    "template {template_id} field {} has length {field_len}; HFT requires 8",
+                    raw_id & 0x7fff
+                )
+                .into());
+            }
+            let enterprise = raw_id & 0x8000 != 0;
+            let field_id = raw_id & 0x7fff;
+            if enterprise {
+                if set.len() - offset < 4 {
+                    return Err(format!(
+                        "template {template_id} has a truncated enterprise number"
+                    )
+                    .into());
+                }
+                let enterprise_number = NetworkEndian::read_u32(&set[offset..offset + 4]);
+                offset += 4;
+                if enterprise_number == 0 {
+                    return Err(format!(
+                        "template {template_id} uses reserved enterprise number zero"
+                    )
+                    .into());
+                }
+                let object_name = object_names.get(&field_id).ok_or_else(|| {
+                    format!("template {template_id} references unmapped object ID {field_id}")
+                })?;
+                let (type_id, stat_id) = decode_sai_ids(enterprise_number);
+                if !field_keys.insert((field_id, Some(enterprise_number))) {
+                    return Err(format!(
+                        "template {template_id} contains a duplicate counter field"
+                    )
+                    .into());
+                }
+                counters.push(CompiledCounter {
+                    offset: field_index * HFT_FIELD_LEN as usize,
+                    object_name: Arc::clone(object_name),
+                    type_id,
+                    stat_id,
+                });
+            } else if field_id == OBSERVATION_TIME_NANOSECONDS {
+                if !field_keys.insert((field_id, None)) {
+                    return Err(format!(
+                        "template {template_id} contains duplicate observation time fields"
+                    )
+                    .into());
+                }
+                observation_time_offset = Some(field_index * HFT_FIELD_LEN as usize);
+                observation_fields += 1;
+            } else {
+                return Err(format!(
+                    "template {template_id} contains unsupported standard IE {field_id}"
+                )
+                .into());
+            }
+        }
+        if observation_fields != 1 || counters.is_empty() {
+            return Err(format!(
+                "template {template_id} requires exactly one observation time and at least one counter"
+            )
+            .into());
+        }
+
+        let key = TemplateKey {
+            observation_domain_id: domain,
+            template_id,
+        };
+        let template = Arc::new(CompiledTemplate {
+            key,
+            owner: Arc::clone(owner),
+            observation_time_offset: observation_time_offset.expect("validated above"),
+            counters: counters.into(),
+            record_len: field_count * HFT_FIELD_LEN as usize,
+        });
+        if output.insert(key, template).is_some() {
+            return Err(
+                format!("duplicate template ({domain}, {template_id}) in one update").into(),
+            );
+        }
+        if output.len() > MAX_TEMPLATES_PER_UPDATE {
+            return Err(format!(
+                "template update exceeds {} templates",
+                MAX_TEMPLATES_PER_UPDATE
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
-    use log::LevelFilter::Debug;
-    use std::io::Write;
-    use std::sync::{Arc, Mutex, Once, OnceLock};
     use tokio::sync::mpsc::channel;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-    static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
-
-    fn get_log_buffer() -> &'static Arc<Mutex<Vec<u8>>> {
-        LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+    fn template_message(
+        key: &str,
+        domain: u32,
+        template_id: u16,
+        fields: &[(u16, u32)],
+    ) -> IPFixTemplatesMessage {
+        let mut message = Vec::new();
+        let message_len = IPFIX_HEADER_LEN + 12 + fields.len() * 8;
+        let set_len = message_len - IPFIX_HEADER_LEN;
+        message.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        message.extend_from_slice(&(message_len as u16).to_be_bytes());
+        message.extend_from_slice(&0u32.to_be_bytes());
+        message.extend_from_slice(&0u32.to_be_bytes());
+        message.extend_from_slice(&domain.to_be_bytes());
+        message.extend_from_slice(&TEMPLATE_SET_ID.to_be_bytes());
+        message.extend_from_slice(&(set_len as u16).to_be_bytes());
+        message.extend_from_slice(&template_id.to_be_bytes());
+        message.extend_from_slice(&((fields.len() + 1) as u16).to_be_bytes());
+        message.extend_from_slice(&OBSERVATION_TIME_NANOSECONDS.to_be_bytes());
+        message.extend_from_slice(&HFT_FIELD_LEN.to_be_bytes());
+        for (label, enterprise) in fields {
+            message.extend_from_slice(&(0x8000 | label).to_be_bytes());
+            message.extend_from_slice(&HFT_FIELD_LEN.to_be_bytes());
+            message.extend_from_slice(&enterprise.to_be_bytes());
+        }
+        IPFixTemplatesMessage::new(
+            key.to_string(),
+            Arc::new(message),
+            Some(
+                fields
+                    .iter()
+                    .map(|(id, _)| format!("Ethernet{id}"))
+                    .collect(),
+            ),
+            Some(fields.iter().map(|(id, _)| *id).collect()),
+        )
     }
 
-    pub fn capture_logs() -> String {
-        INIT_ENV_LOGGER.call_once(|| {
-            // Try to initialize env_logger, but ignore if already initialized
-            let _ = env_logger::builder()
-                .is_test(true)
-                .filter_level(Debug)
-                .format({
-                    let buffer = get_log_buffer().clone();
-                    move |_, record| {
-                        let mut buffer = buffer.lock().unwrap();
-                        writeln!(buffer, "[{}] {}", record.level(), record.args()).unwrap();
-                        Ok(())
-                    }
+    fn data_message(domain: u32, sets: &[(u16, Vec<(u64, Vec<u64>)>)]) -> Vec<u8> {
+        let message_len = IPFIX_HEADER_LEN
+            + sets
+                .iter()
+                .map(|(_, records)| {
+                    SET_HEADER_LEN
+                        + records
+                            .iter()
+                            .map(|(_, values)| 8 + values.len() * 8)
+                            .sum::<usize>()
                 })
-                .try_init();
-        });
-
-        let buffer = get_log_buffer().lock().unwrap();
-        String::from_utf8(buffer.clone()).expect("Log buffer should be valid UTF-8")
-    }
-
-    pub fn clear_logs() {
-        let mut buffer = get_log_buffer().lock().unwrap();
-        buffer.clear();
-    }
-
-    #[allow(dead_code)]
-    pub fn assert_logs(expected: Vec<&str>) {
-        let logs_string = capture_logs();
-        let mut logs = logs_string.lines().collect::<Vec<_>>();
-        let mut reverse_expected = expected.clone();
-        reverse_expected.reverse();
-        logs.reverse();
-
-        let mut match_count = 0;
-        for line in logs {
-            if reverse_expected.is_empty() {
-                break;
-            }
-            if line.contains(reverse_expected[match_count]) {
-                match_count += 1;
-            }
-
-            if match_count == reverse_expected.len() {
-                break;
+                .sum::<usize>();
+        let mut message = Vec::with_capacity(message_len);
+        message.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        message.extend_from_slice(&(message_len as u16).to_be_bytes());
+        message.extend_from_slice(&0u32.to_be_bytes());
+        message.extend_from_slice(&0u32.to_be_bytes());
+        message.extend_from_slice(&domain.to_be_bytes());
+        for (template_id, records) in sets {
+            let set_len = SET_HEADER_LEN
+                + records
+                    .iter()
+                    .map(|(_, values)| 8 + values.len() * 8)
+                    .sum::<usize>();
+            message.extend_from_slice(&template_id.to_be_bytes());
+            message.extend_from_slice(&(set_len as u16).to_be_bytes());
+            for (time, values) in records {
+                message.extend_from_slice(&time.to_be_bytes());
+                for value in values {
+                    message.extend_from_slice(&value.to_be_bytes());
+                }
             }
         }
-        assert_eq!(
-            match_count,
-            expected.len(),
-            "\nexpected logs \n{}\n, got logs \n{}\n",
-            expected.join("\n"),
-            logs_string
-        );
+        message
+    }
+
+    fn actor() -> IpfixActor {
+        let (_, template_rx) = channel(4);
+        let (_, record_rx) = channel(4);
+        IpfixActor::new(template_rx, record_rx)
     }
 
     #[test]
-    fn test_object_names_follow_template_id() {
-        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
-        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-
-        let template_256_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        let template_257_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x01, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_256_bytes)),
-            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-            Some(vec![1, 2]),
-        ));
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_b"),
-            Arc::new(Vec::from(template_257_bytes)),
-            Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
-            Some(vec![1, 2]),
-        ));
-
-        let valid_records_bytes: [u8; 144] = [
-            0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-            0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x01, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x03, 0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x04, 0x01, 0x01, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x07,
-        ];
-
-        let stats = actor.handle_record(Arc::new(Vec::from(valid_records_bytes)));
-        let stats: Vec<_> = stats
-            .into_iter()
-            .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
-            .collect();
-
-        let session_a_names = ["Ethernet0", "Ethernet1"];
-        let session_b_names = ["Ethernet8", "Ethernet12"];
-        let mut saw_session_a = false;
-        let mut saw_session_b = false;
-
-        for msg in &stats {
-            let names: Vec<&str> = msg.stats.iter().map(|s| s.object_name.as_str()).collect();
-
-            let only_session_a = names.iter().all(|name| session_a_names.contains(name));
-            let only_session_b = names.iter().all(|name| session_b_names.contains(name));
-
+    fn rejects_all_non_progress_message_lengths() {
+        for len in 0u16..IPFIX_HEADER_LEN as u16 {
+            let mut message = [0u8; IPFIX_HEADER_LEN];
+            message[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+            message[2..4].copy_from_slice(&len.to_be_bytes());
             assert!(
-                only_session_a || only_session_b,
-                "record mixes object names from multiple templates: {:?}",
-                names
+                IpfixMessages::new(&message).next().unwrap().is_err(),
+                "length {len}"
             );
-
-            saw_session_a |= only_session_a;
-            saw_session_b |= only_session_b;
         }
+    }
 
-        assert!(
-            saw_session_a,
-            "did not observe any stats for session A/template 256"
+    #[test]
+    fn decodes_hft_records_in_template_order_without_shared_state() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message(
+                "session",
+                42,
+                300,
+                &[(2, 0x1234_0567), (1, 0x0001_0002)],
+            ))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(42, &[(300, vec![(7, vec![10, 20])])]))
+            .unwrap();
+        let record = batch.iter().next().unwrap();
+        assert_eq!(record.observation_time, 7);
+        assert_eq!(record.stats[0].object_name.as_ref(), "Ethernet2");
+        assert_eq!(
+            (record.stats[0].type_id, record.stats[0].stat_id),
+            (0x1234, 0x0567)
         );
-        assert!(
-            saw_session_b,
-            "did not observe any stats for session B/template 257"
+        assert_eq!(record.stats[1].object_name.as_ref(), "Ethernet1");
+    }
+
+    #[test]
+    fn same_template_id_is_scoped_by_domain() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("a", 1, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("b", 2, 300, &[(2, 0x0003_0004)]))
+            .unwrap();
+        let mut bytes = data_message(1, &[(300, vec![(10, vec![11])])]);
+        bytes.extend_from_slice(&data_message(2, &[(300, vec![(20, vec![22])])]));
+        let batch = actor.handle_record(&bytes).unwrap();
+        let records: Vec<_> = batch.iter().collect();
+        assert_eq!(records[0].stats[0].object_name.as_ref(), "Ethernet1");
+        assert_eq!(records[1].stats[0].object_name.as_ref(), "Ethernet2");
+    }
+
+    #[test]
+    fn malformed_update_retains_active_generation() {
+        let mut actor = actor();
+        let valid = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(valid.clone()).unwrap();
+        let mut invalid = valid;
+        invalid.templates = Some(Arc::new(vec![0, 10, 0, 0]));
+        assert!(actor.handle_template(invalid).is_err());
+        assert_eq!(actor.installed.len(), 1);
+        assert_eq!(
+            actor.sessions["session"]
+                .active
+                .as_ref()
+                .unwrap()
+                .templates
+                .len(),
+            1
         );
     }
 
     #[test]
-    fn test_template_update_without_object_names_clears_stale_mapping() {
-        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
-        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-
-        let template_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_bytes)),
-            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-            Some(vec![1, 2]),
-        ));
-        let mut expected = HashMap::new();
-        expected.insert(1u16, "Ethernet0".to_string());
-        expected.insert(2u16, "Ethernet1".to_string());
-        assert_eq!(
-            actor.object_id_name_map.get("session_a"),
-            Some(&expected)
-        );
-
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_bytes)),
-            None,
-            None,
-        ));
+    fn promotes_new_ids_only_when_new_data_arrives() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
 
         assert!(
-            actor.object_id_name_map.get("session_a").is_none(),
-            "stale object_id_name_map entries should be cleared when a template update omits object metadata"
+            actor
+                .handle_record(&data_message(0, &[(300, vec![(1, vec![2])])]))
+                .unwrap()
+                .record_count()
+                == 1
         );
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300
+        }));
+        assert!(
+            actor
+                .handle_record(&data_message(0, &[(301, vec![(2, vec![3])])]))
+                .unwrap()
+                .record_count()
+                == 1
+        );
+        assert!(!actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300
+        }));
+    }
+
+    #[test]
+    fn rejects_ambiguous_same_id_schema_change() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert!(actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0003)]))
+            .is_err());
+    }
+
+    #[test]
+    fn identical_pending_refresh_is_idempotent() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let pending = template_message("session", 0, 301, &[(1, 0x0001_0003)]);
+        actor.handle_template(pending.clone()).unwrap();
+        actor.handle_template(pending).unwrap();
+        assert!(actor.sessions["session"].pending.is_some());
+    }
+
+    #[test]
+    fn active_refresh_cancels_pending_generation() {
+        let mut actor = actor();
+        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(active.clone()).unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        actor.handle_template(active).unwrap();
+        assert!(actor.sessions["session"].pending.is_none());
+        assert!(!actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+        assert!(actor.retired.contains(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+    }
+
+    #[test]
+    fn newer_update_supersedes_pending_generation() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 302, &[(1, 0x0001_0004)]))
+            .unwrap();
+        assert!(!actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 302,
+        }));
+    }
+
+    #[test]
+    fn rejected_supersession_retains_pending_generation() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        assert!(actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0004)]))
+            .is_err());
+        assert!(actor.sessions["session"]
+            .pending
+            .as_ref()
+            .unwrap()
+            .templates
+            .contains_key(&TemplateKey {
+                observation_domain_id: 0,
+                template_id: 301,
+            }));
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+    }
+
+    #[test]
+    fn overlapping_pending_supersession_is_atomic() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        let mut replacement = template_message("session", 0, 301, &[(1, 0x0001_0003)]);
+        let extra = template_message("session", 0, 302, &[(1, 0x0001_0004)]);
+        Arc::make_mut(replacement.templates.as_mut().unwrap())
+            .extend_from_slice(extra.templates.as_ref().unwrap());
+        actor.handle_template(replacement).unwrap();
+
+        let pending = actor.sessions["session"].pending.as_ref().unwrap();
+        assert!(pending.templates.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+        assert!(pending.templates.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 302,
+        }));
+        assert!(!actor.retired.contains(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+    }
+
+    #[test]
+    fn overlapping_pending_supersession_rejects_changed_schema() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        assert!(actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0004)]))
+            .is_err());
+        let pending = actor.sessions["session"].pending.as_ref().unwrap();
+        assert_eq!(
+            pending.templates[&TemplateKey {
+                observation_domain_id: 0,
+                template_id: 301,
+            }]
+                .counters[0]
+                .stat_id,
+            3
+        );
+    }
+
+    #[test]
+    fn delete_while_pending_retires_both_generations() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        actor.handle_template_deletion("session");
+        assert!(actor.installed.is_empty());
+        assert!(actor.retired.contains(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+        assert!(actor.retired.contains(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+    }
+
+    #[test]
+    fn unknown_set_does_not_drop_known_sets_and_is_replayed() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("known", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[
+                    (300, vec![(1, vec![10])]),
+                    (301, vec![(2, vec![20])]),
+                    (300, vec![(3, vec![30])]),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 1);
+        assert_eq!(actor.deferred_sets.sets.len(), 2);
+
+        let replayed = actor
+            .handle_template(template_message("late", 0, 301, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert_eq!(replayed.record_count(), 2);
+        let replayed_times: Vec<_> = replayed
+            .iter()
+            .map(|record| record.observation_time)
+            .collect();
+        assert_eq!(replayed_times, vec![2, 3]);
+    }
+
+    #[test]
+    fn malformed_deferred_set_does_not_promote_pending_generation() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+
+        let future = data_message(0, &[(301, vec![(2, vec![20])])]);
+        actor.handle_record(&future).unwrap();
+        let buffered = actor.deferred_sets.sets.front_mut().unwrap();
+        let mut malformed = buffered.bytes.to_vec();
+        malformed.truncate(SET_HEADER_LEN + 8);
+        malformed[2..4].copy_from_slice(&((SET_HEADER_LEN + 8) as u16).to_be_bytes());
+        buffered.bytes = malformed.into();
+
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+        assert!(actor.sessions["session"].pending.is_some());
+    }
+
+    #[test]
+    fn delete_tombstone_drops_late_data_and_rejects_changed_schema_reuse() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor.handle_template_deletion("session");
+
+        let late = actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![99])])]))
+            .unwrap();
+        assert!(late.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+
+        assert!(actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0003)]))
+            .is_err());
+        assert!(actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .is_err());
+    }
+
+    #[test]
+    fn rejected_first_install_does_not_create_empty_session() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("original", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor.handle_template_deletion("original");
+
+        for index in 0..100 {
+            assert!(actor
+                .handle_template(template_message(
+                    &format!("rejected-{index}"),
+                    0,
+                    300,
+                    &[(1, 0x0001_0002)],
+                ))
+                .is_err());
+        }
+        assert!(actor.sessions.is_empty());
+    }
+
+    #[test]
+    fn malformed_later_set_does_not_emit_earlier_set() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let mut message =
+            data_message(0, &[(300, vec![(1, vec![10])]), (300, vec![(2, vec![20])])]);
+        let second_set_offset = IPFIX_HEADER_LEN + SET_HEADER_LEN + 16;
+        message[second_set_offset + 2..second_set_offset + 4].copy_from_slice(&3u16.to_be_bytes());
+        assert!(actor.handle_record(&message).is_err());
+    }
+
+    #[test]
+    fn arbitrary_inputs_never_panic() {
+        let mut actor = actor();
+        let mut state = 0x0123_4567_89ab_cdefu64;
+        for len in 0..512usize {
+            let mut bytes = vec![0u8; len];
+            for byte in &mut bytes {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                *byte = state as u8;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = actor.handle_record(&bytes);
+            }));
+            assert!(result.is_ok(), "panicked for arbitrary input length {len}");
+        }
+    }
+
+    #[test]
+    fn framing_and_padding_errors_are_rejected() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+
+        for set_len in 0u16..SET_HEADER_LEN as u16 {
+            let mut message = data_message(0, &[(300, vec![(1, vec![2])])]);
+            message[18..20].copy_from_slice(&set_len.to_be_bytes());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                actor.handle_record(&message)
+            }));
+            assert!(result.is_ok(), "set length {set_len} panicked");
+            assert!(result.unwrap().is_err(), "set length {set_len}");
+        }
+
+        let mut truncated = data_message(0, &[(300, vec![(1, vec![2])])]);
+        truncated[18..20].copy_from_slice(&u16::MAX.to_be_bytes());
+        assert!(actor.handle_record(&truncated).is_err());
+
+        let mut bad_padding = data_message(0, &[(300, vec![(1, vec![2])])]);
+        bad_padding.extend_from_slice(&[1]);
+        let message_len = bad_padding.len() as u16;
+        let set_len = (bad_padding.len() - IPFIX_HEADER_LEN) as u16;
+        bad_padding[2..4].copy_from_slice(&message_len.to_be_bytes());
+        bad_padding[18..20].copy_from_slice(&set_len.to_be_bytes());
+        assert!(actor.handle_record(&bad_padding).is_err());
+    }
+
+    #[test]
+    fn zero_message_padding_is_ignored_without_losing_records() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let mut message = data_message(0, &[(300, vec![(1, vec![2])])]);
+        message.extend_from_slice(&[0, 0, 0]);
+        let message_len = message.len() as u16;
+        message[2..4].copy_from_slice(&message_len.to_be_bytes());
+        assert_eq!(actor.handle_record(&message).unwrap().record_count(), 1);
+    }
+
+    #[test]
+    fn rejects_non_hft_fields_and_bad_object_ids() {
+        let mut message = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        message.object_ids = Some(vec![0]);
+        assert!(IpfixActor::compile_generation(&message).is_err());
+
+        let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
+        bytes[24..26].copy_from_slice(&322u16.to_be_bytes());
+        message.object_ids = Some(vec![1]);
+        assert!(IpfixActor::compile_generation(&message).is_err());
     }
 
     #[tokio::test]
-    async fn test_ipfix() {
-        clear_logs(); // Clear any previous logs to ensure clean test state
-        capture_logs();
-        let (buffer_sender, buffer_receiver) = channel(1);
-        let (template_sender, template_receiver) = channel(1);
-        let (saistats_sender, mut saistats_receiver) = channel(100);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-        actor.add_recipient(saistats_sender);
+    async fn sends_one_batch_to_every_recipient() {
+        let (template_tx, template_rx) = channel(2);
+        let (record_tx, record_rx) = channel(2);
+        let (sink_a_tx, mut sink_a_rx) = channel(1);
+        let (sink_b_tx, mut sink_b_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(sink_a_tx);
+        actor.add_recipient(sink_b_tx);
+        let task = tokio::spawn(IpfixActor::run(actor));
 
-        let actor_handle = tokio::task::spawn_blocking(move || {
-            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create runtime for IPFIX actor test");
-            rt.block_on(async move {
-                IpfixActor::run(actor).await;
-            });
-        });
-
-        let template_bytes: [u8; 88] = [
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x01, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x00, 0x02, 0x00, 0x1C, // line 4
-            0x01, 0x00, 0x00, 0x03, // line 5 Template ID 256, 3 fields
-            0x01, 0x45, 0x00, 0x08, // line 6 Field ID 325, 4 bytes
-            0x80, 0x01, 0x00, 0x08, // line 7 Field ID 128, 8 bytes
-            0x00, 0x01, 0x00, 0x02, // line 8 Enterprise Number 1, Field ID 1
-            0x80, 0x02, 0x00, 0x08, // line 9 Field ID 129, 8 bytes
-            0x80, 0x03, 0x80, 0x04, // line 10 Enterprise Number 128, Field ID 2
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 2
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x01, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x00, 0x02, 0x00, 0x1C, // line 4
-            0x01, 0x01, 0x00, 0x03, // line 5 Template ID 257, 3 fields
-            0x01, 0x45, 0x00, 0x08, // line 6 Field ID 325, 4 bytes
-            0x80, 0x01, 0x00, 0x08, // line 7 Field ID 128, 8 bytes
-            0x00, 0x01, 0x00, 0x02, // line 8 Enterprise Number 1, Field ID 1
-            0x80, 0x02, 0x00, 0x08, // line 9 Field ID 129, 8 bytes
-            0x80, 0x03, 0x80, 0x04, // line 10 Enterprise Number 128, Field ID 2
-        ];
-
-        template_sender
-            .send(IPFixTemplatesMessage::new(
-                String::from("test_key"),
-                Arc::new(Vec::from(template_bytes)),
-                Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-                Some(vec![1, 2]),
-            ))
+        template_tx
+            .send(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .await
+            .unwrap();
+        record_tx
+            .send(Arc::new(data_message(
+                0,
+                &[(300, vec![(1, vec![2]), (3, vec![4])])],
+            )))
             .await
             .unwrap();
 
-        // Wait for the template to be processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let a = sink_a_rx.recv().await.unwrap();
+        let b = sink_b_rx.recv().await.unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(a.record_count(), 2);
+        drop(template_tx);
+        drop(record_tx);
+        assert!(task.await.unwrap().is_err());
+    }
 
-        let invalid_len_record: [u8; 20] = [
-            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(invalid_len_record)))
+    #[tokio::test]
+    async fn full_recipient_does_not_delay_available_recipient() {
+        let (_, template_rx) = channel(1);
+        let (_, record_rx) = channel(1);
+        let (blocked_tx, mut blocked_rx) = channel(1);
+        let (ready_tx, mut ready_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(blocked_tx.clone());
+        actor.add_recipient(ready_tx);
+        blocked_tx
+            .send(Arc::new(SAIStatsBatch::default()))
             .await
             .unwrap();
 
-        let unknown_record: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x03, 0x00, 0x00, 0x1C, // line 4 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 5
-            0x00, 0x00, 0x00, 0x01, // line 6
-            0x00, 0x00, 0x00, 0x00, // line 7
-            0x00, 0x00, 0x00, 0x01, // line 8
-            0x00, 0x00, 0x00, 0x00, // line 9
-            0x00, 0x00, 0x00, 0x01, // line 10
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(unknown_record)))
-            .await
-            .unwrap();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
+        let send = actor.send_batch(batch);
+        tokio::pin!(send);
 
-        // contains data sets for templates 999, 500, 999
-        let valid_records_bytes: [u8; 144] = [
-            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 5
-            0x00, 0x00, 0x00, 0x01, // line 6
-            0x00, 0x00, 0x00, 0x00, // line 7
-            0x00, 0x00, 0x00, 0x01, // line 8
-            0x00, 0x00, 0x00, 0x00, // line 9
-            0x00, 0x00, 0x00, 0x01, // line 10
-            0x01, 0x00, 0x00, 0x1C, // line 11 Record 2
-            0x00, 0x00, 0x00, 0x00, // line 12
-            0x00, 0x00, 0x00, 0x02, // line 13
-            0x00, 0x00, 0x00, 0x00, // line 14
-            0x00, 0x00, 0x00, 0x02, // line 15
-            0x00, 0x00, 0x00, 0x00, // line 16
-            0x00, 0x00, 0x00, 0x03, // line 17
-            0x00, 0x0A, 0x00, 0x48, // line 18 Packet 2
-            0x00, 0x00, 0x00, 0x00, // line 19
-            0x00, 0x00, 0x00, 0x02, // line 20
-            0x00, 0x00, 0x00, 0x00, // line 21
-            0x01, 0x00, 0x00, 0x1C, // line 22 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 23
-            0x00, 0x00, 0x00, 0x01, // line 24
-            0x00, 0x00, 0x00, 0x00, // line 25
-            0x00, 0x00, 0x00, 0x01, // line 26
-            0x00, 0x00, 0x00, 0x00, // line 27
-            0x00, 0x00, 0x00, 0x04, // line 28
-            0x01, 0x01, 0x00, 0x1C, // line 29 Record 2
-            0x00, 0x00, 0x00, 0x00, // line 30
-            0x00, 0x00, 0x00, 0x02, // line 31
-            0x00, 0x00, 0x00, 0x00, // line 32
-            0x00, 0x00, 0x00, 0x02, // line 33
-            0x00, 0x00, 0x00, 0x00, // line 34
-            0x00, 0x00, 0x00, 0x07, // line 35
-        ];
-
-        buffer_sender
-            .send(Arc::new(Vec::from(valid_records_bytes)))
-            .await
-            .unwrap();
-
-        let expected_stats = vec![
-            SAIStats {
-                observation_time: 1,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 1,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 1,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 2,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 3,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 2,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 1,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 4,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 1,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 2,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 7,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 2,
-                    },
-                ],
-            },
-        ];
-
-        let mut received_stats = Vec::new();
-        while let Some(stats) = saistats_receiver.recv().await {
-            // The actor keeps its own Arc clone of each message until it finishes
-            // the current send batch, so the strong count can still be > 1 when we
-            // receive here. Clone the inner value instead of requiring exclusive
-            // ownership (Arc::try_unwrap), which races on slow/emulated runners
-            // such as armhf under QEMU.
-            let unwrapped_stats = (*stats).clone();
-            received_stats.push(unwrapped_stats);
-            if received_stats.len() == expected_stats.len() {
-                break;
-            }
+        tokio::select! {
+            ready = ready_rx.recv() => assert_eq!(ready.unwrap().record_count(), 1),
+            result = &mut send => panic!("send completed before blocked recipient drained: {result:?}"),
         }
+        assert!(blocked_rx.recv().await.is_some());
+        assert!(send.await.is_ok());
+        assert_eq!(blocked_rx.recv().await.unwrap().record_count(), 1);
+    }
 
-        assert_eq!(received_stats, expected_stats);
+    #[tokio::test]
+    async fn closed_recipient_is_reported_after_healthy_delivery() {
+        let (_, template_rx) = channel(1);
+        let (_, record_rx) = channel(1);
+        let (closed_tx, closed_rx) = channel(1);
+        let (healthy_tx, mut healthy_rx) = channel(1);
+        drop(closed_rx);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(healthy_tx);
+        actor.add_recipient(closed_tx);
 
-        drop(buffer_sender);
-        drop(template_sender);
-        drop(saistats_receiver);
-
-        actor_handle
-            .await
-            .expect("Actor task should complete successfully");
-        // Note: Log assertions removed due to env_logger initialization conflicts in test suite
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
+        let error = actor.send_batch(batch).await.unwrap_err();
+        assert!(error.to_string().contains("SAI stats recipient closed"));
+        assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
     }
 }
