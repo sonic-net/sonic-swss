@@ -16,7 +16,6 @@ use std::{
     future::Future,
     io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
-    path::PathBuf,
     process::{Command, Output, Stdio},
     sync::OnceLock,
     time::{Duration, Instant as WallInstant},
@@ -26,14 +25,16 @@ use countersyncd::{
     actor::{control_netlink::ControlNetlinkActor, data_netlink::DataNetlinkActor},
     message::{buffer::SocketBufferMessage, netlink::NetlinkCommand},
 };
+use futures_timer::Delay;
 use log::LevelFilter;
+use netlink_packet_utils::nla::NlasIterator;
 use tokio::{
-    io::unix::AsyncFd,
     runtime::Builder,
     sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
     task::JoinHandle,
     time::advance,
 };
+use wait_timeout::ChildExt;
 
 const FAMILY: &str = "psample";
 const GROUP: &str = "packets";
@@ -49,7 +50,6 @@ const MAX_HEAP_TREND_BYTES: u64 = 128 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const PSAMPLE_ATTR_SAMPLE_GROUP: u16 = 3;
 const PSAMPLE_ATTR_DATA: u16 = 6;
-const NLA_TYPE_MASK: u16 = 0x3fff;
 
 const OUTAGES: &[(&str, Duration)] = &[
     ("100ms", Duration::from_millis(100)),
@@ -94,64 +94,9 @@ struct StressStats {
     heap_last_median: u64,
 }
 
-struct WallTimer(AsyncFd<OwnedFd>);
-
 struct AutoAdvanceGuard {
     release: Option<std::sync::mpsc::Sender<()>>,
     task: Option<JoinHandle<()>>,
-}
-
-impl WallTimer {
-    fn new(duration: Duration) -> Result<Self, DynError> {
-        let fd = unsafe {
-            libc::timerfd_create(
-                libc::CLOCK_MONOTONIC,
-                libc::TFD_CLOEXEC | libc::TFD_NONBLOCK,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        let timer = libc::itimerspec {
-            it_interval: libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            },
-            it_value: libc::timespec {
-                tv_sec: duration.as_secs().try_into()?,
-                tv_nsec: duration.subsec_nanos().try_into()?,
-            },
-        };
-        if unsafe { libc::timerfd_settime(fd.as_raw_fd(), 0, &timer, std::ptr::null_mut()) } < 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-        Ok(Self(AsyncFd::new(fd)?))
-    }
-
-    async fn elapsed(&self) -> Result<(), DynError> {
-        loop {
-            let mut ready = self.0.readable().await?;
-            let mut expirations = 0u64;
-            let read = unsafe {
-                libc::read(
-                    self.0.get_ref().as_raw_fd(),
-                    (&mut expirations as *mut u64).cast(),
-                    std::mem::size_of::<u64>(),
-                )
-            };
-            if read == std::mem::size_of::<u64>() as isize {
-                return Ok(());
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::WouldBlock {
-                ready.clear_ready();
-                continue;
-            }
-            return Err(error.into());
-        }
-    }
 }
 
 impl AutoAdvanceGuard {
@@ -635,29 +580,26 @@ fn drain_pending_samples(
 }
 
 fn sample_contains(message: &SocketBufferMessage, marker: &[u8]) -> Result<bool, DynError> {
-    let mut offset = 0usize;
     let mut sample_group = None;
-    let mut data = None;
+    let mut data_contains_marker = false;
 
-    while offset + 4 <= message.len() {
-        let len = u16::from_ne_bytes([message[offset], message[offset + 1]]) as usize;
-        let kind = u16::from_ne_bytes([message[offset + 2], message[offset + 3]]) & NLA_TYPE_MASK;
-        if len < 4 || offset + len > message.len() {
-            return Err(format!("invalid psample attribute at offset {offset}: len={len}").into());
-        }
-        let value = &message[offset + 4..offset + len];
-        match kind {
-            PSAMPLE_ATTR_SAMPLE_GROUP if value.len() >= 4 => {
-                sample_group = Some(u32::from_ne_bytes(value[..4].try_into()?));
+    for attribute in NlasIterator::new(message.as_ref()) {
+        let attribute = attribute.map_err(|error| format!("invalid psample attribute: {error}"))?;
+        match attribute.kind() {
+            PSAMPLE_ATTR_SAMPLE_GROUP if attribute.value().len() >= 4 => {
+                sample_group = Some(u32::from_ne_bytes(attribute.value()[..4].try_into()?));
             }
-            PSAMPLE_ATTR_DATA => data = Some(value),
+            PSAMPLE_ATTR_DATA => {
+                data_contains_marker = attribute
+                    .value()
+                    .windows(marker.len())
+                    .any(|window| window == marker)
+            }
             _ => {}
         }
-        offset += (len + 3) & !3;
     }
 
-    Ok(sample_group == Some(SAMPLE_GROUP)
-        && data.is_some_and(|packet| packet.windows(marker.len()).any(|window| window == marker)))
+    Ok(sample_group == Some(SAMPLE_GROUP) && data_contains_marker)
 }
 
 fn create_sample_path() -> Result<(), DynError> {
@@ -705,6 +647,7 @@ fn send_marker(marker: &[u8]) -> Result<(), DynError> {
     if socket < 0 {
         return Err(io::Error::last_os_error().into());
     }
+    let socket = unsafe { OwnedFd::from_raw_fd(socket) };
 
     let result = (|| {
         let tx = std::ffi::CString::new(tx_link())?;
@@ -731,7 +674,7 @@ fn send_marker(marker: &[u8]) -> Result<(), DynError> {
 
         let sent = unsafe {
             libc::sendto(
-                socket,
+                socket.as_raw_fd(),
                 frame.as_ptr().cast(),
                 frame.len(),
                 0,
@@ -745,7 +688,6 @@ fn send_marker(marker: &[u8]) -> Result<(), DynError> {
         Ok(())
     })();
 
-    unsafe { libc::close(socket) };
     result.map_err(Into::into)
 }
 
@@ -953,12 +895,12 @@ async fn verify_auto_advance_disabled() -> Result<(), DynError> {
     let before = tokio::time::Instant::now();
     let virtual_timer = tokio::time::sleep(Duration::from_secs(1));
     tokio::pin!(virtual_timer);
-    let wall_timer = WallTimer::new(Duration::from_millis(20))?;
+    let wall_timer = Delay::new(Duration::from_millis(20));
     tokio::select! {
         _ = &mut virtual_timer => {
             return Err("Tokio time auto-advanced despite the guard".into());
         }
-        result = wall_timer.elapsed() => result?,
+        _ = wall_timer => {},
     }
     if tokio::time::Instant::now() != before {
         return Err("Tokio time advanced during a real wall-clock wait".into());
@@ -977,13 +919,12 @@ async fn advance_in_steps(duration: Duration) {
 }
 
 async fn wall_timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, DynError> {
-    let timer = WallTimer::new(duration)?;
+    let timer = Delay::new(duration);
     tokio::pin!(future);
 
     tokio::select! {
         result = &mut future => Ok(result),
-        result = timer.elapsed() => {
-            result?;
+        _ = timer => {
             Err(format!("wall-clock timeout after {duration:?}").into())
         },
     }
@@ -1018,37 +959,26 @@ fn output(command: &str, args: &[&str]) -> Result<Output, DynError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("run {command} {}: {e}", args.join(" ")))?;
-    let deadline = WallInstant::now() + COMMAND_TIMEOUT;
-    loop {
-        if child.try_wait()?.is_some() {
-            return child
-                .wait_with_output()
-                .map_err(|e| format!("collect {command} output: {e}").into());
-        }
-        if WallInstant::now() >= deadline {
-            child.kill()?;
-            let _ = child.wait();
-            return Err(format!(
-                "{} {} timed out after {:?}",
-                command,
-                args.join(" "),
-                COMMAND_TIMEOUT
-            )
-            .into());
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    if child.wait_timeout(COMMAND_TIMEOUT)?.is_none() {
+        child.kill()?;
+        let _ = child.wait();
+        return Err(format!(
+            "{} {} timed out after {:?}",
+            command,
+            args.join(" "),
+            COMMAND_TIMEOUT
+        )
+        .into());
     }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("collect {command} output: {e}").into())
 }
 
-fn command_path(command: &str) -> Option<PathBuf> {
-    let mut directories = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default();
-    directories.extend([PathBuf::from("/usr/sbin"), PathBuf::from("/sbin")]);
-    directories
-        .into_iter()
-        .map(|directory| directory.join(command))
-        .find(|path| path.is_file())
+fn command_path(command: &str) -> Option<std::path::PathBuf> {
+    let mut paths = std::env::var_os("PATH").unwrap_or_default();
+    paths.push(":/usr/sbin:/sbin");
+    which::which_in(command, Some(paths), std::env::current_dir().ok()?).ok()
 }
 
 fn command_error(command: &str, args: &[&str], output: &Output) -> String {

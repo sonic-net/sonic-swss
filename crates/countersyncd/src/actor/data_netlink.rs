@@ -5,6 +5,8 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 
 use log::{debug, info, warn};
+use netlink_packet_core::{NetlinkBuffer, NETLINK_HEADER_LEN};
+use netlink_packet_generic::GenlBuffer;
 
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
@@ -152,7 +154,7 @@ impl NetlinkMessageParser {
         // Parse all complete messages in the buffer
         while offset < new_data.len() {
             // Check if we have enough data for a netlink header
-            if offset + 16 > new_data.len() {
+            if offset + NETLINK_HEADER_LEN > new_data.len() {
                 if Self::is_valid_alignment_padding(&new_data[offset..]) {
                     break;
                 }
@@ -168,13 +170,24 @@ impl NetlinkMessageParser {
                 return Self::return_parsed_or_error(complete_messages, error, offset, remaining);
             }
 
-            // Extract message length from netlink header
-            let nl_len = u32::from_ne_bytes([
-                new_data[offset],
-                new_data[offset + 1],
-                new_data[offset + 2],
-                new_data[offset + 3],
-            ]) as usize;
+            let remaining_data = &new_data[offset..];
+            let netlink = match NetlinkBuffer::new_checked(remaining_data) {
+                Ok(netlink) => netlink,
+                Err(error) => {
+                    let remaining = remaining_data.len();
+                    let error = io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Invalid netlink message at offset {offset}: {error}"),
+                    );
+                    return Self::return_parsed_or_error(
+                        complete_messages,
+                        error,
+                        offset,
+                        remaining,
+                    );
+                }
+            };
+            let nl_len = netlink.length() as usize;
 
             // Validate message length
             if nl_len < 16 {
@@ -267,44 +280,24 @@ impl NetlinkMessageParser {
         message_data: &[u8],
         expected_family_id: u16,
     ) -> Result<SocketBufferMessage, io::Error> {
-        const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr)
-        const GENL_HDRLEN: usize = 4; // sizeof(struct genlmsghdr)
-        const TOTAL_HEADER_SIZE: usize = NLMSG_HDRLEN + GENL_HDRLEN;
-        const NLMSG_LEN: std::ops::Range<usize> = 0..4;
-        const NLMSG_TYPE: std::ops::Range<usize> = 4..6;
-        const NLMSG_FLAGS: std::ops::Range<usize> = 6..8;
-        const NLMSG_SEQ: std::ops::Range<usize> = 8..12;
-        const NLMSG_PID: std::ops::Range<usize> = 12..16;
-        const GENL_CMD: usize = 16;
-        const GENL_VERSION: usize = 17;
-        const GENL_RESERVED: std::ops::Range<usize> = 18..20;
-
-        if message_data.len() < TOTAL_HEADER_SIZE {
-            return Err(io::Error::new(
+        let netlink = NetlinkBuffer::new_checked(message_data).map_err(|error| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "Message too small: {} bytes, expected at least {}",
-                    message_data.len(),
-                    TOTAL_HEADER_SIZE
-                ),
-            ));
-        }
-
-        // Extract netlink message length from header
-        let nl_len = u32::from_ne_bytes(message_data[NLMSG_LEN].try_into().unwrap()) as usize;
-
-        if nl_len != message_data.len() {
+                format!("Invalid netlink message: {error}"),
+            )
+        })?;
+        if netlink.length() as usize != message_data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "Message length mismatch: header says {}, actual {}",
-                    nl_len,
+                    netlink.length(),
                     message_data.len()
                 ),
             ));
         }
 
-        let nl_type = u16::from_ne_bytes(message_data[NLMSG_TYPE].try_into().unwrap());
+        let nl_type = netlink.message_type();
         if nl_type != expected_family_id {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -318,46 +311,31 @@ impl NetlinkMessageParser {
         if log::log_enabled!(log::Level::Debug) {
             debug!(
                 "Netlink Header ({} bytes): {:02x?}",
-                NLMSG_HDRLEN,
-                &message_data[..NLMSG_HDRLEN]
+                NETLINK_HEADER_LEN,
+                &message_data[..NETLINK_HEADER_LEN]
             );
-            let nl_flags = u16::from_ne_bytes(message_data[NLMSG_FLAGS].try_into().unwrap());
-            let nl_seq = u32::from_ne_bytes(message_data[NLMSG_SEQ].try_into().unwrap());
-            let nl_pid = u32::from_ne_bytes(message_data[NLMSG_PID].try_into().unwrap());
             debug!(
                 "  nl_len={}, nl_type={}, nl_flags=0x{:04x}, nl_seq={}, nl_pid={}",
-                nl_len, nl_type, nl_flags, nl_seq, nl_pid
+                netlink.length(),
+                nl_type,
+                netlink.flags(),
+                netlink.sequence_number(),
+                netlink.port_number()
             );
-
-            if message_data.len() >= TOTAL_HEADER_SIZE {
-                debug!(
-                    "Generic Netlink Header ({} bytes): {:02x?}",
-                    GENL_HDRLEN,
-                    &message_data[NLMSG_HDRLEN..TOTAL_HEADER_SIZE]
-                );
-                let genl_cmd = message_data[GENL_CMD];
-                let genl_version = message_data[GENL_VERSION];
-                let genl_reserved =
-                    u16::from_ne_bytes(message_data[GENL_RESERVED].try_into().unwrap());
-                debug!(
-                    "  genl_cmd={}, genl_version={}, genl_reserved=0x{:04x}",
-                    genl_cmd, genl_version, genl_reserved
-                );
-            }
         }
 
-        // Extract payload after both headers
-        let payload_start = TOTAL_HEADER_SIZE;
-        let payload_end = nl_len;
-
-        if payload_start >= payload_end {
-            // No payload data, return empty payload
-            Ok(Arc::new(Vec::new()))
-        } else {
-            // Return payload data without headers
-            let payload = message_data[payload_start..payload_end].to_vec();
-            Ok(Arc::new(payload))
-        }
+        let generic = GenlBuffer::new_checked(netlink.payload()).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid Generic Netlink message: {error}"),
+            )
+        })?;
+        debug!(
+            "Generic Netlink header: cmd={}, version={}",
+            generic.cmd(),
+            generic.version()
+        );
+        Ok(Arc::new(generic.payload().to_vec()))
     }
 }
 
@@ -2157,9 +2135,7 @@ pub mod test {
     fn test_get_genl_family_group_from_path() {
         let result = get_genl_family_group_from_path_safe("/non/existent/path.yml");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Failed to open constants file"));
+        assert!(result.unwrap_err().contains("Failed to open"));
     }
 
     /// Tests invalid configuration is reported and the public wrapper falls back.
@@ -2231,42 +2207,32 @@ fn get_genl_family_group_from_path(path: &str) -> (String, String) {
 /// A Result containing a tuple (family_name, group_name) on success,
 /// or an error message on failure.
 fn get_genl_family_group_from_path_safe(path: &str) -> Result<(String, String), String> {
+    use serde::Deserialize;
     use std::fs::File;
-    use std::io::Read;
-    use yaml_rust::YamlLoader;
 
-    // Try to read the YAML file
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) => return Err(format!("Failed to open constants file '{}': {}", path, e)),
-    };
-
-    let mut contents = String::new();
-    if let Err(e) = file.read_to_string(&mut contents) {
-        return Err(format!("Failed to read constants file '{}': {}", path, e));
+    #[derive(Deserialize)]
+    struct Document {
+        constants: Constants,
     }
 
-    // Parse YAML
-    let yaml_docs = match YamlLoader::load_from_str(&contents) {
-        Ok(docs) => docs,
-        Err(e) => return Err(format!("Failed to parse YAML in '{}': {}", path, e)),
-    };
-
-    if yaml_docs.is_empty() {
-        return Err(format!("Empty YAML document in constants file '{}'", path));
+    #[derive(Deserialize)]
+    struct Constants {
+        high_frequency_telemetry: HighFrequencyTelemetry,
     }
 
-    let yaml = &yaml_docs[0];
+    #[derive(Deserialize)]
+    struct HighFrequencyTelemetry {
+        genl_family: String,
+        genl_multicast_group: String,
+    }
 
-    let hft = &yaml["constants"]["high_frequency_telemetry"];
-    let family = hft["genl_family"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("Missing or invalid genl_family in '{path}'"))?;
-    let group = hft["genl_multicast_group"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("Missing or invalid genl_multicast_group in '{path}'"))?;
+    let file = File::open(path).map_err(|error| format!("Failed to open '{path}': {error}"))?;
+    let config: Document = serde_yaml::from_reader(file)
+        .map_err(|error| format!("Failed to parse '{path}': {error}"))?;
+    let hft = config.constants.high_frequency_telemetry;
+    if hft.genl_family.is_empty() || hft.genl_multicast_group.is_empty() {
+        return Err(format!("Empty Generic Netlink family or group in '{path}'"));
+    }
 
-    Ok((family.to_string(), group.to_string()))
+    Ok((hft.genl_family, hft.genl_multicast_group))
 }

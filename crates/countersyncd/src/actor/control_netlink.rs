@@ -1,6 +1,18 @@
 use std::time::Duration;
 
 use log::{debug, info, warn};
+use netlink_packet_core::{NetlinkBuffer, NETLINK_HEADER_LEN};
+use netlink_packet_generic::{
+    constants::{
+        CTRL_ATTR_FAMILY_ID, CTRL_ATTR_FAMILY_NAME, CTRL_CMD_DELFAMILY,
+        CTRL_CMD_NEWFAMILY,
+    },
+    GenlBuffer,
+};
+use netlink_packet_utils::{
+    nla::NlasIterator,
+    parsers::{parse_string, parse_u16},
+};
 
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
@@ -33,21 +45,8 @@ const FAMILY_CHECK_INTERVAL_MS: u64 = 1_000_u64;
 const HEARTBEAT_LOG_INTERVAL_SECS: u64 = 60;
 /// Interval for control socket recreation attempts.
 const CONTROL_SOCKET_RECREATE_INTERVAL_SECS: u64 = 3 * 60;
-/// Minimum netlink message header size in bytes
-const NETLINK_HEADER_SIZE: usize = 16;
 /// Generic Netlink controller family ID (`GENL_ID_CTRL`).
 const GENL_ID_CTRL: u16 = 0x10;
-/// Generic netlink control command: CTRL_CMD_NEWFAMILY
-const CTRL_CMD_NEWFAMILY: u8 = 1;
-/// Generic netlink control command: CTRL_CMD_DELFAMILY  
-const CTRL_CMD_DELFAMILY: u8 = 2;
-/// Netlink attribute type: CTRL_ATTR_FAMILY_ID
-const CTRL_ATTR_FAMILY_ID: u16 = 1;
-/// Netlink attribute type: CTRL_ATTR_FAMILY_NAME
-const CTRL_ATTR_FAMILY_NAME: u16 = 2;
-const NLA_TYPE_MASK: u16 = 0x3fff;
-/// Size of generic netlink header in bytes
-const GENL_HEADER_SIZE: usize = 20;
 const MAX_CONTROL_DATAGRAMS_PER_WAKE: usize = 64;
 /// Netlink control notify multicast group ID
 #[cfg(not(test))]
@@ -64,12 +63,6 @@ enum SubscriptionState {
     Unknown,
     Absent,
     Present(NetlinkSubscription),
-}
-
-#[derive(Debug, Default)]
-struct FamilyAttrs {
-    family_id: Option<u16>,
-    name: Option<String>,
 }
 
 /// Actor responsible for monitoring netlink family registration/unregistration.
@@ -290,13 +283,29 @@ impl ControlNetlinkActor {
         let mut events = Vec::new();
         let mut offset = 0usize;
 
-        while offset + NETLINK_HEADER_SIZE <= buffer.len() {
-            let nl_len =
-                u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
+        while offset + NETLINK_HEADER_LEN <= buffer.len() {
+            let packet = match NetlinkBuffer::new_checked(&buffer[offset..]) {
+                Ok(packet) => packet,
+                Err(error) if !events.is_empty() => {
+                    warn!(
+                        "Discarding malformed trailing control message after {} valid event(s): {}",
+                        events.len(),
+                        error
+                    );
+                    break;
+                }
+                Err(error) => {
+                    return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid control netlink message at offset {offset}: {error}"),
+                    ));
+                }
+            };
+            let nl_len = packet.length() as usize;
             let message_end = offset
                 .checked_add(nl_len)
                 .filter(|end| *end <= buffer.len());
-            let Some(message_end) = message_end.filter(|_| nl_len >= NETLINK_HEADER_SIZE) else {
+            let Some(message_end) = message_end.filter(|_| nl_len >= NETLINK_HEADER_LEN) else {
                 let error = io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid control netlink message length {nl_len} at offset {offset}"),
@@ -355,51 +364,66 @@ impl ControlNetlinkActor {
         buffer: &[u8],
         target_family: &str,
     ) -> Result<Option<FamilyEvent>, io::Error> {
-        // Parse the netlink header
-        if buffer.len() < NETLINK_HEADER_SIZE {
-            return Err(io::Error::new(
+        let netlink = NetlinkBuffer::new_checked(buffer).map_err(|error| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Control message is shorter than the netlink header",
-            ));
-        }
-
-        let nl_len = u32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
-        if nl_len < GENL_HEADER_SIZE || nl_len > buffer.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid control message length {nl_len}"),
-            ));
-        }
-        let nl_type = u16::from_ne_bytes([buffer[4], buffer[5]]);
-        debug!(
-            "Control netlink header: nl_type={}, genl_cmd={}",
-            nl_type,
-            buffer.get(16).copied().unwrap_or_default()
-        );
-
-        // Check if this is a generic netlink message
-        if nl_type != GENL_ID_CTRL {
+                format!("Failed to parse control netlink header: {error}"),
+            )
+        })?;
+        if netlink.message_type() != GENL_ID_CTRL {
             return Ok(None);
         }
-
-        // Parse the generic netlink header
-        if buffer.len() < GENL_HEADER_SIZE {
-            return Ok(None);
-        }
-
-        let genl_cmd = buffer[16];
-
-        // Check if this is a family new/del command
-        let registered = match genl_cmd {
+        let generic = GenlBuffer::new_checked(netlink.payload()).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse Generic Netlink header: {error}"),
+            )
+        })?;
+        let registered = match generic.cmd() {
             CTRL_CMD_NEWFAMILY => true,
             CTRL_CMD_DELFAMILY => false,
             _ => return Ok(None),
         };
-        let attrs = Self::parse_family_attrs(&buffer[GENL_HEADER_SIZE..nl_len])?;
-        if attrs.name.as_deref() != Some(target_family) {
+
+        let mut family_id = None;
+        let mut family_name = None;
+        for attribute in NlasIterator::new(generic.payload()) {
+            let attribute = attribute.map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse control attribute: {error}"),
+                )
+            })?;
+            match attribute.kind() {
+                CTRL_ATTR_FAMILY_ID => {
+                    family_id = Some(parse_u16(attribute.value()).map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid control family ID: {error}"),
+                        )
+                    })?);
+                }
+                CTRL_ATTR_FAMILY_NAME => {
+                    if attribute.value().last() != Some(&0) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Control family name is not NUL-terminated",
+                        ));
+                    }
+                    family_name = Some(parse_string(attribute.value()).map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid control family name: {error}"),
+                        )
+                    })?);
+                }
+                _ => {}
+            }
+        }
+        if family_name.as_deref() != Some(target_family) {
             return Ok(None);
         }
-        let family_id = attrs.family_id.ok_or_else(|| {
+        let family_id = family_id.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "Control event has no family ID")
         })?;
         Ok(Some(if registered {
@@ -407,67 +431,6 @@ impl ControlNetlinkActor {
         } else {
             FamilyEvent::Unregistered(family_id)
         }))
-    }
-
-    fn parse_family_attrs(attrs_buffer: &[u8]) -> Result<FamilyAttrs, io::Error> {
-        let mut attrs = FamilyAttrs::default();
-        let mut offset = 0;
-
-        while offset < attrs_buffer.len() {
-            if attrs_buffer.len() - offset < 4 {
-                if attrs_buffer[offset..].iter().all(|byte| *byte == 0) {
-                    break;
-                }
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Incomplete control attribute header",
-                ));
-            }
-            let attr_len =
-                u16::from_ne_bytes([attrs_buffer[offset], attrs_buffer[offset + 1]]) as usize;
-            if attr_len < 4 || offset + attr_len > attrs_buffer.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Invalid control attribute length {attr_len} at offset {offset}"),
-                ));
-            }
-            let attr_type = u16::from_ne_bytes([
-                attrs_buffer[offset + 2],
-                attrs_buffer[offset + 3],
-            ]) & NLA_TYPE_MASK;
-            let value = &attrs_buffer[offset + 4..offset + attr_len];
-            match attr_type {
-                CTRL_ATTR_FAMILY_ID if value.len() == 2 => {
-                    attrs.family_id = Some(u16::from_ne_bytes(value.try_into().unwrap()));
-                }
-                CTRL_ATTR_FAMILY_NAME => {
-                    let Some(0) = value.last().copied() else {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Control family name is not NUL-terminated",
-                        ));
-                    };
-                    let name = std::str::from_utf8(&value[..value.len() - 1]).map_err(|error| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Control family name is not UTF-8: {error}"),
-                        )
-                    })?;
-                    attrs.name = Some(name.to_string());
-                }
-                _ => {}
-            }
-            let aligned_len = (attr_len + 3) & !3;
-            if offset + aligned_len > attrs_buffer.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Control attribute padding is truncated",
-                ));
-            }
-            offset += aligned_len;
-        }
-
-        Ok(attrs)
     }
 
     async fn apply_state(
@@ -639,6 +602,12 @@ pub mod test {
     use crate::actor::data_netlink::{self, DataNetlinkActor};
     use crate::message::buffer::SocketBufferMessage;
     use netlink_sys::SocketAddr;
+    use netlink_packet_generic::{
+        constants::{
+            CTRL_ATTR_FAMILY_ID, CTRL_ATTR_FAMILY_NAME, CTRL_CMD_DELFAMILY,
+            CTRL_CMD_NEWFAMILY, GENL_HDRLEN,
+        },
+    };
     use std::{
         os::fd::{AsRawFd, RawFd},
         os::unix::net::UnixDatagram,
@@ -749,7 +718,8 @@ pub mod test {
         let aligned_id_attr_len = (id_attr_len + 3) & !3;
         let name_attr_len = 4 + family_name.len();
         let aligned_name_attr_len = (name_attr_len + 3) & !3;
-        let message_len = GENL_HEADER_SIZE + aligned_id_attr_len + aligned_name_attr_len;
+        let message_len = NETLINK_HEADER_LEN + GENL_HDRLEN + aligned_id_attr_len
+            + aligned_name_attr_len;
         let mut message = vec![0u8; message_len];
 
         message[0..4].copy_from_slice(&(message_len as u32).to_ne_bytes());
@@ -758,7 +728,7 @@ pub mod test {
         message[20..22].copy_from_slice(&(id_attr_len as u16).to_ne_bytes());
         message[22..24].copy_from_slice(&CTRL_ATTR_FAMILY_ID.to_ne_bytes());
         message[24..26].copy_from_slice(&family_id.to_ne_bytes());
-        let name_offset = GENL_HEADER_SIZE + aligned_id_attr_len;
+        let name_offset = NETLINK_HEADER_LEN + GENL_HDRLEN + aligned_id_attr_len;
         message[name_offset..name_offset + 2]
             .copy_from_slice(&(name_attr_len as u16).to_ne_bytes());
         message[name_offset + 2..name_offset + 4]
@@ -1170,7 +1140,7 @@ pub mod test {
     fn test_valid_event_before_malformed_trailing_message_is_kept() {
         let mut datagram = control_message(CTRL_CMD_DELFAMILY, "test_family", 0x20);
         datagram.extend_from_slice(&u32::MAX.to_ne_bytes());
-        datagram.resize(datagram.len() + NETLINK_HEADER_SIZE - 4, 0);
+        datagram.resize(datagram.len() + NETLINK_HEADER_LEN - 4, 0);
 
         assert_eq!(
             ControlNetlinkActor::parse_control_datagram(&datagram, "test_family").unwrap(),
@@ -1206,46 +1176,29 @@ pub mod test {
             .expect("control actor panicked");
     }
 
-    /// Tests family name parsing from attributes.
-    #[test]
-    fn test_family_name_parsing() {
-        let mut attrs_buffer = vec![0u8; 16];
-
-        // Create a mock attribute with family name
-        let family_name = b"sonic_stel\0";
-        let attr_len = 4 + family_name.len(); // header + data
-
-        attrs_buffer[0..2].copy_from_slice(&(attr_len as u16).to_ne_bytes()); // length
-        attrs_buffer[2..4].copy_from_slice(&(2u16).to_ne_bytes()); // CTRL_ATTR_FAMILY_NAME type
-        attrs_buffer[4..4 + family_name.len()].copy_from_slice(family_name);
-
-        let attrs = ControlNetlinkActor::parse_family_attrs(&attrs_buffer).unwrap();
-        assert_eq!(attrs.name.as_deref(), Some("sonic_stel"));
-    }
-
     #[test]
     fn test_family_name_attribute_masks_type_flags() {
-        let family_name = b"sonic_stel\0";
-        let attr_len = 4 + family_name.len();
-        let mut attrs_buffer = vec![0u8; (attr_len + 3) & !3];
-        attrs_buffer[0..2].copy_from_slice(&(attr_len as u16).to_ne_bytes());
-        attrs_buffer[2..4]
+        let mut message = control_message(CTRL_CMD_NEWFAMILY, "sonic_stel", 0x20);
+        let name_offset = NETLINK_HEADER_LEN + GENL_HDRLEN + 8;
+        message[name_offset + 2..name_offset + 4]
             .copy_from_slice(&(CTRL_ATTR_FAMILY_NAME | 0x8000).to_ne_bytes());
-        attrs_buffer[4..4 + family_name.len()].copy_from_slice(family_name);
 
-        let attrs = ControlNetlinkActor::parse_family_attrs(&attrs_buffer).unwrap();
-        assert_eq!(attrs.name.as_deref(), Some("sonic_stel"));
+        assert_eq!(
+            ControlNetlinkActor::parse_control_message(&message, "sonic_stel").unwrap(),
+            Some(FamilyEvent::Registered(0x20))
+        );
     }
 
     #[test]
     fn test_malformed_family_name_is_rejected() {
-        let mut attrs_buffer = vec![0u8; 8];
-        attrs_buffer[0..2].copy_from_slice(&8u16.to_ne_bytes());
-        attrs_buffer[2..4].copy_from_slice(&CTRL_ATTR_FAMILY_NAME.to_ne_bytes());
-        attrs_buffer[4..8].copy_from_slice(b"oops");
+        let mut message = control_message(CTRL_CMD_NEWFAMILY, "sonic_stel", 0x20);
+        let name_offset = NETLINK_HEADER_LEN + GENL_HDRLEN + 8;
+        let name_len =
+            u16::from_ne_bytes(message[name_offset..name_offset + 2].try_into().unwrap());
+        message[name_offset + name_len as usize - 1] = b'x';
 
         assert_eq!(
-            ControlNetlinkActor::parse_family_attrs(&attrs_buffer)
+            ControlNetlinkActor::parse_control_message(&message, "sonic_stel")
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::InvalidData

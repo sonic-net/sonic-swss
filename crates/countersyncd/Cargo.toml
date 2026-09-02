@@ -13,12 +13,14 @@ edition.workspace = true
 tokio = { workspace = true }
 
 # Configuration and serialization
-yaml-rust = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
 
 # Netlink for network operations
 genetlink = { workspace = true }
 netlink-packet-core = { workspace = true }
 netlink-packet-generic = { workspace = true }
+netlink-packet-utils = "0.5"
 netlink-sys = { workspace = true }
 libc = "0.2"
 
@@ -72,6 +74,9 @@ tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 async-trait = { workspace = true }
+futures-timer = "3.0.4"
+wait-timeout = "0.2.1"
+which = "7.0.3"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
