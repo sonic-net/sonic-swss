@@ -3025,6 +3025,55 @@ namespace portsorch_test
         _unhook_sai_bridge_api();
     }
 
+    /**
+     * PortsOrch::addBridgePort() re-asserts ADMIN_STATE=true when
+     * reusing a bridge port that was left stranded in the disabled state
+     */
+    TEST_F(PortsOrchTest, addBridgePortReassertsAdminStateOnReuse)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        // Create the bridge port for the first time.
+        ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+        // Simulate the stranded-disabled bug: the bridge port still exists but
+        // was left at ADMIN_STATE=false (e.g. by a failed removeBridgePort()).
+        sai_attribute_t attr;
+        attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+        attr.value.booldata = false;
+        ASSERT_EQ(sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr), SAI_STATUS_SUCCESS);
+
+        // Re-adding the port should reuse the existing bridge port and restore
+        // ADMIN_STATE=true instead of silently leaving it disabled.
+        ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+        ASSERT_EQ(sai_bridge_api->get_bridge_port_attribute(port.m_bridge_port_id, 1, &attr), SAI_STATUS_SUCCESS);
+        ASSERT_TRUE(attr.value.booldata);
+    }
+
     TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmSuccess)
     {
         _hook_sai_port_api();

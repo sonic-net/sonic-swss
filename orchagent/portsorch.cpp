@@ -7353,6 +7353,33 @@ bool PortsOrch::addBridgePort(Port &port)
 
     if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
     {
+        // Re-assert ADMIN_STATE=true and hostif VLAN tag mode on reuse so an existing
+        // bridge port is never silently left disabled or mis-tagged from a prior removal.
+        sai_attribute_t admin_attr;
+        admin_attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+        admin_attr.value.booldata = true;
+
+        sai_status_t admin_status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &admin_attr);
+        if (admin_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR(
+                "Failed to re-assert bridge port %s admin status to UP on reuse, rv:%d",
+                port.m_alias.c_str(), admin_status);
+
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_BRIDGE, admin_status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
+            return false;
+        }
+
         return true;
     }
 
