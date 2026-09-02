@@ -6,6 +6,8 @@
 //!
 //! This is intentionally an example instead of a Cargo test: normal CI compiles it via
 //! `cargo check --all-targets`, but does not execute host-wide module unload/reload operations.
+//! It verifies both startup orderings (family already registered and family registered after the
+//! actors start) before running the repeated reload stress phase.
 //! The current-thread virtual-time harness serializes synchronous host operations with actor
 //! execution and therefore does not cover production multi-threaded teardown races.
 
@@ -23,14 +25,20 @@ use std::{
 
 use countersyncd::{
     actor::{control_netlink::ControlNetlinkActor, data_netlink::DataNetlinkActor},
-    message::{buffer::SocketBufferMessage, netlink::NetlinkCommand},
+    message::{
+        buffer::SocketBufferMessage,
+        netlink::{NetlinkCommand, NetlinkSubscription},
+    },
 };
 use futures_timer::Delay;
 use log::LevelFilter;
 use netlink_packet_utils::nla::NlasIterator;
 use tokio::{
     runtime::Builder,
-    sync::mpsc::{channel, error::TryRecvError, Receiver, Sender},
+    sync::mpsc::{
+        channel, error::TryRecvError, unbounded_channel, Receiver, Sender, UnboundedReceiver,
+        UnboundedSender,
+    },
     task::JoinHandle,
     time::advance,
 };
@@ -48,6 +56,7 @@ const MAX_RSS_TREND_KIB: u64 = 512;
 const MAX_HEAP_GROWTH_BYTES: usize = 512 * 1024;
 const MAX_HEAP_TREND_BYTES: u64 = 128 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+const STARTUP_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const PSAMPLE_ATTR_SAMPLE_GROUP: u16 = 3;
 const PSAMPLE_ATTR_DATA: u16 = 6;
 
@@ -66,10 +75,19 @@ const OUTAGES: &[(&str, Duration)] = &[
 type DynError = Box<dyn Error + Send + Sync>;
 
 struct Actors {
-    command_sender: Sender<NetlinkCommand>,
+    close_sender: Sender<NetlinkCommand>,
+    command_observations: Option<UnboundedReceiver<ObservedCommand>>,
     data_receiver: Receiver<SocketBufferMessage>,
+    command_relay_task: Option<JoinHandle<()>>,
     data_task: JoinHandle<()>,
     control_task: JoinHandle<()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObservedCommand {
+    Connect(NetlinkSubscription),
+    Reconnect(NetlinkSubscription),
+    Disconnect,
 }
 
 struct Cleanup {
@@ -192,25 +210,110 @@ async fn run_test() -> Result<(), DynError> {
     let mut cleanup = Cleanup::new()?;
     let reloads = reloads()?;
 
-    eprintln!("loading psample and configuring the sampling path");
+    eprintln!("verifying startup when psample is already registered");
     load_modules()?;
     require_removable_modules()?;
     create_sample_path()?;
 
     let pre_actor_fds = fd_snapshot()?;
-    let mut actors = start_actors();
-    if let Err(error) = wait_for_data_socket(&mut actors).await {
-        let shutdown = stop_actors(actors, false).await;
+    let mut actors = start_actors(true);
+    let startup_result = verify_family_present_at_startup(&mut actors).await;
+    let startup_shutdown = stop_actors(actors, false).await;
+    if let Err(error) = startup_result {
         let cleanup_result = cleanup.finish();
         return Err(format!(
-            "initial psample receive failed: {error}; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+            "pre-registered startup failed: {error}; actor shutdown: {startup_shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    startup_shutdown?;
+    let post_startup_fds = fd_snapshot()?;
+    if post_startup_fds != pre_actor_fds {
+        return Err(format!(
+            "pre-registered startup changed fd set after shutdown: before={pre_actor_fds:?}, after={post_startup_fds:?}"
         )
         .into());
     }
 
+    eprintln!("verifying startup before psample is registered");
+    delete_links()?;
+    unload_modules()?;
+    expect_family(false)?;
+    let absent_started = tokio::time::Instant::now();
+    let mut actors = start_actors(true);
+    if let Err(error) = verify_family_absent_at_startup(&mut actors).await {
+        let shutdown = stop_actors(actors, false).await;
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "absent-family startup failed: {error}; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    tokio::time::pause();
+    if absent_started.elapsed() >= Duration::from_secs(1) {
+        let shutdown = stop_actors(actors, true).await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "initial absent-family reconciliation reached the one-second periodic deadline; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    let auto_advance_guard = AutoAdvanceGuard::new().await;
+    if let Err(error) = verify_auto_advance_disabled().await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start virtual-time isolation failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    if let Err(error) = verify_family_registered_after_startup(&mut actors).await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start registration failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
+    let startup_shutdown = stop_actors(actors, true).await;
+    let startup_guard_result = auto_advance_guard.stop().await;
+    tokio::time::resume();
+    if startup_shutdown.is_err() || startup_guard_result.is_err() {
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start actor teardown failed: actor shutdown: {startup_shutdown:?}; virtual-time guard shutdown: {startup_guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
+    let mut actors = start_actors(false);
+    if let Err(error) = verify_sample(&mut actors, "stress-actor-startup").await {
+        let shutdown = stop_actors(actors, false).await;
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "stress actor startup failed: {error}; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
     tokio::time::pause();
     let auto_advance_guard = AutoAdvanceGuard::new().await;
-    verify_auto_advance_disabled().await?;
+    if let Err(error) = verify_auto_advance_disabled().await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "stress virtual-time isolation failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
     let stress_result = {
         let stress = run_stress(&mut actors, reloads);
         tokio::pin!(stress);
@@ -223,6 +326,7 @@ async fn run_test() -> Result<(), DynError> {
 
     let shutdown_result = stop_actors(actors, true).await;
     let guard_result = auto_advance_guard.stop().await;
+    tokio::time::resume();
     let post_actor_fds = fd_snapshot();
     let cleanup_result = cleanup.finish();
 
@@ -421,31 +525,79 @@ async fn cycle_family(
     Ok(())
 }
 
-fn start_actors() -> Actors {
-    let (command_sender, command_receiver) = channel(32);
+fn start_actors(observe_commands: bool) -> Actors {
+    let (control_command_sender, control_command_receiver) = channel(32);
     let (data_sender, data_receiver) = channel(DATA_CHANNEL_CAPACITY);
 
-    let mut data_actor = DataNetlinkActor::new(FAMILY, GROUP, command_receiver, 4 * 1024 * 1024);
+    let (data_command_receiver, command_observations, command_relay_task) = if observe_commands {
+        let (data_command_sender, data_command_receiver) = channel(32);
+        let (command_observation_sender, command_observations) = unbounded_channel();
+        (
+            data_command_receiver,
+            Some(command_observations),
+            Some(tokio::spawn(relay_commands(
+                control_command_receiver,
+                data_command_sender,
+                command_observation_sender,
+            ))),
+        )
+    } else {
+        (control_command_receiver, None, None)
+    };
+
+    let mut data_actor =
+        DataNetlinkActor::new(FAMILY, GROUP, data_command_receiver, 4 * 1024 * 1024);
     data_actor.add_recipient(data_sender);
-    let control_actor = ControlNetlinkActor::new(FAMILY, GROUP, command_sender.clone());
+    let close_sender = control_command_sender.clone();
+    let control_actor = ControlNetlinkActor::new(FAMILY, GROUP, control_command_sender);
 
     Actors {
-        command_sender,
+        close_sender,
+        command_observations,
         data_receiver,
+        command_relay_task,
         data_task: tokio::spawn(DataNetlinkActor::run(data_actor)),
         control_task: tokio::spawn(ControlNetlinkActor::run(control_actor)),
+    }
+}
+
+async fn relay_commands(
+    mut commands: Receiver<NetlinkCommand>,
+    data_sender: Sender<NetlinkCommand>,
+    observations: UnboundedSender<ObservedCommand>,
+) {
+    while let Some(command) = commands.recv().await {
+        let observation = match &command {
+            NetlinkCommand::Connect(subscription) => Some(ObservedCommand::Connect(*subscription)),
+            NetlinkCommand::Reconnect(subscription) => {
+                Some(ObservedCommand::Reconnect(*subscription))
+            }
+            NetlinkCommand::Disconnect => Some(ObservedCommand::Disconnect),
+            NetlinkCommand::Close => None,
+        };
+        if let Some(observation) = observation {
+            let _ = observations.send(observation);
+        }
+        let close = matches!(command, NetlinkCommand::Close);
+        if data_sender.send(command).await.is_err() || close {
+            break;
+        }
     }
 }
 
 async fn stop_actors(actors: Actors, time_paused: bool) -> Result<(), DynError> {
     let close_result = wall_timeout(
         Duration::from_secs(5),
-        actors.command_sender.send(NetlinkCommand::Close),
+        actors.close_sender.send(NetlinkCommand::Close),
     )
     .await;
-    drop(actors.command_sender);
+    drop(actors.close_sender);
 
     let data_result = stop_task("data actor", actors.data_task).await;
+    let relay_result = match actors.command_relay_task {
+        Some(task) => stop_task("command relay", task).await,
+        None => Ok(()),
+    };
     if time_paused {
         advance_in_steps(Duration::from_millis(20)).await;
     }
@@ -453,6 +605,7 @@ async fn stop_actors(actors: Actors, time_paused: bool) -> Result<(), DynError> 
 
     close_result??;
     data_result?;
+    relay_result?;
     control_result?;
     Ok(())
 }
@@ -468,39 +621,61 @@ async fn stop_task(name: &str, mut task: JoinHandle<()>) -> Result<(), DynError>
     }
 }
 
-async fn wait_for_data_socket(actors: &mut Actors) -> Result<(), DynError> {
-    for attempt in 0..20 {
-        let marker = format!("startup-{attempt}");
-        send_marker(marker.as_bytes())?;
-        if let Ok(message) =
-            wall_timeout(Duration::from_millis(100), actors.data_receiver.recv()).await
-        {
-            let message = message.ok_or("data actor channel closed during startup")?;
-            if sample_contains(&message, marker.as_bytes())? {
-                return Ok(());
-            }
-        }
-        wall_timeout(
-            Duration::from_secs(1),
-            async {
-                let (family_id, group_id) = resolve_ids()?;
-                actors
-                    .command_sender
-                    .send(NetlinkCommand::Reconnect(
-                        countersyncd::message::netlink::NetlinkSubscription {
-                            family_id,
-                            group_id,
-                        },
-                    ))
-                    .await
-                    .map_err(|error| format!("send startup reconnect: {error}"))?;
-                Ok::<(), DynError>(())
-            },
-        )
-        .await??;
-        settle().await;
+async fn verify_family_present_at_startup(actors: &mut Actors) -> Result<(), DynError> {
+    let expected = subscription(resolve_ids()?);
+    expect_command(actors, ObservedCommand::Connect(expected)).await?;
+    verify_sample(actors, "family-present-before-startup").await?;
+    actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations")
+        .close();
+    println!("startup with pre-registered psample passed");
+    Ok(())
+}
+
+async fn verify_family_registered_after_startup(actors: &mut Actors) -> Result<(), DynError> {
+    load_modules()?;
+    expect_family(true)?;
+    let expected = subscription(resolve_ids()?);
+    create_sample_path()?;
+    expect_command(actors, ObservedCommand::Reconnect(expected)).await?;
+    verify_sample(actors, "family-registered-after-startup").await?;
+    actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations")
+        .close();
+    println!("startup before psample registration passed");
+    Ok(())
+}
+
+async fn verify_family_absent_at_startup(actors: &mut Actors) -> Result<(), DynError> {
+    expect_command(actors, ObservedCommand::Disconnect).await?;
+    settle().await;
+    Ok(())
+}
+
+async fn expect_command(actors: &mut Actors, expected: ObservedCommand) -> Result<(), DynError> {
+    let observations = actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations");
+    let actual = wall_timeout(STARTUP_COMMAND_TIMEOUT, observations.recv())
+        .await
+        .map_err(|error| format!("waiting for control command {expected:?}: {error}"))?
+        .ok_or("control command relay closed during startup verification")?;
+    if actual != expected {
+        return Err(format!("expected control command {expected:?}, received {actual:?}").into());
     }
-    Err("data actor did not receive psample data during startup".into())
+    Ok(())
+}
+
+fn subscription((family_id, group_id): (u16, u32)) -> NetlinkSubscription {
+    NetlinkSubscription {
+        family_id,
+        group_id,
+    }
 }
 
 async fn verify_sample(actors: &mut Actors, marker: &str) -> Result<(), DynError> {
@@ -549,7 +724,7 @@ async fn verify_sample(actors: &mut Actors, marker: &str) -> Result<(), DynError
     }
 
     Err(format!(
-        "data actor did not receive marker {marker:?} after psample reload; discarded {delayed_samples} delayed sample(s)"
+        "data actor did not receive marker {marker:?} after psample setup; discarded {delayed_samples} delayed sample(s)"
     )
     .into())
 }

@@ -7,6 +7,13 @@ It repeatedly unloads and reloads the host's `psample` and `act_sample` modules,
 creates a veth and `tc action sample` path, and verifies that countersyncd receives
 a fresh kernel-generated payload after every reload.
 
+Before the reload stress phase, it also verifies both startup orderings without
+injecting a reconnect command from the test: `psample` registered before the actors
+start, and the actors started while `psample` is absent followed by its first
+registration. Both scenarios must receive their own fresh marker payload. The second
+scenario keeps Tokio time paused, so the one-second reconciliation timer cannot make
+it pass instead of the `NEWFAMILY` notification path.
+
 ## Requirements
 
 - An exclusive disposable Linux host or VM. Do not run it on a shared kernel.
@@ -32,16 +39,16 @@ sudo env \
   --release
 ```
 
-The default performs 137 real module reloads: one warm-up cycle for each outage
-duration plus 128 measured cycles rotating through `100ms`, `1s`, `10s`, `30s`,
-`1h`, `1d`, `1w`, `1mo`, and `1y`. Durations use Tokio virtual time; module and
-packet operations remain real.
+After the two startup scenarios, the default stress phase performs 137 real module
+reloads: one warm-up cycle for each outage duration plus 128 measured cycles rotating
+through `100ms`, `1s`, `10s`, `30s`, `1h`, `1d`, `1w`, `1mo`, and `1y`. Durations use
+Tokio virtual time; module and packet operations remain real.
 
 Wall-clock runtime is host-dependent because module, link, and packet operations
 remain synchronous and real. Successful runs report `elapsed_wall`; measure a full
 run on the target host rather than inferring runtime from the virtual outages. The
-final Linux 6.8 validation completed the 137 reloads in 51.69 seconds, excluding
-the initial release build and package installation.
+latest Linux 6.8 validation completed both startup scenarios and the 137-reload
+stress phase in 24.62 seconds, excluding the release build and package installation.
 
 For local debugging only, a shorter run can bypass the minimum of 101 measured
 reloads:

@@ -113,7 +113,9 @@ pub(crate) fn set_socket_recv_timeout(socket: &Socket, timeout: Duration) -> io:
 
 /// Creates a netlink socket for family/group resolution.
 ///
-/// The socket is configured in blocking mode for request-response operations.
+/// The socket is configured in blocking mode for request-response operations. Its receive timeout
+/// bounds the receive phase if the kernel response is lost; `receive_matching_response` shortens
+/// that timeout against one overall deadline when it skips unrelated responses.
 ///
 /// # Returns
 ///
