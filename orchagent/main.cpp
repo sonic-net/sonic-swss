@@ -479,14 +479,7 @@ int main(int argc, char **argv)
             gBatchSize = atoi(optarg);
             break;
         case 'i':
-            {
-                bool truncated;
-                gAsicInstance = parseAsicInstanceId(optarg, SAI_MAX_HARDWARE_ID_LEN, truncated);
-                if (truncated)
-                {
-                    SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
-                }
-            }
+            gAsicInstance = parseAsicInstanceIdWithLimit(optarg, SAI_MAX_HARDWARE_ID_LEN);
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);

@@ -35,3 +35,22 @@ TEST(ParseAsicInstanceIdTest, EmptyInput)
     EXPECT_EQ(result, "");
     EXPECT_FALSE(truncated);
 }
+
+TEST(ParseAsicInstanceIdTest, NullInput)
+{
+    bool truncated = true;
+    std::string result = parseAsicInstanceId(nullptr, 255, truncated);
+    EXPECT_EQ(result, "");
+    EXPECT_FALSE(truncated);
+}
+
+TEST(ParseAsicInstanceIdTest, WithLimitDoesNotWarnWhenInRange)
+{
+    EXPECT_EQ(parseAsicInstanceIdWithLimit("Asic0", 255), "Asic0");
+}
+
+TEST(ParseAsicInstanceIdTest, WithLimitWarnsAndTruncatesWhenTooLong)
+{
+    std::string input(10, 'B');
+    EXPECT_EQ(parseAsicInstanceIdWithLimit(input.c_str(), 8), std::string(8, 'B'));
+}
