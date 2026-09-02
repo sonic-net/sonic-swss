@@ -15,6 +15,13 @@ enum class ProtNhgRole
     STANDBY
 };
 
+/* What a protection member resolves its SAI next hop ID from. */
+enum class ProtNhgMemberType
+{
+    NEXT_HOP,     /* An individual next hop, resolved through NeighOrch. */
+    SHARED_NHG,   /* A nested NHG held by NhgOrch, referenced by its index. */
+};
+
 /*
  * ProtNhgMember represents a member of a protection next hop group.
  * A member is identified by its role, not by what it forwards to: the role is
@@ -29,13 +36,17 @@ enum class ProtNhgRole
 class ProtNhgMember : public NhgMember<ProtNhgRole>
 {
 public:
+    /* A member backed by an individual next hop, resolved via NeighOrch. */
+    static ProtNhgMember nextHop(ProtNhgRole role, const NextHopKey &nh_key);
+
     /*
-     * A member backed by an individual next hop is created with nhg_key empty
-     * and resolves through NeighOrch. A non-empty nhg_key makes the member
-     * recursive: it resolves through NhgOrch instead, and nh_key is unused.
+     * A member backed by a nested NHG that NhgOrch owns, named by its APP_DB
+     * index. The index is the only identity NhgOrch can resolve; a group's
+     * membership string is a different key space and deliberately not used
+     * here. The nested group is ref counted for as long as this member is
+     * synced, so NhgOrch will refuse to remove it out from under us.
      */
-    ProtNhgMember(ProtNhgRole role, const NextHopKey &nh_key,
-                  const string &nhg_key = "");
+    static ProtNhgMember sharedNhg(ProtNhgRole role, const string &nhg_index);
 
     ProtNhgMember(ProtNhgMember &&nhgm);
 
@@ -45,19 +56,36 @@ public:
     void remove() override;
 
     inline ProtNhgRole getRole() const { return m_key; }
-    sai_object_id_t getNhId() const;
+    inline ProtNhgMemberType getType() const { return m_type; }
 
-    /* True when this member represents a recursive NHG rather than an individual NH. */
-    inline bool isRecursive() const { return !m_nhg_key.empty(); }
+    /* True when this member resolves to a NHG rather than an individual NH. */
+    inline bool isRecursive() const
+        { return m_type != ProtNhgMemberType::NEXT_HOP; }
 
-    /* The individual next hop this member resolves through. Meaningless for a
-     * recursive member, which has no single next hop of its own. */
+    /* Meaningful only for NEXT_HOP members; a default NextHopKey otherwise. */
     inline const NextHopKey& getNextHopKey() const { return m_nh_key; }
+
+    /* Meaningful only for SHARED_NHG members; empty otherwise. */
+    inline const string& getNhgIndex() const { return m_nhg_index; }
+
+    /*
+     * Resolved on every call rather than cached, so a member always programs
+     * against the nested group's current SAI ID.
+     */
+    sai_object_id_t getNhId() const;
 
     inline sai_object_id_t getMonitoredObject() const { return m_monitored_oid; }
     void setMonitoredObject(sai_object_id_t oid) { m_monitored_oid = oid; }
 
     bool updateMonitoredObject(sai_object_id_t oid);
+
+    /*
+     * Re-point a synced member at its target's current SAI ID. NhgOrch may
+     * replace a shared group's SAI object when its membership changes, and
+     * the member's next hop is CREATE_AND_SET, so the member can follow it
+     * without being torn down. A no-op when the ID has not moved.
+     */
+    bool updateNhId();
 
     /* Query the hardware-observed role (active/inactive) from SAI. */
     bool getObservedRole(sai_next_hop_group_member_observed_role_t &observed_role) const;
@@ -65,8 +93,19 @@ public:
     string to_string() const override;
 
 private:
-    NextHopKey m_nh_key;
-    string m_nhg_key;   /* Non-empty when member is a recursive NHG (resolved via NhgOrch). */
+    ProtNhgMember(ProtNhgRole role,
+                  ProtNhgMemberType type,
+                  const NextHopKey &nh_key,
+                  const string &nhg_index);
+
+    ProtNhgMemberType m_type;
+
+    NextHopKey m_nh_key;    /* NEXT_HOP only. */
+    string m_nhg_index;     /* SHARED_NHG only. */
+
+    /* The next hop ID currently programmed into the SAI member. */
+    sai_object_id_t m_programmed_nh_id;
+
     sai_object_id_t m_monitored_oid;
 };
 
@@ -91,24 +130,22 @@ private:
  * Attaching or detaching the monitored object moves the group between the two
  * modes in place; it never recreates the SAI group.
  *
- * Multi-primary (N:M) is expressed via the recursive NextHopGroupKey-pair
- * constructor, where the primary/standby members each point to an ECMP (or
- * fine-grained) NHG resolved through NhgOrch.
+ * Multi-primary (N:M) is expressed by giving either role a nested NHG member;
+ * the two legs need not be the same member type.
  */
 class ProtNhg : public NhgCommon<string, ProtNhgRole, ProtNhgMember>
 {
 public:
+    /*
+     * The general form: an explicit primary/standby member pair, so the two
+     * legs can be of different member types.
+     */
+    ProtNhg(const string &key, ProtNhgMember &&primary, ProtNhgMember &&standby);
+
+    /* Convenience form for the common case of two individual next hops. */
     ProtNhg(const string &key,
             const NextHopKey &primary_nh,
             const NextHopKey &standby_nh);
-
-    /* Construct from NextHopGroupKey pairs (recursive/nested NHG).
-     * Each group becomes a single protection member whose SAI next-hop ID
-     * is dynamically resolved via NhgOrch at sync time.
-     */
-    ProtNhg(const string &key,
-            const NextHopGroupKey &primary_nhg_key,
-            const NextHopGroupKey &standby_nhg_key);
 
     ProtNhg(ProtNhg &&nhg);
 
@@ -116,6 +153,13 @@ public:
 
     bool sync() override;
     bool remove() override;
+
+    /*
+     * Re-point whichever member resolves through the shared NHG named by
+     * nhg_index, after NhgOrch has updated that group. Nothing to do for a
+     * group this protection NHG does not reference.
+     */
+    bool updateSharedMember(const string &nhg_index);
 
     /* Sync a member once its next hop becomes valid.  There is no invalidate
      * counterpart: a protection NHG keeps both legs programmed and switches
@@ -138,19 +182,18 @@ public:
     /* Trigger switchover from primary to standby -- SW-driven only. */
     bool setSwitchover(bool enable);
 
-    /*
-     * Role is how a member is addressed; the next-hop forms are conveniences
-     * for a group whose legs are individual next hops, and never match a
-     * recursive member.
-     */
+    /* Role-addressed member operations; these reach every member type. */
     bool updateMemberMonitoredObject(ProtNhgRole role,
                                      sai_object_id_t monitored_oid);
-    bool updateMemberMonitoredObject(const NextHopKey &nh_key,
-                                     sai_object_id_t monitored_oid);
-
-    /* Query a specific member's observed role from SAI. */
     bool getMemberObservedRole(ProtNhgRole role,
                                sai_next_hop_group_member_observed_role_t &observed_role) const;
+
+    /*
+     * Next-hop-addressed convenience forms. They only ever match a NEXT_HOP
+     * member, since a nested NHG has no single next hop to address it by.
+     */
+    bool updateMemberMonitoredObject(const NextHopKey &nh_key,
+                                     sai_object_id_t monitored_oid);
     bool getMemberObservedRole(const NextHopKey &nh_key,
                                sai_next_hop_group_member_observed_role_t &observed_role) const;
 
@@ -162,13 +205,17 @@ public:
     const ProtNhgMember* getPrimaryMember() const;
     const ProtNhgMember* getStandbyMember() const;
 
-    /* Resolve which role the member forwarding to nh_key holds. Fails when no
-     * member resolves through that next hop. */
+    /*
+     * Resolve the role of the NEXT_HOP member addressed by nh_key, so callers
+     * holding a next hop can reach the role-addressed API.  False when no
+     * NEXT_HOP member matches.
+     */
     bool getMemberRole(const NextHopKey &nh_key, ProtNhgRole &role) const;
 
     string to_string() const override { return m_key; }
 
 private:
+    /* Find the NEXT_HOP member resolving to nh_key, or nullptr. */
     const ProtNhgMember* findMemberByNextHop(const NextHopKey &nh_key) const;
     ProtNhgMember* findMemberByNextHop(const NextHopKey &nh_key);
 

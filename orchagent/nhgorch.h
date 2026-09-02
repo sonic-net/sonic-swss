@@ -172,7 +172,7 @@ public:
 
     /* Create a protection NHG as a strict pair: one primary and one standby
      * next hop. Individual NHs are resolved via NeighOrch at sync time.
-     * For N:M, use the recursive NextHopGroupKey-pair overloads below.
+     * For N:M, give a role a nested NHG with createProtNhgShared() below.
      */
     bool createProtNhg(const string &key,
                        const NextHopKey &primary_nh,
@@ -181,6 +181,22 @@ public:
     /* Auto-keyed convenience overload -- key is derived from the members. */
     bool createProtNhg(const NextHopKey &primary_nh,
                        const NextHopKey &standby_nh);
+
+    /* Create a protection NHG whose legs are nested NHGs that NhgOrch already
+     * holds, named by their APP_DB indices. A group is identified by its
+     * index, never by its membership: the two are different key spaces, and
+     * several groups may share one membership. Each leg is ref counted for as
+     * long as the protection group references it, and neither leg may be
+     * temporary or itself recursive, since such a group can be replaced by a
+     * different SAI object underneath us.
+     */
+    bool createProtNhgShared(const string &key,
+                             const string &primary_nhg_index,
+                             const string &standby_nhg_index);
+
+    /* Auto-keyed convenience overload -- key is derived from the indices. */
+    bool createProtNhgShared(const string &primary_nhg_index,
+                             const string &standby_nhg_index);
 
     /* Create a protection NHG where each role is an existing ECMP NHG.
      * NHG OIDs are dynamically resolved via NhgOrch at sync time.
@@ -200,6 +216,8 @@ public:
                                   const NextHopKey &standby_nh);
     static string buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
                                   const NextHopGroupKey &standby_nhg_key);
+    static string buildProtNhgSharedKey(const string &primary_nhg_index,
+                                        const string &standby_nhg_index);
 
     /* Remove a protection NHG by key. */
     bool removeProtNhg(const string &key);
@@ -260,6 +278,21 @@ public:
 
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Room for count more next hop groups, ECMP and protection alike. */
+    bool hasNhgCapacity(unsigned count) const;
+
+    /*
+     * Re-point the protection members that reference the NHG at nhg_index.
+     * Updating a group can replace its SAI object, and a protection member
+     * programs the next hop ID it saw at creation, so it has to follow.
+     */
+    void updateProtNhgMembers(const string &nhg_index);
+
+    /* Sync a freshly built protection NHG and register it under key. */
+    bool finalizeProtNhg(const string &key,
+                         unique_ptr<ProtNhg> nhg,
+                         const string &desc);
 
     /* Probe the ASIC once for protection-NHG support, hardware switchover
      * support, and the backup-group hint, then publish the results to

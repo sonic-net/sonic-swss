@@ -530,6 +530,30 @@ namespace protnhg_test
         unregisterNextHop(nh);
     }
 
+    /* Members are keyed by role, so a same-role pair would collapse into a
+     * single member instead of forming a protection pair. */
+    TEST_F(ProtNhgTest, SameRoleMemberPairIsRejected)
+    {
+        NextHopKey nh1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey nh2(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(nh1);
+        registerNextHop(nh2);
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    create_next_hop_group(_, _, _, _)).Times(0);
+
+        ProtNhg nhg("prot_nhg_same_role",
+                    ProtNhgMember::nextHop(ProtNhgRole::PRIMARY, nh1),
+                    ProtNhgMember::nextHop(ProtNhgRole::PRIMARY, nh2));
+
+        EXPECT_EQ(nhg.getSize(), 0u);
+        EXPECT_FALSE(nhg.sync());
+        EXPECT_FALSE(nhg.isSynced());
+
+        unregisterNextHop(nh1);
+        unregisterNextHop(nh2);
+    }
+
     TEST_F(ProtNhgTest, SyncMembersFailure)
     {
         EXPECT_CALL(*mock_sai_next_hop_group_api,
@@ -965,7 +989,7 @@ namespace protnhg_test
     TEST_F(ProtNhgTest, MemberRemoveUnsynced)
     {
         NextHopKey nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        ProtNhgMember member(ProtNhgRole::PRIMARY, nh);
+        ProtNhgMember member = ProtNhgMember::nextHop(ProtNhgRole::PRIMARY, nh);
 
         EXPECT_FALSE(member.isSynced());
         member.remove();
@@ -1003,22 +1027,29 @@ namespace protnhg_test
 
     static uint64_t ecmp_nhg_oid_counter = 0x7000000;
 
-    /* Helper: register a fake synced ECMP NHG in gNhgOrch.
+    /* Helper: register a fake synced ECMP NHG in gNhgOrch under an index.
      * Directly assigns a SAI OID instead of calling sync(), which would
      * try to resolve individual NHs through NeighOrch.
      */
-    static void addEcmpNhg(const NextHopGroupKey &nhg_key)
+    static void addEcmpNhg(const string &index, const NextHopGroupKey &nhg_key,
+                           bool is_temp = false)
     {
-        string key_str = nhg_key.to_string();
-        auto nhg = make_unique<NextHopGroup>(nhg_key, false);
+        auto nhg = make_unique<NextHopGroup>(nhg_key, is_temp);
         nhg->m_id = ++ecmp_nhg_oid_counter;
         gNhgOrch->m_syncdNextHopGroups.emplace(
-            key_str, NhgEntry<NextHopGroup>(move(nhg)));
+            index, NhgEntry<NextHopGroup>(move(nhg)));
     }
 
-    static void removeEcmpNhg(const string &key_str)
+    /* Register under the membership string, which is what the
+     * NextHopGroupKey-pair create overload looks the legs up by. */
+    static void addEcmpNhg(const NextHopGroupKey &nhg_key)
     {
-        auto it = gNhgOrch->m_syncdNextHopGroups.find(key_str);
+        addEcmpNhg(nhg_key.to_string(), nhg_key);
+    }
+
+    static void removeEcmpNhg(const string &index)
+    {
+        auto it = gNhgOrch->m_syncdNextHopGroups.find(index);
         if (it != gNhgOrch->m_syncdNextHopGroups.end())
         {
             it->second.nhg->m_id = SAI_NULL_OBJECT_ID;
@@ -1122,6 +1153,175 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         removeEcmpNhg(primary_nhg_key.to_string());
         removeEcmpNhg(standby_nhg_key.to_string());
+    }
+
+    /* --- Shared member groups: referenced by their NhgOrch index --- */
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithSharedNhgs)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        string key = "prot_nhg_shared";
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared(key, "ID100", "ID200"));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        const ProtNhgMember *primary = nhg.getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+        EXPECT_EQ(primary->getType(), ProtNhgMemberType::SHARED_NHG);
+        EXPECT_TRUE(primary->isRecursive());
+        EXPECT_EQ(primary->getNhgIndex(), "ID100");
+        EXPECT_EQ(primary->getNhId(), gNhgOrch->getNhg("ID100").getId());
+
+        const ProtNhgMember *standby = nhg.getStandbyMember();
+        ASSERT_NE(standby, nullptr);
+        EXPECT_EQ(standby->getNhgIndex(), "ID200");
+        EXPECT_EQ(standby->getNhId(), gNhgOrch->getNhg("ID200").getId());
+
+        /* Referenced legs are pinned so NhgOrch will not remove them. */
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID100").ref_count, 1u);
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 1u);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID100").ref_count, 0u);
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 0u);
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    /* The same leg may back several protection groups. */
+    TEST_F(ProtNhgTest, SharedNhgMayBackSeveralProtectionGroups)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+        addEcmpNhg("ID300", NextHopGroupKey("10.0.0.200@Ethernet8"));
+
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared("prot_a", "ID100", "ID200"));
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared("prot_b", "ID100", "ID300"));
+
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID100").ref_count, 2u);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg("prot_a"));
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID100").ref_count, 1u);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg("prot_b"));
+        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID100").ref_count, 0u);
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+        removeEcmpNhg("ID300");
+    }
+
+    /*
+     * A group is named by its index, never by its membership. Passing the
+     * membership string must not resolve to anything -- this is the key-space
+     * confusion the recursive API originally had.
+     */
+    TEST_F(ProtNhgTest, SharedNhgMembershipStringIsNotAnIndex)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        addEcmpNhg("ID100", primary_nhg_key);
+        addEcmpNhg("ID200", standby_nhg_key);
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    create_next_hop_group(_, _, _, _)).Times(0);
+
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_membership_key",
+                                                   primary_nhg_key.to_string(),
+                                                   standby_nhg_key.to_string()));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_membership_key"));
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgSharedPrimaryNotFound)
+    {
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_no_primary",
+                                                   "ID100", "ID200"));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_primary"));
+
+        removeEcmpNhg("ID200");
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgSharedStandbyNotFound)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0"));
+
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_no_standby",
+                                                   "ID100", "ID200"));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_standby"));
+
+        removeEcmpNhg("ID100");
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgSharedEmptyIndexFails)
+    {
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_empty_index", "", "ID200"));
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_empty_index", "ID100", ""));
+    }
+
+    /*
+     * A temporary group stands for a single next hop of the set that was asked
+     * for, and it is replaced by a different SAI object when promoted, so it
+     * must not back a protection leg.
+     */
+    TEST_F(ProtNhgTest, CreateProtNhgSharedRejectsTemporaryLeg)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0"), true);
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    create_next_hop_group(_, _, _, _)).Times(0);
+
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_temp_leg",
+                                                   "ID100", "ID200"));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_temp_leg"));
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgSharedRejectsRecursiveLeg)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+        gNhgOrch->m_syncdNextHopGroups.at("ID200").nhg->setRecursive(true);
+
+        EXPECT_FALSE(gNhgOrch->createProtNhgShared("prot_recursive_leg",
+                                                   "ID100", "ID200"));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_recursive_leg"));
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgSharedAutoKey)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        string expected_key = NhgOrch::buildProtNhgSharedKey("ID100", "ID200");
+        EXPECT_FALSE(expected_key.empty());
+
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared("ID100", "ID200"));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(expected_key));
+
+        /* Idempotent, like the other create overloads. */
+        EXPECT_TRUE(gNhgOrch->createProtNhgShared("ID100", "ID200"));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(expected_key));
+
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
     }
 
     /* Every protection NHG is created with the one protection type; there is
@@ -1254,6 +1454,17 @@ namespace protnhg_test
         removeEcmpNhg(standby_nhg_key.to_string());
     }
 
+    /* Indices and membership are different key spaces, so the keys built from
+     * them must not collide. */
+    TEST_F(ProtNhgTest, SharedAndMembershipKeysDoNotCollide)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        EXPECT_NE(NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key),
+                  NhgOrch::buildProtNhgSharedKey("ID100", "ID200"));
+    }
+
     TEST_F(ProtNhgTest, BuildProtNhgKeyDiffersByPrimary)
     {
         NextHopKey nh_a(IpAddress("10.0.0.1"), string("Ethernet0"));
@@ -1317,31 +1528,89 @@ namespace protnhg_test
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, RecursiveMemberResolvesViaNhgOrch)
+    TEST_F(ProtNhgTest, SharedLegResolvesThroughItsIndex)
     {
-        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
-        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
 
-        addEcmpNhg(primary_nhg_key);
-        addEcmpNhg(standby_nhg_key);
-
-        string key = "prot_recursive_resolve";
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        string key = "prot_shared_resolve";
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared(key, "ID100", "ID200"));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
         const ProtNhgMember *primary = nhg.getPrimaryMember();
         ASSERT_NE(primary, nullptr);
         EXPECT_TRUE(primary->isRecursive());
-        EXPECT_NE(primary->getNhId(), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(primary->isSynced());
 
-        const ProtNhgMember *standby = nhg.getStandbyMember();
-        ASSERT_NE(standby, nullptr);
-        EXPECT_TRUE(standby->isRecursive());
-        EXPECT_NE(standby->getNhId(), SAI_NULL_OBJECT_ID);
+        /* The member holds an index, not an OID, so it always reads the
+         * group's current SAI ID rather than a cached one. */
+        EXPECT_EQ(primary->getNhId(), gNhgOrch->getNhg("ID100").getId());
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        removeEcmpNhg(primary_nhg_key.to_string());
-        removeEcmpNhg(standby_nhg_key.to_string());
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    /*
+     * Updating a non-recursive group to or from a single next hop makes
+     * NhgOrch replace its SAI object. The member programmed the old ID at
+     * creation, so it has to be re-pointed at the new one.
+     */
+    TEST_F(ProtNhgTest, SharedLegOidChangeRepointsMember)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        string key = "prot_shared_repoint";
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared(key, "ID100", "ID200"));
+
+        const ProtNhgMember *primary =
+            gNhgOrch->getProtNhg(key).getPrimaryMember();
+        ASSERT_NE(primary, nullptr);
+
+        sai_object_id_t new_id = primary->getNhId() + 0x1000;
+        gNhgOrch->m_syncdNextHopGroups.at("ID100").nhg->m_id = new_id;
+
+        sai_object_id_t programmed = SAI_NULL_OBJECT_ID;
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    set_next_hop_group_member_attribute(_, _))
+            .WillOnce([&](sai_object_id_t, const sai_attribute_t *attr) {
+                if (attr->id == SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID)
+                {
+                    programmed = attr->value.oid;
+                }
+                return SAI_STATUS_SUCCESS;
+            });
+
+        gNhgOrch->updateProtNhgMembers("ID100");
+
+        EXPECT_EQ(programmed, new_id);
+        EXPECT_EQ(primary->getNhId(), new_id);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+    }
+
+    /* An in-place membership update keeps the SAI object, so there is nothing
+     * to re-point and no SAI call to make. */
+    TEST_F(ProtNhgTest, SharedLegUpdateWithoutOidChangeIsNoOp)
+    {
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        string key = "prot_shared_noop";
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared(key, "ID100", "ID200"));
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    set_next_hop_group_member_attribute(_, _)).Times(0);
+
+        gNhgOrch->updateProtNhgMembers("ID100");
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
     }
 
     /* --- Protection capabilities are published to STATE_DB --- */

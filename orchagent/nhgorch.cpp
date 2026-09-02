@@ -386,6 +386,11 @@ void NhgOrch::doTask(Consumer& consumer)
                 {
                     success = nhg_ptr->update(nhg_key);
 
+                    if (success)
+                    {
+                        updateProtNhgMembers(index);
+                    }
+
                     /* Keep the msg in loop if any member path is not available yet */
                     if (is_recursive && non_existent_member)
                     {
@@ -1397,8 +1402,7 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
-        gRouteOrch->getMaxNhgCount())
+    if (!hasNhgCapacity(1))
     {
         SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
                        key.c_str());
@@ -1406,6 +1410,68 @@ bool NhgOrch::createProtNhg(const string &key,
     }
 
     auto nhg = make_unique<ProtNhg>(key, primary_nh, standby_nh);
+
+    return finalizeProtNhg(key, move(nhg),
+                           "primary: " + primary_nh.to_string() +
+                           ", standby: " + standby_nh.to_string());
+}
+
+string NhgOrch::buildProtNhgKey(const NextHopKey &primary_nh,
+                                 const NextHopKey &standby_nh)
+{
+    return "prot:" + primary_nh.to_string() + "|" + standby_nh.to_string();
+}
+
+string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
+                                 const NextHopGroupKey &standby_nhg_key)
+{
+    return "prot:" + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
+}
+
+/* Indices live in a different key space than membership, so they get their own
+ * prefix: two protection groups built from the same next hops, one naming its
+ * legs by index and one by membership, are different objects and must not
+ * collide. */
+string NhgOrch::buildProtNhgSharedKey(const string &primary_nhg_index,
+                                       const string &standby_nhg_index)
+{
+    return "prot-shared:" + primary_nhg_index + "|" + standby_nhg_index;
+}
+
+bool NhgOrch::createProtNhg(const NextHopKey &primary_nh,
+                             const NextHopKey &standby_nh)
+{
+    return createProtNhg(buildProtNhgKey(primary_nh, standby_nh),
+                         primary_nh, standby_nh);
+}
+
+bool NhgOrch::hasNhgCapacity(unsigned count) const
+{
+    SWSS_LOG_ENTER();
+
+    return gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() + count <=
+           gRouteOrch->getMaxNhgCount();
+}
+
+void NhgOrch::updateProtNhgMembers(const string &nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it : m_protNhgs)
+    {
+        if (!it.second.nhg->updateSharedMember(nhg_index))
+        {
+            SWSS_LOG_ERROR("Failed to update protection NHG %s after NHG %s "
+                           "changed", it.first.c_str(), nhg_index.c_str());
+        }
+    }
+}
+
+bool NhgOrch::finalizeProtNhg(const string &key,
+                               unique_ptr<ProtNhg> nhg,
+                               const string &desc)
+{
+    SWSS_LOG_ENTER();
 
     bool synced = nhg->sync();
 
@@ -1427,31 +1493,9 @@ bool NhgOrch::createProtNhg(const string &key,
 
     m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
 
-    SWSS_LOG_NOTICE("Created protection NHG %s (primary: %s, standby: %s)",
-                    key.c_str(),
-                    primary_nh.to_string().c_str(),
-                    standby_nh.to_string().c_str());
+    SWSS_LOG_NOTICE("Created protection NHG %s (%s)", key.c_str(), desc.c_str());
 
     return true;
-}
-
-string NhgOrch::buildProtNhgKey(const NextHopKey &primary_nh,
-                                 const NextHopKey &standby_nh)
-{
-    return "prot:" + primary_nh.to_string() + "|" + standby_nh.to_string();
-}
-
-string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
-                                 const NextHopGroupKey &standby_nhg_key)
-{
-    return "prot:" + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
-}
-
-bool NhgOrch::createProtNhg(const NextHopKey &primary_nh,
-                             const NextHopKey &standby_nh)
-{
-    return createProtNhg(buildProtNhgKey(primary_nh, standby_nh),
-                         primary_nh, standby_nh);
 }
 
 bool NhgOrch::createProtNhg(const NextHopGroupKey &primary_nhg_key,
@@ -1479,6 +1523,28 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
+    /*
+     * The legs are named by their membership strings, which NhgOrch only
+     * resolves for a caller that registered its groups under those strings.
+     * An index is the general way to name a nested group.
+     */
+    return createProtNhgShared(key,
+                               primary_nhg_key.to_string(),
+                               standby_nhg_key.to_string());
+}
+
+bool NhgOrch::createProtNhgShared(const string &key,
+                                   const string &primary_nhg_index,
+                                   const string &standby_nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    if (primary_nhg_index.empty() || standby_nhg_index.empty())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: member NHG index is empty", key.c_str());
+        return false;
+    }
+
     /* Idempotent re-create: short-circuit before reference / capacity checks
      * so a repeat call after a transient member-NHG removal still returns
      * success, matching the individual-NH overload's contract. */
@@ -1495,57 +1561,66 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    string primary_key_str = primary_nhg_key.to_string();
-    string standby_key_str = standby_nhg_key.to_string();
-
-    if (!hasNhg(primary_key_str))
+    /*
+     * Both legs must already exist, and neither may be recursive or temporary:
+     * a temporary group stands for a single next hop of the set the caller
+     * asked for, and it is replaced by a different SAI object when it is
+     * promoted. NhgOrch applies the same rule to its own nested groups.
+     */
+    auto checkLeg = [&](const char *role, const string &index) -> bool
     {
-        SWSS_LOG_ERROR("Protection NHG %s: primary NHG %s does not exist",
-                       key.c_str(), primary_key_str.c_str());
+        if (!hasNhg(index))
+        {
+            SWSS_LOG_ERROR("Protection NHG %s: %s NHG %s does not exist",
+                           key.c_str(), role, index.c_str());
+            return false;
+        }
+
+        const NextHopGroup &member_nhg = getNhg(index);
+
+        if (member_nhg.isRecursive() || member_nhg.isTemp())
+        {
+            SWSS_LOG_ERROR("Protection NHG %s: %s NHG %s is %s and cannot back "
+                           "a protection leg",
+                           key.c_str(), role, index.c_str(),
+                           member_nhg.isTemp() ? "temporary" : "recursive");
+            return false;
+        }
+
+        return true;
+    };
+
+    if (!checkLeg("primary", primary_nhg_index) ||
+        !checkLeg("standby", standby_nhg_index))
+    {
         return false;
     }
 
-    if (!hasNhg(standby_key_str))
-    {
-        SWSS_LOG_ERROR("Protection NHG %s: standby NHG %s does not exist",
-                       key.c_str(), standby_key_str.c_str());
-        return false;
-    }
-
-    if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
-        gRouteOrch->getMaxNhgCount())
+    if (!hasNhgCapacity(1))
     {
         SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
                        key.c_str());
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, standby_nhg_key);
+    auto nhg = make_unique<ProtNhg>(
+        key,
+        ProtNhgMember::sharedNhg(ProtNhgRole::PRIMARY, primary_nhg_index),
+        ProtNhgMember::sharedNhg(ProtNhgRole::STANDBY, standby_nhg_index));
 
-    bool synced = nhg->sync();
+    return finalizeProtNhg(key, move(nhg),
+                           "shared primary NHG: " + primary_nhg_index +
+                           ", shared standby NHG: " + standby_nhg_index);
+}
 
-    /* See the individual-NH overload above. */
-    if (!nhg->isSynced())
-    {
-        SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
-        return false;
-    }
+bool NhgOrch::createProtNhgShared(const string &primary_nhg_index,
+                                   const string &standby_nhg_index)
+{
+    SWSS_LOG_ENTER();
 
-    if (!synced)
-    {
-        SWSS_LOG_WARN("Protection NHG %s created with unresolved member(s); "
-                      "will complete once the next hop(s) are validated",
-                      key.c_str());
-    }
-
-    m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
-
-    SWSS_LOG_NOTICE("Created protection NHG %s (primary NHG: %s, standby NHG: %s)",
-                    key.c_str(),
-                    primary_key_str.c_str(),
-                    standby_key_str.c_str());
-
-    return true;
+    return createProtNhgShared(
+        buildProtNhgSharedKey(primary_nhg_index, standby_nhg_index),
+        primary_nhg_index, standby_nhg_index);
 }
 
 bool NhgOrch::removeProtNhg(const string &key)

@@ -12,23 +12,45 @@ static inline const char* roleToString(ProtNhgRole role)
     return (role == ProtNhgRole::PRIMARY) ? "primary" : "standby";
 }
 
-ProtNhgMember::ProtNhgMember(ProtNhgRole role, const NextHopKey &nh_key,
-                             const string &nhg_key) :
+ProtNhgMember::ProtNhgMember(ProtNhgRole role,
+                             ProtNhgMemberType type,
+                             const NextHopKey &nh_key,
+                             const string &nhg_index) :
     NhgMember(role),
+    m_type(type),
     m_nh_key(nh_key),
-    m_nhg_key(nhg_key),
+    m_nhg_index(nhg_index),
+    m_programmed_nh_id(SAI_NULL_OBJECT_ID),
     m_monitored_oid(SAI_NULL_OBJECT_ID)
 {
     SWSS_LOG_ENTER();
 }
 
+ProtNhgMember ProtNhgMember::nextHop(ProtNhgRole role, const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    return ProtNhgMember(role, ProtNhgMemberType::NEXT_HOP, nh_key, "");
+}
+
+ProtNhgMember ProtNhgMember::sharedNhg(ProtNhgRole role, const string &nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    return ProtNhgMember(role, ProtNhgMemberType::SHARED_NHG, NextHopKey(),
+                         nhg_index);
+}
+
 ProtNhgMember::ProtNhgMember(ProtNhgMember &&nhgm) :
     NhgMember(move(nhgm)),
+    m_type(nhgm.m_type),
     m_nh_key(move(nhgm.m_nh_key)),
-    m_nhg_key(move(nhgm.m_nhg_key)),
+    m_nhg_index(move(nhgm.m_nhg_index)),
+    m_programmed_nh_id(nhgm.m_programmed_nh_id),
     m_monitored_oid(nhgm.m_monitored_oid)
 {
     SWSS_LOG_ENTER();
+    nhgm.m_programmed_nh_id = SAI_NULL_OBJECT_ID;
     nhgm.m_monitored_oid = SAI_NULL_OBJECT_ID;
 }
 
@@ -42,13 +64,31 @@ void ProtNhgMember::sync(sai_object_id_t gm_id)
     SWSS_LOG_ENTER();
     NhgMember::sync(gm_id);
 
-    if (isRecursive())
+    /* The SAI member was just created pointing here, so this is what is
+     * programmed until updateNhId() says otherwise. */
+    m_programmed_nh_id = getNhId();
+
+    switch (m_type)
     {
-        gNhgOrch->incNhgRefCount(m_nhg_key);
-    }
-    else
-    {
-        gNeighOrch->increaseNextHopRefCount(m_nh_key);
+        case ProtNhgMemberType::NEXT_HOP:
+            gNeighOrch->increaseNextHopRefCount(m_nh_key);
+            break;
+
+        case ProtNhgMemberType::SHARED_NHG:
+            /* incNhgRefCount() throws if the index is gone, and it can be:
+             * getNhId() resolved it earlier in this same call chain, but
+             * nothing pins it between then and here. */
+            if (gNhgOrch->hasNhg(m_nhg_index))
+            {
+                gNhgOrch->incNhgRefCount(m_nhg_index);
+            }
+            else
+            {
+                SWSS_LOG_WARN("Shared NHG %s vanished before member %s could "
+                              "reference it",
+                              m_nhg_index.c_str(), to_string().c_str());
+            }
+            break;
     }
 }
 
@@ -61,14 +101,20 @@ void ProtNhgMember::remove()
         return;
     }
 
-    if (isRecursive())
+    switch (m_type)
     {
-        gNhgOrch->decNhgRefCount(m_nhg_key);
+        case ProtNhgMemberType::NEXT_HOP:
+            gNeighOrch->decreaseNextHopRefCount(m_nh_key);
+            break;
+
+        case ProtNhgMemberType::SHARED_NHG:
+            if (gNhgOrch->hasNhg(m_nhg_index))
+            {
+                gNhgOrch->decNhgRefCount(m_nhg_index);
+            }
+            break;
     }
-    else
-    {
-        gNeighOrch->decreaseNextHopRefCount(m_nh_key);
-    }
+
     NhgMember::remove();
 }
 
@@ -76,21 +122,23 @@ sai_object_id_t ProtNhgMember::getNhId() const
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive())
+    switch (m_type)
     {
-        if (gNhgOrch->hasNhg(m_nhg_key))
-        {
-            return gNhgOrch->getNhg(m_nhg_key).getId();
-        }
+        case ProtNhgMemberType::NEXT_HOP:
+            if (gNeighOrch->hasNextHop(m_nh_key))
+            {
+                return gNeighOrch->getNextHopId(m_nh_key);
+            }
+            return SAI_NULL_OBJECT_ID;
 
-        SWSS_LOG_WARN("Recursive NHG %s not found for %s member",
-                       m_nhg_key.c_str(), roleToString(m_key));
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    if (gNeighOrch->hasNextHop(m_nh_key))
-    {
-        return gNeighOrch->getNextHopId(m_nh_key);
+        case ProtNhgMemberType::SHARED_NHG:
+            if (gNhgOrch->hasNhg(m_nhg_index))
+            {
+                return gNhgOrch->getNhg(m_nhg_index).getId();
+            }
+            SWSS_LOG_WARN("Shared NHG %s not found for %s member",
+                          m_nhg_index.c_str(), roleToString(m_key));
+            return SAI_NULL_OBJECT_ID;
     }
 
     return SAI_NULL_OBJECT_ID;
@@ -121,6 +169,59 @@ bool ProtNhgMember::updateMonitoredObject(sai_object_id_t oid)
     }
 
     m_monitored_oid = oid;
+    return true;
+}
+
+bool ProtNhgMember::updateNhId()
+{
+    SWSS_LOG_ENTER();
+
+    /* Nothing is programmed yet; sync() will pick up the current ID. */
+    if (!isSynced())
+    {
+        return true;
+    }
+
+    sai_object_id_t nh_id = getNhId();
+
+    if (nh_id == m_programmed_nh_id)
+    {
+        return true;
+    }
+
+    /*
+     * The target went away rather than moving. Leave the member pointing at
+     * the old ID: there is nothing valid to point it at, and sync of a
+     * replacement group will come back through here.
+     */
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Member %s has no next hop to re-point at",
+                      to_string().c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+    attr.value.oid = nh_id;
+
+    sai_status_t status =
+        sai_next_hop_group_api->set_next_hop_group_member_attribute(m_gm_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to re-point member %s at next hop %s, rv: %d",
+                       to_string().c_str(),
+                       sai_serialize_object_id(nh_id).c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Re-pointed member %s from next hop %s to %s",
+                    to_string().c_str(),
+                    sai_serialize_object_id(m_programmed_nh_id).c_str(),
+                    sai_serialize_object_id(nh_id).c_str());
+
+    m_programmed_nh_id = nh_id;
     return true;
 }
 
@@ -157,7 +258,18 @@ bool ProtNhgMember::getObservedRole(
 
 string ProtNhgMember::to_string() const
 {
-    string target = isRecursive() ? ("NHG " + m_nhg_key) : m_nh_key.to_string();
+    string target;
+
+    switch (m_type)
+    {
+        case ProtNhgMemberType::NEXT_HOP:
+            target = m_nh_key.to_string();
+            break;
+
+        case ProtNhgMemberType::SHARED_NHG:
+            target = "shared NHG " + m_nhg_index;
+            break;
+    }
 
     return target + " [" + roleToString(m_key) + "], SAI ID: " +
            std::to_string(m_gm_id);
@@ -166,31 +278,37 @@ string ProtNhgMember::to_string() const
 /* ----------------------------------------------------------------------- */
 
 ProtNhg::ProtNhg(const string &key,
-                  const NextHopKey &primary_nh,
-                  const NextHopKey &standby_nh) :
+                 ProtNhgMember &&primary,
+                 ProtNhgMember &&standby) :
     NhgCommon(key)
 {
     SWSS_LOG_ENTER();
 
-    m_members.emplace(ProtNhgRole::PRIMARY,
-                      ProtNhgMember(ProtNhgRole::PRIMARY, primary_nh));
-    m_members.emplace(ProtNhgRole::STANDBY,
-                      ProtNhgMember(ProtNhgRole::STANDBY, standby_nh));
+    ProtNhgRole primary_role = primary.getRole();
+    ProtNhgRole standby_role = standby.getRole();
+
+    /* Members are keyed by role, so two members of one role would silently
+     * collapse into one. Leave the group empty instead; sync() rejects it. */
+    if (primary_role == standby_role)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s was given two %s members, it must be "
+                       "a primary/standby pair",
+                       key.c_str(), roleToString(primary_role));
+        return;
+    }
+
+    m_members.emplace(primary_role, move(primary));
+    m_members.emplace(standby_role, move(standby));
 }
 
 ProtNhg::ProtNhg(const string &key,
-                  const NextHopGroupKey &primary_nhg_key,
-                  const NextHopGroupKey &standby_nhg_key) :
-    NhgCommon(key)
+                 const NextHopKey &primary_nh,
+                 const NextHopKey &standby_nh) :
+    ProtNhg(key,
+            ProtNhgMember::nextHop(ProtNhgRole::PRIMARY, primary_nh),
+            ProtNhgMember::nextHop(ProtNhgRole::STANDBY, standby_nh))
 {
     SWSS_LOG_ENTER();
-
-    m_members.emplace(ProtNhgRole::PRIMARY,
-                      ProtNhgMember(ProtNhgRole::PRIMARY, NextHopKey(),
-                                    primary_nhg_key.to_string()));
-    m_members.emplace(ProtNhgRole::STANDBY,
-                      ProtNhgMember(ProtNhgRole::STANDBY, NextHopKey(),
-                                    standby_nhg_key.to_string()));
 }
 
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
@@ -308,22 +426,26 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
             continue;
         }
 
-        /*
-         * A member backed by an individual next hop is unblocked by that next
-         * hop alone.  A recursive member resolves through NhgOrch instead, so
-         * there is no next hop of its own to match: retry it whenever it has
-         * become resolvable.
-         */
-        if (mbr.isRecursive())
+        switch (mbr.getType())
         {
-            if (mbr.getNhId() != SAI_NULL_OBJECT_ID)
-            {
-                to_sync.insert(entry.first);
-            }
-        }
-        else if (mbr.getNextHopKey() == nh_key)
-        {
-            to_sync.insert(entry.first);
+            case ProtNhgMemberType::NEXT_HOP:
+                if (mbr.getNextHopKey() == nh_key)
+                {
+                    to_sync.insert(entry.first);
+                }
+                break;
+
+            case ProtNhgMemberType::SHARED_NHG:
+                /*
+                 * NhgOrch resolves the shared group itself, through its own
+                 * map. All that can be left for us is a member we could not
+                 * sync earlier because the group was not ready yet.
+                 */
+                if (mbr.getNhId() != SAI_NULL_OBJECT_ID)
+                {
+                    to_sync.insert(entry.first);
+                }
+                break;
         }
     }
 
@@ -333,6 +455,35 @@ bool ProtNhg::validateNextHop(const NextHopKey &nh_key)
     }
 
     return syncMembers(to_sync);
+}
+
+bool ProtNhg::updateSharedMember(const string &nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    bool success = true;
+
+    for (auto &entry : m_members)
+    {
+        ProtNhgMember &mbr = entry.second;
+
+        if (mbr.getType() != ProtNhgMemberType::SHARED_NHG ||
+            mbr.getNhgIndex() != nhg_index)
+        {
+            continue;
+        }
+
+        if (!mbr.updateNhId())
+        {
+            SWSS_LOG_ERROR("Failed to re-point %s member of protection NHG %s "
+                           "at shared NHG %s",
+                           roleToString(entry.first), m_key.c_str(),
+                           nhg_index.c_str());
+            success = false;
+        }
+    }
+
+    return success;
 }
 
 bool ProtNhg::isHwAutonomous() const
@@ -500,7 +651,8 @@ const ProtNhgMember* ProtNhg::findMemberByNextHop(const NextHopKey &nh_key) cons
 
     for (const auto &mbr : m_members)
     {
-        if (!mbr.second.isRecursive() && mbr.second.getNextHopKey() == nh_key)
+        if (mbr.second.getType() == ProtNhgMemberType::NEXT_HOP &&
+            mbr.second.getNextHopKey() == nh_key)
         {
             return &mbr.second;
         }
