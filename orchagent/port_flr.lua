@@ -2,6 +2,7 @@
 -- ARGV[1] - counters db index
 -- ARGV[2] - counters table name
 -- ARGV[3] - poll time interval
+-- ARGV[4] - secondary poll factor (optional for rollout compatibility)
 -- return log
 
 local logtable = {}
@@ -12,6 +13,14 @@ end
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
+local poll_interval = tonumber(ARGV[3]) or 1000
+local secondary_poll_factor = tonumber(ARGV[4]) or 120
+
+if secondary_poll_factor <= 0 then
+  secondary_poll_factor = 120
+end
+
+local FEC_FLR_POLL_INTERVAL = (poll_interval / 1000) * secondary_poll_factor
 
 local APPL_DB         = 0      -- Application database
 local COUNTERS_DB     = 2      -- Counters and statistics
@@ -28,7 +37,6 @@ local rates_table_name = "RATES"
 local bookmark_table_name = "RATES:GLOBAL"
 local BIN_FILTER_VALUE = 10
 local MIN_SIGNIFICANT_BINS = 2
-local FEC_FLR_POLL_INTERVAL = 120
 local MFC = 8
 
 local function get_port_name_from_oid(port)
