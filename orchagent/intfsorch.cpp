@@ -76,6 +76,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
         m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
     }
 
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
@@ -441,7 +442,7 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (!getSaiLoopbackAction(actionStr, action))
     {
-        return false;
+        return true;
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
@@ -1071,14 +1072,21 @@ void IntfsOrch::doTask(Consumer &consumer)
                     /* Set loopback action */
                     if (!loopbackAction.empty())
                     {
-                        setIntfLoopbackAction(port, loopbackAction);
+                        if (!setIntfLoopbackAction(port, loopbackAction))
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                 }
             }
 
             if (!mac)
             {
-                mac = gMacAddress;
+                // Prefer the port's own MAC (e.g. a VLAN SVI's gateway MAC populated
+                // from VLAN_TABLE) and only fall back to the switch MAC when the port
+                // has none.
+                mac = port.m_mac ? port.m_mac : gMacAddress;
             }
 
             // update mac if it is changed
@@ -1980,4 +1988,3 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
-
