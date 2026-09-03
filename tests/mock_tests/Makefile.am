@@ -56,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_sai_api.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
+                vlanmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
                 policerorch_ut.cpp \
                 vnetorch_ut.cpp \
@@ -186,6 +187,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
+                $(top_srcdir)/cfgmgr/vlanmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
                 $(top_srcdir)/orchagent/zmqrouteorch.cpp \
