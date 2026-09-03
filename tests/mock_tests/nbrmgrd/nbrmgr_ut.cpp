@@ -201,4 +201,35 @@ namespace nbrmgr_ut
         /* Should not crash; failures are logged as warnings */
         swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
     }
+
+    TEST_F(NbrMgrTest, ParseAliasIpMissingDelimiter)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto result = nbrmgr.parseAliasIp("NoDelimiterHere", ":");
+        EXPECT_TRUE(result.empty());
+    }
+
+    TEST_F(NbrMgrTest, ParseAliasIpValidKey)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto result = nbrmgr.parseAliasIp("Ethernet0:10.0.0.1", ":");
+        ASSERT_EQ(result.size(), 2u);
+        EXPECT_EQ(result[0], "Ethernet0");
+        EXPECT_EQ(result[1], "10.0.0.1");
+    }
+
+    TEST_F(NbrMgrTest, ParseAliasIpValidIPv6Key)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        auto result = nbrmgr.parseAliasIp("Ethernet4:fc00::2", ":");
+        ASSERT_EQ(result.size(), 2u);
+        EXPECT_EQ(result[0], "Ethernet4");
+        EXPECT_EQ(result[1], "fc00::2");
+    }
 }
