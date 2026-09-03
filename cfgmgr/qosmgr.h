@@ -164,6 +164,7 @@ private:
     bool interfaceExists(const std::string &iface);
     void getAllPorts(std::vector<std::string> &ports);
     void ensureClsact(const std::string &iface);
+    void reapplyMapBindings(const std::string &field, const std::string &name);
     bool applyMapsToPort(const std::string &iface,
                          const std::map<std::string, std::string> &maps,
                          std::string &reason);

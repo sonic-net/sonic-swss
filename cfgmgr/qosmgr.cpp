@@ -156,6 +156,8 @@ void QosMgr::doDscpToTcTask(Consumer &consumer)
                 m_dscpToTcMap[name] = map<string, string>();
                 for (const auto &fv : kfvFieldsValues(t))
                     m_dscpToTcMap[name][fvField(fv)] = fvValue(fv);
+
+                reapplyMapBindings(QOS_FIELD_DSCP_TO_TC, name);
             }
             writeMapStatus(m_stateDscpToTcTable, name, ok ? "active" : "inactive");
             it = consumer.m_toSync.erase(it);
@@ -194,6 +196,8 @@ void QosMgr::doDot1pToTcTask(Consumer &consumer)
                 m_dot1pToTcMap[name] = map<string, string>();
                 for (const auto &fv : kfvFieldsValues(t))
                     m_dot1pToTcMap[name][fvField(fv)] = fvValue(fv);
+
+                reapplyMapBindings(QOS_FIELD_DOT1P_TO_TC, name);
             }
             writeMapStatus(m_stateDot1pToTcTable, name, ok ? "active" : "inactive");
             it = consumer.m_toSync.erase(it);
@@ -232,6 +236,8 @@ void QosMgr::doTcToQueueTask(Consumer &consumer)
                 m_tcToQueueMap[name] = map<string, string>();
                 for (const auto &fv : kfvFieldsValues(t))
                     m_tcToQueueMap[name][fvField(fv)] = fvValue(fv);
+
+                reapplyMapBindings(QOS_FIELD_TC_TO_QUEUE, name);
             }
             writeMapStatus(m_stateTcToQueueTable, name, ok ? "active" : "inactive");
             it = consumer.m_toSync.erase(it);
@@ -270,6 +276,8 @@ void QosMgr::doTcToDscpTask(Consumer &consumer)
                 m_tcToDscpMap[name] = map<string, string>();
                 for (const auto &fv : kfvFieldsValues(t))
                     m_tcToDscpMap[name][fvField(fv)] = fvValue(fv);
+
+                reapplyMapBindings(QOS_FIELD_TC_TO_DSCP, name);
             }
             writeMapStatus(m_stateTcToDscpTable, name, ok ? "active" : "inactive");
             it = consumer.m_toSync.erase(it);
@@ -581,6 +589,24 @@ void QosMgr::ensureClsact(const string &iface)
     cmd << TC_CMD << " qdisc add dev " << iface << " clsact";
     string ignored;
     swss::exec(cmd.str(), ignored);
+}
+
+void QosMgr::reapplyMapBindings(const string &field, const string &name)
+{
+    /* Re-apply the tc realization for every port whose PORT_QOS_MAP references
+     * the changed map (field -> name). Same dependency pattern as SCHEDULER ->
+     * PORT / POLICER -> ACL. */
+    for (const auto &entry : m_portQosMap)
+    {
+        const string &port = entry.first;
+        const map<string, string> &maps = entry.second;
+        if (maps.count(field) && maps.at(field) == name)
+        {
+            string iface = kernutil::resolveInterface(port);
+            string reason;
+            applyMapsToPort(iface, maps, reason);
+        }
+    }
 }
 
 bool QosMgr::applyMapsToPort(const string &iface,
