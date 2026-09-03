@@ -96,6 +96,8 @@ namespace fdborch_vxlan_ut
         FlexCounterOrch *m_flexCounterOrch = nullptr;
         VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
         FlowCounterRouteOrch *m_flowCounterRouteOrch = nullptr;
+        TunnelDecapOrch *m_tunnelDecapOrch = nullptr;
+        MuxOrch *m_muxOrch = nullptr;
 
         virtual void SetUp() override
         {
@@ -272,6 +274,20 @@ namespace fdborch_vxlan_ut
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
             gDirectory.set(gRouteOrch);
 
+            vector<string> tunnel_tables = {
+                APP_TUNNEL_DECAP_TABLE_NAME,
+                APP_TUNNEL_DECAP_TERM_TABLE_NAME
+            };
+            m_tunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+            gDirectory.set(m_tunnelDecapOrch);
+
+            vector<string> mux_tables = {
+                CFG_MUX_CABLE_TABLE_NAME,
+                CFG_PEER_SWITCH_TABLE_NAME
+            };
+            m_muxOrch = new MuxOrch(m_config_db.get(), mux_tables, m_tunnelDecapOrch, gNeighOrch, gFdbOrch);
+            gDirectory.set(m_muxOrch);
+
             INIT_SAI_API_MOCK(fdb);
             INIT_SAI_API_MOCK(neighbor);
             MockSaiApis();
@@ -328,6 +344,12 @@ namespace fdborch_vxlan_ut
 
             delete m_flexCounterOrch;
             m_flexCounterOrch = nullptr;
+
+            delete m_muxOrch;
+            m_muxOrch = nullptr;
+
+            delete m_tunnelDecapOrch;
+            m_tunnelDecapOrch = nullptr;
 
             gDirectory.m_values.clear();
             sai_route_api = pold_sai_route_api;
