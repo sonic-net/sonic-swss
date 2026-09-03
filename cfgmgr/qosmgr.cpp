@@ -680,13 +680,19 @@ bool QosMgr::applyMapsToPort(const string &iface,
          * Use the software `prio` qdisc instead of `mqprio`: veth interfaces
          * have a single tx queue, so mqprio (which needs real hardware queues)
          * fails with "Device does not support hardware offload". */
-        int priomap[16] = {0};
+        /* tc `prio` band 0 is the highest priority and band N the lowest, but
+         * SONiC queue 0 is the default (lowest) and queue 7 the highest. Invert
+         * so higher queue -> lower band, and default (unmapped) priorities land
+         * on the lowest band. */
+        int priomap[16];
+        for (int i = 0; i < 16; i++)
+            priomap[i] = (int)QOS_QUEUE_MAX;
         for (const auto &kv : m)
         {
             long long tc = 0, queue = 0;
             if (parseInt(kv.first, tc) && parseInt(kv.second, queue) &&
                 tc >= 0 && tc < 16 && queue >= 0 && queue < 16)
-                priomap[tc] = (int)queue;
+                priomap[tc] = (int)(QOS_QUEUE_MAX - queue);
         }
         ostringstream cmd;
         cmd << TC_CMD << " qdisc replace dev " << iface << " root handle 1: prio bands 8 priomap";
@@ -754,13 +760,13 @@ bool QosMgr::applyQueueToPort(const string &iface, const string &queue,
         ostringstream cmd;
         if (type == SCHED_TYPE_STRICT)
         {
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
+            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (QOS_QUEUE_MAX - qnum + 1)
                 << " handle " << (10 + qnum) << ": prio";
         }
         else
         {
             string quantum = cfg.count(SCHED_FIELD_WEIGHT) ? cfg.at(SCHED_FIELD_WEIGHT) : "1";
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
+            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (QOS_QUEUE_MAX - qnum + 1)
                 << " handle " << (10 + qnum) << ": drr quantum " << quantum;
         }
         SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
@@ -776,7 +782,7 @@ bool QosMgr::applyQueueToPort(const string &iface, const string &queue,
         string ecn = cfg.count(WRED_FIELD_ECN) ? cfg.at(WRED_FIELD_ECN) : "ecn_none";
 
         ostringstream cmd;
-        cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
+        cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (QOS_QUEUE_MAX - qnum + 1)
             << " handle " << (20 + qnum) << ": red min " << mn << " max " << mx
             << " probability " << prob << "%";
         if (ecn != "ecn_none")
