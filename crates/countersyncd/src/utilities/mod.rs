@@ -1,6 +1,7 @@
 /// Utility helpers shared across countersyncd modules.
 use std::fmt::Write;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use log::info;
@@ -48,11 +49,16 @@ pub enum ChannelLabel {
     IpfixToOtel,
 }
 
-const CHANNEL_LABEL_COUNT: usize = 6;
-
 impl ChannelLabel {
-    const fn index(self) -> usize {
-        self as usize
+    fn stats(self) -> &'static Mutex<CommStats> {
+        match self {
+            ChannelLabel::ControlNetlinkToDataNetlink => &CONTROL_NETLINK_TO_DATA_NETLINK_STATS,
+            ChannelLabel::DataNetlinkToIpfixRecords => &DATA_NETLINK_TO_IPFIX_RECORDS_STATS,
+            ChannelLabel::SwssToIpfixTemplates => &SWSS_TO_IPFIX_TEMPLATES_STATS,
+            ChannelLabel::IpfixToStatsReporter => &IPFIX_TO_STATS_REPORTER_STATS,
+            ChannelLabel::IpfixToCounterDb => &IPFIX_TO_COUNTER_DB_STATS,
+            ChannelLabel::IpfixToOtel => &IPFIX_TO_OTEL_STATS,
+        }
     }
 
     fn as_str(self) -> &'static str {
@@ -67,149 +73,138 @@ impl ChannelLabel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CommStats {
     /// Total number of samples recorded in the current reporting window.
     /// Use to normalize sums and compare workload across windows.
-    count: AtomicU64,
+    count: u64,
     /// Sum of sampled channel lengths (used to compute average).
     /// Higher sum with same count means consistently higher queue occupancy.
-    sum: AtomicU64,
+    sum: u64,
     /// Peak channel length observed in the current window.
     /// Spikes here indicate bursty producers or downstream backpressure.
-    max: AtomicUsize,
+    max: usize,
     /// Minimum channel length observed in the current window.
     /// Useful to confirm idle periods (min == 0) or steady load (min > 0).
-    min: AtomicUsize,
+    min: usize,
     /// Most recent sampled channel length.
     /// Helps correlate with immediate behavior when reading logs.
-    last: AtomicUsize,
+    last: usize,
     /// Sum of squared channel lengths (used to compute RMS).
     /// RMS > AVG implies variability/peaks; RMS ~= AVG implies stable load.
-    sum_sq: AtomicU64,
+    sum_sq: u128,
     /// Number of samples where channel length was non-zero.
     /// Non-zero ratio hints at sustained pressure vs. intermittent bursts.
-    nonzero_count: AtomicU64,
+    nonzero_count: u64,
     /// Configured channel capacity (0 means unknown/not set).
     /// Enables utilization analysis: avg/capacity and peak/capacity.
-    capacity: AtomicUsize,
+    capacity: usize,
     /// Last time we emitted a log for this label.
-    last_log_ns: AtomicU64,
+    last_log: Instant,
 }
 
 impl Default for CommStats {
     fn default() -> Self {
         Self {
-            count: AtomicU64::new(0),
-            sum: AtomicU64::new(0),
-            max: AtomicUsize::new(0),
-            min: AtomicUsize::new(usize::MAX),
-            last: AtomicUsize::new(0),
-            sum_sq: AtomicU64::new(0),
-            nonzero_count: AtomicU64::new(0),
-            capacity: AtomicUsize::new(0),
-            last_log_ns: AtomicU64::new(0),
+            count: 0,
+            sum: 0,
+            max: 0,
+            min: 0,
+            last: 0,
+            sum_sq: 0,
+            nonzero_count: 0,
+            capacity: 0,
+            last_log: Instant::now(),
         }
     }
 }
 
-static COMM_STATS: Lazy<[CommStats; CHANNEL_LABEL_COUNT]> =
-    Lazy::new(|| std::array::from_fn(|_| CommStats::default()));
-static COMM_STATS_STARTED: Lazy<Instant> = Lazy::new(Instant::now);
+static CONTROL_NETLINK_TO_DATA_NETLINK_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static DATA_NETLINK_TO_IPFIX_RECORDS_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static SWSS_TO_IPFIX_TEMPLATES_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_STATS_REPORTER_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_COUNTER_DB_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_OTEL_STATS: Lazy<Mutex<CommStats>> = Lazy::new(|| Mutex::new(CommStats::default()));
 
 /// Records a communication channel length sample and logs periodically.
 pub fn record_comm_stats(label: ChannelLabel, channel_len: usize) {
-    let stats = &COMM_STATS[label.index()];
-    let count = stats
-        .count
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            Some(value.saturating_add(1))
-        })
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    atomic_saturating_add(&stats.sum, channel_len as u64);
-    let squared = (channel_len as u64).saturating_mul(channel_len as u64);
-    atomic_saturating_add(&stats.sum_sq, squared);
-    stats.last.store(channel_len, Ordering::Relaxed);
+    let mut stats = label.stats().lock().expect("comm stats mutex poisoned");
+    stats.count = stats.count.saturating_add(1);
+    stats.sum = stats.sum.saturating_add(channel_len as u64);
+    stats.sum_sq = stats
+        .sum_sq
+        .saturating_add((channel_len as u128).saturating_mul(channel_len as u128));
+    stats.last = channel_len;
     if channel_len > 0 {
-        atomic_saturating_add(&stats.nonzero_count, 1);
+        stats.nonzero_count = stats.nonzero_count.saturating_add(1);
     }
-    stats.min.fetch_min(channel_len, Ordering::Relaxed);
-    stats.max.fetch_max(channel_len, Ordering::Relaxed);
+    if stats.count == 1 || channel_len < stats.min {
+        stats.min = channel_len;
+    }
+    stats.max = stats.max.max(channel_len);
 
-    // Avoid a clock read on every hot-path message. Low-rate channels still
-    // check every sample until the first report window has elapsed.
-    let last_log_ns = stats.last_log_ns.load(Ordering::Relaxed);
-    if count >= 256 && count & 0xff != 0 {
+    let now = Instant::now();
+    let interval = Duration::from_secs(COMM_LOG_INTERVAL_SECS.load(Ordering::Relaxed));
+    if now.duration_since(stats.last_log) < interval {
         return;
     }
 
-    let now_ns = COMM_STATS_STARTED
-        .elapsed()
-        .as_nanos()
-        .min(u64::MAX as u128) as u64;
-    let interval_ns = Duration::from_secs(COMM_LOG_INTERVAL_SECS.load(Ordering::Relaxed))
-        .as_nanos()
-        .min(u64::MAX as u128) as u64;
-    if now_ns.saturating_sub(last_log_ns) >= interval_ns
-        && stats
-            .last_log_ns
-            .compare_exchange(last_log_ns, now_ns, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-    {
-        let count = stats.count.swap(0, Ordering::Relaxed);
-        let sum = stats.sum.swap(0, Ordering::Relaxed);
-        let sum_sq = stats.sum_sq.swap(0, Ordering::Relaxed);
-        let max = stats.max.swap(0, Ordering::Relaxed);
-        let min = stats.min.swap(usize::MAX, Ordering::Relaxed);
-        let last = stats.last.load(Ordering::Relaxed);
-        let nonzero_count = stats.nonzero_count.swap(0, Ordering::Relaxed);
-        let capacity = stats.capacity.load(Ordering::Relaxed);
-        let avg = sum as f64 / count as f64;
-        let rms = (sum_sq as f64 / count as f64).sqrt();
-        if capacity > 0 {
-            let avg_util = avg / capacity as f64;
-            let peak_util = max as f64 / capacity as f64;
-            info!(
-                "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}, capacity={}, avg_util={:.2}, peak_util={:.2}",
-                label.as_str(),
-                count,
-                avg,
-                max,
-                min,
-                last,
-                rms,
-                nonzero_count,
-                capacity,
-                avg_util,
-                peak_util
-            );
-        } else {
-            info!(
-                "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}",
-                label.as_str(),
-                count,
-                avg,
-                max,
-                min,
-                last,
-                rms,
-                nonzero_count
-            );
-        }
-    }
-}
+    let capacity = stats.capacity;
+    let snapshot = std::mem::replace(
+        &mut *stats,
+        CommStats {
+            capacity,
+            last_log: now,
+            ..CommStats::default()
+        },
+    );
+    drop(stats);
 
-fn atomic_saturating_add(value: &AtomicU64, amount: u64) {
-    let _ = value.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        Some(current.saturating_add(amount))
-    });
+    let avg = snapshot.sum as f64 / snapshot.count as f64;
+    let rms = (snapshot.sum_sq as f64 / snapshot.count as f64).sqrt();
+    if snapshot.capacity > 0 {
+        let avg_util = avg / snapshot.capacity as f64;
+        let peak_util = snapshot.max as f64 / snapshot.capacity as f64;
+        info!(
+            "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}, capacity={}, avg_util={:.2}, peak_util={:.2}",
+            label.as_str(),
+            snapshot.count,
+            avg,
+            snapshot.max,
+            snapshot.min,
+            snapshot.last,
+            rms,
+            snapshot.nonzero_count,
+            snapshot.capacity,
+            avg_util,
+            peak_util
+        );
+    } else {
+        info!(
+            "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}",
+            label.as_str(),
+            snapshot.count,
+            avg,
+            snapshot.max,
+            snapshot.min,
+            snapshot.last,
+            rms,
+            snapshot.nonzero_count
+        );
+    }
 }
 
 /// Sets channel capacity for utilization analysis (optional).
 /// Call this once during initialization if capacity is known.
 pub fn set_comm_capacity(label: ChannelLabel, capacity: usize) {
-    COMM_STATS[label.index()]
-        .capacity
-        .store(capacity, Ordering::Relaxed);
+    label
+        .stats()
+        .lock()
+        .expect("comm stats mutex poisoned")
+        .capacity = capacity;
 }

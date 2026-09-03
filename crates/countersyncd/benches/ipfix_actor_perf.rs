@@ -12,7 +12,7 @@ use countersyncd::message::{
 use log::warn;
 
 mod ipfix_bench_data;
-use ipfix_bench_data::{datasets, PreparedDataset};
+use ipfix_bench_data::{datasets, PreparedDataset, PAYLOAD_POOL_RECORDS};
 
 const STATS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -25,8 +25,7 @@ fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
 }
 
 async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, usize, usize, usize) {
-    let (template_tx, template_rx) =
-        mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
+    let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(1);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
     let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
 
@@ -41,6 +40,10 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
             .await
             .expect("template send should succeed");
     }
+    let template_barrier = template_tx
+        .reserve()
+        .await
+        .expect("template barrier reserve should succeed");
 
     buffer_tx
         .send(Arc::clone(&prepared.readiness_record))
@@ -52,22 +55,24 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
         .expect("stats channel closed before readiness probe");
     assert_eq!(probe_batch.record_count(), 1);
     assert_eq!(probe_batch.counter_count(), 1);
+    drop(template_barrier);
 
     let expected_messages = prepared.expected_messages;
     let expected_counters = prepared.expected_counters;
     let records: Vec<_> = prepared
         .templates
         .into_iter()
-        .map(|template| (template.base_record, template.records))
+        .map(|template| (template.payload_pool, template.records))
         .collect();
 
     let sender_tasks: Vec<_> = records
         .into_iter()
-        .map(|(record, record_count)| {
+        .map(|(payload_pool, record_count)| {
             let tx = buffer_tx.clone();
             tokio::spawn(async move {
-                for _ in 0..record_count {
-                    if tx.send(Arc::clone(&record)).await.is_err() {
+                for index in 0..record_count {
+                    let payload = &payload_pool[index % payload_pool.len()];
+                    if tx.send(Arc::clone(payload)).await.is_err() {
                         break;
                     }
                 }
@@ -165,25 +170,26 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
                 .build()
                 .expect("tokio current-thread runtime");
             let spec = bench_spec.clone();
+            let prepared = Arc::new(PreparedDataset::new((*spec).clone()));
             b.to_async(&rt).iter_custom(move |iterations| {
                 let spec = Arc::clone(&spec);
+                let prepared = Arc::clone(&prepared);
                 async move {
                     let mut measured = Duration::ZERO;
                     for _ in 0..iterations {
-                        let prepared = PreparedDataset::new((*spec).clone());
                         let (
                             elapsed,
                             received_messages,
                             received_counters,
                             expected_messages,
                             expected_counters,
-                        ) = run_prepared_dataset(prepared).await;
+                        ) = run_prepared_dataset((*prepared).clone()).await;
                         measured += elapsed;
 
                         let cps = counters_per_second(elapsed, received_counters);
 
                         println!(
-                            "Dataset {} -> elapsed {:?}, records {}/{}, counters {}/{}, cps {:.2}, readiness probe 1 record/1 counter (excluded)",
+                            "Dataset {} -> elapsed {:?}, records {}/{}, counters {}/{}, cps {:.2}, up to {} pre-generated payloads/template, readiness probe 1 record/1 counter (excluded)",
                             spec.name,
                             elapsed,
                             received_messages,
@@ -191,6 +197,7 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
                             received_counters,
                             expected_counters,
                             cps,
+                            PAYLOAD_POOL_RECORDS,
                         );
                     }
                     measured

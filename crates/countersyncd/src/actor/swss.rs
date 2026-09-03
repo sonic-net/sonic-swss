@@ -314,7 +314,7 @@ impl SwssActor {
         if session_data.stream_status != "enabled" {
             debug!("Deactivating disabled session: {}", key);
             return template_recipient
-                .send(IPFixTemplatesMessage::delete(key.to_string()))
+                .send(IPFixTemplatesMessage::deactivate(key.to_string()))
                 .await
                 .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
@@ -325,7 +325,7 @@ impl SwssActor {
                 key, session_data.session_type
             );
             return template_recipient
-                .send(IPFixTemplatesMessage::delete(key.to_string()))
+                .send(IPFixTemplatesMessage::deactivate(key.to_string()))
                 .await
                 .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
@@ -422,6 +422,7 @@ struct SessionData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::ipfix::IPFixTemplateOperation;
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
@@ -477,7 +478,7 @@ mod tests {
             .try_recv()
             .expect("Should have received a message");
         assert_eq!(received_message.key, "test_session|PORT");
-        assert!(!received_message.is_delete);
+        assert_eq!(received_message.operation, IPFixTemplateOperation::Update);
         assert!(received_message.templates.is_some());
 
         // Verify object_names parsing
@@ -526,7 +527,7 @@ mod tests {
             .try_recv()
             .expect("Should have received a deletion message");
         assert_eq!(received_message.key, "test_session|PORT");
-        assert!(received_message.is_delete);
+        assert_eq!(received_message.operation, IPFixTemplateOperation::Delete);
         assert!(received_message.templates.is_none());
         assert!(received_message.object_names.is_none());
         assert!(received_message.object_ids.is_none());
@@ -549,7 +550,7 @@ mod tests {
         actor.handle_session_update(key, &field_values).await;
 
         let message = template_receiver.try_recv().expect("deactivation message");
-        assert!(message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
         assert_eq!(message.key, key);
     }
 
@@ -570,7 +571,7 @@ mod tests {
         actor.handle_session_update(key, &field_values).await;
 
         let message = template_receiver.try_recv().expect("deactivation message");
-        assert!(message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
         assert_eq!(message.key, key);
     }
 
@@ -652,7 +653,7 @@ mod tests {
         assert_eq!(message.templates, Some(templates));
         assert_eq!(message.object_names, object_names);
         assert_eq!(message.object_ids, object_ids);
-        assert!(!message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Update);
     }
 
     #[test]
@@ -663,7 +664,7 @@ mod tests {
         assert!(message.templates.is_none());
         assert!(message.object_names.is_none());
         assert!(message.object_ids.is_none());
-        assert!(message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
     }
 
     // Helper function to create a test session entry in Redis
@@ -784,7 +785,7 @@ mod tests {
             .iter()
             .find(|msg| msg.key == test_key)
             .unwrap();
-        assert!(!our_message.is_delete);
+        assert_eq!(our_message.operation, IPFixTemplateOperation::Update);
         assert!(our_message.templates.is_some());
 
         let object_names = our_message
@@ -844,7 +845,7 @@ mod tests {
                 .find(|msg| msg.key == test_key)
                 .unwrap();
             assert_eq!(received_message.key, test_key);
-            assert!(!received_message.is_delete);
+            assert_eq!(received_message.operation, IPFixTemplateOperation::Update);
             assert!(received_message.templates.is_some());
 
             let object_names = received_message
@@ -924,7 +925,7 @@ mod tests {
             .iter()
             .find(|msg| msg.key == existing_key)
             .unwrap();
-        assert!(!existing_message.is_delete);
+        assert_eq!(existing_message.operation, IPFixTemplateOperation::Update);
         assert!(existing_message.templates.is_some());
 
         let existing_object_names = existing_message
@@ -943,7 +944,7 @@ mod tests {
                 .find(|msg| msg.key == runtime_key)
                 .unwrap();
             assert_eq!(runtime_message.key, runtime_key);
-            assert!(!runtime_message.is_delete);
+            assert_eq!(runtime_message.operation, IPFixTemplateOperation::Update);
             assert!(runtime_message.templates.is_some());
 
             let runtime_object_names = runtime_message

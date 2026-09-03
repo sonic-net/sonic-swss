@@ -7,7 +7,9 @@ use tokio::time::{timeout, Duration};
 
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
-    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
+    buffer::SocketBufferMessage,
+    ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage},
+    saistats::SAIStatsBatchMessage,
 };
 
 type ReceivedRecord = (u64, Vec<(u32, u32, u64)>);
@@ -34,6 +36,10 @@ async fn receive_records(
             .expect("timed out waiting for SAI stats batch")
             .expect("SAI stats channel closed early");
         let batch_counter_count = batch.counter_count();
+        assert!(
+            batch_counter_count <= 8192,
+            "SAI stats batch exceeded the configured counter limit"
+        );
         let mut iterated_counters = 0usize;
         for record in batch.iter() {
             iterated_counters += record.stats.len();
@@ -55,6 +61,104 @@ async fn receive_records(
         "unexpected logical record count"
     );
     records
+}
+
+async fn send_template_barrier(
+    template_sender: &tokio::sync::mpsc::Sender<IPFixTemplatesMessage>,
+    buffer_sender: &tokio::sync::mpsc::Sender<SocketBufferMessage>,
+    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
+    key: &str,
+    template_id: u16,
+) {
+    let template = ipfix_test_helpers::generate_ipfix_templates(1, template_id);
+    let record = ipfix_test_helpers::generate_ipfix_records(&template);
+    template_sender
+        .send(template_message(key, template, 1))
+        .await
+        .expect("barrier template send should succeed");
+    buffer_sender
+        .send(Arc::new(record))
+        .await
+        .expect("barrier record send should succeed");
+    assert_eq!(receive_records(receiver, 1).await[0].1.len(), 1);
+}
+
+#[tokio::test]
+async fn deactivate_is_reversible_but_delete_retires_ids() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
+    let (template_sender, template_receiver) = channel(5);
+    let (saistats_sender, mut saistats_receiver) = channel(10);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
+    let record = Arc::new(ipfix_test_helpers::generate_ipfix_records(&template));
+    template_sender
+        .send(template_message("session", template.clone(), 1))
+        .await
+        .unwrap();
+    send_template_barrier(
+        &template_sender,
+        &buffer_sender,
+        &mut saistats_receiver,
+        "install_barrier",
+        301,
+    )
+    .await;
+
+    template_sender
+        .send(IPFixTemplatesMessage::deactivate("session".to_string()))
+        .await
+        .unwrap();
+    template_sender
+        .send(template_message("session", template, 1))
+        .await
+        .unwrap();
+    send_template_barrier(
+        &template_sender,
+        &buffer_sender,
+        &mut saistats_receiver,
+        "reactivate_barrier",
+        302,
+    )
+    .await;
+    buffer_sender.send(Arc::clone(&record)).await.unwrap();
+    assert_eq!(
+        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
+        1
+    );
+
+    let delete = IPFixTemplatesMessage::delete("session".to_string());
+    assert_eq!(delete.operation, IPFixTemplateOperation::Delete);
+    template_sender.send(delete).await.unwrap();
+    send_template_barrier(
+        &template_sender,
+        &buffer_sender,
+        &mut saistats_receiver,
+        "delete_barrier",
+        303,
+    )
+    .await;
+    buffer_sender.send(record).await.unwrap();
+    let barrier_record = Arc::new(ipfix_test_helpers::generate_ipfix_records(
+        &ipfix_test_helpers::generate_ipfix_templates(1, 303),
+    ));
+    buffer_sender.send(barrier_record).await.unwrap();
+    assert_eq!(
+        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
+        1
+    );
+    assert!(
+        timeout(Duration::from_millis(50), saistats_receiver.recv())
+            .await
+            .is_err(),
+        "late data for a deleted template ID must not be emitted"
+    );
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
 }
 
 #[tokio::test]
@@ -236,6 +340,11 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         ))
         .await
         .expect("template re-add should succeed");
+    let template_barrier = template_sender
+        .reserve()
+        .await
+        .expect("template channel should remain open");
+    drop(template_barrier);
 
     let readd_records = ipfix_test_helpers::generate_ipfix_records(&readd_templates_bytes);
     buffer_sender

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use byteorder::{ByteOrder, NetworkEndian};
 use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage};
 
 #[path = "../tests/ipfix_test_helpers.rs"]
@@ -8,6 +9,7 @@ mod ipfix_test_helpers;
 
 const TARGET_TOTAL_COUNTERS: usize = 4_000_000;
 const READINESS_TEMPLATE_ID: u16 = u16::MAX;
+pub const PAYLOAD_POOL_RECORDS: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct TemplateSpec {
@@ -27,9 +29,11 @@ pub struct DatasetSpec {
 pub struct PreparedTemplate {
     pub spec: TemplateSpec,
     pub base_record: Arc<Vec<u8>>,
+    pub payload_pool: Arc<[SocketBufferMessage]>,
     pub records: usize,
 }
 
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct PreparedDataset {
     pub spec: DatasetSpec,
@@ -69,10 +73,12 @@ impl PreparedDataset {
             *max_counters = (*max_counters).max(tmpl.counters);
 
             let base_record = ipfix_test_helpers::generate_ipfix_records(&tmpl_bytes);
+            let payload_pool = prepare_payload_pool(&base_record, tmpl, records_per_template[idx]);
 
             templates.push(PreparedTemplate {
                 spec: tmpl.clone(),
-                base_record: Arc::new(base_record),
+                base_record: Arc::clone(&payload_pool[0]),
+                payload_pool: payload_pool.into(),
                 records: records_per_template[idx],
             });
         }
@@ -122,6 +128,32 @@ impl PreparedDataset {
             readiness_record,
         }
     }
+}
+
+fn prepare_payload_pool(
+    base_record: &[u8],
+    template: &TemplateSpec,
+    records: usize,
+) -> Vec<SocketBufferMessage> {
+    let pool_len = records.clamp(1, PAYLOAD_POOL_RECORDS);
+    (0..pool_len)
+        .map(|sequence| {
+            let mut payload = base_record.to_vec();
+            let observation_time = ((template.template_id as u64) << 32)
+                | u64::try_from(sequence + 1).expect("payload sequence fits u64");
+            NetworkEndian::write_u64(&mut payload[20..28], observation_time);
+
+            for (index, field) in payload[28..].chunks_exact_mut(8).enumerate() {
+                let field_index = u64::try_from(index + 1).expect("field index fits u64");
+                let value = observation_time
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .wrapping_add(field_index)
+                    .rotate_left((index % 64) as u32);
+                NetworkEndian::write_u64(field, value);
+            }
+            Arc::new(payload)
+        })
+        .collect()
 }
 
 pub fn datasets() -> Vec<DatasetSpec> {

@@ -10,22 +10,35 @@ const BENCH_PORT_COUNT: usize = 64;
 /// IDs equal the 1-based counter index).
 pub fn max_counters_per_template() -> usize {
     // message_length = 16 (msg hdr) + 12 (set + template header + obs field) + 8*N <= 65535
-    ((u16::MAX as usize - 28) / 8) as usize
+    (usize::from(u16::MAX) - 28) / 8
+}
+
+fn validated_counters_count(counters_count: usize) -> usize {
+    let max_counters = max_counters_per_template();
+    let counters_count = if counters_count == 0 {
+        max_counters
+    } else {
+        counters_count
+    };
+
+    assert!(
+        counters_count <= max_counters,
+        "counters_count ({counters_count}) exceeds max_counters_per_template ({max_counters})"
+    );
+    counters_count
 }
 
 /// Build complete object metadata for the labels emitted by
 /// `generate_ipfix_templates`.
 pub fn generate_object_metadata(counters_count: usize) -> (Vec<String>, Vec<u16>) {
-    let counters_count = if counters_count == 0 {
-        max_counters_per_template()
-    } else {
-        counters_count
-    };
+    let counters_count = validated_counters_count(counters_count);
 
     let object_names = (0..counters_count)
         .map(|idx| format!("Ethernet{}", idx % BENCH_PORT_COUNT))
         .collect();
-    let object_ids = (1..=counters_count as u16).collect();
+    let max_object_id =
+        u16::try_from(counters_count).expect("validated counters_count fits in a 15-bit label");
+    let object_ids = (1..=max_object_id).collect();
 
     (object_names, object_ids)
 }
@@ -34,35 +47,32 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
     assert!(template_id >= 256, "template_id must be >= 256");
 
     // If caller passes 0, use the maximum counters that fit in one IPFIX message.
-    let counters_count = if counters_count == 0 {
-        max_counters_per_template()
-    } else {
-        counters_count
-    };
+    let counters_count = validated_counters_count(counters_count);
 
     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
     let message_length = IPFIX_HEADER_LEN + set_length;
-    assert!(
-        message_length <= u16::MAX as usize,
-        "template too large for a single IPFIX message"
-    );
+    let message_length =
+        u16::try_from(message_length).expect("template length must fit in a single IPFIX message");
+    let set_length = u16::try_from(set_length).expect("template set length must fit in u16");
+    let field_count =
+        u16::try_from(counters_count + 1).expect("template field count must fit in u16");
 
-    let mut buf = Vec::with_capacity(message_length);
+    let mut buf = Vec::with_capacity(usize::from(message_length));
 
     // IPFIX message header
     buf.extend_from_slice(&10u16.to_be_bytes());
-    buf.extend_from_slice(&(message_length as u16).to_be_bytes());
+    buf.extend_from_slice(&message_length.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
 
     // Template set header
     buf.extend_from_slice(&2u16.to_be_bytes());
-    buf.extend_from_slice(&(set_length as u16).to_be_bytes());
+    buf.extend_from_slice(&set_length.to_be_bytes());
 
     // Template record header
     buf.extend_from_slice(&template_id.to_be_bytes());
-    buf.extend_from_slice(&((counters_count as u16) + 1).to_be_bytes());
+    buf.extend_from_slice(&field_count.to_be_bytes());
 
     // Field 1: observationTimeNanoseconds (325), length 8
     buf.extend_from_slice(&325u16.to_be_bytes());
@@ -70,13 +80,14 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
 
     // Counter fields
     for idx in 0..counters_count {
-        let element_id = 0x8000 | ((idx as u16) + 1);
+        let counter_label =
+            u16::try_from(idx + 1).expect("validated counter label fits in 15 bits");
+        let element_id = 0x8000 | counter_label;
         buf.extend_from_slice(&element_id.to_be_bytes());
         buf.extend_from_slice(&8u16.to_be_bytes());
 
-        let type_id = (idx as u32) + 1;
-        let stat_id = (idx as u32) + 1;
-        let enterprise_number = (type_id << 16) | stat_id;
+        let counter_label = u32::from(counter_label);
+        let enterprise_number = (counter_label << 16) | counter_label;
         buf.extend_from_slice(&enterprise_number.to_be_bytes());
     }
 
@@ -202,6 +213,12 @@ fn get_ipfix_message_length(data: &[u8]) -> Result<usize, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[should_panic(expected = "exceeds max_counters_per_template")]
+    fn oversized_metadata_request_is_rejected_before_allocation() {
+        let _ = super::generate_object_metadata(usize::MAX);
+    }
+
     #[test]
     fn short_declared_lengths_do_not_stall_record_generation() {
         for declared_length in 0..super::IPFIX_HEADER_LEN as u16 {

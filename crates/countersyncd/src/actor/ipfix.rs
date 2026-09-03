@@ -3,7 +3,7 @@ use std::{
     error::Error,
     fmt::{Display, Formatter},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -12,11 +12,12 @@ use log::{debug, error, warn};
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
+    time::{sleep_until, Instant},
 };
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    ipfix::IPFixTemplatesMessage,
+    ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage},
     saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
@@ -63,6 +64,29 @@ struct CompiledTemplate {
     record_len: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DataSetLayout {
+    record_bytes: usize,
+    record_count: usize,
+    counter_count: usize,
+}
+
+#[derive(Debug)]
+struct ValidatedDataSet<'a> {
+    key: TemplateKey,
+    bytes: &'a [u8],
+    template: Option<Arc<CompiledTemplate>>,
+    layout: Option<DataSetLayout>,
+    enabled: bool,
+    retired: bool,
+}
+
+#[derive(Debug)]
+struct ValidatedDataMessage<'a> {
+    sets: Vec<ValidatedDataSet<'a>>,
+    counter_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TemplateGeneration {
     owner: Arc<str>,
@@ -79,13 +103,16 @@ impl TemplateGeneration {
 struct SessionTemplates {
     active: Option<TemplateGeneration>,
     pending: Option<TemplateGeneration>,
+    enabled: bool,
+    deferred_floor: u64,
 }
 
 #[derive(Debug, Clone)]
 struct BufferedSet {
     key: TemplateKey,
     bytes: Arc<[u8]>,
-    received_at: Instant,
+    sequence: u64,
+    expires_at: Option<Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -98,14 +125,17 @@ struct DeferredSetBuffer {
 impl DeferredSetBuffer {
     fn expire(&mut self, now: Instant) -> u64 {
         let dropped_before = self.dropped;
-        while self
-            .sets
-            .front()
-            .is_some_and(|set| now.duration_since(set.received_at) >= UNKNOWN_SET_TTL)
-        {
-            let expired = self.sets.pop_front().expect("front checked above");
-            self.bytes = self.bytes.saturating_sub(expired.bytes.len());
-            self.dropped = self.dropped.saturating_add(1);
+        let mut index = 0usize;
+        while index < self.sets.len() {
+            if self.sets[index]
+                .expires_at
+                .is_some_and(|deadline| now >= deadline)
+            {
+                self.remove(index).expect("index checked above");
+                self.dropped = self.dropped.saturating_add(1);
+            } else {
+                index += 1;
+            }
         }
         self.dropped - dropped_before
     }
@@ -131,16 +161,38 @@ impl DeferredSetBuffer {
         self.dropped - dropped_before
     }
 
-    fn pop_front(&mut self) -> Option<BufferedSet> {
-        let set = self.sets.pop_front()?;
+    fn remove(&mut self, index: usize) -> Option<BufferedSet> {
+        let set = self.sets.remove(index)?;
         self.bytes = self.bytes.saturating_sub(set.bytes.len());
         Some(set)
+    }
+
+    fn contains_domain(&self, observation_domain_id: u32) -> bool {
+        self.sets
+            .iter()
+            .any(|set| set.key.observation_domain_id == observation_domain_id)
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        self.sets.iter().filter_map(|set| set.expires_at).min()
     }
 
     fn remove_keys(&mut self, keys: &HashSet<TemplateKey>) {
         let mut retained = VecDeque::with_capacity(self.sets.len());
         while let Some(set) = self.sets.pop_front() {
             if keys.contains(&set.key) {
+                self.bytes = self.bytes.saturating_sub(set.bytes.len());
+            } else {
+                retained.push_back(set);
+            }
+        }
+        self.sets = retained;
+    }
+
+    fn remove_keys_before(&mut self, keys: &HashSet<TemplateKey>, sequence: u64) {
+        let mut retained = VecDeque::with_capacity(self.sets.len());
+        while let Some(set) = self.sets.pop_front() {
+            if keys.contains(&set.key) && set.sequence < sequence {
                 self.bytes = self.bytes.saturating_sub(set.bytes.len());
             } else {
                 retained.push_back(set);
@@ -216,6 +268,8 @@ pub struct IpfixActor {
     installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
     retired: RetiredTemplates,
     deferred_sets: DeferredSetBuffer,
+    deferred_set_ttl: Duration,
+    next_deferred_sequence: u64,
 }
 
 impl IpfixActor {
@@ -231,6 +285,8 @@ impl IpfixActor {
             installed: HashMap::new(),
             retired: RetiredTemplates::default(),
             deferred_sets: DeferredSetBuffer::default(),
+            deferred_set_ttl: UNKNOWN_SET_TTL,
+            next_deferred_sequence: 1,
         }
     }
 
@@ -339,9 +395,16 @@ impl IpfixActor {
         &mut self,
         templates: IPFixTemplatesMessage,
     ) -> Result<SAIStatsBatch, IpfixError> {
-        if templates.is_delete {
-            self.handle_template_deletion(&templates.key);
-            return Ok(SAIStatsBatch::default());
+        match templates.operation {
+            IPFixTemplateOperation::Deactivate => {
+                self.handle_template_deactivation(&templates.key);
+                return Ok(SAIStatsBatch::default());
+            }
+            IPFixTemplateOperation::Delete => {
+                self.handle_template_deletion(&templates.key);
+                return Ok(SAIStatsBatch::default());
+            }
+            IPFixTemplateOperation::Update => {}
         }
 
         let generation = match Self::compile_generation(&templates) {
@@ -355,6 +418,7 @@ impl IpfixActor {
             }
         };
         let owner = Arc::clone(&generation.owner);
+        let updated_keys = generation.templates.keys().copied().collect::<HashSet<_>>();
 
         if let Some(conflict) = generation.templates.keys().find_map(|key| {
             self.installed
@@ -368,16 +432,28 @@ impl IpfixActor {
             .into());
         }
 
-        let is_first_install = !self.sessions.contains_key(owner.as_ref());
+        let is_first_install = self
+            .sessions
+            .get(owner.as_ref())
+            .is_none_or(|session| session.active.is_none());
         if is_first_install {
             validate_generation_reactivation(&generation, &self.retired)?;
             validate_registry_capacity(&generation, &self.installed, &self.retired)?;
+            let deferred_floor = self
+                .sessions
+                .contains_key(owner.as_ref())
+                .then_some(self.next_deferred_sequence)
+                .unwrap_or(0);
+            self.deferred_sets
+                .remove_keys_before(&updated_keys, deferred_floor);
             install_generation(&generation, &mut self.installed);
             self.sessions.insert(
                 owner,
                 SessionTemplates {
                     active: Some(generation),
                     pending: None,
+                    enabled: true,
+                    deferred_floor,
                 },
             );
             return self.finish_template_update();
@@ -387,6 +463,7 @@ impl IpfixActor {
             .sessions
             .get_mut(owner.as_ref())
             .expect("session existence checked above");
+        let was_enabled = session.enabled;
         if session
             .active
             .as_ref()
@@ -450,12 +527,19 @@ impl IpfixActor {
             session.pending = Some(generation);
         }
 
+        if !was_enabled {
+            session.deferred_floor = self.next_deferred_sequence;
+        }
+        self.deferred_sets
+            .remove_keys_before(&updated_keys, session.deferred_floor);
+        session.enabled = true;
+
         self.finish_template_update()
     }
 
     fn finish_template_update(&mut self) -> Result<SAIStatsBatch, IpfixError> {
         let mut batch = SAIStatsBatch::default();
-        self.drain_deferred_sets(&mut batch)?;
+        self.drain_deferred_sets(&mut batch, Instant::now())?;
         Ok(batch)
     }
 
@@ -470,6 +554,9 @@ impl IpfixActor {
         let Some(session) = self.sessions.get_mut(&owner) else {
             return;
         };
+        if !session.enabled {
+            return;
+        }
         let should_promote = session
             .pending
             .as_ref()
@@ -496,25 +583,39 @@ impl IpfixActor {
     }
 
     fn handle_template_deletion(&mut self, key: &str) {
-        let Some((owner, session)) = self.sessions.remove_entry(key) else {
-            return;
-        };
         let mut removed = HashSet::new();
-        for generation in [session.active, session.pending].into_iter().flatten() {
-            for template_key in generation.templates.keys() {
-                if self
-                    .installed
-                    .get(template_key)
-                    .is_some_and(|template| template.owner == owner)
-                {
-                    if let Some(template) = self.installed.remove(template_key) {
-                        self.retired.retire(&template);
+        if let Some((owner, session)) = self.sessions.remove_entry(key) {
+            for generation in [session.active, session.pending].into_iter().flatten() {
+                for template_key in generation.templates.keys() {
+                    if self
+                        .installed
+                        .get(template_key)
+                        .is_some_and(|template| template.owner == owner)
+                    {
+                        if let Some(template) = self.installed.remove(template_key) {
+                            self.retired.retire(&template);
+                        }
+                        removed.insert(*template_key);
                     }
-                    removed.insert(*template_key);
                 }
             }
         }
         self.deferred_sets.remove_keys(&removed);
+        self.sessions
+            .insert(Arc::<str>::from(key), SessionTemplates::default());
+    }
+
+    fn handle_template_deactivation(&mut self, key: &str) {
+        let session = self.sessions.entry(Arc::<str>::from(key)).or_default();
+        session.enabled = false;
+        let keys = session
+            .active
+            .iter()
+            .chain(session.pending.iter())
+            .flat_map(|generation| generation.templates.keys())
+            .copied()
+            .collect::<HashSet<_>>();
+        self.deferred_sets.remove_keys(&keys);
     }
 
     #[cfg(test)]
@@ -525,16 +626,20 @@ impl IpfixActor {
         }
         for message in IpfixMessages::new(records) {
             let message = message?;
-            self.validate_data_message(message)?;
-            self.process_data_message(message, &mut batch)?;
+            let validated = self.validate_data_message(message)?;
+            self.process_data_message(validated, &mut batch)?;
         }
         Ok(batch)
     }
 
-    fn validate_data_message(&self, message: &[u8]) -> Result<(), IpfixError> {
+    fn validate_data_message<'a>(
+        &self,
+        message: &'a [u8],
+    ) -> Result<ValidatedDataMessage<'a>, IpfixError> {
         let domain = NetworkEndian::read_u32(&message[12..16]);
         let mut offset = IPFIX_HEADER_LEN;
-        let mut set_count = 0usize;
+        let mut sets = Vec::new();
+        let mut counter_count = 0usize;
         while offset < message.len() {
             let (set_id, set) = next_set(message, &mut offset)?;
             if set.is_empty() {
@@ -547,95 +652,182 @@ impl IpfixActor {
                 observation_domain_id: domain,
                 template_id: set_id,
             };
-            if let Some(template) = self.installed.get(&key) {
-                validate_data_set(template, set)?;
+            let template = self.installed.get(&key).cloned();
+            let enabled = template.as_ref().is_some_and(|template| {
+                self.sessions
+                    .get(template.owner.as_ref())
+                    .is_some_and(|session| session.enabled)
+            });
+            let layout = if enabled {
+                template
+                    .as_deref()
+                    .map(|template| validate_data_set(template, set))
+                    .transpose()?
+            } else {
+                None
+            };
+            if enabled {
+                counter_count = counter_count
+                    .checked_add(layout.expect("installed template has layout").counter_count)
+                    .ok_or("decoded counter count overflow")?;
             }
-            set_count += 1;
+            sets.push(ValidatedDataSet {
+                key,
+                bytes: set,
+                template,
+                layout,
+                enabled,
+                retired: self.retired.contains(&key),
+            });
         }
-        if set_count == 0 {
+        if sets.is_empty() {
             return Err("IPFIX data message contains no sets".into());
         }
-        Ok(())
+        Ok(ValidatedDataMessage {
+            sets,
+            counter_count,
+        })
     }
 
     fn process_data_message(
         &mut self,
-        message: &[u8],
+        message: ValidatedDataMessage<'_>,
         batch: &mut SAIStatsBatch,
     ) -> Result<(), IpfixError> {
-        let domain = NetworkEndian::read_u32(&message[12..16]);
-        let mut offset = IPFIX_HEADER_LEN;
-        while offset < message.len() {
-            let (set_id, set) = next_set(message, &mut offset)?;
-            if set.is_empty() {
-                break;
-            }
-            let key = TemplateKey {
-                observation_domain_id: domain,
-                template_id: set_id,
-            };
-            if !self.deferred_sets.sets.is_empty() {
-                let dropped = self.deferred_sets.push(BufferedSet {
-                    key,
-                    bytes: Arc::from(set),
-                    received_at: Instant::now(),
-                });
-                self.log_deferred_drops(dropped);
-            } else if let Some(template) = self.installed.get(&key) {
-                validate_data_set(template, set)?;
-                self.promote_pending_for(key);
-                if self.installed.contains_key(&key) {
-                    self.decode_set(key, set, batch)?;
+        for set in message.sets {
+            let ValidatedDataSet {
+                key,
+                bytes,
+                template,
+                layout,
+                enabled,
+                retired,
+            } = set;
+            let domain_blocked = self
+                .deferred_sets
+                .contains_domain(key.observation_domain_id);
+            match (template, layout) {
+                (Some(template), Some(layout)) if enabled && !domain_blocked => {
+                    self.promote_pending_for(key);
+                    if self
+                        .installed
+                        .get(&key)
+                        .is_some_and(|installed| Arc::ptr_eq(installed, &template))
+                    {
+                        self.decode_set(&template, bytes, layout, batch);
+                    }
                 }
-            } else if !self.retired.contains(&key) {
-                let dropped = self.deferred_sets.push(BufferedSet {
-                    key,
-                    bytes: Arc::from(set),
-                    received_at: Instant::now(),
-                });
-                self.log_deferred_drops(dropped);
+                (Some(_), Some(_)) if enabled => {
+                    let sequence = self.next_deferred_sequence;
+                    self.next_deferred_sequence = self.next_deferred_sequence.saturating_add(1);
+                    let dropped = self.deferred_sets.push(BufferedSet {
+                        key,
+                        bytes: Arc::from(bytes),
+                        sequence,
+                        expires_at: None,
+                    });
+                    self.log_deferred_drops(dropped);
+                }
+                (Some(_), _) => {}
+                (None, _) if !retired => {
+                    let received_at = Instant::now();
+                    let sequence = self.next_deferred_sequence;
+                    self.next_deferred_sequence = self.next_deferred_sequence.saturating_add(1);
+                    let dropped = self.deferred_sets.push(BufferedSet {
+                        key,
+                        bytes: Arc::from(bytes),
+                        sequence,
+                        expires_at: Some(received_at + self.deferred_set_ttl),
+                    });
+                    self.log_deferred_drops(dropped);
+                }
+                (None, _) => {}
             }
         }
-        self.drain_deferred_sets(batch)?;
+        self.drain_deferred_sets(batch, Instant::now())?;
         Ok(())
     }
 
-    fn drain_deferred_sets(&mut self, batch: &mut SAIStatsBatch) -> Result<(), IpfixError> {
-        let expired = self.deferred_sets.expire(Instant::now());
+    fn drain_deferred_sets(
+        &mut self,
+        batch: &mut SAIStatsBatch,
+        now: Instant,
+    ) -> Result<(), IpfixError> {
+        let expired = self.deferred_sets.expire(now);
         self.log_deferred_drops(expired);
 
-        loop {
-            let Some(front) = self.deferred_sets.sets.front() else {
-                return Ok(());
-            };
-            if self.retired.contains(&front.key) {
-                self.deferred_sets.pop_front();
+        let installed = &self.installed;
+        let sessions = &self.sessions;
+        for set in &mut self.deferred_sets.sets {
+            if installed.get(&set.key).is_some_and(|template| {
+                sessions
+                    .get(template.owner.as_ref())
+                    .is_some_and(|session| session.enabled)
+            }) {
+                set.expires_at = None;
+            }
+        }
+
+        let mut blocked_domains = HashSet::new();
+        let mut index = 0usize;
+        while index < self.deferred_sets.sets.len() {
+            let key = self.deferred_sets.sets[index].key;
+            if blocked_domains.contains(&key.observation_domain_id) {
+                index += 1;
                 continue;
             }
-            let Some(template) = self.installed.get(&front.key) else {
-                return Ok(());
-            };
-            if let Err(err) = validate_data_set(template, &front.bytes) {
-                let invalid = self.deferred_sets.pop_front().expect("front checked above");
-                warn!(
-                    "Dropping invalid deferred HFT data set ({}, {}): {}",
-                    invalid.key.observation_domain_id, invalid.key.template_id, err
-                );
+            if self.retired.contains(&key) {
+                self.deferred_sets.remove(index);
                 continue;
             }
-            let counters = data_set_counter_count(template, &front.bytes)?;
+            let Some(template) = self.installed.get(&key).cloned() else {
+                blocked_domains.insert(key.observation_domain_id);
+                index += 1;
+                continue;
+            };
+            let enabled = self
+                .sessions
+                .get(template.owner.as_ref())
+                .is_some_and(|session| session.enabled);
+            if !enabled {
+                self.deferred_sets.remove(index);
+                continue;
+            }
+            let layout = match validate_data_set(&template, &self.deferred_sets.sets[index].bytes) {
+                Ok(layout) => layout,
+                Err(err) => {
+                    let invalid = self
+                        .deferred_sets
+                        .remove(index)
+                        .expect("index checked above");
+                    warn!(
+                        "Dropping invalid deferred HFT data set ({}, {}): {}",
+                        invalid.key.observation_domain_id, invalid.key.template_id, err
+                    );
+                    continue;
+                }
+            };
             if !batch.is_empty()
-                && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
+                && batch.counter_count().saturating_add(layout.counter_count)
+                    > MAX_COUNTERS_PER_BATCH
             {
                 return Ok(());
             }
 
-            let ready = self.deferred_sets.pop_front().expect("front checked above");
+            let ready = self
+                .deferred_sets
+                .remove(index)
+                .expect("index checked above");
             self.promote_pending_for(ready.key);
-            if self.installed.contains_key(&ready.key) {
-                self.decode_set(ready.key, &ready.bytes, batch)?;
+            if self
+                .installed
+                .get(&ready.key)
+                .is_some_and(|installed| Arc::ptr_eq(installed, &template))
+            {
+                self.decode_set(&template, &ready.bytes, layout, batch);
             }
         }
+        Ok(())
     }
 
     fn log_deferred_drops(&self, dropped: u64) {
@@ -649,24 +841,15 @@ impl IpfixActor {
 
     fn decode_set(
         &self,
-        key: TemplateKey,
+        template: &CompiledTemplate,
         set: &[u8],
+        layout: DataSetLayout,
         batch: &mut SAIStatsBatch,
-    ) -> Result<(), IpfixError> {
-        let template = self
-            .installed
-            .get(&key)
-            .ok_or_else(|| format!("missing installed template {key:?}"))?;
-        if set.len() < SET_HEADER_LEN {
-            return Err("IPFIX set is shorter than its header".into());
-        }
-        validate_data_set(template, set)?;
+    ) {
         let payload = &set[SET_HEADER_LEN..];
-        let record_bytes = payload.len() / template.record_len * template.record_len;
-        let record_count = record_bytes / template.record_len;
-        batch.reserve(record_count, record_count * template.counters.len());
+        batch.reserve(layout.record_count, layout.counter_count);
 
-        for record in payload[..record_bytes].chunks_exact(template.record_len) {
+        for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
             let time_offset = template.observation_time_offset;
             let observation_time = NetworkEndian::read_u64(&record[time_offset..time_offset + 8]);
             batch.push_record(
@@ -681,7 +864,6 @@ impl IpfixActor {
                 }),
             );
         }
-        Ok(())
     }
 
     async fn process_record_input(
@@ -694,43 +876,19 @@ impl IpfixActor {
         }
         for message in IpfixMessages::new(records) {
             let message = message?;
-            self.validate_data_message(message)?;
-            let counters = self.data_message_counter_count(message)?;
+            let validated = self.validate_data_message(message)?;
+            let counters = validated.counter_count;
             if !batch.is_empty()
                 && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
             {
                 self.send_batch(std::mem::take(batch)).await?;
             }
-            self.process_data_message(message, batch)?;
+            self.process_data_message(validated, batch)?;
             if batch.counter_count() >= MAX_COUNTERS_PER_BATCH {
                 self.send_batch(std::mem::take(batch)).await?;
             }
         }
         Ok(())
-    }
-
-    fn data_message_counter_count(&self, message: &[u8]) -> Result<usize, IpfixError> {
-        let domain = NetworkEndian::read_u32(&message[12..16]);
-        let mut offset = IPFIX_HEADER_LEN;
-        let mut counters = 0usize;
-        while offset < message.len() {
-            let (set_id, set) = next_set(message, &mut offset)?;
-            if set.is_empty() {
-                break;
-            }
-            let key = TemplateKey {
-                observation_domain_id: domain,
-                template_id: set_id,
-            };
-            if self.deferred_sets.sets.is_empty() {
-                if let Some(template) = self.installed.get(&key) {
-                    counters = counters
-                        .checked_add(data_set_counter_count(template, set)?)
-                        .ok_or("decoded counter count overflow")?;
-                }
-            }
-        }
-        Ok(counters)
     }
 
     async fn send_batch(&self, batch: SAIStatsBatch) -> Result<(), IpfixError> {
@@ -739,16 +897,16 @@ impl IpfixActor {
         }
         let batch = Arc::new(batch);
         let mut blocked = Vec::new();
+        let mut closed = 0usize;
         for recipient in &self.saistats_recipients {
             match recipient.try_reserve() {
                 Ok(permit) => permit.send(Arc::clone(&batch)),
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => blocked.push(recipient),
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    return Err("SAI stats recipient closed".into())
+                    closed += 1;
                 }
             }
         }
-        let mut closed = 0usize;
         for recipient in blocked {
             if recipient.send(Arc::clone(&batch)).await.is_err() {
                 closed += 1;
@@ -767,7 +925,7 @@ impl IpfixActor {
         self.send_batch(batch).await?;
         loop {
             let mut ready = SAIStatsBatch::default();
-            self.drain_deferred_sets(&mut ready)?;
+            self.drain_deferred_sets(&mut ready, Instant::now())?;
             if ready.is_empty() {
                 return Ok(());
             }
@@ -775,11 +933,45 @@ impl IpfixActor {
         }
     }
 
+    async fn drain_records_queued_before_update(&mut self) -> Result<(), IpfixError> {
+        let queued = self.record_recipient.len();
+        if queued == 0 {
+            return Ok(());
+        }
+
+        record_comm_stats(
+            ChannelLabel::DataNetlinkToIpfixRecords,
+            self.record_recipient.len(),
+        );
+        let mut batch = SAIStatsBatch::default();
+        for _ in 0..queued {
+            let Ok(record) = self.record_recipient.try_recv() else {
+                break;
+            };
+            if let Err(err) = self.process_record_input(&record, &mut batch).await {
+                warn!("Dropping invalid HFT IPFIX message: {err}");
+            }
+        }
+        self.send_batch_and_drain_deferred(batch).await
+    }
+
     pub async fn run(mut actor: IpfixActor) -> Result<(), IpfixError> {
         loop {
             select! {
+                _ = async {
+                    if let Some(deadline) = actor.deferred_sets.next_deadline() {
+                        sleep_until(deadline).await;
+                    }
+                }, if actor.deferred_sets.next_deadline().is_some() => {
+                    let mut batch = SAIStatsBatch::default();
+                    actor.drain_deferred_sets(&mut batch, Instant::now())?;
+                    actor.send_batch_and_drain_deferred(batch).await?;
+                },
                 template = actor.template_recipient.recv() => match template {
                     Some(template) => {
+                        if template.operation == IPFixTemplateOperation::Update {
+                            actor.drain_records_queued_before_update().await?;
+                        }
                         record_comm_stats(
                             ChannelLabel::SwssToIpfixTemplates,
                             actor.template_recipient.len(),
@@ -1011,7 +1203,7 @@ fn next_set<'a>(message: &'a [u8], offset: &mut usize) -> Result<(u16, &'a [u8])
     Ok((set_id, set))
 }
 
-fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<(), IpfixError> {
+fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<DataSetLayout, IpfixError> {
     if set.len() <= SET_HEADER_LEN {
         return Err(format!("data set {} contains no records", template.key.template_id).into());
     }
@@ -1025,7 +1217,7 @@ fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<(), Ipfi
         .into());
     }
     let padding = &payload[record_bytes..];
-    if padding.len() > 3 || padding.iter().any(|byte| *byte != 0) {
+    if padding.len() >= template.record_len || padding.iter().any(|byte| *byte != 0) {
         return Err(format!(
             "data set {} has {} invalid trailing bytes",
             template.key.template_id,
@@ -1033,15 +1225,15 @@ fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<(), Ipfi
         )
         .into());
     }
-    Ok(())
-}
-
-fn data_set_counter_count(template: &CompiledTemplate, set: &[u8]) -> Result<usize, IpfixError> {
-    validate_data_set(template, set)?;
-    let record_count = (set.len() - SET_HEADER_LEN) / template.record_len;
-    record_count
+    let record_count = record_bytes / template.record_len;
+    let counter_count = record_count
         .checked_mul(template.counters.len())
-        .ok_or_else(|| "decoded counter count overflow".into())
+        .ok_or_else(|| IpfixError::from("decoded counter count overflow"))?;
+    Ok(DataSetLayout {
+        record_bytes,
+        record_count,
+        counter_count,
+    })
 }
 
 fn compile_template_set(
@@ -1367,6 +1559,30 @@ mod tests {
     }
 
     #[test]
+    fn pending_cutover_drops_later_old_id_in_same_message() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[(301, vec![(2, vec![20])]), (300, vec![(1, vec![10])])],
+            ))
+            .unwrap();
+        let times: Vec<_> = batch.iter().map(|record| record.observation_time).collect();
+        assert_eq!(times, vec![2]);
+        assert!(!actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+    }
+
+    #[test]
     fn rejects_ambiguous_same_id_schema_change() {
         let mut actor = actor();
         actor
@@ -1615,6 +1831,269 @@ mod tests {
     }
 
     #[test]
+    fn delete_boundary_drops_unknown_data_before_new_generation() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor.handle_template_deletion("session");
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+
+        let replayed = actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+
+        let live = actor
+            .handle_record(&data_message(0, &[(301, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(live.record_count(), 1);
+        assert_eq!(live.iter().next().unwrap().observation_time, 2);
+    }
+
+    #[test]
+    fn delete_preserves_preinstall_lifecycle_boundary() {
+        let mut actor = actor();
+        actor.handle_template_deactivation("session");
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap();
+        actor.handle_template_deletion("session");
+
+        let replayed = actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[test]
+    fn deactivate_then_reactivate_identical_generation() {
+        let mut actor = actor();
+        let template = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(template.clone()).unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::deactivate("session".to_string()))
+            .unwrap();
+
+        let disabled = actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap();
+        assert!(disabled.is_empty());
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+        assert!(!actor.retired.contains(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+
+        actor.handle_template(template).unwrap();
+        let enabled = actor
+            .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(enabled.record_count(), 1);
+    }
+
+    #[test]
+    fn rejected_update_does_not_reactivate_stale_generation() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::deactivate("session".to_string()))
+            .unwrap();
+
+        assert!(actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0003)]))
+            .is_err());
+        assert!(!actor.sessions["session"].enabled);
+        assert!(actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn reactivation_drops_data_received_while_disabled() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::deactivate("session".to_string()))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+
+        let replayed = actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+
+        let live = actor
+            .handle_record(&data_message(0, &[(301, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(live.record_count(), 1);
+        assert_eq!(live.iter().next().unwrap().observation_time, 2);
+    }
+
+    #[test]
+    fn first_activation_drops_data_received_after_preinstall_deactivation() {
+        let mut actor = actor();
+        actor
+            .handle_template(IPFixTemplatesMessage::deactivate("session".to_string()))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap();
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+
+        let replayed = actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+
+        let live = actor
+            .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(live.record_count(), 1);
+        assert_eq!(live.iter().next().unwrap().observation_time, 2);
+    }
+
+    #[test]
+    fn stale_unknown_data_does_not_cross_intermediate_reactivation() {
+        let mut actor = actor();
+        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(active.clone()).unwrap();
+        actor.handle_template_deactivation("session");
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+
+        actor.handle_template(active).unwrap();
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+        let replayed = actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+
+        let live = actor
+            .handle_record(&data_message(0, &[(301, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(live.record_count(), 1);
+        assert_eq!(live.iter().next().unwrap().observation_time, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolved_deferred_sets_do_not_expire_between_batches() {
+        let mut actor = actor();
+        actor.deferred_set_ttl = Duration::from_millis(20);
+        let counters = MAX_COUNTERS_PER_BATCH - 4;
+        let fields = (1..=counters)
+            .map(|label| {
+                (
+                    u16::try_from(label).expect("counter label fits u16"),
+                    0x0001_0002,
+                )
+            })
+            .collect::<Vec<_>>();
+        let values = vec![1; counters];
+
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, values.clone())])]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(2, values)])]))
+            .unwrap();
+        tokio::time::advance(Duration::from_millis(19)).await;
+
+        let first = actor
+            .handle_template(template_message("late", 0, 300, &fields))
+            .unwrap();
+        assert_eq!(first.counter_count(), counters);
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+        assert!(actor.deferred_sets.sets[0].expires_at.is_none());
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let mut second = SAIStatsBatch::default();
+        actor
+            .drain_deferred_sets(&mut second, Instant::now())
+            .unwrap();
+        assert_eq!(second.counter_count(), counters);
+        assert!(actor.deferred_sets.sets.is_empty());
+        assert_eq!(actor.deferred_sets.dropped, 0);
+    }
+
+    #[test]
+    fn malformed_disabled_set_does_not_drop_enabled_telemetry() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("disabled", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("enabled", 0, 301, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::deactivate("disabled".to_string()))
+            .unwrap();
+
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[(300, vec![(1, vec![])]), (301, vec![(2, vec![20])])],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 2);
+    }
+
+    #[test]
+    fn unknown_template_does_not_block_known_other_domain() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("known", 2, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert!(actor
+            .handle_record(&data_message(1, &[(301, vec![(1, vec![10])])]))
+            .unwrap()
+            .is_empty());
+        let known = actor
+            .handle_record(&data_message(2, &[(300, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(known.record_count(), 1);
+        assert_eq!(actor.deferred_sets.sets.len(), 1);
+    }
+
+    #[test]
+    fn expired_unknown_does_not_drop_known_telemetry() {
+        let mut actor = actor();
+        actor.deferred_set_ttl = Duration::ZERO;
+        actor
+            .handle_template(template_message("known", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+        let known = actor
+            .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(known.record_count(), 1);
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[test]
     fn rejected_first_install_does_not_create_empty_session() {
         let mut actor = actor();
         actor
@@ -1632,7 +2111,8 @@ mod tests {
                 ))
                 .is_err());
         }
-        assert!(actor.sessions.is_empty());
+        assert_eq!(actor.sessions.len(), 1);
+        assert!(actor.sessions["original"].active.is_none());
     }
 
     #[test]
@@ -1707,6 +2187,21 @@ mod tests {
         message.extend_from_slice(&[0, 0, 0]);
         let message_len = message.len() as u16;
         message[2..4].copy_from_slice(&message_len.to_be_bytes());
+        assert_eq!(actor.handle_record(&message).unwrap().record_count(), 1);
+    }
+
+    #[test]
+    fn data_set_padding_may_exceed_three_bytes() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let mut message = data_message(0, &[(300, vec![(1, vec![2])])]);
+        message.extend_from_slice(&[0; 8]);
+        let message_len = message.len() as u16;
+        let set_len = (message.len() - IPFIX_HEADER_LEN) as u16;
+        message[2..4].copy_from_slice(&message_len.to_be_bytes());
+        message[18..20].copy_from_slice(&set_len.to_be_bytes());
         assert_eq!(actor.handle_record(&message).unwrap().record_count(), 1);
     }
 
@@ -1796,7 +2291,101 @@ mod tests {
         let mut batch = SAIStatsBatch::default();
         batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
         let error = actor.send_batch(batch).await.unwrap_err();
-        assert!(error.to_string().contains("SAI stats recipient closed"));
+        assert!(error.to_string().contains("1 SAI stats recipient"));
         assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn closed_recipient_before_healthy_recipient_still_delivers() {
+        let (_, template_rx) = channel(1);
+        let (_, record_rx) = channel(1);
+        let (closed_tx, closed_rx) = channel(1);
+        let (healthy_tx, mut healthy_rx) = channel(1);
+        drop(closed_rx);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(closed_tx);
+        actor.add_recipient(healthy_tx);
+
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
+        assert!(actor.send_batch(batch).await.is_err());
+        assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn queued_disabled_records_are_drained_before_reactivation() {
+        let (_, template_rx) = channel(1);
+        let (record_tx, record_rx) = channel(2);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(active.clone()).unwrap();
+        actor.handle_template_deactivation("session");
+        record_tx
+            .send(Arc::new(data_message(0, &[(301, vec![(1, vec![10])])])))
+            .await
+            .unwrap();
+
+        actor.drain_records_queued_before_update().await.unwrap();
+        actor.handle_template(active).unwrap();
+        let replayed = actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(replayed.is_empty());
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deferred_timer_expires_unknown_without_new_input() {
+        let (template_tx, template_rx) = channel(1);
+        let (record_tx, record_rx) = channel(1);
+        let (stats_tx, mut stats_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.deferred_set_ttl = Duration::from_millis(20);
+        actor.add_recipient(stats_tx);
+        actor
+            .handle_template(template_message("known", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("barrier", 1, 302, &[(1, 0x0001_0002)]))
+            .unwrap();
+        let task = tokio::spawn(IpfixActor::run(actor));
+
+        record_tx
+            .send(Arc::new(data_message(
+                0,
+                &[(301, vec![(1, vec![10])]), (300, vec![(2, vec![20])])],
+            )))
+            .await
+            .unwrap();
+        record_tx
+            .send(Arc::new(data_message(1, &[(302, vec![(3, vec![30])])])))
+            .await
+            .unwrap();
+        let barrier = stats_rx.recv().await.unwrap();
+        assert_eq!(barrier.record_count(), 1);
+        assert_eq!(barrier.iter().next().unwrap().observation_time, 3);
+
+        tokio::time::advance(Duration::from_millis(19)).await;
+        tokio::task::yield_now().await;
+        assert!(stats_rx.try_recv().is_err());
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        let released = stats_rx.try_recv().unwrap();
+        assert_eq!(released.record_count(), 1);
+        assert_eq!(released.iter().next().unwrap().observation_time, 2);
+
+        template_tx
+            .send(template_message("late", 0, 301, &[(1, 0x0001_0002)]))
+            .await
+            .unwrap();
+        let template_barrier = template_tx.reserve().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(stats_rx.try_recv().is_err());
+        drop(template_barrier);
+
+        drop(record_tx);
+        drop(template_tx);
+        assert!(task.await.unwrap().is_err());
     }
 }
