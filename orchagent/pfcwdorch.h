@@ -8,14 +8,21 @@
 #include "notificationconsumer.h"
 #include "timer.h"
 #include "events.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
 }
 
 // ============================================================================
-// Global macros used across base and derived classes
+// Global macros used across base and derived classes (PfcWdBaseOrch,
+// PfcWdSwOrch, PfcWdHwOrch)
 // ============================================================================
+
+#define PFC_WD_RECOVERY_MECHANISM       "RECOVERY_MECHANISM"
+#define PFC_WD_RECOVERY_SOFTWARE        "SOFTWARE"
+#define PFC_WD_RECOVERY_HARDWARE        "HARDWARE"
+#define PFC_WD_TC_MAX                   8
 
 // State and configuration table identifiers
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
@@ -71,6 +78,16 @@ public:
         return m_countersDb;
     }
 
+    shared_ptr<Table> getStateTable(void)
+    {
+        return m_stateTable;
+    }
+
+    shared_ptr<DBConnector> getStateDb(void)
+    {
+        return m_stateDb;
+    }
+
     static PfcWdAction deserializeAction(const string& key);
     static string serializeAction(const PfcWdAction &action);
 
@@ -85,6 +102,27 @@ protected:
     // Supported timer limits. False defers the entry for retry.
     virtual bool getTimerRange(PfcWdTimerRange& range) const;
 
+    // A port with no lossless TCs is not PFC-ready yet: defer the entry and
+    // retry once the port becomes ready, logging the deferral only once.
+    task_process_status handleStartWdOnPortFailure(const Port& port);
+    void clearPfcWdPending(const Port& port) { m_pfcwdPendingPorts.erase(port.m_alias); }
+
+    // Ports that are admin-up but not yet PFC-ready, for which a deferral has
+    // already been logged.
+    std::set<std::string> m_pfcwdPendingPorts;
+
+    void updateStateTable(const string &field, const string &value)
+    {
+        string key = m_stateTable->getTableName() + m_stateTable->getTableNameSeparator() + "PFC_WD";
+        m_stateDb->hset(key, field, value);
+    }
+
+    void updateDlrPacketActionInStateTable()
+    {
+        string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
+        this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
+    }
+    
     // ========================================================================
     // Helper functions used in both SW and HW watchdog implementations
     // ========================================================================
@@ -120,6 +158,8 @@ private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
+    shared_ptr<DBConnector> m_stateDb = nullptr;
+    shared_ptr<Table> m_stateTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
     std::set<std::string> m_pfcwd_ports;
 };
