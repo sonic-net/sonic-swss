@@ -8,17 +8,22 @@ documentation.workspace = true
 keywords.workspace = true
 edition.workspace = true
 
+[features]
+benchmark = []
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
 
 # Configuration and serialization
-yaml-rust = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
 
 # Netlink for network operations
 genetlink = { workspace = true }
 netlink-packet-core = { workspace = true }
 netlink-packet-generic = { workspace = true }
+netlink-packet-utils = { workspace = true }
 netlink-sys = { workspace = true }
 libc = "0.2"
 
@@ -68,9 +73,13 @@ swss-common = { workspace = true }
 
 [dev-dependencies]
 # Test utilities  
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 async-trait = { workspace = true }
+futures-timer = "3.0.4"
+wait-timeout = "0.2.1"
+which = "7.0.3"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
@@ -91,3 +100,8 @@ harness = false
 [[bench]]
 name = "counter_db_actor_perf"
 harness = false
+
+[[bench]]
+name = "data_netlink_perf"
+harness = false
+required-features = ["benchmark"]
