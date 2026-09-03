@@ -760,10 +760,26 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     // teamdctl <port_channel_name> port config update <member> { "lacp_key": <lacp_key>, "link_watch": { "name": "ethtool" } };
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
+    if (exec(cmd.str(), res) != 0)
+    {
+        SWSS_LOG_WARN("Failed to set %s down", member.c_str());
+
+        return task_need_retry;
+    }
+
+    cmd.clear();
     cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port config update " << shellquote(member)
         << " '{\"lacp_key\":"
         << keyId
         << ",\"link_watch\": {\"name\": \"ethtool\"} }'; ";
+    if (exec(cmd.str(), res) != 0)
+    {
+        SWSS_LOG_WARN("Failed to execute %s, retry...",
+                cmd.str().c_str());
+        return task_need_retry;
+    }
+
+    cmd.clear();
     cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
 
     if (exec(cmd.str(), res) != 0)
