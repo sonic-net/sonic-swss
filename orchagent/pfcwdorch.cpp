@@ -31,6 +31,8 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_stateDb(new DBConnector("STATE_DB", 0)),
+    m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
@@ -39,6 +41,7 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("Platform environment variable is not defined");
         return;
     }
+
 }
 
 
@@ -57,6 +60,28 @@ bool PfcWdBaseOrch::getTimerRange(PfcWdTimerRange& range) const
     range.restorationMax = PFC_WD_RESTORATION_TIME_MAX;
 
     return true;
+}
+
+task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    // A port with no lossless TCs is not ready for the PFC watchdog yet, so the entry stays pending and starts once the port becomes PFC-ready.
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        if (m_pfcwdPendingPorts.insert(port.m_alias).second)
+        {
+            SWSS_LOG_INFO("Deferring PFC Watchdog on port %s: no lossless TC yet", port.m_alias.c_str());
+        }
+        return task_process_status::task_need_retry;
+    }
+
+    // The port is PFC ready, so the failure is in the programming itself. The
+    // entry is kept for retry: doTask() has no case for task_failed and would
+    // drop the configuration outright, leaving CONFIG_DB and the ASIC out of sync.
+    SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+    return task_process_status::task_need_retry;
 }
 
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)

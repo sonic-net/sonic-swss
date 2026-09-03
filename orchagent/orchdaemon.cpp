@@ -24,7 +24,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -808,6 +807,7 @@ bool OrchDaemon::init()
         };
 
         bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
+        bool pfcDldrEnable = gSwitchOrch->checkPfcDldrEnable();
 
         // Override pfcDlrInit if needed, and this change is only for PFC tests.
         if(getenv("PFC_DLR_INIT_ENABLE"))
@@ -821,19 +821,33 @@ bool OrchDaemon::init()
             else if(envPfcDlrInit == "0")
             {
                 pfcDlrInit = false;
+                // Asking for a software handler also rules out the hardware
+                // watchdog, which would otherwise take precedence below. The
+                // virtual switch advertises every queue attribute, DLDR
+                // included, so without this the software handlers are
+                // unreachable there and the tests that set this variable cannot
+                // exercise them.
+                pfcDldrEnable = false;
                 SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
             }
         }
 
         // Complete hardware recovery needs deadlock detection and recovery in
         // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
-        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
-        if (gSwitchOrch->checkPfcDldrEnable())
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT, and a platform
+        // that reports DLDR may report DLR init too, so DLDR is checked first:
+        // starting a software handler there would duplicate the hardware.
+        if (pfcDldrEnable)
         {
-            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
         }
-
-        if(pfcDlrInit)
+        else if(pfcDlrInit)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
