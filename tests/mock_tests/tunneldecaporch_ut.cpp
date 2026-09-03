@@ -156,6 +156,11 @@ namespace tunneldecaporch_test
             delete gCrmOrch;
             gCrmOrch = nullptr;
         }
+
+        bool removeDecapTunnel(TunnelDecapOrch &orch, const string &table_name, const string &key)
+        {
+            return orch.removeDecapTunnel(table_name, key);
+        }
     };
 
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_Creation)
@@ -542,6 +547,18 @@ namespace tunneldecaporch_test
             const auto& config = tunnelDecapOrch->getSubnetDecapConfig();
             EXPECT_FALSE(config.enable);
         });
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_RemoveNonExistentTunnel)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        // removeDecapTunnel should return false for a tunnel not in tunnelTable
+        bool result = removeDecapTunnel(*tunnelDecapOrch, APP_TUNNEL_DECAP_TABLE_NAME, "nonexistent_tunnel");
+        EXPECT_FALSE(result);
     }
 
 } // namespace tunneldecaporch_test
