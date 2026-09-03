@@ -107,6 +107,7 @@ typedef struct {
     std::string cable_length;
     std::string mtu;
     std::string gearbox_model;
+    std::string oper_status = "down";
 
     bool auto_neg;
     std::string effective_speed;
