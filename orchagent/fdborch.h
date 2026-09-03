@@ -114,6 +114,8 @@ typedef unordered_map<string, vector<SavedFdbEntry>> saved_fdb_entries_by_port_t
  */
 typedef unordered_map<string, vector<FdbEntry>> fdb_entries_by_port_t;
 
+#define ASIC_FDB_EVENT_STATE_TABLE "FDB_EVENT_STATE"
+
 class FdbOrch: public Orch, public Subject, public Observer
 {
     /* Embedded MacMoveGuard registers its config-table Consumer and recovery
