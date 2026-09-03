@@ -72,6 +72,8 @@ typedef std::map<std::string, Nexthop> TunnelNhs;
 /* unhandled decap term table */
 typedef std::map<std::string, std::map<swss::IpPrefix, TunnelTermEntry>> UnhandledDecapTermTable;
 
+namespace tunneldecaporch_test { class TunnelDecapOrchTest; }
+
 class TunnelDecapOrch : public Orch
 {
 public:
@@ -91,6 +93,8 @@ public:
     }
 
 private:
+    friend class tunneldecaporch_test::TunnelDecapOrchTest;
+
     TunnelTable tunnelTable;
     TunnelNhs   tunnelNhs;
     UnhandledDecapTermTable unhandledDecapTerms;
@@ -154,15 +158,18 @@ private:
     void RemoveTunnelIfNotReferenced(const std::string &tunnel_name);
     int getTunnelRefCount(const std::string &tunnel_name)
     {
-        return tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        return it == tunnelTable.end() ? 0 : it->second.ref_count;
     }
     void increaseTunnelRefCount(const std::string &tunnel_name)
     {
-        ++tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        if (it != tunnelTable.end()) ++it->second.ref_count;
     }
     void decreaseTunnelRefCount(const std::string &tunnel_name)
     {
-        --tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        if (it != tunnelTable.end()) --it->second.ref_count;
     }
 };
 #endif
