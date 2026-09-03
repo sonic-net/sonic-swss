@@ -104,7 +104,6 @@ public:
     void clearBulkers() { gRouteBulker.clear(); };
 
 protected:
-    bool areNeighborsReady() const;
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
     bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
     bool setBulkRouteNH(std::list<MuxRouteBulkContext>& bulk_ctx_list);
