@@ -2050,6 +2050,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
         ctx->mac = neighborIt->second.mac;
@@ -2104,6 +2105,7 @@ bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
         ctx->mac = neighborIt->second.mac;
