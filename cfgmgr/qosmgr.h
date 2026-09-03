@@ -120,6 +120,10 @@ private:
     Table m_stateQueueTable;
     Table m_statePortQosMapTable;
 
+    /* CONFIG_DB PORT table, for enumerating ports when applying the global
+     * DSCP/DOT1P classification to every port's ingress. */
+    Table m_cfgPortTable;
+
     /* In-memory map definitions: name -> {field -> value} */
     std::map<std::string, std::map<std::string, std::string>> m_dscpToTcMap;
     std::map<std::string, std::map<std::string, std::string>> m_dot1pToTcMap;
@@ -158,6 +162,7 @@ private:
 
     /* Kernel programming */
     bool interfaceExists(const std::string &iface);
+    void getAllPorts(std::vector<std::string> &ports);
     bool applyMapsToPort(const std::string &iface,
                          const std::map<std::string, std::string> &maps,
                          std::string &reason);

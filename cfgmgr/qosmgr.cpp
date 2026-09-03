@@ -78,7 +78,8 @@ QosMgr::QosMgr(DBConnector *cfgDb, DBConnector *stateDb,
     m_stateSchedulerTable(stateDb, STATE_SCHEDULER_TABLE_NAME),
     m_stateWredTable(stateDb, STATE_WRED_PROFILE_TABLE_NAME),
     m_stateQueueTable(stateDb, STATE_QUEUE_TABLE_NAME),
-    m_statePortQosMapTable(stateDb, STATE_PORT_QOS_MAP_TABLE_NAME)
+    m_statePortQosMapTable(stateDb, STATE_PORT_QOS_MAP_TABLE_NAME),
+    m_cfgPortTable(cfgDb, "PORT")
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("QosMgr initialized, subscribed to %zu CONFIG_DB tables", tableNames.size());
@@ -564,6 +565,14 @@ bool QosMgr::interfaceExists(const string &iface)
     return swss::exec(cmd, res) == 0;
 }
 
+void QosMgr::getAllPorts(vector<string> &ports)
+{
+    vector<string> keys;
+    m_cfgPortTable.getKeys(keys);
+    for (const auto &key : keys)
+        ports.push_back(key);
+}
+
 bool QosMgr::applyMapsToPort(const string &iface,
                              const map<string, string> &maps, string &reason)
 {
@@ -574,30 +583,52 @@ bool QosMgr::applyMapsToPort(const string &iface,
     if (maps.count(QOS_FIELD_DSCP_TO_TC))
     {
         const auto &m = m_dscpToTcMap[maps.at(QOS_FIELD_DSCP_TO_TC)];
-        uint32_t prio = 100;
-        for (const auto &kv : m)
+        /* DSCP_TO_TC_MAP is GLOBAL in SONiC — apply the classifier to every
+         * port's ingress, not just the PORT_QOS_MAP port. */
+        vector<string> ports;
+        getAllPorts(ports);
+        if (ports.empty())
+            ports.push_back(iface);
+        for (const auto &port : ports)
         {
-            ostringstream cmd;
-            cmd << TC_CMD << " filter add dev " << iface << " ingress prio " << prio++
-                << " flower match ip dscp " << kv.first
-                << " action skbedit priority " << kv.second;
-            SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-            swss::exec(cmd.str(), res);
+            string piface = kernutil::resolveInterface(port);
+            if (!interfaceExists(piface))
+                continue;
+            uint32_t prio = 100;
+            for (const auto &kv : m)
+            {
+                ostringstream cmd;
+                cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
+                    << " flower match ip dscp " << kv.first
+                    << " action skbedit priority " << kv.second;
+                SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
+                swss::exec(cmd.str(), res);
+            }
         }
     }
 
     if (maps.count(QOS_FIELD_DOT1P_TO_TC))
     {
         const auto &m = m_dot1pToTcMap[maps.at(QOS_FIELD_DOT1P_TO_TC)];
-        uint32_t prio = 200;
-        for (const auto &kv : m)
+        vector<string> ports;
+        getAllPorts(ports);
+        if (ports.empty())
+            ports.push_back(iface);
+        for (const auto &port : ports)
         {
-            ostringstream cmd;
-            cmd << TC_CMD << " filter add dev " << iface << " ingress prio " << prio++
-                << " flower match vlan prio " << kv.first
-                << " action skbedit priority " << kv.second;
-            SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-            swss::exec(cmd.str(), res);
+            string piface = kernutil::resolveInterface(port);
+            if (!interfaceExists(piface))
+                continue;
+            uint32_t prio = 200;
+            for (const auto &kv : m)
+            {
+                ostringstream cmd;
+                cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
+                    << " flower match vlan prio " << kv.first
+                    << " action skbedit priority " << kv.second;
+                SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
+                swss::exec(cmd.str(), res);
+            }
         }
     }
 
