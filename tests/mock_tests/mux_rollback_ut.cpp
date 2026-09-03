@@ -72,6 +72,18 @@ namespace mux_rollback_test
             return gNeighOrch->isPrefixNeighborNh(nhKey);
         }
 
+        void RemoveNeighOrchStateKeepMuxEntry()
+        {
+            IpAddress neighborIp(SERVER_IP1);
+            NeighborEntry neighborEntry(neighborIp, VLAN_1000);
+            NextHopKey nextHop(neighborIp, VLAN_1000);
+
+            ASSERT_EQ(gNeighOrch->m_syncdNeighbors.erase(neighborEntry), 1u);
+            gNeighOrch->m_syncdNextHops.erase(nextHop);
+            ASSERT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(neighborIp), 1u);
+            ASSERT_FALSE(gNeighOrch->hasNextHop(nextHop));
+        }
+
         void ApplyInitialConfigs()
         {
             Table peer_switch_table = Table(m_config_db.get(), CFG_PEER_SWITCH_TABLE_NAME);
@@ -224,6 +236,27 @@ namespace mux_rollback_test
                 .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
         }
         SetAndAssertMuxState(STANDBY_STATE);
+    }
+
+    TEST_F(MuxRollbackTest, StandbyToActiveMissingNeighborPropagatesFailure)
+    {
+        RemoveNeighOrchStateKeepMuxEntry();
+
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
+    }
+
+    TEST_F(MuxRollbackTest, ActiveToStandbyMissingNeighborPropagatesFailure)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+        RemoveNeighOrchStateKeepMuxEntry();
+
+        SetMuxStateFromAppDb(STANDBY_STATE);
+
+        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRouteNotFound)

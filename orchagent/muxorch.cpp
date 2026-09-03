@@ -885,8 +885,31 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     }
 }
 
+bool MuxNbrHandler::areNeighborsReady() const
+{
+    const auto& neighborTable = gNeighOrch->getNeighborTable();
+
+    for (const auto& neighbor : neighbors_)
+    {
+        NeighborEntry neighborEntry(neighbor.first, alias_);
+        if (neighborTable.find(neighborEntry) == neighborTable.end())
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s is not available in NeighOrch",
+                          neighbor.first.to_string().c_str(), alias_.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool MuxNbrHandler::enable(bool update_rt)
 {
+    if (!areNeighborsReady())
+    {
+        return false;
+    }
+
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
     std::list<MuxRouteBulkContext> route_ctx_list;
@@ -966,6 +989,11 @@ bool MuxNbrHandler::enable(bool update_rt)
 
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
+    if (!areNeighborsReady())
+    {
+        return false;
+    }
+
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
     std::list<MuxRouteBulkContext> route_ctx_list;

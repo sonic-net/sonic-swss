@@ -214,7 +214,7 @@ namespace neighorch_test
         contexts.emplace_back(VLAN1000_NEIGH, true);
 
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
-        EXPECT_TRUE(gNeighOrch->enableNeighbors(contexts));
+        EXPECT_FALSE(gNeighOrch->enableNeighbors(contexts));
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
     }
 
@@ -224,7 +224,7 @@ namespace neighorch_test
         contexts.emplace_back(VLAN1000_NEIGH, true);
 
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
-        EXPECT_TRUE(gNeighOrch->disableNeighbors(contexts));
+        EXPECT_FALSE(gNeighOrch->disableNeighbors(contexts));
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0u);
     }
 
