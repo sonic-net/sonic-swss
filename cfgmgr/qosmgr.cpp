@@ -367,6 +367,27 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
                         applyMapsToPort(iface, maps, reason);
                     }
                 }
+
+                /* SCHEDULER -> QUEUE dependency: re-apply the queue-level
+                 * scheduler for every queue referencing this scheduler. */
+                for (const auto &entry : m_queueMap)
+                {
+                    const string &key = entry.first;
+                    const map<string, string> &cfg = entry.second;
+                    if (!cfg.count(QOS_FIELD_SCHEDULER) ||
+                        cfg.at(QOS_FIELD_SCHEDULER) != name)
+                        continue;
+
+                    size_t sep = key.find('|');
+                    if (sep == string::npos)
+                        continue;
+                    string port = key.substr(0, sep);
+                    string queue = key.substr(sep + 1);
+                    string wred = cfg.count(QOS_FIELD_WRED_PROFILE) ?
+                                  cfg.at(QOS_FIELD_WRED_PROFILE) : "";
+                    string iface = kernutil::resolveInterface(port);
+                    applyQueueToPort(iface, queue, name, wred, reason);
+                }
             }
 
             writeMapStatus(m_stateSchedulerTable, name, ok ? "active" : "inactive");
@@ -375,6 +396,23 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             m_schedulerMap.erase(name);
+
+            /* SCHEDULER -> PORT: remove the port-level shaper on referencing
+             * ports so a deleted scheduler doesn't leave a stale shaper. */
+            for (const auto &entry : m_portQosMap)
+            {
+                const string &port = entry.first;
+                const map<string, string> &maps = entry.second;
+                if (maps.count(QOS_FIELD_SCHEDULER) &&
+                    maps.at(QOS_FIELD_SCHEDULER) == name)
+                {
+                    string iface = kernutil::resolveInterface(port);
+                    string res;
+                    string cmd = string(TC_CMD) + " qdisc del dev " + iface + " root";
+                    swss::exec(cmd, res);
+                }
+            }
+
             m_stateSchedulerTable.del(name);
             it = consumer.m_toSync.erase(it);
         }
@@ -867,6 +905,27 @@ void QosMgr::doQueueTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            /* Remove the child qdisc for this queue (parent class 1:(queue+1)). */
+            string port, queue;
+            size_t sep = key.find('|');
+            if (sep != string::npos)
+            {
+                port = key.substr(0, sep);
+                queue = key.substr(sep + 1);
+
+                long long qnum = 0;
+                parseInt(queue, qnum);
+                if (qnum < 0)
+                    qnum = 0;
+
+                string iface = kernutil::resolveInterface(port);
+                string res;
+                ostringstream cmd;
+                cmd << TC_CMD << " qdisc del dev " << iface
+                    << " parent 1:" << (qnum + 1);
+                swss::exec(cmd.str(), res);
+            }
+
             m_queueMap.erase(key);
             m_stateQueueTable.del(key);
             it = consumer.m_toSync.erase(it);
