@@ -885,31 +885,8 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     }
 }
 
-bool MuxNbrHandler::areNeighborsReady() const
-{
-    const auto& neighborTable = gNeighOrch->getNeighborTable();
-
-    for (const auto& neighbor : neighbors_)
-    {
-        NeighborEntry neighborEntry(neighbor.first, alias_);
-        if (neighborTable.find(neighborEntry) == neighborTable.end())
-        {
-            SWSS_LOG_INFO("Neighbor %s on %s is not available in NeighOrch",
-                          neighbor.first.to_string().c_str(), alias_.c_str());
-            return false;
-        }
-    }
-
-    return true;
-}
-
 bool MuxNbrHandler::enable(bool update_rt)
 {
-    if (!areNeighborsReady())
-    {
-        return false;
-    }
-
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
     std::list<MuxRouteBulkContext> route_ctx_list;
@@ -925,20 +902,26 @@ bool MuxNbrHandler::enable(bool update_rt)
         it++;
     }
 
-    if (!gNeighOrch->enableNeighbors(neigh_ctx_list))
-    {
-        return false;
-    }
+    bool ret = gNeighOrch->enableNeighbors(neigh_ctx_list);
 
     it = neighbors_.begin();
     while (it != neighbors_.end())
     {
         /* Update NH to point to learned neighbor */
         neigh = NeighborEntry(it->first, alias_);
+        NextHopKey nh_key = NextHopKey(it->first, alias_);
+        if (!gNeighOrch->isHwConfigured(neigh) || !gNeighOrch->hasNextHop(nh_key))
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s was not enabled",
+                          it->first.to_string().c_str(), alias_.c_str());
+            ret = false;
+            it++;
+            continue;
+        }
+
         it->second = gNeighOrch->getLocalNextHopId(neigh);
 
         /* Reprogram route */
-        NextHopKey nh_key = NextHopKey(it->first, alias_);
         uint32_t num_routes = 0;
         if (!gRouteOrch->updateNextHopRoutes(nh_key, num_routes))
         {
@@ -984,30 +967,36 @@ bool MuxNbrHandler::enable(bool update_rt)
         return false;
     }
 
-    return true;
+    return ret;
 }
 
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
-    if (!areNeighborsReady())
-    {
-        return false;
-    }
-
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
     std::list<MuxRouteBulkContext> route_ctx_list;
+    bool ret = true;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
     {
         SWSS_LOG_INFO("Disabling neigh %s on %s", it->first.to_string().c_str(), alias_.c_str());
 
+        neigh = NeighborEntry(it->first, alias_);
+        NextHopKey nh_key = NextHopKey(it->first, alias_);
+        if (!gNeighOrch->isHwConfigured(neigh) || !gNeighOrch->hasNextHop(nh_key))
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s is not available for disable",
+                          it->first.to_string().c_str(), alias_.c_str());
+            ret = false;
+            it++;
+            continue;
+        }
+
         /* Update NH to point to Tunnel nexhtop */
         it->second = tnh;
 
         /* Reprogram route */
-        NextHopKey nh_key = NextHopKey(it->first, alias_);
         uint32_t num_routes = 0;
         if (!gRouteOrch->updateNextHopRoutes(nh_key, num_routes))
         {
@@ -1040,7 +1029,6 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
         IpPrefix pfx = it->first.to_string();
         route_ctx_list.push_back(MuxRouteBulkContext(pfx, it->second));
 
-        neigh = NeighborEntry(it->first, alias_);
         // Create neighbor context with bulk_op enabled
         neigh_ctx_list.push_back(NeighborContext(neigh, true));
 
@@ -1054,10 +1042,10 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
 
     if (!gNeighOrch->disableNeighbors(neigh_ctx_list))
     {
-        return false;
+        ret = false;
     }
 
-    return true;
+    return ret;
 }
 
 sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)

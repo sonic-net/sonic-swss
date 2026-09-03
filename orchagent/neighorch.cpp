@@ -2066,6 +2066,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!addNeighbor(*ctx))
         {
             SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
     }
@@ -2115,6 +2116,7 @@ bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!removeNeighbor(*ctx, true))
         {
             SWSS_LOG_ERROR("Neighbor %s remove entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
         }
     }
 
