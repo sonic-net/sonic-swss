@@ -573,6 +573,16 @@ void QosMgr::getAllPorts(vector<string> &ports)
         ports.push_back(key);
 }
 
+void QosMgr::ensureClsact(const string &iface)
+{
+    /* Attach the clsact qdisc (ingress + egress hooks). Idempotent; tc returns
+     * EEXIST if already present, which we ignore. */
+    ostringstream cmd;
+    cmd << TC_CMD << " qdisc add dev " << iface << " clsact";
+    string ignored;
+    swss::exec(cmd.str(), ignored);
+}
+
 bool QosMgr::applyMapsToPort(const string &iface,
                              const map<string, string> &maps, string &reason)
 {
@@ -594,12 +604,16 @@ bool QosMgr::applyMapsToPort(const string &iface,
             string piface = kernutil::resolveInterface(port);
             if (!interfaceExists(piface))
                 continue;
+            ensureClsact(piface);
             uint32_t prio = 100;
             for (const auto &kv : m)
             {
+                string tos = kernutil::dscpToTos(kv.first);
+                if (tos.empty())
+                    continue;
                 ostringstream cmd;
                 cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
-                    << " flower match ip dscp " << kv.first
+                    << " flower ip_tos " << tos
                     << " action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
                 swss::exec(cmd.str(), res);
@@ -619,12 +633,13 @@ bool QosMgr::applyMapsToPort(const string &iface,
             string piface = kernutil::resolveInterface(port);
             if (!interfaceExists(piface))
                 continue;
+            ensureClsact(piface);
             uint32_t prio = 200;
             for (const auto &kv : m)
             {
                 ostringstream cmd;
                 cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
-                    << " flower match vlan prio " << kv.first
+                    << " flower vlan_prio " << kv.first
                     << " action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
                 swss::exec(cmd.str(), res);
