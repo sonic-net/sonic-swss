@@ -385,6 +385,11 @@ void MockOrchTest::TearDown()
     for (std::vector<Orch **>::reverse_iterator rit = ut_orch_list.rbegin(); rit != ut_orch_list.rend(); ++rit)
     {
         Orch **orch = *rit;
+        (*orch)->detachObservers();
+    }
+    for (std::vector<Orch **>::reverse_iterator rit = ut_orch_list.rbegin(); rit != ut_orch_list.rend(); ++rit)
+    {
+        Orch **orch = *rit;
         delete *orch;
         if (global_orch_list.find(orch) != global_orch_list.end())
         {

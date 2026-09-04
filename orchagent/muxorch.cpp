@@ -36,6 +36,7 @@ extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
 extern QosOrch *gQosOrch;
+extern MuxOrch *gMuxOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -1509,6 +1510,13 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    if (gAclOrch == nullptr)
+    {
+        SWSS_LOG_NOTICE("AclOrch already destroyed, skipping ACL cleanup for port %s", alias_.c_str());
+        return;
+    }
+
     string table_name = is_ingress_acl_ ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
@@ -2502,6 +2510,25 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
 
     std::unique_ptr<DBConnector> state_db = std::make_unique<DBConnector>("STATE_DB", 0);
     state_mux_cable_table_ = std::make_unique<Table>(state_db.get(), STATE_MUX_CABLE_TABLE_NAME);
+}
+
+MuxOrch::~MuxOrch()
+{
+    gMuxOrch = nullptr;
+}
+
+void MuxOrch::detachObservers()
+{
+    if (neigh_orch_)
+    {
+        neigh_orch_->detach(this);
+        neigh_orch_ = nullptr;
+    }
+    if (fdb_orch_)
+    {
+        fdb_orch_->detach(this);
+        fdb_orch_ = nullptr;
+    }
 }
 
 bool MuxOrch::handleMuxCfg(const Request& request)

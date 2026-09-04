@@ -73,6 +73,7 @@ class NeighOrch : public Orch, public Subject, public Observer
 public:
     NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
     ~NeighOrch();
+    void detachObservers() override;
 
     bool hasNextHop(const NextHopKey&);
     bool isNeighborResolved(const NextHopKey&);
