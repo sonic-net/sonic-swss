@@ -28,7 +28,7 @@ const SET_HEADER_LEN: usize = 4;
 const TEMPLATE_SET_ID: u16 = 2;
 const MIN_DATA_SET_ID: u16 = 256;
 const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
-const HFT_FIELD_LEN: u16 = 8;
+const OBSERVATION_TIME_LEN: u16 = 8;
 const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 16;
 const MAX_UNKNOWN_SETS: usize = 256;
 const MAX_UNKNOWN_SET_BYTES: usize = 4 * 1024 * 1024;
@@ -58,6 +58,7 @@ struct TemplateKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CompiledCounter {
     offset: usize,
+    len: u8,
     object_name: Arc<str>,
     type_id: u32,
     stat_id: u32,
@@ -70,6 +71,7 @@ struct CompiledTemplate {
     observation_time_offset: usize,
     counters: Arc<[CompiledCounter]>,
     record_len: usize,
+    all_counters_u64: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1332,17 +1334,31 @@ impl IpfixActor {
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
             let time_offset = template.observation_time_offset;
             let observation_time = NetworkEndian::read_u64(&record[time_offset..time_offset + 8]);
-            batch.push_record(
-                observation_time,
-                template.counters.iter().map(|counter| SAIStat {
-                    object_name: Arc::clone(&counter.object_name),
-                    type_id: counter.type_id,
-                    stat_id: counter.stat_id,
-                    counter: NetworkEndian::read_u64(
-                        &record[counter.offset..counter.offset + HFT_FIELD_LEN as usize],
-                    ),
-                }),
-            );
+            if template.all_counters_u64 {
+                batch.push_record(
+                    observation_time,
+                    template.counters.iter().map(|counter| SAIStat {
+                        object_name: Arc::clone(&counter.object_name),
+                        type_id: counter.type_id,
+                        stat_id: counter.stat_id,
+                        counter: NetworkEndian::read_u64(
+                            &record[counter.offset..counter.offset + 8],
+                        ),
+                    }),
+                );
+            } else {
+                batch.push_record(
+                    observation_time,
+                    template.counters.iter().map(|counter| SAIStat {
+                        object_name: Arc::clone(&counter.object_name),
+                        type_id: counter.type_id,
+                        stat_id: counter.stat_id,
+                        counter: read_be_u64(
+                            &record[counter.offset..counter.offset + counter.len as usize],
+                        ),
+                    }),
+                );
+            }
         }
     }
 
@@ -1833,6 +1849,17 @@ fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<DataSetL
     })
 }
 
+fn read_be_u64(bytes: &[u8]) -> u64 {
+    match bytes.len() {
+        1 => u64::from(bytes[0]),
+        3 => u64::from(NetworkEndian::read_u24(bytes)),
+        4 => u64::from(NetworkEndian::read_u32(bytes)),
+        6 => NetworkEndian::read_u48(bytes),
+        8 => NetworkEndian::read_u64(bytes),
+        _ => unreachable!("counter width validated during template compilation"),
+    }
+}
+
 fn compile_template_set(
     set: &[u8],
     domain: u32,
@@ -1867,23 +1894,23 @@ fn compile_template_set(
         let mut observation_time_offset = None;
         let mut observation_fields = 0usize;
         let mut field_keys = HashSet::with_capacity(field_count);
-        for field_index in 0..field_count {
+        let mut record_len = 0usize;
+        for _ in 0..field_count {
             if set.len() - offset < 4 {
                 return Err(format!("template {template_id} has a truncated field").into());
             }
             let raw_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
             let field_len = NetworkEndian::read_u16(&set[offset + 2..offset + 4]);
             offset += 4;
-            if field_len != HFT_FIELD_LEN {
-                return Err(format!(
-                    "template {template_id} field {} has length {field_len}; HFT requires 8",
-                    raw_id & 0x7fff
-                )
-                .into());
-            }
             let enterprise = raw_id & 0x8000 != 0;
             let field_id = raw_id & 0x7fff;
             if enterprise {
+                if !matches!(field_len, 1 | 3 | 4 | 6 | 8) {
+                    return Err(format!(
+                        "template {template_id} counter field {field_id} has unsupported length {field_len}; expected 1, 3, 4, 6, or 8 bytes"
+                    )
+                    .into());
+                }
                 if set.len() - offset < 4 {
                     return Err(format!(
                         "template {template_id} has a truncated enterprise number"
@@ -1909,19 +1936,26 @@ fn compile_template_set(
                     .into());
                 }
                 counters.push(CompiledCounter {
-                    offset: field_index * HFT_FIELD_LEN as usize,
+                    offset: record_len,
+                    len: u8::try_from(field_len).expect("counter length is at most 8"),
                     object_name: Arc::clone(object_name),
                     type_id,
                     stat_id,
                 });
             } else if field_id == OBSERVATION_TIME_NANOSECONDS {
+                if field_len != OBSERVATION_TIME_LEN {
+                    return Err(format!(
+                        "template {template_id} observation time has length {field_len}; expected {OBSERVATION_TIME_LEN}"
+                    )
+                    .into());
+                }
                 if !field_keys.insert((field_id, None)) {
                     return Err(format!(
                         "template {template_id} contains duplicate observation time fields"
                     )
                     .into());
                 }
-                observation_time_offset = Some(field_index * HFT_FIELD_LEN as usize);
+                observation_time_offset = Some(record_len);
                 observation_fields += 1;
             } else {
                 return Err(format!(
@@ -1929,6 +1963,9 @@ fn compile_template_set(
                 )
                 .into());
             }
+            record_len = record_len
+                .checked_add(usize::from(field_len))
+                .ok_or("template record length overflow")?;
         }
         if observation_fields != 1 || counters.is_empty() {
             return Err(format!(
@@ -1941,12 +1978,14 @@ fn compile_template_set(
             observation_domain_id: domain,
             template_id,
         };
+        let all_counters_u64 = counters.iter().all(|counter| counter.len == 8);
         let template = Arc::new(CompiledTemplate {
             key,
             owner: Arc::clone(owner),
             observation_time_offset: observation_time_offset.expect("validated above"),
             counters: counters.into(),
-            record_len: field_count * HFT_FIELD_LEN as usize,
+            record_len,
+            all_counters_u64,
         });
         if output.insert(key, template).is_some() {
             return Err(
@@ -1988,10 +2027,10 @@ mod tests {
         message.extend_from_slice(&template_id.to_be_bytes());
         message.extend_from_slice(&((fields.len() + 1) as u16).to_be_bytes());
         message.extend_from_slice(&OBSERVATION_TIME_NANOSECONDS.to_be_bytes());
-        message.extend_from_slice(&HFT_FIELD_LEN.to_be_bytes());
+        message.extend_from_slice(&OBSERVATION_TIME_LEN.to_be_bytes());
         for (label, enterprise) in fields {
             message.extend_from_slice(&(0x8000 | label).to_be_bytes());
-            message.extend_from_slice(&HFT_FIELD_LEN.to_be_bytes());
+            message.extend_from_slice(&8u16.to_be_bytes());
             message.extend_from_slice(&enterprise.to_be_bytes());
         }
         IPFixTemplatesMessage::new(
@@ -2084,6 +2123,86 @@ mod tests {
             (0x1234, 0x0567)
         );
         assert_eq!(record.stats[1].object_name.as_ref(), "Ethernet1");
+    }
+
+    #[test]
+    fn decodes_template_defined_counter_widths() {
+        let mut message = template_message(
+            "mixed-width",
+            42,
+            300,
+            &[
+                (1, 0x0001_0001),
+                (2, 0x0001_0002),
+                (3, 0x0001_0003),
+                (4, 0x0001_0004),
+                (5, 0x0001_0005),
+            ],
+        );
+        let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
+        for (index, len) in [1u16, 3, 4, 6, 8].into_iter().enumerate() {
+            let field_offset = 28 + index * 8;
+            bytes[field_offset + 2..field_offset + 4].copy_from_slice(&len.to_be_bytes());
+        }
+
+        let mut actor = actor();
+        actor.handle_template(message).unwrap();
+        let mut data = Vec::new();
+        let record = [
+            0, 0, 0, 0, 0, 0, 0, 7,      // observation time
+            0xabu8, // 8-bit
+            0x01, 0x23, 0x45, // 24-bit
+            0x89, 0xab, 0xcd, 0xef, // 32-bit
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, // 48-bit
+            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, // 64-bit
+        ];
+        let message_len = IPFIX_HEADER_LEN + SET_HEADER_LEN + record.len();
+        data.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        data.extend_from_slice(&(message_len as u16).to_be_bytes());
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&42u32.to_be_bytes());
+        data.extend_from_slice(&300u16.to_be_bytes());
+        data.extend_from_slice(&((SET_HEADER_LEN + record.len()) as u16).to_be_bytes());
+        data.extend_from_slice(&record);
+
+        let batch = actor.handle_record(&data).unwrap();
+        let decoded = batch.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 7);
+        assert_eq!(
+            decoded
+                .stats
+                .iter()
+                .map(|stat| stat.counter)
+                .collect::<Vec<_>>(),
+            vec![
+                0xab,
+                0x01_23_45,
+                0x89_ab_cd_ef,
+                0x01_23_45_67_89_ab,
+                0xfe_dc_ba_98_76_54_32_10,
+            ]
+        );
+    }
+
+    #[test]
+    fn mixed_width_offsets_follow_template_order() {
+        let mut message =
+            template_message("offsets", 7, 300, &[(1, 0x0001_0001), (2, 0x0001_0002)]);
+        let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
+        let original = bytes.clone();
+        bytes[24..32].copy_from_slice(&original[28..36]);
+        bytes[26..28].copy_from_slice(&3u16.to_be_bytes());
+        bytes[32..40].copy_from_slice(&original[36..44]);
+        bytes[34..36].copy_from_slice(&6u16.to_be_bytes());
+        bytes[40..44].copy_from_slice(&original[24..28]);
+
+        let generation = IpfixActor::compile_generation(&message).unwrap();
+        let template = generation.templates.values().next().unwrap();
+        assert_eq!(template.counters[0].offset, 0);
+        assert_eq!(template.counters[1].offset, 3);
+        assert_eq!(template.observation_time_offset, 9);
+        assert_eq!(template.record_len, 17);
     }
 
     #[test]
@@ -2693,6 +2812,7 @@ mod tests {
                     observation_time_offset: 0,
                     counters: Arc::from([]),
                     record_len: 8,
+                    all_counters_u64: true,
                 }),
             );
         }
@@ -3134,6 +3254,21 @@ mod tests {
         let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
         bytes[24..26].copy_from_slice(&322u16.to_be_bytes());
         message.object_ids = Some(vec![1]);
+        assert!(IpfixActor::compile_generation(&message).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_and_oversized_counter_widths() {
+        for len in [0u16, 2, 5, 7, 9] {
+            let mut message = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+            Arc::make_mut(message.templates.as_mut().unwrap())[30..32]
+                .copy_from_slice(&len.to_be_bytes());
+            assert!(IpfixActor::compile_generation(&message).is_err());
+        }
+
+        let mut message = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        Arc::make_mut(message.templates.as_mut().unwrap())[26..28]
+            .copy_from_slice(&4u16.to_be_bytes());
         assert!(IpfixActor::compile_generation(&message).is_err());
     }
 

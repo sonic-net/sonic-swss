@@ -468,3 +468,39 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .expect("actor task should join")
         .expect_err("actor should report closed input channels");
 }
+
+#[tokio::test]
+async fn template_defined_counter_widths_reach_sai_stats() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut saistats_receiver) = channel(1);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let template =
+        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&[1, 3, 4, 6, 8], 400);
+    let record = ipfix_test_helpers::generate_ipfix_records(&template);
+    template_sender
+        .send(template_message("mixed-width", template, 5))
+        .await
+        .unwrap();
+    let barrier = template_sender.reserve().await.unwrap();
+    buffer_sender.send(Arc::new(record)).await.unwrap();
+    let records = receive_records(&mut saistats_receiver, 1).await;
+    drop(barrier);
+
+    assert_eq!(records[0].1.len(), 5);
+    assert_eq!(
+        records[0]
+            .1
+            .iter()
+            .map(|(_, _, counter)| *counter)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5]
+    );
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+}

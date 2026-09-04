@@ -48,6 +48,25 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
 
     // If caller passes 0, use the maximum counters that fit in one IPFIX message.
     let counters_count = validated_counters_count(counters_count);
+    generate_ipfix_templates_with_counter_widths(&vec![8; counters_count], template_id)
+}
+
+pub fn generate_ipfix_templates_with_counter_widths(
+    counter_widths: &[u16],
+    template_id: u16,
+) -> Vec<u8> {
+    assert!(template_id >= 256, "template_id must be >= 256");
+    assert!(
+        !counter_widths.is_empty(),
+        "counter widths must not be empty"
+    );
+    assert!(
+        counter_widths
+            .iter()
+            .all(|width| matches!(width, 1 | 3 | 4 | 6 | 8)),
+        "counter widths must be 1, 3, 4, 6, or 8 bytes"
+    );
+    let counters_count = validated_counters_count(counter_widths.len());
 
     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
     let message_length = IPFIX_HEADER_LEN + set_length;
@@ -79,12 +98,12 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
     buf.extend_from_slice(&8u16.to_be_bytes());
 
     // Counter fields
-    for idx in 0..counters_count {
+    for (idx, width) in counter_widths.iter().copied().enumerate() {
         let counter_label =
             u16::try_from(idx + 1).expect("validated counter label fits in 15 bits");
         let element_id = 0x8000 | counter_label;
         buf.extend_from_slice(&element_id.to_be_bytes());
-        buf.extend_from_slice(&8u16.to_be_bytes());
+        buf.extend_from_slice(&width.to_be_bytes());
 
         let counter_label = u32::from(counter_label);
         let enterprise_number = (counter_label << 16) | counter_label;
@@ -144,6 +163,7 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
                 break;
             }
 
+            let mut fields = Vec::with_capacity(field_count);
             let mut fields_consumed = true;
             for _ in 0..field_count {
                 if cursor + 4 > set_end {
@@ -151,21 +171,27 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
                     break;
                 }
                 let field_id = NetworkEndian::read_u16(&message[cursor..cursor + 2]);
+                let field_len = NetworkEndian::read_u16(&message[cursor + 2..cursor + 4]);
                 cursor += 4;
-                if (field_id & 0x8000) != 0 {
+                let enterprise = (field_id & 0x8000) != 0;
+                if enterprise {
                     if cursor + 4 > set_end {
                         fields_consumed = false;
                         break;
                     }
                     cursor += 4;
                 }
+                fields.push((field_id & 0x7fff, field_len, enterprise));
             }
             if !fields_consumed {
                 break;
             }
 
-            let counters_count = field_count.saturating_sub(1);
-            let data_set_length = 4 + 8 + counters_count * 8;
+            let data_set_length = 4usize
+                + fields
+                    .iter()
+                    .map(|(_, field_len, _)| usize::from(*field_len))
+                    .sum::<usize>();
             let message_length = IPFIX_HEADER_LEN + data_set_length;
             if message_length > u16::MAX as usize {
                 continue;
@@ -182,12 +208,26 @@ pub fn generate_ipfix_records(ipfix_templates: &[u8]) -> Vec<u8> {
             data_message.extend_from_slice(&template_id.to_be_bytes());
             data_message.extend_from_slice(&(data_set_length as u16).to_be_bytes());
 
-            let observation_time = (sequence as u64) + 1;
-            data_message.extend_from_slice(&observation_time.to_be_bytes());
-
-            for idx in 0..counters_count {
-                let counter = observation_time + idx as u64;
-                data_message.extend_from_slice(&counter.to_be_bytes());
+            let observation_time = u64::from(sequence) + 1;
+            let mut counter_index = 0usize;
+            for (field_id, field_len, enterprise) in fields {
+                let value = if !enterprise && field_id == 325 {
+                    observation_time
+                } else {
+                    let value = observation_time + counter_index as u64;
+                    counter_index += 1;
+                    value
+                };
+                let bytes = value.to_be_bytes();
+                let field_len = usize::from(field_len);
+                if field_len > bytes.len() {
+                    fields_consumed = false;
+                    break;
+                }
+                data_message.extend_from_slice(&bytes[bytes.len() - field_len..]);
+            }
+            if !fields_consumed {
+                continue;
             }
 
             records.extend_from_slice(&data_message);
@@ -229,6 +269,22 @@ mod tests {
                 super::generate_ipfix_records(&message).is_empty(),
                 "declared length {declared_length}"
             );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "counter widths must not be empty")]
+    fn variable_width_template_requires_a_counter() {
+        let _ = super::generate_ipfix_templates_with_counter_widths(&[], 300);
+    }
+
+    #[test]
+    fn variable_width_template_rejects_unsupported_widths() {
+        for width in [0, 2, 5, 7, 9] {
+            assert!(std::panic::catch_unwind(|| {
+                super::generate_ipfix_templates_with_counter_widths(&[width], 300)
+            })
+            .is_err());
         }
     }
 }
