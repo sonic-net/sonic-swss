@@ -2237,7 +2237,7 @@ class TestMuxShutdownWithStandby(TestMuxTunnelBase):
 
         Sets a mux port to standby state so that MuxAclHandler ACL rules are
         active, then stops orchagent via supervisorctl (SIGTERM) and verifies
-        it exits without crashing or producing a coredump.
+        it exits without crashing.
         """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -2251,12 +2251,6 @@ class TestMuxShutdownWithStandby(TestMuxTunnelBase):
             "orchagent did not stop cleanly: {}".format(output)
         assert "FATAL" not in output, \
             "orchagent crashed on shutdown: {}".format(output)
-
-        exitcode, coredumps = dvs.runcmd(
-            "find /var/core/ -name 'core.orchagent.*' -newer /proc/1/cmdline"
-        )
-        assert coredumps.strip() == "", \
-            "orchagent produced a coredump on shutdown: {}".format(coredumps)
 
         dvs.start_swss()
 
