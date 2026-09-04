@@ -478,11 +478,13 @@ async fn template_defined_counter_widths_reach_sai_stats() {
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    let template =
-        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&[1, 3, 4, 6, 8], 400);
+    let template = ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+        400,
+    );
     let record = ipfix_test_helpers::generate_ipfix_records(&template);
     template_sender
-        .send(template_message("mixed-width", template, 5))
+        .send(template_message("mixed-width", template, 8))
         .await
         .unwrap();
     let barrier = template_sender.reserve().await.unwrap();
@@ -490,14 +492,14 @@ async fn template_defined_counter_widths_reach_sai_stats() {
     let records = receive_records(&mut saistats_receiver, 1).await;
     drop(barrier);
 
-    assert_eq!(records[0].1.len(), 5);
+    assert_eq!(records[0].1.len(), 8);
     assert_eq!(
         records[0]
             .1
             .iter()
             .map(|(_, _, counter)| *counter)
             .collect::<Vec<_>>(),
-        vec![1, 2, 3, 4, 5]
+        vec![1, 2, 3, 4, 5, 6, 7, 8]
     );
 
     drop(buffer_sender);

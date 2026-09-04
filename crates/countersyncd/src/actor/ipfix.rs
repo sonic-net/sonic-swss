@@ -71,7 +71,6 @@ struct CompiledTemplate {
     observation_time_offset: usize,
     counters: Arc<[CompiledCounter]>,
     record_len: usize,
-    all_counters_u64: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1334,31 +1333,17 @@ impl IpfixActor {
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
             let time_offset = template.observation_time_offset;
             let observation_time = NetworkEndian::read_u64(&record[time_offset..time_offset + 8]);
-            if template.all_counters_u64 {
-                batch.push_record(
-                    observation_time,
-                    template.counters.iter().map(|counter| SAIStat {
-                        object_name: Arc::clone(&counter.object_name),
-                        type_id: counter.type_id,
-                        stat_id: counter.stat_id,
-                        counter: NetworkEndian::read_u64(
-                            &record[counter.offset..counter.offset + 8],
-                        ),
-                    }),
-                );
-            } else {
-                batch.push_record(
-                    observation_time,
-                    template.counters.iter().map(|counter| SAIStat {
-                        object_name: Arc::clone(&counter.object_name),
-                        type_id: counter.type_id,
-                        stat_id: counter.stat_id,
-                        counter: read_be_u64(
-                            &record[counter.offset..counter.offset + counter.len as usize],
-                        ),
-                    }),
-                );
-            }
+            batch.push_record(
+                observation_time,
+                template.counters.iter().map(|counter| SAIStat {
+                    object_name: Arc::clone(&counter.object_name),
+                    type_id: counter.type_id,
+                    stat_id: counter.stat_id,
+                    counter: read_be_u64(
+                        &record[counter.offset..counter.offset + counter.len as usize],
+                    ),
+                }),
+            );
         }
     }
 
@@ -1850,14 +1835,10 @@ fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<DataSetL
 }
 
 fn read_be_u64(bytes: &[u8]) -> u64 {
-    match bytes.len() {
-        1 => u64::from(bytes[0]),
-        3 => u64::from(NetworkEndian::read_u24(bytes)),
-        4 => u64::from(NetworkEndian::read_u32(bytes)),
-        6 => NetworkEndian::read_u48(bytes),
-        8 => NetworkEndian::read_u64(bytes),
-        _ => unreachable!("counter width validated during template compilation"),
-    }
+    debug_assert!((1..=8).contains(&bytes.len()));
+    bytes
+        .iter()
+        .fold(0u64, |value, byte| (value << 8) | u64::from(*byte))
 }
 
 fn compile_template_set(
@@ -1905,9 +1886,9 @@ fn compile_template_set(
             let enterprise = raw_id & 0x8000 != 0;
             let field_id = raw_id & 0x7fff;
             if enterprise {
-                if !matches!(field_len, 1 | 3 | 4 | 6 | 8) {
+                if !(1..=8).contains(&field_len) {
                     return Err(format!(
-                        "template {template_id} counter field {field_id} has unsupported length {field_len}; expected 1, 3, 4, 6, or 8 bytes"
+                        "template {template_id} counter field {field_id} has unsupported length {field_len}; expected 1..=8 bytes"
                     )
                     .into());
                 }
@@ -1978,14 +1959,12 @@ fn compile_template_set(
             observation_domain_id: domain,
             template_id,
         };
-        let all_counters_u64 = counters.iter().all(|counter| counter.len == 8);
         let template = Arc::new(CompiledTemplate {
             key,
             owner: Arc::clone(owner),
             observation_time_offset: observation_time_offset.expect("validated above"),
             counters: counters.into(),
             record_len,
-            all_counters_u64,
         });
         if output.insert(key, template).is_some() {
             return Err(
@@ -2137,10 +2116,13 @@ mod tests {
                 (3, 0x0001_0003),
                 (4, 0x0001_0004),
                 (5, 0x0001_0005),
+                (6, 0x0001_0006),
+                (7, 0x0001_0007),
+                (8, 0x0001_0008),
             ],
         );
         let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
-        for (index, len) in [1u16, 3, 4, 6, 8].into_iter().enumerate() {
+        for (index, len) in (1u16..=8).enumerate() {
             let field_offset = 28 + index * 8;
             bytes[field_offset + 2..field_offset + 4].copy_from_slice(&len.to_be_bytes());
         }
@@ -2151,9 +2133,12 @@ mod tests {
         let record = [
             0, 0, 0, 0, 0, 0, 0, 7,      // observation time
             0xabu8, // 8-bit
+            0x01, 0x23, // 16-bit
             0x01, 0x23, 0x45, // 24-bit
             0x89, 0xab, 0xcd, 0xef, // 32-bit
+            0x01, 0x23, 0x45, 0x67, 0x89, // 40-bit
             0x01, 0x23, 0x45, 0x67, 0x89, 0xab, // 48-bit
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, // 56-bit
             0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, // 64-bit
         ];
         let message_len = IPFIX_HEADER_LEN + SET_HEADER_LEN + record.len();
@@ -2177,9 +2162,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 0xab,
+                0x01_23,
                 0x01_23_45,
                 0x89_ab_cd_ef,
+                0x01_23_45_67_89,
                 0x01_23_45_67_89_ab,
+                0x01_23_45_67_89_ab_cd,
                 0xfe_dc_ba_98_76_54_32_10,
             ]
         );
@@ -2812,7 +2800,6 @@ mod tests {
                     observation_time_offset: 0,
                     counters: Arc::from([]),
                     record_len: 8,
-                    all_counters_u64: true,
                 }),
             );
         }
@@ -3259,7 +3246,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_and_oversized_counter_widths() {
-        for len in [0u16, 2, 5, 7, 9] {
+        for len in [0u16, 9] {
             let mut message = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
             Arc::make_mut(message.templates.as_mut().unwrap())[30..32]
                 .copy_from_slice(&len.to_be_bytes());

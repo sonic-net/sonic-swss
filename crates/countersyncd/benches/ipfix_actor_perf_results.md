@@ -26,12 +26,31 @@ Criterion point estimates and 95% confidence intervals:
 
 | Dataset | Upstream | Candidate | Ratio | Upstream items | Candidate batches |
 |---|---:|---:|---:|---:|---:|
-| one template, 2 counters | 1.4892 M/s [1.4773, 1.5004] | 5.3266 M/s [5.3152, 5.3382] | 3.58x | 2,000,000 | 31,250 |
-| one template, 8,000 counters | 3.9295 M/s [3.8452, 4.0076] | 63.144 M/s [62.938, 63.352] | 16.07x | 500 | 500 |
-| five keys, one large template each | 3.9430 M/s [3.9296, 3.9557] | 61.346 M/s [61.170, 61.480] | 15.56x | 500 | 500 |
-| five keys, four large templates each | 3.6682 M/s [3.6508, 3.6860] | 59.551 M/s [58.899, 60.126] | 16.23x | 500 | 500 |
-| five keys, mixed templates | 3.7761 M/s [3.7564, 3.7961] | 28.851 M/s [28.672, 28.993] | 7.64x | 200,265 | 3,385 |
+| one template, 2 counters | 1.4703 M/s [1.4565, 1.4818] | 5.1588 M/s [5.1151, 5.2012] | 3.51x | 2,000,000 | 31,250 |
+| one template, 8,000 counters | 4.1600 M/s [4.0929, 4.2208] | 56.280 M/s [56.155, 56.414] | 13.53x | 500 | 500 |
+| five keys, one large template each | 4.0437 M/s [4.0225, 4.0618] | 54.695 M/s [54.552, 54.855] | 13.53x | 500 | 500 |
+| five keys, four large templates each | 3.7859 M/s [3.7244, 3.8343] | 53.918 M/s [53.806, 54.017] | 14.24x | 500 | 500 |
+| five keys, mixed templates | 3.7214 M/s [3.6574, 3.7809] | 27.627 M/s [27.531, 27.715] | 7.42x | 200,265 | 3,385 |
 
 Every sample produced the expected logical records and counters. These are
 end-to-end actor/API measurements. The output-count columns make the batching
 component explicit; they are not parser-only measurements.
+
+## Unified-width decoder cost
+
+The candidate uses one unsigned big-endian decoder for every template-defined
+counter width from one through eight bytes. Compared with the preceding
+candidate revision that special-cased 8-byte counters, the same five workloads
+measured the following throughput changes:
+
+| Dataset | 8-byte-specialized candidate | Unified 1-8-byte candidate | Change |
+|---|---:|---:|---:|
+| one template, 2 counters | 5.3266 M/s | 5.1588 M/s | -3.15% |
+| one template, 8,000 counters | 63.144 M/s | 56.280 M/s | -10.87% |
+| five keys, one large template each | 61.346 M/s | 54.695 M/s | -10.84% |
+| five keys, four large templates each | 59.551 M/s | 53.918 M/s | -9.46% |
+| five keys, mixed templates | 28.851 M/s | 27.627 M/s | -4.24% |
+
+This is the measured cost of keeping one implementation for all widths. The
+unified implementation remains 3.51x to 14.24x faster than upstream across the
+same end-to-end workloads.

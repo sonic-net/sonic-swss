@@ -61,10 +61,8 @@ pub fn generate_ipfix_templates_with_counter_widths(
         "counter widths must not be empty"
     );
     assert!(
-        counter_widths
-            .iter()
-            .all(|width| matches!(width, 1 | 3 | 4 | 6 | 8)),
-        "counter widths must be 1, 3, 4, 6, or 8 bytes"
+        counter_widths.iter().all(|width| (1..=8).contains(width)),
+        "counter widths must be in 1..=8 bytes"
     );
     let counters_count = validated_counters_count(counter_widths.len());
 
@@ -279,8 +277,8 @@ mod tests {
     }
 
     #[test]
-    fn variable_width_template_rejects_unsupported_widths() {
-        for width in [0, 2, 5, 7, 9] {
+    fn variable_width_template_rejects_out_of_range_widths() {
+        for width in [0, 9] {
             assert!(std::panic::catch_unwind(|| {
                 super::generate_ipfix_templates_with_counter_widths(&[width], 300)
             })
