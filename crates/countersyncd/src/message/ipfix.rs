@@ -7,6 +7,7 @@ pub enum IPFixTemplateOperation {
     Update,
     Deactivate,
     Delete,
+    Quarantine,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,16 @@ impl IPFixTemplatesMessage {
             object_names: None,
             object_ids: None,
             operation: IPFixTemplateOperation::Deactivate,
+        }
+    }
+
+    pub fn quarantine(key: String) -> Self {
+        Self {
+            key,
+            templates: None,
+            object_names: None,
+            object_ids: None,
+            operation: IPFixTemplateOperation::Quarantine,
         }
     }
 }

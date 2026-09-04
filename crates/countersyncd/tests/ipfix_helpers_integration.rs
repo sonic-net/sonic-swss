@@ -84,7 +84,7 @@ async fn send_template_barrier(
 }
 
 #[tokio::test]
-async fn deactivate_is_reversible_but_delete_retires_ids() {
+async fn deactivate_and_identical_delete_rejoin_are_supported() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
     let (template_sender, template_receiver) = channel(5);
     let (saistats_sender, mut saistats_receiver) = channel(10);
@@ -92,6 +92,8 @@ async fn deactivate_is_reversible_but_delete_retires_ids() {
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
+    // The SAI adapter is allowed to reuse the same wire ID after object
+    // recreation; an identical schema remains safe for delayed records.
     let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
     let record = Arc::new(ipfix_test_helpers::generate_ipfix_records(&template));
     template_sender
@@ -154,6 +156,28 @@ async fn deactivate_is_reversible_but_delete_retires_ids() {
             .await
             .is_err(),
         "late data for a deleted template ID must not be emitted"
+    );
+
+    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
+    template_sender
+        .send(template_message("session", template, 1))
+        .await
+        .unwrap();
+    send_template_barrier(
+        &template_sender,
+        &buffer_sender,
+        &mut saistats_receiver,
+        "rejoin_barrier",
+        304,
+    )
+    .await;
+    let rejoined = Arc::new(ipfix_test_helpers::generate_ipfix_records(
+        &ipfix_test_helpers::generate_ipfix_templates(1, 300),
+    ));
+    buffer_sender.send(rejoined).await.unwrap();
+    assert_eq!(
+        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
+        1
     );
 
     drop(buffer_sender);

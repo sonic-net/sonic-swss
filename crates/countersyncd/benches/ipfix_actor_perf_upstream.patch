@@ -1,0 +1,481 @@
+diff --git a/crates/countersyncd/benches/ipfix_actor_perf.rs b/crates/countersyncd/benches/ipfix_actor_perf.rs
+index ca8659a4..a586041d 100644
+--- a/crates/countersyncd/benches/ipfix_actor_perf.rs
++++ b/crates/countersyncd/benches/ipfix_actor_perf.rs
+@@ -1,5 +1,5 @@
+-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+ use criterion::SamplingMode;
++use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+ use std::sync::Arc;
+ use tokio::runtime::Builder;
+ use tokio::sync::mpsc;
+@@ -7,16 +7,13 @@ use tokio::time::{timeout, Duration, Instant};
+ 
+ use countersyncd::actor::ipfix::IpfixActor;
+ use countersyncd::message::{
+-    buffer::SocketBufferMessage,
+-    ipfix::IPFixTemplatesMessage,
+-    saistats::SAIStatsMessage,
++    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsMessage,
+ };
+-use log::warn;
+-
+ mod ipfix_bench_data;
+-use ipfix_bench_data::{datasets, randomize_record, rng_for_template, PreparedDataset};
++use ipfix_bench_data::{datasets, PreparedDataset, PAYLOAD_POOL_RECORDS};
+ 
+-const STATS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
++const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
++const ITERATION_TIMEOUT: Duration = Duration::from_secs(120);
+ 
+ fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
+     if elapsed.as_secs_f64() > 0.0 {
+@@ -26,16 +23,17 @@ fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
+     }
+ }
+ 
+-async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, usize, usize, usize) {
+-    let (template_tx, template_rx) =
+-        mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
++async fn run_prepared_dataset(
++    prepared: PreparedDataset,
++) -> (Duration, usize, usize, usize, usize, usize) {
++    let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(1);
+     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
+     let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsMessage>(1024);
+ 
+     let mut actor = IpfixActor::new(template_rx, buffer_rx);
+     actor.add_recipient(stats_tx);
+ 
+-    let actor_handle = tokio::spawn(async move {
++    let mut actor_handle = tokio::spawn(async move {
+         IpfixActor::run(actor).await;
+     });
+ 
+@@ -46,70 +44,113 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
+             .expect("template send should succeed");
+     }
+ 
+-    tokio::time::sleep(Duration::from_millis(50)).await;
++    let template_barrier = template_tx
++        .reserve()
++        .await
++        .expect("template barrier reserve should succeed");
++
++    buffer_tx
++        .send(Arc::clone(&prepared.readiness_record))
++        .await
++        .expect("readiness probe send should succeed");
++    let probe = timeout(READINESS_TIMEOUT, stats_rx.recv())
++        .await
++        .expect("readiness probe timed out")
++        .expect("stats channel closed before readiness probe");
++    assert_eq!(probe.stats.len(), 1);
++    drop(template_barrier);
+ 
+     let expected_messages = prepared.expected_messages;
+     let expected_counters = prepared.expected_counters;
+ 
+-    let start = Instant::now();
+-
+-    let sender_tasks: Vec<_> = prepared
++    let records: Vec<_> = prepared
+         .templates
+-        .iter()
+-        .cloned()
+-        .map(|tmpl| {
++        .into_iter()
++        .map(|template| (template.payload_pool, template.records))
++        .collect();
++
++    let sender_tasks: Vec<_> = records
++        .into_iter()
++        .map(|(payload_pool, record_count)| {
+             let tx = buffer_tx.clone();
+-            let base_record = tmpl.base_record.clone();
+-            let mut rng = rng_for_template(&tmpl.spec);
+             tokio::spawn(async move {
+-                for seq in 0..tmpl.records {
+-                    let msg = randomize_record(&base_record, seq as u64, &mut rng);
+-                    if tx.send(msg).await.is_err() {
++                for index in 0..record_count {
++                    let payload = &payload_pool[index % payload_pool.len()];
++                    if tx.send(Arc::clone(payload)).await.is_err() {
+                         break;
+                     }
+                 }
+             })
+         })
+         .collect();
++    drop(buffer_tx);
+ 
++    let mut received_items = 0usize;
+     let mut received_messages = 0usize;
+     let mut received_counters = 0usize;
+ 
+-    while received_messages < expected_messages {
+-        match timeout(STATS_RECV_TIMEOUT, stats_rx.recv()).await {
+-            Ok(Some(stats_msg)) => {
++    let mut sender_tasks = sender_tasks;
++    let completion = timeout(
++        ITERATION_TIMEOUT,
++        std::pin::pin!(async {
++            let start = Instant::now();
++            let mut measured_elapsed = None;
++            while let Some(stats_msg) = stats_rx.recv().await {
++                received_items += 1;
+                 received_messages += 1;
+                 received_counters += stats_msg.stats.len();
+-            }
+-            Ok(None) => {
+-                warn!(
+-                    "Stats channel closed early for dataset {} after {} messages",
+-                    prepared.spec.name, received_messages
++                assert!(
++                    received_messages <= expected_messages,
++                    "dataset {} produced more records than expected",
++                    prepared.spec.name
+                 );
+-                break;
+-            }
+-            Err(_) => {
+-                panic!(
+-                    "Stats recv timeout for dataset {} after {} messages (expected {})",
+-                    prepared.spec.name, received_messages, expected_messages
++                assert!(
++                    received_counters <= expected_counters,
++                    "dataset {} produced more counters than expected",
++                    prepared.spec.name
+                 );
++                if received_messages == expected_messages
++                    && received_counters == expected_counters
++                    && measured_elapsed.is_none()
++                {
++                    measured_elapsed = Some(start.elapsed());
++                }
+             }
+-        }
+-    }
+ 
+-    for task in sender_tasks {
+-        let _ = task.await;
+-    }
+-
+-    drop(buffer_tx);
++            for task in &mut sender_tasks {
++                task.await.expect("record sender should join");
++            }
++            (&mut actor_handle)
++                .await
++                .expect("IPFIX actor task should join");
+ 
+-    let elapsed = start.elapsed();
++            measured_elapsed.expect("stats channel closed before complete output")
++        }),
++    )
++    .await;
++    let elapsed = match completion {
++        Ok(elapsed) => elapsed,
++        Err(_) => {
++            for task in &sender_tasks {
++                task.abort();
++            }
++            actor_handle.abort();
++            panic!(
++                "Dataset {} timed out after {:?}: output items {}, records {}/{}, counters {}/{}",
++                prepared.spec.name,
++                ITERATION_TIMEOUT,
++                received_items,
++                received_messages,
++                expected_messages,
++                received_counters,
++                expected_counters
++            );
++        }
++    };
+ 
+     drop(template_tx);
+-    drop(stats_rx);
+-    let _ = actor_handle.await;
+ 
+-    if received_messages != expected_messages {
++    if received_messages != expected_messages || received_counters != expected_counters {
+         panic!(
+             "Dataset {} incomplete: msgs {}/{}, counters {}/{}",
+             prepared.spec.name,
+@@ -122,6 +163,7 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
+ 
+     (
+         elapsed,
++        received_items,
+         received_messages,
+         received_counters,
+         expected_messages,
+@@ -138,7 +180,7 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
+     for spec in datasets() {
+         let bench_id = BenchmarkId::from_parameter(spec.name);
+         group.throughput(Throughput::Elements(
+-            spec.total_counters_per_iteration() as u64,
++            spec.total_counters_per_iteration() as u64
+         ));
+         let bench_spec = Arc::new(spec.clone());
+         group.bench_function(bench_id, move |b| {
+@@ -147,41 +189,41 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
+                 .build()
+                 .expect("tokio current-thread runtime");
+             let spec = bench_spec.clone();
+-            b.to_async(&rt).iter_batched(
+-                {
+-                    let spec = Arc::clone(&spec);
+-                    move || PreparedDataset::new((*spec).clone())
+-                },
+-                {
+-                    let spec = Arc::clone(&spec);
+-                    move |prepared| {
+-                        let spec = Arc::clone(&spec);
+-                        async move {
++            let prepared = Arc::new(PreparedDataset::new((*spec).clone()));
++            b.to_async(&rt).iter_custom(move |iterations| {
++                let spec = Arc::clone(&spec);
++                let prepared = Arc::clone(&prepared);
++                async move {
++                    let mut measured = Duration::ZERO;
++                    for _ in 0..iterations {
+                     let (
+                         elapsed,
++                        received_items,
+                         received_messages,
+                         received_counters,
+                         expected_messages,
+                         expected_counters,
+-                    ) = run_prepared_dataset(prepared).await;
++                    ) = run_prepared_dataset((*prepared).clone()).await;
++                    measured += elapsed;
+ 
+                     let cps = counters_per_second(elapsed, received_counters);
+ 
+                     println!(
+-                        "Dataset {} -> elapsed {:?}, msgs {}/{}, counters {}/{}, cps {:.2}",
++                        "Dataset {} -> elapsed {:?}, output items {}, records {}/{}, counters {}/{}, cps {:.2}, up to {} pre-generated payloads/template, readiness probe 1 record/1 counter (excluded)",
+                         spec.name,
+                         elapsed,
++                        received_items,
+                         received_messages,
+                         expected_messages,
+                         received_counters,
+                         expected_counters,
+                         cps,
++                        PAYLOAD_POOL_RECORDS,
+                     );
+-                        }
+                     }
+-                },
+-                BatchSize::SmallInput,
+-            )
++                    measured
++                }
++            })
+         });
+     }
+ 
+diff --git a/crates/countersyncd/benches/ipfix_bench_data.rs b/crates/countersyncd/benches/ipfix_bench_data.rs
+index 34e0c104..126c5b1a 100644
+--- a/crates/countersyncd/benches/ipfix_bench_data.rs
++++ b/crates/countersyncd/benches/ipfix_bench_data.rs
+@@ -1,8 +1,7 @@
+-use std::collections::HashMap;
++use std::collections::BTreeMap;
+ use std::sync::Arc;
+ 
+ use byteorder::{ByteOrder, NetworkEndian};
+-use rand::{rngs::StdRng, RngCore, SeedableRng};
+ 
+ use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage};
+ 
+@@ -10,6 +9,8 @@ use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMe
+ mod ipfix_test_helpers;
+ 
+ const TARGET_TOTAL_COUNTERS: usize = 4_000_000;
++const READINESS_TEMPLATE_ID: u16 = u16::MAX;
++pub const PAYLOAD_POOL_RECORDS: usize = 16;
+ 
+ #[derive(Clone, Debug)]
+ pub struct TemplateSpec {
+@@ -25,13 +26,16 @@ pub struct DatasetSpec {
+ }
+ 
+ #[derive(Clone)]
++#[allow(dead_code)]
+ pub struct PreparedTemplate {
+     pub spec: TemplateSpec,
+     #[allow(dead_code)]
+     pub base_record: Arc<Vec<u8>>,
++    pub payload_pool: Arc<[SocketBufferMessage]>,
+     pub records: usize,
+ }
+ 
++#[derive(Clone)]
+ pub struct PreparedDataset {
+     #[allow(dead_code)]
+     pub spec: DatasetSpec,
+@@ -41,6 +45,7 @@ pub struct PreparedDataset {
+     #[allow(dead_code)]
+     pub expected_messages: usize,
+     pub expected_counters: usize,
++    pub readiness_record: SocketBufferMessage,
+ }
+ 
+ impl DatasetSpec {
+@@ -57,45 +62,92 @@ impl DatasetSpec {
+ impl PreparedDataset {
+     pub fn new(spec: DatasetSpec) -> Self {
+         let mut templates = Vec::with_capacity(spec.templates.len());
+-        let mut key_to_templates: HashMap<String, Vec<u8>> = HashMap::new();
++        let mut key_to_templates: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+ 
+         let (records_per_template, expected_messages, expected_counters) =
+             compute_distribution(&spec);
+ 
+         for (idx, tmpl) in spec.templates.iter().enumerate() {
+-            let tmpl_bytes = ipfix_test_helpers::generate_ipfix_templates(
+-                tmpl.counters,
+-                tmpl.template_id,
+-            );
++            let tmpl_bytes =
++                ipfix_test_helpers::generate_ipfix_templates(tmpl.counters, tmpl.template_id);
+             key_to_templates
+                 .entry(tmpl.key.clone())
+                 .or_default()
+                 .extend_from_slice(&tmpl_bytes);
+ 
+             let base_record = ipfix_test_helpers::generate_ipfix_records(&tmpl_bytes);
++            let payload_pool = prepare_payload_pool(&base_record, tmpl, records_per_template[idx]);
+ 
+             templates.push(PreparedTemplate {
+                 spec: tmpl.clone(),
+-                base_record: Arc::new(base_record),
++                base_record: Arc::clone(&payload_pool[0]),
++                payload_pool: payload_pool.into(),
+                 records: records_per_template[idx],
+             });
+         }
+ 
+-        let template_messages = key_to_templates
++        let mut template_messages: Vec<_> = key_to_templates
+             .into_iter()
+             .map(|(key, bytes)| IPFixTemplatesMessage::new(key, Arc::new(bytes), None, None))
+             .collect();
+ 
++        let readiness_template_id = (256..=READINESS_TEMPLATE_ID)
++            .rev()
++            .find(|candidate| {
++                spec.templates
++                    .iter()
++                    .all(|template| template.template_id != *candidate)
++            })
++            .expect("dataset must leave one template ID for the readiness probe");
++        let readiness_template_bytes =
++            ipfix_test_helpers::generate_ipfix_templates(1, readiness_template_id);
++        let readiness_record = Arc::new(ipfix_test_helpers::generate_ipfix_records(
++            &readiness_template_bytes,
++        ));
++        template_messages.push(IPFixTemplatesMessage::new(
++            "__benchmark_readiness_probe".to_string(),
++            Arc::new(readiness_template_bytes),
++            None,
++            None,
++        ));
++
+         Self {
+             spec,
+             templates,
+             template_messages,
+             expected_messages,
+             expected_counters,
++            readiness_record,
+         }
+     }
+ }
+ 
++fn prepare_payload_pool(
++    base_record: &[u8],
++    template: &TemplateSpec,
++    records: usize,
++) -> Vec<SocketBufferMessage> {
++    let pool_len = records.clamp(1, PAYLOAD_POOL_RECORDS);
++    (0..pool_len)
++        .map(|sequence| {
++            let mut payload = base_record.to_vec();
++            let observation_time = ((template.template_id as u64) << 32)
++                | u64::try_from(sequence + 1).expect("payload sequence fits u64");
++            NetworkEndian::write_u64(&mut payload[20..28], observation_time);
++
++            for (index, field) in payload[28..].chunks_exact_mut(8).enumerate() {
++                let field_index = u64::try_from(index + 1).expect("field index fits u64");
++                let value = observation_time
++                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
++                    .wrapping_add(field_index)
++                    .rotate_left((index % 64) as u32);
++                NetworkEndian::write_u64(field, value);
++            }
++            Arc::new(payload)
++        })
++        .collect()
++}
++
+ pub fn datasets() -> Vec<DatasetSpec> {
+     vec![
+         DatasetSpec {
+@@ -160,12 +212,6 @@ pub fn datasets() -> Vec<DatasetSpec> {
+     ]
+ }
+ 
+-#[allow(dead_code)]
+-pub fn rng_for_template(spec: &TemplateSpec) -> StdRng {
+-    let seed = ((spec.template_id as u64) << 32) ^ (spec.counters as u64) ^ 0x5a5a_5a5a_5a5a_5a5a;
+-    StdRng::seed_from_u64(seed)
+-}
+-
+ fn compute_distribution(spec: &DatasetSpec) -> (Vec<usize>, usize, usize) {
+     if spec.templates.is_empty() {
+         return (Vec::new(), 0, 0);
+@@ -201,23 +247,3 @@ fn compute_distribution(spec: &DatasetSpec) -> (Vec<usize>, usize, usize) {
+ 
+     (records, total_messages, total_counters)
+ }
+-
+-#[allow(dead_code)]
+-pub fn randomize_record(base: &[u8], seq: u64, rng: &mut StdRng) -> SocketBufferMessage {
+-    let mut record = base.to_vec();
+-    if record.len() < 28 {
+-        return Arc::new(record);
+-    }
+-
+-    let obs_time = rng.next_u64().wrapping_add(seq + 1);
+-    NetworkEndian::write_u64(&mut record[20..28], obs_time);
+-
+-    let mut offset = 28;
+-    while offset + 8 <= record.len() {
+-        let counter = rng.next_u64().wrapping_add(obs_time);
+-        NetworkEndian::write_u64(&mut record[offset..offset + 8], counter);
+-        offset += 8;
+-    }
+-
+-    Arc::new(record)
+-}
+diff --git a/crates/countersyncd/tests/ipfix_test_helpers.rs b/crates/countersyncd/tests/ipfix_test_helpers.rs
+index f048f810..7c5a422c 100644
+--- a/crates/countersyncd/tests/ipfix_test_helpers.rs
++++ b/crates/countersyncd/tests/ipfix_test_helpers.rs
+@@ -22,7 +22,10 @@ pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<
+ 
+     let set_length = 12 + counters_count * 8; // set hdr (4) + template hdr (4) + obs field (4) + N enterprise fields (8 each)
+     let message_length = 16 + set_length;
+-    assert!(message_length <= u16::MAX as usize, "template too large for a single IPFIX message");
++    assert!(
++        message_length <= u16::MAX as usize,
++        "template too large for a single IPFIX message"
++    );
+ 
+     let mut buf = Vec::with_capacity(message_length);
+ 

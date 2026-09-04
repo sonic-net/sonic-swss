@@ -330,6 +330,30 @@ impl SwssActor {
                 .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
 
+        let message = match Self::validated_update(key, session_data) {
+            Ok(message) => message,
+            Err(err) => {
+                template_recipient
+                    .send(IPFixTemplatesMessage::quarantine(key.to_string()))
+                    .await
+                    .map_err(|e| format!("Failed to quarantine IPFIX session {}: {}", key, e))?;
+                return Err(err);
+            }
+        };
+
+        template_recipient
+            .send(message)
+            .await
+            .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
+
+        info!("Successfully sent IPFix templates for session: {}", key);
+        Ok(())
+    }
+
+    fn validated_update(
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<IPFixTemplatesMessage, String> {
         if session_data.session_config.is_empty() {
             return Err("Session config is empty".to_string());
         }
@@ -376,20 +400,12 @@ impl SwssActor {
             ));
         }
 
-        let message = IPFixTemplatesMessage::new(
+        Ok(IPFixTemplatesMessage::new(
             key.to_string(),
             Arc::new(session_data.session_config.clone()),
             Some(object_names),
             Some(object_ids),
-        );
-
-        template_recipient
-            .send(message)
-            .await
-            .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
-
-        info!("Successfully sent IPFix templates for session: {}", key);
-        Ok(())
+        ))
     }
 
     /// Handles session deletion events
@@ -509,7 +525,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("quarantine message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -595,7 +613,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("quarantine message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -614,6 +634,9 @@ mod tests {
                     .await
                     .is_err()
             );
+            let message = template_receiver.try_recv().expect("quarantine message");
+            assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+            assert_eq!(message.key, "test|PORT");
             assert!(template_receiver.try_recv().is_err());
         }
 

@@ -2,6 +2,7 @@ use std::{
     collections::VecDeque,
     error::Error,
     fmt::{Display, Formatter},
+    mem::size_of,
     sync::Arc,
     time::Duration,
 };
@@ -29,10 +30,17 @@ const TEMPLATE_SET_ID: u16 = 2;
 const MIN_DATA_SET_ID: u16 = 256;
 const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 const HFT_FIELD_LEN: u16 = 8;
+const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 16;
 const MAX_UNKNOWN_SETS: usize = 256;
 const MAX_UNKNOWN_SET_BYTES: usize = 4 * 1024 * 1024;
 const UNKNOWN_SET_TTL: Duration = Duration::from_secs(5);
-const MAX_RETIRED_TEMPLATES: usize = 4096;
+const MAX_INSTALLED_TEMPLATE_KEYS: usize = 4096;
+const MAX_TRACKED_OBSERVATION_DOMAINS: usize = 256;
+const TEMPLATE_ID_HISTORY_WORDS: usize = 1024;
+const MAX_REUSABLE_TEMPLATES: usize = 4096;
+const MAX_REUSABLE_TEMPLATE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DELETED_SESSION_MARKERS: usize = 4096;
+const MAX_DELETED_SESSION_MARKER_BYTES: usize = 1024 * 1024;
 const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEMPLATES_PER_UPDATE: usize = 1024;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
@@ -99,10 +107,18 @@ impl TemplateGeneration {
     }
 }
 
+fn same_template_schema(left: &CompiledTemplate, right: &CompiledTemplate) -> bool {
+    left.key == right.key
+        && left.observation_time_offset == right.observation_time_offset
+        && left.counters == right.counters
+        && left.record_len == right.record_len
+}
+
 #[derive(Debug, Default)]
 struct SessionTemplates {
     active: Option<TemplateGeneration>,
     pending: Option<TemplateGeneration>,
+    pending_cutover_keys: HashSet<TemplateKey>,
     enabled: bool,
     deferred_floor: u64,
 }
@@ -202,37 +218,185 @@ impl DeferredSetBuffer {
     }
 }
 
-#[derive(Debug)]
-struct RetiredTemplates {
-    keys: HashSet<TemplateKey>,
+#[derive(Debug, Default)]
+struct TemplateHistory {
+    used_ids: HashMap<u32, Box<[u64]>>,
+    reusable: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    reusable_order: VecDeque<TemplateKey>,
+    reusable_bytes: usize,
 }
 
-impl Default for RetiredTemplates {
-    fn default() -> Self {
-        Self {
-            keys: HashSet::new(),
+impl TemplateHistory {
+    fn validate_tracking(&self, generation: &TemplateGeneration) -> Result<(), IpfixError> {
+        let new_domains = generation
+            .templates
+            .keys()
+            .filter_map(|key| {
+                (!self.used_ids.contains_key(&key.observation_domain_id))
+                    .then_some(key.observation_domain_id)
+            })
+            .collect::<HashSet<_>>();
+        if self.used_ids.len().saturating_add(new_domains.len()) > MAX_TRACKED_OBSERVATION_DOMAINS {
+            return Err(format!(
+                "template history observation-domain limit {} exceeded",
+                MAX_TRACKED_OBSERVATION_DOMAINS
+            )
+            .into());
         }
-    }
-}
-
-impl RetiredTemplates {
-    fn retire(&mut self, template: &CompiledTemplate) {
-        self.keys.insert(template.key);
+        Ok(())
     }
 
-    fn contains(&self, key: &TemplateKey) -> bool {
-        self.keys.contains(key)
+    fn mark_used(&mut self, key: TemplateKey) -> bool {
+        if !self.used_ids.contains_key(&key.observation_domain_id)
+            && self.used_ids.len() >= MAX_TRACKED_OBSERVATION_DOMAINS
+        {
+            return false;
+        }
+        let words = self
+            .used_ids
+            .entry(key.observation_domain_id)
+            .or_insert_with(|| vec![0u64; TEMPLATE_ID_HISTORY_WORDS].into_boxed_slice());
+        let index = key.template_id as usize;
+        words[index / u64::BITS as usize] |= 1u64 << (index % u64::BITS as usize);
+        true
+    }
+
+    fn was_used(&self, key: &TemplateKey) -> bool {
+        let Some(words) = self.used_ids.get(&key.observation_domain_id) else {
+            return false;
+        };
+        let index = key.template_id as usize;
+        words[index / u64::BITS as usize] & (1u64 << (index % u64::BITS as usize)) != 0
     }
 
     fn validate_reactivation(&self, template: &CompiledTemplate) -> Result<(), IpfixError> {
-        if self.contains(&template.key) {
+        if self.was_used(&template.key)
+            && !self
+                .reusable
+                .get(&template.key)
+                .is_some_and(|retired| same_template_schema(retired, template))
+        {
             return Err(format!(
-                "template ({}, {}) cannot reuse a retired ID without an exporter generation boundary",
+                "template ({}, {}) cannot reuse a prior ID with a different or unavailable schema",
                 template.key.observation_domain_id, template.key.template_id
             )
             .into());
         }
         Ok(())
+    }
+
+    fn activate_generation(&mut self, generation: &TemplateGeneration) {
+        for key in generation.templates.keys() {
+            assert!(
+                self.mark_used(*key),
+                "template history capacity validated before activation"
+            );
+            self.remove_reusable(key);
+        }
+    }
+
+    fn retire(&mut self, template: Arc<CompiledTemplate>) {
+        assert!(
+            self.mark_used(template.key),
+            "installed template domain must already be tracked"
+        );
+        self.remember_reusable(template);
+    }
+
+    fn remember_reusable(&mut self, template: Arc<CompiledTemplate>) {
+        let weight = reusable_template_weight(&template);
+        self.remove_reusable(&template.key);
+        if weight > MAX_REUSABLE_TEMPLATE_BYTES {
+            return;
+        }
+
+        self.reusable_bytes = self.reusable_bytes.saturating_add(weight);
+        self.reusable_order.push_back(template.key);
+        self.reusable.insert(template.key, template);
+        while self.reusable.len() > MAX_REUSABLE_TEMPLATES
+            || self.reusable_bytes > MAX_REUSABLE_TEMPLATE_BYTES
+        {
+            let Some(oldest) = self.reusable_order.pop_front() else {
+                break;
+            };
+            if let Some(evicted) = self.reusable.remove(&oldest) {
+                self.reusable_bytes = self
+                    .reusable_bytes
+                    .saturating_sub(reusable_template_weight(&evicted));
+            }
+        }
+    }
+
+    fn poison(&mut self, key: TemplateKey) {
+        // Failure to allocate a new domain is still fail-closed: all future
+        // updates for that domain fail validate_tracking while the map is full.
+        self.mark_used(key);
+        self.remove_reusable(&key);
+    }
+
+    fn remove_reusable(&mut self, key: &TemplateKey) {
+        let Some(template) = self.reusable.remove(key) else {
+            return;
+        };
+        self.reusable_bytes = self
+            .reusable_bytes
+            .saturating_sub(reusable_template_weight(&template));
+        self.reusable_order.retain(|candidate| candidate != key);
+    }
+}
+
+fn reusable_template_weight(template: &CompiledTemplate) -> usize {
+    size_of::<CompiledTemplate>()
+        .saturating_add(template.owner.len())
+        .saturating_add(
+            template
+                .counters
+                .len()
+                .saturating_mul(size_of::<CompiledCounter>()),
+        )
+        .saturating_add(
+            template
+                .counters
+                .iter()
+                .map(|counter| counter.object_name.len())
+                .sum::<usize>(),
+        )
+}
+
+#[derive(Debug, Default)]
+struct LifecycleMarkers {
+    owners: HashSet<Arc<str>>,
+    bytes: usize,
+    drop_all_preinstall: bool,
+}
+
+impl LifecycleMarkers {
+    fn insert(&mut self, owner: Arc<str>) {
+        if self.drop_all_preinstall || self.owners.contains(owner.as_ref()) {
+            return;
+        }
+        if self.owners.len() >= MAX_DELETED_SESSION_MARKERS
+            || self.bytes.saturating_add(owner.len()) > MAX_DELETED_SESSION_MARKER_BYTES
+        {
+            // Losing an owner-specific marker must reduce availability rather
+            // than permit stale pre-install data to cross a delete boundary.
+            self.owners.clear();
+            self.bytes = 0;
+            self.drop_all_preinstall = true;
+            return;
+        }
+        self.bytes += owner.len();
+        self.owners.insert(owner);
+    }
+
+    fn remove(&mut self, owner: &str) {
+        if let Some(owner) = self.owners.take(owner) {
+            self.bytes = self.bytes.saturating_sub(owner.len());
+        }
+    }
+
+    fn requires_fresh_data(&self, owner: &str) -> bool {
+        self.drop_all_preinstall || self.owners.contains(owner)
     }
 }
 
@@ -266,7 +430,8 @@ pub struct IpfixActor {
     record_recipient: Receiver<SocketBufferMessage>,
     sessions: HashMap<Arc<str>, SessionTemplates>,
     installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    retired: RetiredTemplates,
+    history: TemplateHistory,
+    lifecycle_markers: LifecycleMarkers,
     deferred_sets: DeferredSetBuffer,
     deferred_set_ttl: Duration,
     next_deferred_sequence: u64,
@@ -283,7 +448,8 @@ impl IpfixActor {
             record_recipient,
             sessions: HashMap::new(),
             installed: HashMap::new(),
-            retired: RetiredTemplates::default(),
+            history: TemplateHistory::default(),
+            lifecycle_markers: LifecycleMarkers::default(),
             deferred_sets: DeferredSetBuffer::default(),
             deferred_set_ttl: UNKNOWN_SET_TTL,
             next_deferred_sequence: 1,
@@ -404,6 +570,10 @@ impl IpfixActor {
                 self.handle_template_deletion(&templates.key);
                 return Ok(SAIStatsBatch::default());
             }
+            IPFixTemplateOperation::Quarantine => {
+                self.quarantine_session(&templates.key);
+                return Ok(SAIStatsBatch::default());
+            }
             IPFixTemplateOperation::Update => {}
         }
 
@@ -411,25 +581,40 @@ impl IpfixActor {
             Ok(generation) => generation,
             Err(err) => {
                 error!(
-                    "Rejecting invalid HFT template update for {} and retaining the active generation: {}",
+                    "Rejecting invalid HFT template update for {} and quarantining any active generation: {}",
                     templates.key, err
                 );
+                self.quarantine_session(&templates.key);
                 return Err(err);
             }
         };
         let owner = Arc::clone(&generation.owner);
         let updated_keys = generation.templates.keys().copied().collect::<HashSet<_>>();
 
-        if let Some(conflict) = generation.templates.keys().find_map(|key| {
-            self.installed
-                .get(key)
-                .filter(|existing| existing.owner != owner)
-        }) {
-            return Err(format!(
+        let conflicts = generation
+            .templates
+            .keys()
+            .filter_map(|key| {
+                self.installed.get(key).and_then(|existing| {
+                    (existing.owner != owner).then(|| (*key, Arc::clone(&existing.owner)))
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Some((conflict_key, conflict_owner)) = conflicts.first() {
+            let err = IpfixError::from(format!(
                 "template ({}, {}) is already owned by session {}",
-                conflict.key.observation_domain_id, conflict.key.template_id, conflict.owner
-            )
-            .into());
+                conflict_key.observation_domain_id, conflict_key.template_id, conflict_owner
+            ));
+            let conflicting_owners = conflicts
+                .into_iter()
+                .map(|(_, conflict_owner)| conflict_owner)
+                .collect::<HashSet<_>>();
+            for conflict_owner in conflicting_owners {
+                self.quarantine_session(conflict_owner.as_ref());
+            }
+            self.quarantine_session(owner.as_ref());
+            self.poison_generation(&generation);
+            return Err(err);
         }
 
         let is_first_install = self
@@ -437,21 +622,33 @@ impl IpfixActor {
             .get(owner.as_ref())
             .is_none_or(|session| session.active.is_none());
         if is_first_install {
-            validate_generation_reactivation(&generation, &self.retired)?;
-            validate_registry_capacity(&generation, &self.installed, &self.retired)?;
-            let deferred_floor = self
-                .sessions
-                .contains_key(owner.as_ref())
-                .then_some(self.next_deferred_sequence)
-                .unwrap_or(0);
+            let validation = self
+                .history
+                .validate_tracking(&generation)
+                .and_then(|()| validate_generation_reactivation(&generation, &self.history))
+                .and_then(|()| validate_registry_capacity(&generation, &self.installed));
+            if let Err(err) = validation {
+                self.poison_generation(&generation);
+                return Err(err);
+            }
+            // A known deletion has no cross-channel generation fence, so data
+            // received before reinstallation cannot be assigned safely.
+            let deferred_floor = if self.lifecycle_markers.requires_fresh_data(&owner) {
+                self.next_deferred_sequence
+            } else {
+                0
+            };
             self.deferred_sets
                 .remove_keys_before(&updated_keys, deferred_floor);
+            self.lifecycle_markers.remove(&owner);
+            self.history.activate_generation(&generation);
             install_generation(&generation, &mut self.installed);
             self.sessions.insert(
                 owner,
                 SessionTemplates {
                     active: Some(generation),
                     pending: None,
+                    pending_cutover_keys: HashSet::new(),
                     enabled: true,
                     deferred_floor,
                 },
@@ -459,74 +656,119 @@ impl IpfixActor {
             return self.finish_template_update();
         }
 
-        let session = self
-            .sessions
-            .get_mut(owner.as_ref())
-            .expect("session existence checked above");
-        let was_enabled = session.enabled;
-        if session
-            .active
-            .as_ref()
-            .is_some_and(|active| active.equivalent(&generation))
-        {
+        let (active, pending, pending_cutover_keys, was_enabled) = {
+            let session = self
+                .sessions
+                .get(owner.as_ref())
+                .expect("session existence checked above");
+            (
+                session.active.clone().expect("checked above"),
+                session.pending.clone(),
+                session.pending_cutover_keys.clone(),
+                session.enabled,
+            )
+        };
+        if active.equivalent(&generation) {
+            let session = self
+                .sessions
+                .get_mut(owner.as_ref())
+                .expect("session existence checked above");
             if let Some(pending) = session.pending.take() {
                 retire_canceled_pending_generation(
                     &pending,
                     session.active.as_ref(),
                     &mut self.installed,
-                    &mut self.retired,
+                    &mut self.history,
                 );
+                session.pending_cutover_keys.clear();
                 debug!("Canceled pending HFT template generation for {owner}");
             }
             debug!("Refreshed unchanged HFT template generation for {owner}");
-        } else if session
-            .pending
+        } else if pending
             .as_ref()
             .is_some_and(|pending| pending.equivalent(&generation))
         {
             debug!("Refreshed unchanged pending HFT template generation for {owner}");
         } else {
-            let active = session.active.as_ref().expect("checked above");
-            for (key, candidate) in &generation.templates {
-                if let Some(current) = active.templates.get(key) {
-                    if current.as_ref() != candidate.as_ref() {
-                        return Err(format!(
-                            "session {owner} cannot change template ({}, {}) in place; use a new template ID",
-                            key.observation_domain_id, key.template_id
-                        )
-                        .into());
+            let validation = (|| {
+                for (key, candidate) in &generation.templates {
+                    if let Some(current) = active.templates.get(key) {
+                        if current.as_ref() != candidate.as_ref() {
+                            return Err(format!(
+                                "session {owner} cannot change template ({}, {}) in place; use a new template ID",
+                                key.observation_domain_id, key.template_id
+                            )
+                            .into());
+                        }
                     }
                 }
-            }
-            if !generation
-                .templates
-                .keys()
-                .any(|key| !active.templates.contains_key(key))
-            {
-                return Err(format!(
-                    "session {owner} update has no new template ID to mark a lossless cutover"
-                )
-                .into());
-            }
-            validate_pending_replacement(
-                &generation,
-                session.pending.as_ref(),
-                &self.installed,
-                &self.retired,
-            )?;
+                if !generation
+                    .templates
+                    .keys()
+                    .any(|key| !active.templates.contains_key(key))
+                {
+                    return Err(format!(
+                        "session {owner} update has no new template ID to mark a cutover"
+                    )
+                    .into());
+                }
+                self.history.validate_tracking(&generation)?;
+                validate_pending_replacement(
+                    &generation,
+                    pending.as_ref(),
+                    &active,
+                    &self.installed,
+                    &self.history,
+                )?;
+                let cutover_keys = generation
+                    .templates
+                    .keys()
+                    .filter(|key| {
+                        !active.templates.contains_key(key)
+                            && (!self.history.was_used(key) || pending_cutover_keys.contains(key))
+                    })
+                    .copied()
+                    .collect::<HashSet<_>>();
+                if cutover_keys.is_empty() {
+                    return Err(format!(
+                        "session {owner} update has no previously unused template ID to mark a cutover"
+                    )
+                    .into());
+                }
+                Ok(cutover_keys)
+            })();
+            let cutover_keys = match validation {
+                Ok(cutover_keys) => cutover_keys,
+                Err(err) => {
+                    self.quarantine_session(owner.as_ref());
+                    self.poison_generation(&generation);
+                    return Err(err);
+                }
+            };
+
+            let session = self
+                .sessions
+                .get_mut(owner.as_ref())
+                .expect("session existence checked above");
             if let Some(pending) = session.pending.take() {
                 retire_replaced_pending_generation(
                     &pending,
                     &generation,
                     session.active.as_ref(),
                     &mut self.installed,
-                    &mut self.retired,
+                    &mut self.history,
                 );
             }
+            self.history.activate_generation(&generation);
             install_generation(&generation, &mut self.installed);
             session.pending = Some(generation);
+            session.pending_cutover_keys = cutover_keys;
         }
 
+        let session = self
+            .sessions
+            .get_mut(owner.as_ref())
+            .expect("session existence checked above");
         if !was_enabled {
             session.deferred_floor = self.next_deferred_sequence;
         }
@@ -535,6 +777,36 @@ impl IpfixActor {
         session.enabled = true;
 
         self.finish_template_update()
+    }
+
+    fn quarantine_session(&mut self, owner: &str) {
+        let marker = Arc::<str>::from(owner);
+        let mut keys = HashSet::new();
+        if let Some((session_owner, session)) = self.sessions.remove_entry(owner) {
+            for generation in [session.active, session.pending].into_iter().flatten() {
+                keys.extend(generation.templates.keys().copied());
+            }
+            for key in &keys {
+                if self
+                    .installed
+                    .get(key)
+                    .is_some_and(|template| template.owner == session_owner)
+                {
+                    self.installed.remove(key);
+                }
+                self.history.poison(*key);
+            }
+        }
+        self.deferred_sets.remove_keys(&keys);
+        self.lifecycle_markers.insert(marker);
+    }
+
+    fn poison_generation(&mut self, generation: &TemplateGeneration) {
+        let keys = generation.templates.keys().copied().collect::<HashSet<_>>();
+        for key in &keys {
+            self.history.poison(*key);
+        }
+        self.deferred_sets.remove_keys(&keys);
     }
 
     fn finish_template_update(&mut self) -> Result<SAIStatsBatch, IpfixError> {
@@ -561,20 +833,18 @@ impl IpfixActor {
             .pending
             .as_ref()
             .is_some_and(|pending| pending.templates.contains_key(&key))
-            && session
-                .active
-                .as_ref()
-                .is_some_and(|active| !active.templates.contains_key(&key));
+            && session.pending_cutover_keys.contains(&key);
         if !should_promote {
             return;
         }
 
         let pending = session.pending.take().expect("checked above");
+        session.pending_cutover_keys.clear();
         if let Some(active) = session.active.replace(pending.clone()) {
             for old_key in active.templates.keys() {
                 if !pending.templates.contains_key(old_key) {
                     if let Some(old_template) = self.installed.remove(old_key) {
-                        self.retired.retire(&old_template);
+                        self.history.retire(old_template);
                     }
                 }
             }
@@ -593,20 +863,24 @@ impl IpfixActor {
                         .is_some_and(|template| template.owner == owner)
                     {
                         if let Some(template) = self.installed.remove(template_key) {
-                            self.retired.retire(&template);
+                            self.history.retire(template);
                         }
                         removed.insert(*template_key);
                     }
                 }
             }
+            self.lifecycle_markers.insert(owner);
+        } else {
+            self.lifecycle_markers.insert(Arc::<str>::from(key));
         }
         self.deferred_sets.remove_keys(&removed);
-        self.sessions
-            .insert(Arc::<str>::from(key), SessionTemplates::default());
     }
 
     fn handle_template_deactivation(&mut self, key: &str) {
-        let session = self.sessions.entry(Arc::<str>::from(key)).or_default();
+        let Some(session) = self.sessions.get_mut(key) else {
+            self.lifecycle_markers.insert(Arc::<str>::from(key));
+            return;
+        };
         session.enabled = false;
         let keys = session
             .active
@@ -677,7 +951,7 @@ impl IpfixActor {
                 template,
                 layout,
                 enabled,
-                retired: self.retired.contains(&key),
+                retired: self.history.was_used(&key),
             });
         }
         if sets.is_empty() {
@@ -776,11 +1050,11 @@ impl IpfixActor {
                 index += 1;
                 continue;
             }
-            if self.retired.contains(&key) {
-                self.deferred_sets.remove(index);
-                continue;
-            }
             let Some(template) = self.installed.get(&key).cloned() else {
+                if self.history.was_used(&key) {
+                    self.deferred_sets.remove(index);
+                    continue;
+                }
                 blocked_domains.insert(key.observation_domain_id);
                 index += 1;
                 continue;
@@ -933,28 +1207,6 @@ impl IpfixActor {
         }
     }
 
-    async fn drain_records_queued_before_update(&mut self) -> Result<(), IpfixError> {
-        let queued = self.record_recipient.len();
-        if queued == 0 {
-            return Ok(());
-        }
-
-        record_comm_stats(
-            ChannelLabel::DataNetlinkToIpfixRecords,
-            self.record_recipient.len(),
-        );
-        let mut batch = SAIStatsBatch::default();
-        for _ in 0..queued {
-            let Ok(record) = self.record_recipient.try_recv() else {
-                break;
-            };
-            if let Err(err) = self.process_record_input(&record, &mut batch).await {
-                warn!("Dropping invalid HFT IPFIX message: {err}");
-            }
-        }
-        self.send_batch_and_drain_deferred(batch).await
-    }
-
     pub async fn run(mut actor: IpfixActor) -> Result<(), IpfixError> {
         loop {
             select! {
@@ -969,9 +1221,6 @@ impl IpfixActor {
                 },
                 template = actor.template_recipient.recv() => match template {
                     Some(template) => {
-                        if template.operation == IPFixTemplateOperation::Update {
-                            actor.drain_records_queued_before_update().await?;
-                        }
                         record_comm_stats(
                             ChannelLabel::SwssToIpfixTemplates,
                             actor.template_recipient.len(),
@@ -1030,12 +1279,12 @@ fn retire_canceled_pending_generation(
     pending: &TemplateGeneration,
     active: Option<&TemplateGeneration>,
     installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    retired: &mut RetiredTemplates,
+    history: &mut TemplateHistory,
 ) {
     for key in pending.templates.keys() {
         if !active.is_some_and(|generation| generation.templates.contains_key(key)) {
             if let Some(template) = installed.remove(key) {
-                retired.retire(&template);
+                history.retire(template);
             }
         }
     }
@@ -1046,14 +1295,14 @@ fn retire_replaced_pending_generation(
     replacement: &TemplateGeneration,
     active: Option<&TemplateGeneration>,
     installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    retired: &mut RetiredTemplates,
+    history: &mut TemplateHistory,
 ) {
     for key in pending.templates.keys() {
         if !active.is_some_and(|generation| generation.templates.contains_key(key))
             && !replacement.templates.contains_key(key)
         {
             if let Some(template) = installed.remove(key) {
-                retired.retire(&template);
+                history.retire(template);
             }
         }
     }
@@ -1062,8 +1311,9 @@ fn retire_replaced_pending_generation(
 fn validate_pending_replacement(
     replacement: &TemplateGeneration,
     pending: Option<&TemplateGeneration>,
+    active: &TemplateGeneration,
     installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    retired: &RetiredTemplates,
+    history: &TemplateHistory,
 ) -> Result<(), IpfixError> {
     for template in replacement.templates.values() {
         if let Some(pending_template) =
@@ -1076,20 +1326,20 @@ fn validate_pending_replacement(
                 )
                 .into());
             }
-        } else if retired.contains(&template.key) {
-            retired.validate_reactivation(template)?;
+        } else if !active.templates.contains_key(&template.key) {
+            history.validate_reactivation(template)?;
         }
     }
 
     let fresh_keys = replacement
         .templates
         .keys()
-        .filter(|key| !installed.contains_key(key) && !retired.contains(key))
+        .filter(|key| !installed.contains_key(key))
         .count();
-    if retired.keys.len() + installed.len() + fresh_keys > MAX_RETIRED_TEMPLATES {
+    if installed.len().saturating_add(fresh_keys) > MAX_INSTALLED_TEMPLATE_KEYS {
         return Err(format!(
             "template key registry limit {} exceeded",
-            MAX_RETIRED_TEMPLATES
+            MAX_INSTALLED_TEMPLATE_KEYS
         )
         .into());
     }
@@ -1098,10 +1348,10 @@ fn validate_pending_replacement(
 
 fn validate_generation_reactivation(
     generation: &TemplateGeneration,
-    retired: &RetiredTemplates,
+    history: &TemplateHistory,
 ) -> Result<(), IpfixError> {
     for template in generation.templates.values() {
-        retired.validate_reactivation(template)?;
+        history.validate_reactivation(template)?;
     }
     Ok(())
 }
@@ -1109,17 +1359,16 @@ fn validate_generation_reactivation(
 fn validate_registry_capacity(
     generation: &TemplateGeneration,
     installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    retired: &RetiredTemplates,
 ) -> Result<(), IpfixError> {
     let fresh_keys = generation
         .templates
         .keys()
-        .filter(|key| !installed.contains_key(key) && !retired.contains(key))
+        .filter(|key| !installed.contains_key(key))
         .count();
-    if retired.keys.len() + installed.len() + fresh_keys > MAX_RETIRED_TEMPLATES {
+    if installed.len().saturating_add(fresh_keys) > MAX_INSTALLED_TEMPLATE_KEYS {
         return Err(format!(
             "template key registry limit {} exceeded",
-            MAX_RETIRED_TEMPLATES
+            MAX_INSTALLED_TEMPLATE_KEYS
         )
         .into());
     }
@@ -1245,10 +1494,12 @@ fn compile_template_set(
 ) -> Result<(), IpfixError> {
     let mut offset = SET_HEADER_LEN;
     while offset < set.len() {
-        if set.len() - offset < 4 {
-            if set[offset..].iter().all(|byte| *byte == 0) {
-                break;
-            }
+        let remaining = &set[offset..];
+        if remaining.len() < MIN_HFT_TEMPLATE_RECORD_LEN && remaining.iter().all(|byte| *byte == 0)
+        {
+            break;
+        }
+        if remaining.len() < 4 {
             return Err("template set has a truncated template record".into());
         }
         let template_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
@@ -1505,23 +1756,36 @@ mod tests {
     }
 
     #[test]
-    fn malformed_update_retains_active_generation() {
+    fn cross_owner_conflict_quarantines_every_incumbent() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("a", 1, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("b", 1, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        let mut conflicting = template_message("c", 1, 300, &[(1, 0x0001_0004)]);
+        let second = template_message("c", 1, 301, &[(1, 0x0001_0005)]);
+        Arc::make_mut(conflicting.templates.as_mut().unwrap())
+            .extend_from_slice(second.templates.as_ref().unwrap());
+        assert!(actor.handle_template(conflicting).is_err());
+
+        assert!(actor.installed.is_empty());
+        assert!(!actor.sessions.contains_key("a"));
+        assert!(!actor.sessions.contains_key("b"));
+    }
+
+    #[test]
+    fn malformed_update_quarantines_active_generation() {
         let mut actor = actor();
         let valid = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
         actor.handle_template(valid.clone()).unwrap();
         let mut invalid = valid;
         invalid.templates = Some(Arc::new(vec![0, 10, 0, 0]));
         assert!(actor.handle_template(invalid).is_err());
-        assert_eq!(actor.installed.len(), 1);
-        assert_eq!(
-            actor.sessions["session"]
-                .active
-                .as_ref()
-                .unwrap()
-                .templates
-                .len(),
-            1
-        );
+        assert!(actor.installed.is_empty());
+        assert!(!actor.sessions.contains_key("session"));
     }
 
     #[test]
@@ -1591,6 +1855,12 @@ mod tests {
         assert!(actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0003)]))
             .is_err());
+        assert!(actor.installed.is_empty());
+        assert!(!actor.sessions.contains_key("session"));
+        assert!(actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1619,7 +1889,7 @@ mod tests {
             observation_domain_id: 0,
             template_id: 301,
         }));
-        assert!(actor.retired.contains(&TemplateKey {
+        assert!(actor.history.was_used(&TemplateKey {
             observation_domain_id: 0,
             template_id: 301,
         }));
@@ -1648,7 +1918,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_supersession_retains_pending_generation() {
+    fn rejected_supersession_quarantines_the_session() {
         let mut actor = actor();
         actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
@@ -1660,16 +1930,8 @@ mod tests {
         assert!(actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0004)]))
             .is_err());
-        assert!(actor.sessions["session"]
-            .pending
-            .as_ref()
-            .unwrap()
-            .templates
-            .contains_key(&TemplateKey {
-                observation_domain_id: 0,
-                template_id: 301,
-            }));
-        assert!(actor.installed.contains_key(&TemplateKey {
+        assert!(!actor.sessions.contains_key("session"));
+        assert!(!actor.installed.contains_key(&TemplateKey {
             observation_domain_id: 0,
             template_id: 301,
         }));
@@ -1700,7 +1962,7 @@ mod tests {
             observation_domain_id: 0,
             template_id: 302,
         }));
-        assert!(!actor.retired.contains(&TemplateKey {
+        assert!(actor.installed.contains_key(&TemplateKey {
             observation_domain_id: 0,
             template_id: 301,
         }));
@@ -1719,16 +1981,8 @@ mod tests {
         assert!(actor
             .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0004)]))
             .is_err());
-        let pending = actor.sessions["session"].pending.as_ref().unwrap();
-        assert_eq!(
-            pending.templates[&TemplateKey {
-                observation_domain_id: 0,
-                template_id: 301,
-            }]
-                .counters[0]
-                .stat_id,
-            3
-        );
+        assert!(!actor.sessions.contains_key("session"));
+        assert!(actor.installed.is_empty());
     }
 
     #[test]
@@ -1742,11 +1996,11 @@ mod tests {
             .unwrap();
         actor.handle_template_deletion("session");
         assert!(actor.installed.is_empty());
-        assert!(actor.retired.contains(&TemplateKey {
+        assert!(actor.history.was_used(&TemplateKey {
             observation_domain_id: 0,
             template_id: 300,
         }));
-        assert!(actor.retired.contains(&TemplateKey {
+        assert!(actor.history.was_used(&TemplateKey {
             observation_domain_id: 0,
             template_id: 301,
         }));
@@ -1809,7 +2063,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_tombstone_drops_late_data_and_rejects_changed_schema_reuse() {
+    fn delete_drops_late_data_and_rejects_changed_schema_reuse() {
         let mut actor = actor();
         actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
@@ -1828,6 +2082,66 @@ mod tests {
         assert!(actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
             .is_err());
+    }
+
+    #[test]
+    fn delete_and_rejoin_accepts_an_identical_schema() {
+        let mut actor = actor();
+        let template = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(template.clone()).unwrap();
+        actor.handle_template_deletion("session");
+
+        actor.handle_template(template).unwrap();
+        let batch = actor
+            .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 2);
+    }
+
+    #[test]
+    fn identical_schema_rejoin_may_use_a_new_session_name() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("old", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor.handle_template_deletion("old");
+
+        actor
+            .handle_template(template_message("new", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        assert_eq!(
+            actor
+                .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+                .unwrap()
+                .record_count(),
+            1
+        );
+    }
+
+    #[test]
+    fn deleted_history_does_not_consume_the_installed_template_limit() {
+        let mut actor = actor();
+        for offset in 0..MAX_INSTALLED_TEMPLATE_KEYS + 1 {
+            let template_id =
+                MIN_DATA_SET_ID + u16::try_from(offset).expect("test template ID must fit in u16");
+            actor
+                .handle_template(template_message(
+                    "session",
+                    0,
+                    template_id,
+                    &[(1, 0x0001_0002)],
+                ))
+                .unwrap();
+            actor.handle_template_deletion("session");
+        }
+
+        assert!(actor.installed.is_empty());
+        assert_eq!(actor.history.used_ids.len(), 1);
+        assert!(actor.history.was_used(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: MIN_DATA_SET_ID + MAX_INSTALLED_TEMPLATE_KEYS as u16,
+        }));
     }
 
     #[test]
@@ -1872,6 +2186,20 @@ mod tests {
     }
 
     #[test]
+    fn unknown_lifecycle_events_use_bounded_marker_state() {
+        let mut actor = actor();
+        for index in 0..MAX_DELETED_SESSION_MARKERS + 1 {
+            actor.handle_template_deactivation(&format!("deactivate-{index}"));
+            actor.handle_template_deletion(&format!("delete-{index}"));
+        }
+
+        assert!(actor.sessions.is_empty());
+        assert!(actor.lifecycle_markers.drop_all_preinstall);
+        assert!(actor.lifecycle_markers.owners.is_empty());
+        assert_eq!(actor.lifecycle_markers.bytes, 0);
+    }
+
+    #[test]
     fn deactivate_then_reactivate_identical_generation() {
         let mut actor = actor();
         let template = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
@@ -1888,7 +2216,7 @@ mod tests {
             observation_domain_id: 0,
             template_id: 300,
         }));
-        assert!(!actor.retired.contains(&TemplateKey {
+        assert!(actor.history.was_used(&TemplateKey {
             observation_domain_id: 0,
             template_id: 300,
         }));
@@ -1913,7 +2241,8 @@ mod tests {
         assert!(actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0003)]))
             .is_err());
-        assert!(!actor.sessions["session"].enabled);
+        assert!(!actor.sessions.contains_key("session"));
+        assert!(actor.installed.is_empty());
         assert!(actor
             .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
             .unwrap()
@@ -2107,12 +2436,12 @@ mod tests {
                     &format!("rejected-{index}"),
                     0,
                     300,
-                    &[(1, 0x0001_0002)],
+                    &[(1, 0x0001_0003)],
                 ))
                 .is_err());
         }
-        assert_eq!(actor.sessions.len(), 1);
-        assert!(actor.sessions["original"].active.is_none());
+        assert!(actor.sessions.is_empty());
+        assert!(actor.lifecycle_markers.requires_fresh_data("original"));
     }
 
     #[test]
@@ -2188,6 +2517,25 @@ mod tests {
         let message_len = message.len() as u16;
         message[2..4].copy_from_slice(&message_len.to_be_bytes());
         assert_eq!(actor.handle_record(&message).unwrap().record_count(), 1);
+    }
+
+    #[test]
+    fn template_set_accepts_four_bytes_of_zero_padding() {
+        let mut message = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        let bytes = Arc::make_mut(message.templates.as_mut().unwrap());
+        bytes.extend_from_slice(&[0; 4]);
+        let message_len = bytes.len() as u16;
+        let set_len = (bytes.len() - IPFIX_HEADER_LEN) as u16;
+        bytes[2..4].copy_from_slice(&message_len.to_be_bytes());
+        bytes[18..20].copy_from_slice(&set_len.to_be_bytes());
+
+        assert_eq!(
+            IpfixActor::compile_generation(&message)
+                .unwrap()
+                .templates
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -2310,28 +2658,6 @@ mod tests {
         batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
         assert!(actor.send_batch(batch).await.is_err());
         assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
-    }
-
-    #[tokio::test]
-    async fn queued_disabled_records_are_drained_before_reactivation() {
-        let (_, template_rx) = channel(1);
-        let (record_tx, record_rx) = channel(2);
-        let mut actor = IpfixActor::new(template_rx, record_rx);
-        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
-        actor.handle_template(active.clone()).unwrap();
-        actor.handle_template_deactivation("session");
-        record_tx
-            .send(Arc::new(data_message(0, &[(301, vec![(1, vec![10])])])))
-            .await
-            .unwrap();
-
-        actor.drain_records_queued_before_update().await.unwrap();
-        actor.handle_template(active).unwrap();
-        let replayed = actor
-            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
-            .unwrap();
-        assert!(replayed.is_empty());
-        assert!(actor.deferred_sets.sets.is_empty());
     }
 
     #[tokio::test(start_paused = true)]

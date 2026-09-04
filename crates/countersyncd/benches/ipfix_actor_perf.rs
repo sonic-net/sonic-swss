@@ -9,12 +9,11 @@ use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
     buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
 };
-use log::warn;
-
 mod ipfix_bench_data;
 use ipfix_bench_data::{datasets, PreparedDataset, PAYLOAD_POOL_RECORDS};
 
-const STATS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
+const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
+const ITERATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
     if elapsed.as_secs_f64() > 0.0 {
@@ -24,7 +23,9 @@ fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
     }
 }
 
-async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, usize, usize, usize) {
+async fn run_prepared_dataset(
+    prepared: PreparedDataset,
+) -> (Duration, usize, usize, usize, usize, usize) {
     let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(1);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
     let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
@@ -32,7 +33,7 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
     let mut actor = IpfixActor::new(template_rx, buffer_rx);
     actor.add_recipient(stats_tx);
 
-    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+    let mut actor_handle = tokio::spawn(IpfixActor::run(actor));
 
     for message in &prepared.template_messages {
         template_tx
@@ -49,7 +50,7 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
         .send(Arc::clone(&prepared.readiness_record))
         .await
         .expect("readiness probe send should succeed");
-    let probe_batch = timeout(STATS_RECV_TIMEOUT, stats_rx.recv())
+    let probe_batch = timeout(READINESS_TIMEOUT, stats_rx.recv())
         .await
         .expect("readiness probe timed out")
         .expect("stats channel closed before readiness probe");
@@ -79,15 +80,20 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
             })
         })
         .collect();
+    drop(buffer_tx);
 
-    let start = Instant::now();
-
+    let mut received_batches = 0usize;
     let mut received_messages = 0usize;
     let mut received_counters = 0usize;
 
-    while received_messages < expected_messages {
-        match timeout(STATS_RECV_TIMEOUT, stats_rx.recv()).await {
-            Ok(Some(stats_msg)) => {
+    let mut sender_tasks = sender_tasks;
+    let completion = timeout(
+        ITERATION_TIMEOUT,
+        std::pin::pin!(async {
+            let start = Instant::now();
+            let mut measured_elapsed = None;
+            while let Some(stats_msg) = stats_rx.recv().await {
+                received_batches += 1;
                 let batch_counters = stats_msg.counter_count();
                 let counters_before = received_counters;
                 for record in stats_msg.iter() {
@@ -100,37 +106,58 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
                     "dataset {} produced more records than expected",
                     prepared.spec.name
                 );
-            }
-            Ok(None) => {
-                warn!(
-                    "Stats channel closed early for dataset {} after {} messages",
-                    prepared.spec.name, received_messages
+                assert!(
+                    received_counters <= expected_counters,
+                    "dataset {} produced more counters than expected",
+                    prepared.spec.name
                 );
-                break;
+                if received_messages == expected_messages
+                    && received_counters == expected_counters
+                    && measured_elapsed.is_none()
+                {
+                    measured_elapsed = Some(start.elapsed());
+                }
             }
-            Err(_) => {
-                panic!(
-                    "Stats recv timeout for dataset {} after {} messages (expected {})",
-                    prepared.spec.name, received_messages, expected_messages
-                );
+
+            for task in &mut sender_tasks {
+                task.await.expect("record sender should join");
             }
+            let actor_error = (&mut actor_handle)
+                .await
+                .expect("IPFIX actor task should join")
+                .expect_err("IPFIX actor should report a closed input channel");
+            assert!(
+                actor_error
+                    .to_string()
+                    .contains("IPFIX record input channel closed"),
+                "unexpected actor termination: {actor_error}"
+            );
+
+            measured_elapsed.expect("stats channel closed before complete output")
+        }),
+    )
+    .await;
+    let elapsed = match completion {
+        Ok(elapsed) => elapsed,
+        Err(_) => {
+            for task in &sender_tasks {
+                task.abort();
+            }
+            actor_handle.abort();
+            panic!(
+                "Dataset {} timed out after {:?}: batches {}, records {}/{}, counters {}/{}",
+                prepared.spec.name,
+                ITERATION_TIMEOUT,
+                received_batches,
+                received_messages,
+                expected_messages,
+                received_counters,
+                expected_counters
+            );
         }
-    }
-
-    let elapsed = start.elapsed();
-
-    for task in sender_tasks {
-        task.await.expect("record sender should join");
-    }
-
-    drop(buffer_tx);
+    };
 
     drop(template_tx);
-    drop(stats_rx);
-    actor_handle
-        .await
-        .expect("IPFIX actor task should join")
-        .expect_err("IPFIX actor should report closed input channels");
 
     if received_messages != expected_messages || received_counters != expected_counters {
         panic!(
@@ -145,6 +172,7 @@ async fn run_prepared_dataset(prepared: PreparedDataset) -> (Duration, usize, us
 
     (
         elapsed,
+        received_batches,
         received_messages,
         received_counters,
         expected_messages,
@@ -179,6 +207,7 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
                     for _ in 0..iterations {
                         let (
                             elapsed,
+                            received_batches,
                             received_messages,
                             received_counters,
                             expected_messages,
@@ -189,9 +218,10 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
                         let cps = counters_per_second(elapsed, received_counters);
 
                         println!(
-                            "Dataset {} -> elapsed {:?}, records {}/{}, counters {}/{}, cps {:.2}, up to {} pre-generated payloads/template, readiness probe 1 record/1 counter (excluded)",
+                            "Dataset {} -> elapsed {:?}, output batches {}, records {}/{}, counters {}/{}, cps {:.2}, up to {} pre-generated payloads/template, readiness probe 1 record/1 counter (excluded)",
                             spec.name,
                             elapsed,
+                            received_batches,
                             received_messages,
                             expected_messages,
                             received_counters,
