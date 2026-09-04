@@ -252,9 +252,11 @@ namespace mux_rollback_test
         EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
         EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
         EXPECT_FALSE(gNeighOrch->isHwConfigured(existingNeighbor));
-        EXPECT_FALSE(gNeighOrch->hasNextHop(existingNextHop));
+        EXPECT_EQ(gNeighOrch->getLocalNextHopId(existingNextHop), SAI_NULL_OBJECT_ID);
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(missingNeighbor, VLAN_1000)), 0u);
-        EXPECT_FALSE(gNeighOrch->hasNextHop(NextHopKey(missingNeighbor, VLAN_1000)));
+        EXPECT_EQ(
+            gNeighOrch->getLocalNextHopId(NextHopKey(missingNeighbor, VLAN_1000)),
+            SAI_NULL_OBJECT_ID);
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyMissingNeighborPropagatesFailure)
@@ -274,11 +276,13 @@ namespace mux_rollback_test
         EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
         EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
         EXPECT_TRUE(gNeighOrch->isHwConfigured(existingNeighbor));
-        EXPECT_TRUE(gNeighOrch->hasNextHop(existingNextHop));
+        EXPECT_NE(gNeighOrch->getLocalNextHopId(existingNextHop), SAI_NULL_OBJECT_ID);
         EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.at(IpAddress(SERVER_IP1)),
                   gNeighOrch->getLocalNextHopId(existingNextHop));
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(missingNeighbor, VLAN_1000)), 0u);
-        EXPECT_FALSE(gNeighOrch->hasNextHop(NextHopKey(missingNeighbor, VLAN_1000)));
+        EXPECT_EQ(
+            gNeighOrch->getLocalNextHopId(NextHopKey(missingNeighbor, VLAN_1000)),
+            SAI_NULL_OBJECT_ID);
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRouteNotFound)

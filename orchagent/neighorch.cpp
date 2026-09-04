@@ -1813,9 +1813,8 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
         {
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
-                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
+                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, reconciling: status:%s",
                            macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
-                return true;
             }
             else
             {

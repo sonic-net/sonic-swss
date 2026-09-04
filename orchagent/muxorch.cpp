@@ -910,7 +910,8 @@ bool MuxNbrHandler::enable(bool update_rt)
         /* Update NH to point to learned neighbor */
         neigh = NeighborEntry(it->first, alias_);
         NextHopKey nh_key = NextHopKey(it->first, alias_);
-        if (!gNeighOrch->isHwConfigured(neigh) || !gNeighOrch->hasNextHop(nh_key))
+        sai_object_id_t local_nh = gNeighOrch->getLocalNextHopId(nh_key);
+        if (!gNeighOrch->isHwConfigured(neigh) || local_nh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Neighbor %s on %s was not enabled",
                           it->first.to_string().c_str(), alias_.c_str());
@@ -919,7 +920,7 @@ bool MuxNbrHandler::enable(bool update_rt)
             continue;
         }
 
-        it->second = gNeighOrch->getLocalNextHopId(neigh);
+        it->second = local_nh;
 
         /* Reprogram route */
         uint32_t num_routes = 0;
@@ -984,7 +985,8 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
 
         neigh = NeighborEntry(it->first, alias_);
         NextHopKey nh_key = NextHopKey(it->first, alias_);
-        if (!gNeighOrch->isHwConfigured(neigh) || !gNeighOrch->hasNextHop(nh_key))
+        sai_object_id_t local_nh = gNeighOrch->getLocalNextHopId(nh_key);
+        if (!gNeighOrch->isHwConfigured(neigh) || local_nh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Neighbor %s on %s is not available for disable",
                           it->first.to_string().c_str(), alias_.c_str());
