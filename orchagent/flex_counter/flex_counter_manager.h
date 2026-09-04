@@ -48,6 +48,7 @@ enum class CounterType
     HA_SET,
     OFFLOAD_SESSION,
     ICMP_ECHO_SESSION,
+    POLICER,
 };
 
 extern bool gTraditionalFlexCounter;
