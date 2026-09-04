@@ -1,9 +1,10 @@
 # IPFIX Actor Benchmark Reproduction
 
 The PR benchmark compares the candidate against upstream commit
-`0b4057cde6ccdea51c21b626b3d91699fd0cf0bc`. The baseline uses the patch in
-`ipfix_actor_perf_upstream.patch`; it adapts only the benchmark harness and test
-data to the candidate's workload and timing contract.
+`0b4057cde6ccdea51c21b626b3d91699fd0cf0bc`. The baseline uses the zero-context
+patch in `ipfix_actor_perf_upstream.patch` (apply with `git apply
+--unidiff-zero`); it adapts only the benchmark harness and test data to the
+candidate's workload and timing contract.
 
 Both runs used:
 
