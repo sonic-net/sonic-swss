@@ -127,6 +127,30 @@ static std::unordered_set<std::string> serializeSwitchCounterStats(const std::ve
 
 // Switch OA ----------------------------------------------------------------------------------------------------------
 
+void SwitchOrch::set_switch_pfc_dldr_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLDR capability. SAI_QUEUE_ATTR_ENABLE_PFC_DLDR covers both
+     * deadlock detection and recovery in hardware, so it distinguishes a
+     * complete hardware watchdog from a hybrid one, which only supports
+     * SAI_QUEUE_ATTR_PFC_DLR_INIT. */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_ENABLE_PFC_DLDR);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is not supported");
+        m_PfcDldrEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is supported");
+        m_PfcDldrEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -139,7 +163,7 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
-    else 
+    else
     {
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
         m_PfcDlrInitEnable = true;
@@ -202,6 +226,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_pfc_dldr_capability();
     set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
