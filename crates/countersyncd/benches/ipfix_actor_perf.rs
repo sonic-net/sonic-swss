@@ -14,6 +14,7 @@ use ipfix_bench_data::{datasets, PreparedDataset, PAYLOAD_POOL_RECORDS};
 
 const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
 const ITERATION_TIMEOUT: Duration = Duration::from_secs(120);
+const SAI_STATS_CHANNEL_CAPACITY: usize = 64;
 
 fn counters_per_second(elapsed: Duration, counters: usize) -> f64 {
     if elapsed.as_secs_f64() > 0.0 {
@@ -28,7 +29,8 @@ async fn run_prepared_dataset(
 ) -> (Duration, usize, usize, usize, usize, usize) {
     let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(1);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
-    let (stats_tx, mut stats_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
+    let (stats_tx, mut stats_rx) =
+        mpsc::channel::<SAIStatsBatchMessage>(SAI_STATS_CHANNEL_CAPACITY);
 
     let mut actor = IpfixActor::new(template_rx, buffer_rx);
     actor.add_recipient(stats_tx);

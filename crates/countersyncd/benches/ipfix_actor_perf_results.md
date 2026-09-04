@@ -15,6 +15,8 @@ Both runs used:
 - `RUSTFLAGS=-Dwarnings cargo bench --locked -p countersyncd --bench ipfix_actor_perf -- --noplot`
 - up to 16 deterministic, distinct, pre-generated inputs per template
 - one readiness probe outside the measured interval
+- complete object metadata for every normal/readiness template update
+- record-input channel capacity 1,024 and SAI-stats output capacity 64
 - one iteration-wide watchdog, with no per-output timeout
 - a manually measured interval from sender-task execution through receipt of
   the expected records and counters
@@ -24,11 +26,11 @@ Criterion point estimates and 95% confidence intervals:
 
 | Dataset | Upstream | Candidate | Ratio | Upstream items | Candidate batches |
 |---|---:|---:|---:|---:|---:|
-| one template, 2 counters | 1.4357 M/s [1.4296, 1.4416] | 5.9147 M/s [5.8865, 5.9374] | 4.12x | 2,000,000 | 31,250 |
-| one template, 8,000 counters | 3.5500 M/s [3.5378, 3.5628] | 37.546 M/s [37.418, 37.650] | 10.58x | 500 | 500 |
-| five keys, one large template each | 3.5704 M/s [3.5446, 3.5923] | 37.067 M/s [36.799, 37.301] | 10.38x | 500 | 500 |
-| five keys, four large templates each | 3.5917 M/s [3.5794, 3.6033] | 37.102 M/s [37.026, 37.174] | 10.33x | 500 | 500 |
-| five keys, mixed templates | 3.5845 M/s [3.5650, 3.6060] | 28.387 M/s [28.316, 28.451] | 7.92x | 200,265 | 3,385 |
+| one template, 2 counters | 1.4892 M/s [1.4773, 1.5004] | 5.3266 M/s [5.3152, 5.3382] | 3.58x | 2,000,000 | 31,250 |
+| one template, 8,000 counters | 3.9295 M/s [3.8452, 4.0076] | 63.144 M/s [62.938, 63.352] | 16.07x | 500 | 500 |
+| five keys, one large template each | 3.9430 M/s [3.9296, 3.9557] | 61.346 M/s [61.170, 61.480] | 15.56x | 500 | 500 |
+| five keys, four large templates each | 3.6682 M/s [3.6508, 3.6860] | 59.551 M/s [58.899, 60.126] | 16.23x | 500 | 500 |
+| five keys, mixed templates | 3.7761 M/s [3.7564, 3.7961] | 28.851 M/s [28.672, 28.993] | 7.64x | 200,265 | 3,385 |
 
 Every sample produced the expected logical records and counters. These are
 end-to-end actor/API measurements. The output-count columns make the batching

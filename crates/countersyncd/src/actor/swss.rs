@@ -82,6 +82,7 @@ impl SwssActor {
             template_recipient,
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let (fatal_sender, mut fatal_receiver) = mpsc::channel(1);
 
         let _reader_thread = match thread::Builder::new()
             .name("countersyncd-swss".to_string())
@@ -123,7 +124,8 @@ impl SwssActor {
                         }
                         Err(e) => {
                             error!("Error reading from session table: {}", e);
-                            std::thread::sleep(Duration::from_millis(100));
+                            let _ = fatal_sender.blocking_send(e);
+                            break;
                         }
                     }
                 }
@@ -138,13 +140,39 @@ impl SwssActor {
                 }
             };
 
-        while let Some(event) = event_receiver.recv().await {
-            match event {
-                SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(&template_recipient, &key, &session_data).await;
+        loop {
+            tokio::select! {
+                biased;
+                failure = fatal_receiver.recv() => {
+                    if let Some(failure) = failure {
+                        error!("SwssActor reader failed: {failure}");
+                    }
+                    break;
                 }
-                SwssEvent::Delete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
+                event = event_receiver.recv() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    let processing = async {
+                        match event {
+                            SwssEvent::Update { key, session_data } => {
+                                Self::process_session_update(&template_recipient, &key, &session_data).await;
+                            }
+                            SwssEvent::Delete { key } => {
+                                Self::process_session_delete(&template_recipient, &key).await;
+                            }
+                        }
+                    };
+                    tokio::select! {
+                        biased;
+                        failure = fatal_receiver.recv() => {
+                            if let Some(failure) = failure {
+                                error!("SwssActor reader failed while forwarding an event: {failure}");
+                            }
+                            break;
+                        }
+                        _ = processing => {}
+                    }
                 }
             }
         }
@@ -181,10 +209,7 @@ impl SwssActor {
                         }
                         Ok(events)
                     }
-                    Err(e) => {
-                        error!("Error popping items from session table: {}", e);
-                        Ok(events)
-                    }
+                    Err(e) => Err(format!("Error popping items from session table: {}", e)),
                 },
                 swss_common::SelectResult::Timeout => {
                     debug!("Timeout waiting for session table updates");
@@ -334,7 +359,11 @@ impl SwssActor {
             Ok(message) => message,
             Err(err) => {
                 template_recipient
-                    .send(IPFixTemplatesMessage::quarantine(key.to_string()))
+                    .send(IPFixTemplatesMessage::quarantine(
+                        key.to_string(),
+                        (!session_data.session_config.is_empty())
+                            .then(|| Arc::new(session_data.session_config.clone())),
+                    ))
                     .await
                     .map_err(|e| format!("Failed to quarantine IPFIX session {}: {}", key, e))?;
                 return Err(err);

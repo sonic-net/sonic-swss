@@ -55,10 +55,10 @@ impl IPFixTemplatesMessage {
         }
     }
 
-    pub fn quarantine(key: String) -> Self {
+    pub fn quarantine(key: String, templates: Option<IPFixTemplates>) -> Self {
         Self {
             key,
-            templates: None,
+            templates,
             object_names: None,
             object_ids: None,
             operation: IPFixTemplateOperation::Quarantine,

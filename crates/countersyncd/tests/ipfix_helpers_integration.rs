@@ -76,24 +76,27 @@ async fn send_template_barrier(
         .send(template_message(key, template, 1))
         .await
         .expect("barrier template send should succeed");
+    let template_barrier = template_sender
+        .reserve()
+        .await
+        .expect("template barrier reserve should succeed");
     buffer_sender
         .send(Arc::new(record))
         .await
         .expect("barrier record send should succeed");
     assert_eq!(receive_records(receiver, 1).await[0].1.len(), 1);
+    drop(template_barrier);
 }
 
 #[tokio::test]
-async fn deactivate_and_identical_delete_rejoin_are_supported() {
+async fn deactivate_is_reversible_but_delete_reuse_is_fail_closed() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
-    let (template_sender, template_receiver) = channel(5);
+    let (template_sender, template_receiver) = channel(1);
     let (saistats_sender, mut saistats_receiver) = channel(10);
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    // The SAI adapter is allowed to reuse the same wire ID after object
-    // recreation; an identical schema remains safe for delayed records.
     let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
     let record = Arc::new(ipfix_test_helpers::generate_ipfix_records(&template));
     template_sender
@@ -117,6 +120,8 @@ async fn deactivate_and_identical_delete_rejoin_are_supported() {
         .send(template_message("session", template, 1))
         .await
         .unwrap();
+    let rejected_barrier = template_sender.reserve().await.unwrap();
+    drop(rejected_barrier);
     send_template_barrier(
         &template_sender,
         &buffer_sender,
@@ -134,23 +139,14 @@ async fn deactivate_and_identical_delete_rejoin_are_supported() {
     let delete = IPFixTemplatesMessage::delete("session".to_string());
     assert_eq!(delete.operation, IPFixTemplateOperation::Delete);
     template_sender.send(delete).await.unwrap();
-    send_template_barrier(
-        &template_sender,
-        &buffer_sender,
-        &mut saistats_receiver,
-        "delete_barrier",
-        303,
-    )
-    .await;
+    let delete_barrier = template_sender.reserve().await.unwrap();
+    drop(delete_barrier);
     buffer_sender.send(record).await.unwrap();
-    let barrier_record = Arc::new(ipfix_test_helpers::generate_ipfix_records(
-        &ipfix_test_helpers::generate_ipfix_templates(1, 303),
-    ));
-    buffer_sender.send(barrier_record).await.unwrap();
-    assert_eq!(
-        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
-        1
+    let barrier_record = ipfix_test_helpers::generate_ipfix_records(
+        &ipfix_test_helpers::generate_ipfix_templates(1, 302),
     );
+    buffer_sender.send(Arc::new(barrier_record)).await.unwrap();
+    assert_eq!(receive_records(&mut saistats_receiver, 1).await.len(), 1);
     assert!(
         timeout(Duration::from_millis(50), saistats_receiver.recv())
             .await
@@ -163,22 +159,34 @@ async fn deactivate_and_identical_delete_rejoin_are_supported() {
         .send(template_message("session", template, 1))
         .await
         .unwrap();
-    send_template_barrier(
-        &template_sender,
-        &buffer_sender,
-        &mut saistats_receiver,
-        "rejoin_barrier",
-        304,
-    )
-    .await;
-    let rejoined = Arc::new(ipfix_test_helpers::generate_ipfix_records(
+    let rejected_barrier = template_sender.reserve().await.unwrap();
+    drop(rejected_barrier);
+    let rejected_reuse = Arc::new(ipfix_test_helpers::generate_ipfix_records(
         &ipfix_test_helpers::generate_ipfix_templates(1, 300),
     ));
-    buffer_sender.send(rejoined).await.unwrap();
-    assert_eq!(
-        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
-        1
+    buffer_sender.send(rejected_reuse).await.unwrap();
+    assert!(
+        timeout(Duration::from_millis(50), saistats_receiver.recv())
+            .await
+            .is_err(),
+        "a deleted template ID must remain retired until restart"
     );
+
+    let fresh_template = ipfix_test_helpers::generate_ipfix_templates(1, 305);
+    let fresh_record = ipfix_test_helpers::generate_ipfix_records(&fresh_template);
+    // A new observation domain is the only safe destructive rejoin boundary.
+    let mut fresh_template = fresh_template;
+    fresh_template[12..16].copy_from_slice(&1u32.to_be_bytes());
+    let mut fresh_record = fresh_record;
+    fresh_record[12..16].copy_from_slice(&1u32.to_be_bytes());
+    template_sender
+        .send(template_message("session", fresh_template, 1))
+        .await
+        .unwrap();
+    let template_barrier = template_sender.reserve().await.unwrap();
+    drop(template_barrier);
+    buffer_sender.send(Arc::new(fresh_record)).await.unwrap();
+    assert_eq!(receive_records(&mut saistats_receiver, 1).await.len(), 1);
 
     drop(buffer_sender);
     drop(template_sender);
@@ -244,12 +252,17 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .send(template_message("initial_readiness", readiness_template, 1))
         .await
         .expect("readiness template send should succeed");
+    let template_barrier = template_sender
+        .reserve()
+        .await
+        .expect("readiness template barrier should succeed");
     buffer_sender
         .send(Arc::new(readiness_record))
         .await
         .expect("readiness record send should succeed");
     let readiness = receive_records(&mut saistats_receiver, 1).await;
     assert_eq!(readiness[0].1.len(), 1);
+    drop(template_barrier);
 
     // Generate matching records for all templates across all keys
     let records = ipfix_test_helpers::generate_ipfix_records(&all_templates_bytes);
@@ -326,14 +339,13 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         .await
         .expect("template delete should succeed");
 
-    // The new template follows the delete on the same channel. Its output is a
-    // causal barrier even if the data arrives first and is briefly buffered.
-    let barrier_template = ipfix_test_helpers::generate_ipfix_templates(1, 306);
-    let barrier_record = ipfix_test_helpers::generate_ipfix_records(&barrier_template);
-    template_sender
-        .send(template_message("delete_barrier", barrier_template, 1))
-        .await
-        .expect("barrier template send should succeed");
+    let template_barrier = template_sender.reserve().await.unwrap();
+    drop(template_barrier);
+    // Reuse the already-installed readiness template as a data-channel barrier;
+    // installing any new template in the deleted domain must fail closed.
+    let barrier_record = ipfix_test_helpers::generate_ipfix_records(
+        &ipfix_test_helpers::generate_ipfix_templates(1, 305),
+    );
     buffer_sender
         .send(Arc::new(barrier_record))
         .await
@@ -342,13 +354,14 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     let barrier = receive_records(&mut saistats_receiver, 1).await;
     assert_eq!(barrier[0].1.len(), 1);
 
-    // A changed schema must use new IDs so queued old data cannot be decoded
-    // under a different definition after the delete/re-add boundary.
+    // A destructive re-add must use both fresh IDs and a fresh domain.
     let readd_template_defs = vec![(delete_key, 307u16, 4usize), (delete_key, 308u16, 6usize)];
 
     let mut readd_templates_bytes = Vec::new();
     for (_, template_id, counters) in &readd_template_defs {
         let template = ipfix_test_helpers::generate_ipfix_templates(*counters, *template_id);
+        let mut template = template;
+        template[12..16].copy_from_slice(&1u32.to_be_bytes());
         readd_templates_bytes.extend_from_slice(&template);
     }
 
@@ -371,6 +384,14 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
     drop(template_barrier);
 
     let readd_records = ipfix_test_helpers::generate_ipfix_records(&readd_templates_bytes);
+    let mut readd_records = readd_records;
+    let mut offset = 0usize;
+    while offset < readd_records.len() {
+        let len =
+            u16::from_be_bytes([readd_records[offset + 2], readd_records[offset + 3]]) as usize;
+        readd_records[offset + 12..offset + 16].copy_from_slice(&1u32.to_be_bytes());
+        offset += len;
+    }
     buffer_sender
         .send(Arc::new(readd_records))
         .await

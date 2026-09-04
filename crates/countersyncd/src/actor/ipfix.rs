@@ -2,7 +2,6 @@ use std::{
     collections::VecDeque,
     error::Error,
     fmt::{Display, Formatter},
-    mem::size_of,
     sync::Arc,
     time::Duration,
 };
@@ -35,14 +34,15 @@ const MAX_UNKNOWN_SETS: usize = 256;
 const MAX_UNKNOWN_SET_BYTES: usize = 4 * 1024 * 1024;
 const UNKNOWN_SET_TTL: Duration = Duration::from_secs(5);
 const MAX_INSTALLED_TEMPLATE_KEYS: usize = 4096;
+const MAX_LIVE_TEMPLATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRACKED_OBSERVATION_DOMAINS: usize = 256;
 const TEMPLATE_ID_HISTORY_WORDS: usize = 1024;
-const MAX_REUSABLE_TEMPLATES: usize = 4096;
-const MAX_REUSABLE_TEMPLATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DELETED_SESSION_MARKERS: usize = 4096;
 const MAX_DELETED_SESSION_MARKER_BYTES: usize = 1024 * 1024;
 const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEMPLATES_PER_UPDATE: usize = 1024;
+const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 4096;
+const MAX_UNRESOLVED_SETS_PER_RECORD_INPUT: usize = MAX_UNKNOWN_SETS;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
 const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
 const MAX_COUNTERS_PER_BATCH: usize = 8192;
@@ -87,6 +87,7 @@ struct ValidatedDataSet<'a> {
     layout: Option<DataSetLayout>,
     enabled: bool,
     retired: bool,
+    domain_blocked: bool,
 }
 
 #[derive(Debug)]
@@ -95,23 +96,28 @@ struct ValidatedDataMessage<'a> {
     counter_count: usize,
 }
 
+#[derive(Debug)]
+struct ValidatedRecordInput<'a> {
+    messages: Vec<ValidatedDataMessage<'a>>,
+}
+
+#[derive(Debug)]
+struct PendingUpdatePlan {
+    cutover_keys: HashSet<TemplateKey>,
+    retire_keys: HashSet<TemplateKey>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TemplateGeneration {
     owner: Arc<str>,
     templates: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    compiled_bytes: usize,
 }
 
 impl TemplateGeneration {
     fn equivalent(&self, other: &Self) -> bool {
         self.templates == other.templates
     }
-}
-
-fn same_template_schema(left: &CompiledTemplate, right: &CompiledTemplate) -> bool {
-    left.key == right.key
-        && left.observation_time_offset == right.observation_time_offset
-        && left.counters == right.counters
-        && left.record_len == right.record_len
 }
 
 #[derive(Debug, Default)]
@@ -156,37 +162,23 @@ impl DeferredSetBuffer {
         self.dropped - dropped_before
     }
 
-    fn push(&mut self, set: BufferedSet) -> u64 {
-        let dropped_before = self.dropped;
+    fn push(&mut self, set: BufferedSet) {
         let len = set.bytes.len();
-        if len > MAX_UNKNOWN_SET_BYTES {
-            self.dropped = self.dropped.saturating_add(1);
-            return self.dropped - dropped_before;
-        }
-        while self.sets.len() >= MAX_UNKNOWN_SETS
+        if len > MAX_UNKNOWN_SET_BYTES
+            || self.sets.len() >= MAX_UNKNOWN_SETS
             || self.bytes.saturating_add(len) > MAX_UNKNOWN_SET_BYTES
         {
-            let Some(oldest) = self.sets.pop_front() else {
-                break;
-            };
-            self.bytes = self.bytes.saturating_sub(oldest.bytes.len());
             self.dropped = self.dropped.saturating_add(1);
+            return;
         }
         self.bytes += len;
         self.sets.push_back(set);
-        self.dropped - dropped_before
     }
 
     fn remove(&mut self, index: usize) -> Option<BufferedSet> {
         let set = self.sets.remove(index)?;
         self.bytes = self.bytes.saturating_sub(set.bytes.len());
         Some(set)
-    }
-
-    fn contains_domain(&self, observation_domain_id: u32) -> bool {
-        self.sets
-            .iter()
-            .any(|set| set.key.observation_domain_id == observation_domain_id)
     }
 
     fn next_deadline(&self) -> Option<Instant> {
@@ -216,14 +208,35 @@ impl DeferredSetBuffer {
         }
         self.sets = retained;
     }
+
+    fn remove_domains(&mut self, domains: &HashSet<u32>) {
+        let mut retained = VecDeque::with_capacity(self.sets.len());
+        while let Some(set) = self.sets.pop_front() {
+            if domains.contains(&set.key.observation_domain_id) {
+                self.bytes = self.bytes.saturating_sub(set.bytes.len());
+            } else {
+                retained.push_back(set);
+            }
+        }
+        self.sets = retained;
+    }
+
+    fn remove_domains_before(&mut self, domains: &HashSet<u32>, sequence: u64) {
+        let mut retained = VecDeque::with_capacity(self.sets.len());
+        while let Some(set) = self.sets.pop_front() {
+            if domains.contains(&set.key.observation_domain_id) && set.sequence < sequence {
+                self.bytes = self.bytes.saturating_sub(set.bytes.len());
+            } else {
+                retained.push_back(set);
+            }
+        }
+        self.sets = retained;
+    }
 }
 
 #[derive(Debug, Default)]
 struct TemplateHistory {
     used_ids: HashMap<u32, Box<[u64]>>,
-    reusable: HashMap<TemplateKey, Arc<CompiledTemplate>>,
-    reusable_order: VecDeque<TemplateKey>,
-    reusable_bytes: usize,
 }
 
 impl TemplateHistory {
@@ -270,14 +283,9 @@ impl TemplateHistory {
     }
 
     fn validate_reactivation(&self, template: &CompiledTemplate) -> Result<(), IpfixError> {
-        if self.was_used(&template.key)
-            && !self
-                .reusable
-                .get(&template.key)
-                .is_some_and(|retired| same_template_schema(retired, template))
-        {
+        if self.was_used(&template.key) {
             return Err(format!(
-                "template ({}, {}) cannot reuse a prior ID with a different or unavailable schema",
+                "template ({}, {}) cannot reuse a retired ID without an exporter generation boundary",
                 template.key.observation_domain_id, template.key.template_id
             )
             .into());
@@ -291,81 +299,27 @@ impl TemplateHistory {
                 self.mark_used(*key),
                 "template history capacity validated before activation"
             );
-            self.remove_reusable(key);
         }
     }
 
-    fn retire(&mut self, template: Arc<CompiledTemplate>) {
+    fn retire(&mut self, template: &CompiledTemplate) {
         assert!(
             self.mark_used(template.key),
             "installed template domain must already be tracked"
         );
-        self.remember_reusable(template);
-    }
-
-    fn remember_reusable(&mut self, template: Arc<CompiledTemplate>) {
-        let weight = reusable_template_weight(&template);
-        self.remove_reusable(&template.key);
-        if weight > MAX_REUSABLE_TEMPLATE_BYTES {
-            return;
-        }
-
-        self.reusable_bytes = self.reusable_bytes.saturating_add(weight);
-        self.reusable_order.push_back(template.key);
-        self.reusable.insert(template.key, template);
-        while self.reusable.len() > MAX_REUSABLE_TEMPLATES
-            || self.reusable_bytes > MAX_REUSABLE_TEMPLATE_BYTES
-        {
-            let Some(oldest) = self.reusable_order.pop_front() else {
-                break;
-            };
-            if let Some(evicted) = self.reusable.remove(&oldest) {
-                self.reusable_bytes = self
-                    .reusable_bytes
-                    .saturating_sub(reusable_template_weight(&evicted));
-            }
-        }
     }
 
     fn poison(&mut self, key: TemplateKey) {
         // Failure to allocate a new domain is still fail-closed: all future
         // updates for that domain fail validate_tracking while the map is full.
         self.mark_used(key);
-        self.remove_reusable(&key);
     }
-
-    fn remove_reusable(&mut self, key: &TemplateKey) {
-        let Some(template) = self.reusable.remove(key) else {
-            return;
-        };
-        self.reusable_bytes = self
-            .reusable_bytes
-            .saturating_sub(reusable_template_weight(&template));
-        self.reusable_order.retain(|candidate| candidate != key);
-    }
-}
-
-fn reusable_template_weight(template: &CompiledTemplate) -> usize {
-    size_of::<CompiledTemplate>()
-        .saturating_add(template.owner.len())
-        .saturating_add(
-            template
-                .counters
-                .len()
-                .saturating_mul(size_of::<CompiledCounter>()),
-        )
-        .saturating_add(
-            template
-                .counters
-                .iter()
-                .map(|counter| counter.object_name.len())
-                .sum::<usize>(),
-        )
 }
 
 #[derive(Debug, Default)]
 struct LifecycleMarkers {
     owners: HashSet<Arc<str>>,
+    domains: HashSet<u32>,
     bytes: usize,
     drop_all_preinstall: bool,
 }
@@ -397,6 +351,26 @@ impl LifecycleMarkers {
 
     fn requires_fresh_data(&self, owner: &str) -> bool {
         self.drop_all_preinstall || self.owners.contains(owner)
+    }
+
+    fn insert_domains(&mut self, domains: impl IntoIterator<Item = u32>) {
+        for domain in domains {
+            if self.drop_all_preinstall {
+                return;
+            }
+            if !self.domains.contains(&domain)
+                && self.domains.len() >= MAX_TRACKED_OBSERVATION_DOMAINS
+            {
+                self.domains.clear();
+                self.drop_all_preinstall = true;
+                return;
+            }
+            self.domains.insert(domain);
+        }
+    }
+
+    fn consume_owner(&mut self, owner: &str) {
+        self.remove(owner);
     }
 }
 
@@ -432,6 +406,8 @@ pub struct IpfixActor {
     installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
     history: TemplateHistory,
     lifecycle_markers: LifecycleMarkers,
+    live_template_bytes: usize,
+    globally_quarantined: bool,
     deferred_sets: DeferredSetBuffer,
     deferred_set_ttl: Duration,
     next_deferred_sequence: u64,
@@ -450,6 +426,8 @@ impl IpfixActor {
             installed: HashMap::new(),
             history: TemplateHistory::default(),
             lifecycle_markers: LifecycleMarkers::default(),
+            live_template_bytes: 0,
+            globally_quarantined: false,
             deferred_sets: DeferredSetBuffer::default(),
             deferred_set_ttl: UNKNOWN_SET_TTL,
             next_deferred_sequence: 1,
@@ -550,10 +528,32 @@ impl IpfixActor {
         if compiled.is_empty() {
             return Err("template update contains no HFT templates".into());
         }
+        let compiled_bytes = compiled.values().try_fold(0usize, |total, template| {
+            total
+                .checked_add(compiled_template_weight(template)?)
+                .ok_or_else(|| IpfixError::from("compiled template size overflow"))
+        })?;
+        const SHARED_ALLOCATION_OVERHEAD: usize = 32;
+        let shared_bytes = names.iter().try_fold(
+            owner
+                .len()
+                .checked_add(SHARED_ALLOCATION_OVERHEAD)
+                .ok_or("compiled template size overflow")?,
+            |total, name| {
+                total
+                    .checked_add(name.len())
+                    .and_then(|total| total.checked_add(SHARED_ALLOCATION_OVERHEAD))
+                    .ok_or_else(|| IpfixError::from("compiled template size overflow"))
+            },
+        )?;
+        let compiled_bytes = compiled_bytes
+            .checked_add(shared_bytes)
+            .ok_or("compiled template size overflow")?;
 
         Ok(TemplateGeneration {
             owner,
             templates: compiled,
+            compiled_bytes,
         })
     }
 
@@ -561,6 +561,9 @@ impl IpfixActor {
         &mut self,
         templates: IPFixTemplatesMessage,
     ) -> Result<SAIStatsBatch, IpfixError> {
+        if self.globally_quarantined {
+            return Err("IPFIX decoding is globally quarantined until restart".into());
+        }
         match templates.operation {
             IPFixTemplateOperation::Deactivate => {
                 self.handle_template_deactivation(&templates.key);
@@ -571,7 +574,7 @@ impl IpfixActor {
                 return Ok(SAIStatsBatch::default());
             }
             IPFixTemplateOperation::Quarantine => {
-                self.quarantine_session(&templates.key);
+                self.handle_template_quarantine(&templates);
                 return Ok(SAIStatsBatch::default());
             }
             IPFixTemplateOperation::Update => {}
@@ -584,10 +587,19 @@ impl IpfixActor {
                     "Rejecting invalid HFT template update for {} and quarantining any active generation: {}",
                     templates.key, err
                 );
-                self.quarantine_session(&templates.key);
+                self.handle_template_quarantine(&IPFixTemplatesMessage::quarantine(
+                    templates.key.clone(),
+                    templates.templates.clone(),
+                ));
                 return Err(err);
             }
         };
+        if self.lifecycle_markers.drop_all_preinstall {
+            return Err(
+                "lifecycle marker capacity was exceeded; restart is required before installing templates"
+                    .into(),
+            );
+        }
         let owner = Arc::clone(&generation.owner);
         let updated_keys = generation.templates.keys().copied().collect::<HashSet<_>>();
 
@@ -622,26 +634,62 @@ impl IpfixActor {
             .get(owner.as_ref())
             .is_none_or(|session| session.active.is_none());
         if is_first_install {
-            let validation = self
-                .history
+            let blocked_domains = generation_domains(&generation)
+                .into_iter()
+                .filter(|domain| self.lifecycle_markers.domains.contains(domain))
+                .collect::<HashSet<_>>();
+            if !blocked_domains.is_empty() {
+                self.poison_generation(&generation);
+                return Err(format!(
+                    "observation domain(s) {blocked_domains:?} cannot accept a new generation until restart"
+                )
+                .into());
+            }
+            self.history
                 .validate_tracking(&generation)
-                .and_then(|()| validate_generation_reactivation(&generation, &self.history))
-                .and_then(|()| validate_registry_capacity(&generation, &self.installed));
-            if let Err(err) = validation {
+                .map_err(resource_error)?;
+            if let Err(err) = validate_generation_reactivation(&generation, &self.history) {
                 self.poison_generation(&generation);
                 return Err(err);
             }
-            // A known deletion has no cross-channel generation fence, so data
-            // received before reinstallation cannot be assigned safely.
-            let deferred_floor = if self.lifecycle_markers.requires_fresh_data(&owner) {
+            if let Err(err) = validate_projected_capacity(
+                &generation,
+                &self.installed,
+                &HashSet::new(),
+                self.live_template_bytes,
+                0,
+            ) {
+                return Err(resource_error(err));
+            }
+            let domains = generation_domains(&generation);
+            let fenced_domains = domains
+                .iter()
+                .filter(|domain| {
+                    self.lifecycle_markers.drop_all_preinstall
+                        || self.lifecycle_markers.domains.contains(domain)
+                })
+                .copied()
+                .collect::<HashSet<_>>();
+            let has_owner_fence = self.lifecycle_markers.requires_fresh_data(&owner);
+            let deferred_floor = if has_owner_fence || !fenced_domains.is_empty() {
                 self.next_deferred_sequence
             } else {
                 0
             };
+            if has_owner_fence {
+                self.deferred_sets
+                    .remove_keys_before(&updated_keys, deferred_floor);
+                self.deferred_sets
+                    .remove_domains_before(&domains, deferred_floor);
+            }
             self.deferred_sets
-                .remove_keys_before(&updated_keys, deferred_floor);
-            self.lifecycle_markers.remove(&owner);
+                .remove_domains_before(&fenced_domains, deferred_floor);
+            self.lifecycle_markers.consume_owner(&owner);
             self.history.activate_generation(&generation);
+            self.live_template_bytes = self
+                .live_template_bytes
+                .checked_add(generation.compiled_bytes)
+                .ok_or("live template byte accounting overflow")?;
             install_generation(&generation, &mut self.installed);
             self.sessions.insert(
                 owner,
@@ -674,12 +722,17 @@ impl IpfixActor {
                 .get_mut(owner.as_ref())
                 .expect("session existence checked above");
             if let Some(pending) = session.pending.take() {
+                self.live_template_bytes = self
+                    .live_template_bytes
+                    .checked_sub(pending.compiled_bytes)
+                    .ok_or("live template byte accounting underflow")?;
                 retire_canceled_pending_generation(
                     &pending,
                     session.active.as_ref(),
                     &mut self.installed,
                     &mut self.history,
                 );
+                restore_generation(session.active.as_ref(), &mut self.installed);
                 session.pending_cutover_keys.clear();
                 debug!("Canceled pending HFT template generation for {owner}");
             }
@@ -690,7 +743,19 @@ impl IpfixActor {
         {
             debug!("Refreshed unchanged pending HFT template generation for {owner}");
         } else {
-            let validation = (|| {
+            let blocked_domains = generation_domains(&generation)
+                .into_iter()
+                .filter(|domain| self.lifecycle_markers.domains.contains(domain))
+                .collect::<HashSet<_>>();
+            if !blocked_domains.is_empty() {
+                self.quarantine_session(owner.as_ref());
+                self.poison_generation(&generation);
+                return Err(format!(
+                    "observation domain(s) {blocked_domains:?} cannot accept a new generation until restart"
+                )
+                .into());
+            }
+            let plan = match (|| {
                 for (key, candidate) in &generation.templates {
                     if let Some(current) = active.templates.get(key) {
                         if current.as_ref() != candidate.as_ref() {
@@ -712,45 +777,53 @@ impl IpfixActor {
                     )
                     .into());
                 }
-                self.history.validate_tracking(&generation)?;
-                validate_pending_replacement(
+                plan_pending_update(
                     &generation,
                     pending.as_ref(),
                     &active,
-                    &self.installed,
                     &self.history,
-                )?;
-                let cutover_keys = generation
-                    .templates
-                    .keys()
-                    .filter(|key| {
-                        !active.templates.contains_key(key)
-                            && (!self.history.was_used(key) || pending_cutover_keys.contains(key))
-                    })
-                    .copied()
-                    .collect::<HashSet<_>>();
-                if cutover_keys.is_empty() {
-                    return Err(format!(
-                        "session {owner} update has no previously unused template ID to mark a cutover"
-                    )
-                    .into());
-                }
-                Ok(cutover_keys)
-            })();
-            let cutover_keys = match validation {
-                Ok(cutover_keys) => cutover_keys,
+                    &pending_cutover_keys,
+                )
+            })() {
+                Ok(plan) => plan,
                 Err(err) => {
                     self.quarantine_session(owner.as_ref());
                     self.poison_generation(&generation);
                     return Err(err);
                 }
             };
+            self.history
+                .validate_tracking(&generation)
+                .map_err(resource_error)?;
+            if let Err(err) = validate_projected_capacity(
+                &generation,
+                &self.installed,
+                &plan.retire_keys,
+                self.live_template_bytes,
+                pending.as_ref().map_or(0, |pending| pending.compiled_bytes),
+            ) {
+                return Err(resource_error(err));
+            }
+            let domains = generation_domains(&generation);
+            let fenced_domains = domains
+                .iter()
+                .filter(|domain| {
+                    self.lifecycle_markers.drop_all_preinstall
+                        || self.lifecycle_markers.domains.contains(domain)
+                })
+                .copied()
+                .collect::<HashSet<_>>();
+            let update_floor = self.next_deferred_sequence;
 
             let session = self
                 .sessions
                 .get_mut(owner.as_ref())
                 .expect("session existence checked above");
             if let Some(pending) = session.pending.take() {
+                self.live_template_bytes = self
+                    .live_template_bytes
+                    .checked_sub(pending.compiled_bytes)
+                    .ok_or("live template byte accounting underflow")?;
                 retire_replaced_pending_generation(
                     &pending,
                     &generation,
@@ -758,11 +831,19 @@ impl IpfixActor {
                     &mut self.installed,
                     &mut self.history,
                 );
+                restore_generation(session.active.as_ref(), &mut self.installed);
             }
             self.history.activate_generation(&generation);
+            self.live_template_bytes = self
+                .live_template_bytes
+                .checked_add(generation.compiled_bytes)
+                .ok_or("live template byte accounting overflow")?;
             install_generation(&generation, &mut self.installed);
             session.pending = Some(generation);
-            session.pending_cutover_keys = cutover_keys;
+            session.pending_cutover_keys = plan.cutover_keys;
+            self.deferred_sets
+                .remove_domains_before(&fenced_domains, update_floor);
+            self.lifecycle_markers.consume_owner(&owner);
         }
 
         let session = self
@@ -771,6 +852,15 @@ impl IpfixActor {
             .expect("session existence checked above");
         if !was_enabled {
             session.deferred_floor = self.next_deferred_sequence;
+            let domains = generation_domains(
+                session
+                    .pending
+                    .as_ref()
+                    .unwrap_or_else(|| session.active.as_ref().expect("active generation")),
+            );
+            self.deferred_sets
+                .remove_domains_before(&domains, session.deferred_floor);
+            self.lifecycle_markers.consume_owner(&owner);
         }
         self.deferred_sets
             .remove_keys_before(&updated_keys, session.deferred_floor);
@@ -782,11 +872,17 @@ impl IpfixActor {
     fn quarantine_session(&mut self, owner: &str) {
         let marker = Arc::<str>::from(owner);
         let mut keys = HashSet::new();
+        let mut domains = HashSet::new();
         if let Some((session_owner, session)) = self.sessions.remove_entry(owner) {
             for generation in [session.active, session.pending].into_iter().flatten() {
+                self.live_template_bytes = self
+                    .live_template_bytes
+                    .checked_sub(generation.compiled_bytes)
+                    .expect("live template byte accounting underflow");
                 keys.extend(generation.templates.keys().copied());
             }
             for key in &keys {
+                domains.insert(key.observation_domain_id);
                 if self
                     .installed
                     .get(key)
@@ -797,8 +893,51 @@ impl IpfixActor {
                 self.history.poison(*key);
             }
         }
-        self.deferred_sets.remove_keys(&keys);
+        self.deferred_sets.remove_domains(&domains);
         self.lifecycle_markers.insert(marker);
+        self.lifecycle_markers.insert_domains(domains);
+    }
+
+    fn handle_template_quarantine(&mut self, templates: &IPFixTemplatesMessage) {
+        self.quarantine_session(&templates.key);
+        let keys = templates
+            .templates
+            .as_deref()
+            .map(|bytes| extract_template_keys(bytes.as_slice()))
+            .transpose();
+        match keys {
+            Ok(Some(keys)) if !keys.is_empty() => {
+                let owners: HashSet<Arc<str>> = keys
+                    .iter()
+                    .filter_map(|key| self.installed.get(key))
+                    .map(|template| Arc::clone(&template.owner))
+                    .collect::<HashSet<_>>();
+                for owner in owners {
+                    self.quarantine_session(&owner);
+                }
+                let domains = keys
+                    .iter()
+                    .map(|key| key.observation_domain_id)
+                    .collect::<HashSet<_>>();
+                for key in keys {
+                    self.history.poison(key);
+                }
+                self.deferred_sets.remove_domains(&domains);
+                self.lifecycle_markers.insert_domains(domains);
+            }
+            _ => self.enter_global_quarantine(),
+        }
+    }
+
+    fn enter_global_quarantine(&mut self) {
+        let owners = self.sessions.keys().cloned().collect::<Vec<_>>();
+        for owner in owners {
+            self.quarantine_session(&owner);
+        }
+        self.installed.clear();
+        self.deferred_sets = DeferredSetBuffer::default();
+        self.live_template_bytes = 0;
+        self.globally_quarantined = true;
     }
 
     fn poison_generation(&mut self, generation: &TemplateGeneration) {
@@ -841,39 +980,50 @@ impl IpfixActor {
         let pending = session.pending.take().expect("checked above");
         session.pending_cutover_keys.clear();
         if let Some(active) = session.active.replace(pending.clone()) {
+            self.live_template_bytes = self
+                .live_template_bytes
+                .checked_sub(active.compiled_bytes)
+                .expect("live template byte accounting underflow");
             for old_key in active.templates.keys() {
                 if !pending.templates.contains_key(old_key) {
                     if let Some(old_template) = self.installed.remove(old_key) {
-                        self.history.retire(old_template);
+                        self.history.retire(&old_template);
                     }
                 }
             }
         }
+        restore_generation(session.active.as_ref(), &mut self.installed);
         debug!("Promoted pending HFT template generation for {owner}");
     }
 
     fn handle_template_deletion(&mut self, key: &str) {
-        let mut removed = HashSet::new();
+        let mut domains = HashSet::new();
         if let Some((owner, session)) = self.sessions.remove_entry(key) {
             for generation in [session.active, session.pending].into_iter().flatten() {
+                self.live_template_bytes = self
+                    .live_template_bytes
+                    .checked_sub(generation.compiled_bytes)
+                    .expect("live template byte accounting underflow");
                 for template_key in generation.templates.keys() {
+                    domains.insert(template_key.observation_domain_id);
                     if self
                         .installed
                         .get(template_key)
                         .is_some_and(|template| template.owner == owner)
                     {
                         if let Some(template) = self.installed.remove(template_key) {
-                            self.history.retire(template);
+                            self.history.retire(&template);
                         }
-                        removed.insert(*template_key);
                     }
                 }
             }
             self.lifecycle_markers.insert(owner);
+            self.lifecycle_markers
+                .insert_domains(domains.iter().copied());
         } else {
             self.lifecycle_markers.insert(Arc::<str>::from(key));
         }
-        self.deferred_sets.remove_keys(&removed);
+        self.deferred_sets.remove_domains(&domains);
     }
 
     fn handle_template_deactivation(&mut self, key: &str) {
@@ -889,26 +1039,81 @@ impl IpfixActor {
             .flat_map(|generation| generation.templates.keys())
             .copied()
             .collect::<HashSet<_>>();
+        let domains = keys
+            .iter()
+            .map(|key| key.observation_domain_id)
+            .collect::<HashSet<_>>();
         self.deferred_sets.remove_keys(&keys);
+        self.lifecycle_markers.insert(Arc::<str>::from(key));
+        self.deferred_sets.remove_domains(&domains);
     }
 
     #[cfg(test)]
     fn handle_record(&mut self, records: &[u8]) -> Result<SAIStatsBatch, IpfixError> {
         let mut batch = SAIStatsBatch::default();
-        if records.is_empty() {
-            return Err("empty IPFIX payload".into());
-        }
-        for message in IpfixMessages::new(records) {
-            let message = message?;
-            let validated = self.validate_data_message(message)?;
+        let input = self.validate_record_input(records)?;
+        for validated in input.messages {
             self.process_data_message(validated, &mut batch)?;
         }
         Ok(batch)
     }
 
+    fn validate_record_input<'a>(
+        &self,
+        records: &'a [u8],
+    ) -> Result<ValidatedRecordInput<'a>, IpfixError> {
+        if records.is_empty() {
+            return Err("empty IPFIX payload".into());
+        }
+        if self.globally_quarantined {
+            return Ok(ValidatedRecordInput {
+                messages: Vec::new(),
+            });
+        }
+        let mut messages = Vec::new();
+        let mut total_sets = 0usize;
+        let mut unresolved_sets = 0usize;
+        let mut blocked_domains = self
+            .deferred_sets
+            .sets
+            .iter()
+            .map(|set| set.key.observation_domain_id)
+            .collect::<HashSet<_>>();
+        for message in IpfixMessages::new(records) {
+            let validated = self.validate_data_message(message?, &mut blocked_domains)?;
+            total_sets = total_sets
+                .checked_add(validated.sets.len())
+                .ok_or("data Set count overflow")?;
+            unresolved_sets = unresolved_sets
+                .checked_add(
+                    validated
+                        .sets
+                        .iter()
+                        .filter(|set| set.template.is_none() && !set.retired)
+                        .count(),
+                )
+                .ok_or("unresolved data Set count overflow")?;
+            if total_sets > MAX_DATA_SETS_PER_RECORD_INPUT {
+                return Err(format!(
+                    "record input exceeds {MAX_DATA_SETS_PER_RECORD_INPUT} data Sets"
+                )
+                .into());
+            }
+            if unresolved_sets > MAX_UNRESOLVED_SETS_PER_RECORD_INPUT {
+                return Err(format!(
+                    "record input exceeds {MAX_UNRESOLVED_SETS_PER_RECORD_INPUT} unresolved data Sets"
+                )
+                .into());
+            }
+            messages.push(validated);
+        }
+        Ok(ValidatedRecordInput { messages })
+    }
+
     fn validate_data_message<'a>(
         &self,
         message: &'a [u8],
+        blocked_domains: &mut HashSet<u32>,
     ) -> Result<ValidatedDataMessage<'a>, IpfixError> {
         let domain = NetworkEndian::read_u32(&message[12..16]);
         let mut offset = IPFIX_HEADER_LEN;
@@ -940,6 +1145,10 @@ impl IpfixActor {
             } else {
                 None
             };
+            let domain_blocked = blocked_domains.contains(&key.observation_domain_id);
+            if template.is_none() && !self.history.was_used(&key) {
+                blocked_domains.insert(key.observation_domain_id);
+            }
             if enabled {
                 counter_count = counter_count
                     .checked_add(layout.expect("installed template has layout").counter_count)
@@ -952,6 +1161,7 @@ impl IpfixActor {
                 layout,
                 enabled,
                 retired: self.history.was_used(&key),
+                domain_blocked,
             });
         }
         if sets.is_empty() {
@@ -976,10 +1186,8 @@ impl IpfixActor {
                 layout,
                 enabled,
                 retired,
+                domain_blocked,
             } = set;
-            let domain_blocked = self
-                .deferred_sets
-                .contains_domain(key.observation_domain_id);
             match (template, layout) {
                 (Some(template), Some(layout)) if enabled && !domain_blocked => {
                     self.promote_pending_for(key);
@@ -994,26 +1202,24 @@ impl IpfixActor {
                 (Some(_), Some(_)) if enabled => {
                     let sequence = self.next_deferred_sequence;
                     self.next_deferred_sequence = self.next_deferred_sequence.saturating_add(1);
-                    let dropped = self.deferred_sets.push(BufferedSet {
+                    self.deferred_sets.push(BufferedSet {
                         key,
                         bytes: Arc::from(bytes),
                         sequence,
                         expires_at: None,
                     });
-                    self.log_deferred_drops(dropped);
                 }
                 (Some(_), _) => {}
                 (None, _) if !retired => {
                     let received_at = Instant::now();
                     let sequence = self.next_deferred_sequence;
                     self.next_deferred_sequence = self.next_deferred_sequence.saturating_add(1);
-                    let dropped = self.deferred_sets.push(BufferedSet {
+                    self.deferred_sets.push(BufferedSet {
                         key,
                         bytes: Arc::from(bytes),
                         sequence,
                         expires_at: Some(received_at + self.deferred_set_ttl),
                     });
-                    self.log_deferred_drops(dropped);
                 }
                 (None, _) => {}
             }
@@ -1145,12 +1351,9 @@ impl IpfixActor {
         records: &[u8],
         batch: &mut SAIStatsBatch,
     ) -> Result<(), IpfixError> {
-        if records.is_empty() {
-            return Err("empty IPFIX payload".into());
-        }
-        for message in IpfixMessages::new(records) {
-            let message = message?;
-            let validated = self.validate_data_message(message)?;
+        let input = self.validate_record_input(records)?;
+        let dropped_before = self.deferred_sets.dropped;
+        for validated in input.messages {
             let counters = validated.counter_count;
             if !batch.is_empty()
                 && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
@@ -1162,6 +1365,7 @@ impl IpfixActor {
                 self.send_batch(std::mem::take(batch)).await?;
             }
         }
+        self.log_deferred_drops(self.deferred_sets.dropped - dropped_before);
         Ok(())
     }
 
@@ -1227,6 +1431,7 @@ impl IpfixActor {
                         );
                         match actor.handle_template(template) {
                             Ok(batch) => actor.send_batch_and_drain_deferred(batch).await?,
+                            Err(err) if is_resource_error(&err) => return Err(err),
                             Err(err) => error!("HFT template update rejected: {err}"),
                         }
                     }
@@ -1275,6 +1480,15 @@ fn install_generation(
     }
 }
 
+fn restore_generation(
+    generation: Option<&TemplateGeneration>,
+    installed: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+) {
+    if let Some(generation) = generation {
+        install_generation(generation, installed);
+    }
+}
+
 fn retire_canceled_pending_generation(
     pending: &TemplateGeneration,
     active: Option<&TemplateGeneration>,
@@ -1284,7 +1498,7 @@ fn retire_canceled_pending_generation(
     for key in pending.templates.keys() {
         if !active.is_some_and(|generation| generation.templates.contains_key(key)) {
             if let Some(template) = installed.remove(key) {
-                history.retire(template);
+                history.retire(&template);
             }
         }
     }
@@ -1302,19 +1516,19 @@ fn retire_replaced_pending_generation(
             && !replacement.templates.contains_key(key)
         {
             if let Some(template) = installed.remove(key) {
-                history.retire(template);
+                history.retire(&template);
             }
         }
     }
 }
 
-fn validate_pending_replacement(
+fn plan_pending_update(
     replacement: &TemplateGeneration,
     pending: Option<&TemplateGeneration>,
     active: &TemplateGeneration,
-    installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
     history: &TemplateHistory,
-) -> Result<(), IpfixError> {
+    pending_cutover_keys: &HashSet<TemplateKey>,
+) -> Result<PendingUpdatePlan, IpfixError> {
     for template in replacement.templates.values() {
         if let Some(pending_template) =
             pending.and_then(|generation| generation.templates.get(&template.key))
@@ -1331,19 +1545,34 @@ fn validate_pending_replacement(
         }
     }
 
-    let fresh_keys = replacement
+    let cutover_keys = replacement
         .templates
-        .keys()
-        .filter(|key| !installed.contains_key(key))
-        .count();
-    if installed.len().saturating_add(fresh_keys) > MAX_INSTALLED_TEMPLATE_KEYS {
+        .iter()
+        .filter(|(key, _)| {
+            !active.templates.contains_key(key)
+                && (!history.was_used(key) || pending_cutover_keys.contains(key))
+        })
+        .map(|(key, _)| *key)
+        .collect::<HashSet<_>>();
+    if cutover_keys.is_empty() {
         return Err(format!(
-            "template key registry limit {} exceeded",
-            MAX_INSTALLED_TEMPLATE_KEYS
+            "session {} update has no previously unused template ID to mark a cutover",
+            replacement.owner
         )
         .into());
     }
-    Ok(())
+    let retire_keys = pending
+        .into_iter()
+        .flat_map(|pending| pending.templates.keys())
+        .filter(|key| {
+            !active.templates.contains_key(key) && !replacement.templates.contains_key(key)
+        })
+        .copied()
+        .collect();
+    Ok(PendingUpdatePlan {
+        cutover_keys,
+        retire_keys,
+    })
 }
 
 fn validate_generation_reactivation(
@@ -1356,23 +1585,142 @@ fn validate_generation_reactivation(
     Ok(())
 }
 
-fn validate_registry_capacity(
+fn validate_projected_capacity(
     generation: &TemplateGeneration,
     installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    retire_keys: &HashSet<TemplateKey>,
+    live_template_bytes: usize,
+    replaced_generation_bytes: usize,
 ) -> Result<(), IpfixError> {
-    let fresh_keys = generation
-        .templates
-        .keys()
-        .filter(|key| !installed.contains_key(key))
-        .count();
-    if installed.len().saturating_add(fresh_keys) > MAX_INSTALLED_TEMPLATE_KEYS {
+    let mut projected = installed.keys().copied().collect::<HashSet<_>>();
+    projected.retain(|key| !retire_keys.contains(key));
+    projected.extend(generation.templates.keys().copied());
+    if projected.len() > MAX_INSTALLED_TEMPLATE_KEYS {
         return Err(format!(
             "template key registry limit {} exceeded",
             MAX_INSTALLED_TEMPLATE_KEYS
         )
         .into());
     }
+    let projected_bytes = live_template_bytes
+        .checked_sub(replaced_generation_bytes)
+        .ok_or("live template byte accounting underflow")?
+        .checked_add(generation.compiled_bytes)
+        .ok_or("live template byte accounting overflow")?;
+    if projected_bytes > MAX_LIVE_TEMPLATE_BYTES {
+        return Err(format!(
+            "live compiled template limit {MAX_LIVE_TEMPLATE_BYTES} bytes exceeded"
+        )
+        .into());
+    }
     Ok(())
+}
+
+const RESOURCE_ERROR_PREFIX: &str = "fatal resource limit: ";
+
+fn resource_error(err: IpfixError) -> IpfixError {
+    format!("{RESOURCE_ERROR_PREFIX}{err}").into()
+}
+
+fn is_resource_error(err: &IpfixError) -> bool {
+    err.0.starts_with(RESOURCE_ERROR_PREFIX)
+}
+
+fn generation_domains(generation: &TemplateGeneration) -> HashSet<u32> {
+    generation
+        .templates
+        .keys()
+        .map(|key| key.observation_domain_id)
+        .collect()
+}
+
+fn extract_template_keys(bytes: &[u8]) -> Result<HashSet<TemplateKey>, IpfixError> {
+    if bytes.len() > MAX_TEMPLATE_CONFIG_BYTES {
+        return Err(format!(
+            "template input is {} bytes; maximum is {MAX_TEMPLATE_CONFIG_BYTES}",
+            bytes.len()
+        )
+        .into());
+    }
+    let mut keys = HashSet::new();
+    for message in IpfixMessages::new(bytes) {
+        let message = message?;
+        let domain = NetworkEndian::read_u32(&message[12..16]);
+        let mut message_offset = IPFIX_HEADER_LEN;
+        while message_offset < message.len() {
+            let (set_id, set) = next_set(message, &mut message_offset)?;
+            if set.is_empty() {
+                break;
+            }
+            if set_id != TEMPLATE_SET_ID {
+                return Err(format!("template input contains Set ID {set_id}").into());
+            }
+            let mut offset = SET_HEADER_LEN;
+            while offset < set.len() {
+                let remaining = &set[offset..];
+                if remaining.len() < MIN_HFT_TEMPLATE_RECORD_LEN
+                    && remaining.iter().all(|byte| *byte == 0)
+                {
+                    break;
+                }
+                if remaining.len() < 4 {
+                    return Err("template set has a truncated template record".into());
+                }
+                let template_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+                let field_count = NetworkEndian::read_u16(&set[offset + 2..offset + 4]) as usize;
+                if template_id < MIN_DATA_SET_ID || field_count == 0 {
+                    return Err("template key extraction found an invalid template header".into());
+                }
+                offset += 4;
+                for _ in 0..field_count {
+                    if set.len().saturating_sub(offset) < 4 {
+                        return Err("template key extraction found a truncated field".into());
+                    }
+                    let raw_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+                    offset += 4;
+                    if raw_id & 0x8000 != 0 {
+                        if set.len().saturating_sub(offset) < 4 {
+                            return Err(
+                                "template key extraction found a truncated enterprise number"
+                                    .into(),
+                            );
+                        }
+                        offset += 4;
+                    }
+                }
+                keys.insert(TemplateKey {
+                    observation_domain_id: domain,
+                    template_id,
+                });
+                if keys.len() > MAX_TEMPLATES_PER_UPDATE {
+                    return Err(format!(
+                        "template input exceeds {MAX_TEMPLATES_PER_UPDATE} templates"
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    if keys.is_empty() {
+        return Err("template key extraction found no templates".into());
+    }
+    Ok(keys)
+}
+
+fn compiled_template_weight(template: &CompiledTemplate) -> Result<usize, IpfixError> {
+    const ARC_ALLOCATION_OVERHEAD: usize = 32;
+    const HASH_ENTRY_OVERHEAD: usize = 64;
+    let counter_bytes = template
+        .counters
+        .len()
+        .checked_mul(std::mem::size_of::<CompiledCounter>())
+        .ok_or("compiled template size overflow")?;
+    std::mem::size_of::<CompiledTemplate>()
+        .checked_add(ARC_ALLOCATION_OVERHEAD)
+        .and_then(|total| total.checked_add(HASH_ENTRY_OVERHEAD))
+        .and_then(|total| total.checked_add(counter_bytes))
+        .and_then(|total| total.checked_add(ARC_ALLOCATION_OVERHEAD))
+        .ok_or_else(|| IpfixError::from("compiled template size overflow"))
 }
 
 struct IpfixMessages<'a> {
@@ -2085,38 +2433,30 @@ mod tests {
     }
 
     #[test]
-    fn delete_and_rejoin_accepts_an_identical_schema() {
+    fn delete_and_rejoin_rejects_an_identical_schema() {
         let mut actor = actor();
         let template = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
         actor.handle_template(template.clone()).unwrap();
         actor.handle_template_deletion("session");
 
-        actor.handle_template(template).unwrap();
-        let batch = actor
+        assert!(actor.handle_template(template).is_err());
+        assert!(actor
             .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
-            .unwrap();
-        assert_eq!(batch.record_count(), 1);
-        assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 2);
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
-    fn identical_schema_rejoin_may_use_a_new_session_name() {
+    fn identical_schema_rejoin_with_a_new_session_name_is_rejected() {
         let mut actor = actor();
         actor
             .handle_template(template_message("old", 0, 300, &[(1, 0x0001_0002)]))
             .unwrap();
         actor.handle_template_deletion("old");
 
-        actor
+        assert!(actor
             .handle_template(template_message("new", 0, 300, &[(1, 0x0001_0002)]))
-            .unwrap();
-        assert_eq!(
-            actor
-                .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
-                .unwrap()
-                .record_count(),
-            1
-        );
+            .is_err());
     }
 
     #[test]
@@ -2133,7 +2473,14 @@ mod tests {
                     &[(1, 0x0001_0002)],
                 ))
                 .unwrap();
-            actor.handle_template_deletion("session");
+            let session = actor.sessions.remove("session").unwrap();
+            for generation in [session.active, session.pending].into_iter().flatten() {
+                actor.live_template_bytes -= generation.compiled_bytes;
+                for template in generation.templates.values() {
+                    actor.installed.remove(&template.key);
+                    actor.history.retire(template);
+                }
+            }
         }
 
         assert!(actor.installed.is_empty());
@@ -2142,10 +2489,18 @@ mod tests {
             observation_domain_id: 0,
             template_id: MIN_DATA_SET_ID + MAX_INSTALLED_TEMPLATE_KEYS as u16,
         }));
+        assert!(actor
+            .handle_template(template_message(
+                "oldest",
+                0,
+                MIN_DATA_SET_ID,
+                &[(1, 0x0001_0002)],
+            ))
+            .is_err());
     }
 
     #[test]
-    fn delete_boundary_drops_unknown_data_before_new_generation() {
+    fn delete_boundary_rejects_new_generation_in_the_same_domain() {
         let mut actor = actor();
         actor
             .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
@@ -2156,17 +2511,90 @@ mod tests {
             .unwrap();
         assert_eq!(actor.deferred_sets.sets.len(), 1);
 
-        let replayed = actor
+        assert!(actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .is_err());
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[test]
+    fn delete_domain_fence_survives_owner_change() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("old", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+        actor.handle_template_deletion("old");
+
+        assert!(actor
+            .handle_template(template_message("new", 0, 301, &[(1, 0x0001_0003)]))
+            .is_err());
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[test]
+    fn malformed_trailer_does_not_promote_or_emit_valid_prefix() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
             .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
             .unwrap();
-        assert!(replayed.is_empty());
-        assert!(actor.deferred_sets.sets.is_empty());
+        let mut input = data_message(0, &[(301, vec![(2, vec![20])])]);
+        input.extend_from_slice(&[0; IPFIX_HEADER_LEN - 1]);
 
-        let live = actor
-            .handle_record(&data_message(0, &[(301, vec![(2, vec![20])])]))
+        assert!(actor.handle_record(&input).is_err());
+        assert!(actor.sessions["session"].pending.is_some());
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+    }
+
+    #[test]
+    fn invalid_metadata_quarantine_removes_conflicting_incumbent() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("incumbent", 0, 300, &[(1, 0x0001_0002)]))
             .unwrap();
-        assert_eq!(live.record_count(), 1);
-        assert_eq!(live.iter().next().unwrap().observation_time, 2);
+        let raw = template_message("invalid", 0, 300, &[(1, 0x0001_0003)])
+            .templates
+            .unwrap();
+
+        actor
+            .handle_template(IPFixTemplatesMessage::quarantine(
+                "invalid".to_string(),
+                Some(raw),
+            ))
+            .unwrap();
+        assert!(actor.installed.is_empty());
+        assert!(!actor.sessions.contains_key("incumbent"));
+    }
+
+    #[test]
+    fn unidentifiable_quarantine_disables_decoding_until_restart() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("incumbent", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::quarantine(
+                "invalid".to_string(),
+                Some(Arc::new(vec![1, 2, 3])),
+            ))
+            .unwrap();
+
+        assert!(actor.globally_quarantined);
+        assert!(actor
+            .handle_template(template_message("new", 1, 301, &[(1, 0x0001_0002)]))
+            .is_err());
+        assert!(actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -2197,6 +2625,150 @@ mod tests {
         assert!(actor.lifecycle_markers.drop_all_preinstall);
         assert!(actor.lifecycle_markers.owners.is_empty());
         assert_eq!(actor.lifecycle_markers.bytes, 0);
+    }
+
+    #[test]
+    fn capacity_rejection_does_not_poison_a_fresh_id() {
+        let mut actor = actor();
+        actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
+        let candidate = template_message("candidate", 0, 6000, &[(1, 0x0001_0002)]);
+
+        assert!(actor.handle_template(candidate.clone()).is_err());
+        assert!(!actor.history.was_used(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 6000,
+        }));
+
+        actor.live_template_bytes = 0;
+        actor.handle_template(candidate).unwrap();
+    }
+
+    #[test]
+    fn live_template_byte_limit_is_transactional() {
+        let mut actor = actor();
+        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(active).unwrap();
+        let bytes_before = actor.live_template_bytes;
+        actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
+
+        assert!(actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .is_err());
+        assert!(actor.sessions["session"].pending.is_none());
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }));
+        assert!(!actor.history.was_used(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+        actor.live_template_bytes = bytes_before;
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(actor.sessions["session"].pending.is_some());
+    }
+
+    #[test]
+    fn pending_replacement_projects_retired_keys_before_capacity_check() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+
+        for offset in 0..MAX_INSTALLED_TEMPLATE_KEYS - 2 {
+            let key = TemplateKey {
+                observation_domain_id: 1,
+                template_id: MIN_DATA_SET_ID + u16::try_from(offset).unwrap(),
+            };
+            actor.installed.insert(
+                key,
+                Arc::new(CompiledTemplate {
+                    key,
+                    owner: Arc::from("filler"),
+                    observation_time_offset: 0,
+                    counters: Arc::from([]),
+                    record_len: 8,
+                }),
+            );
+        }
+        assert_eq!(actor.installed.len(), MAX_INSTALLED_TEMPLATE_KEYS);
+
+        actor
+            .handle_template(template_message("session", 0, 302, &[(1, 0x0001_0004)]))
+            .unwrap();
+        assert_eq!(actor.installed.len(), MAX_INSTALLED_TEMPLATE_KEYS);
+        assert!(!actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 301,
+        }));
+        assert!(actor.installed.contains_key(&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 302,
+        }));
+    }
+
+    #[test]
+    fn too_many_unresolved_sets_are_rejected_before_mutation() {
+        let mut message = data_message(
+            0,
+            &(0..=MAX_UNRESOLVED_SETS_PER_RECORD_INPUT)
+                .map(|index| {
+                    (
+                        MIN_DATA_SET_ID + u16::try_from(index).unwrap(),
+                        vec![(1, vec![])],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        // Unknown Sets need no valid record layout; shrink each to one byte.
+        let mut offset = IPFIX_HEADER_LEN;
+        while offset < message.len() {
+            let set_len = NetworkEndian::read_u16(&message[offset + 2..offset + 4]) as usize;
+            message.drain(offset + SET_HEADER_LEN + 1..offset + set_len);
+            message[offset + 2..offset + 4]
+                .copy_from_slice(&((SET_HEADER_LEN + 1) as u16).to_be_bytes());
+            offset += SET_HEADER_LEN + 1;
+        }
+        let message_len = u16::try_from(message.len()).unwrap();
+        message[2..4].copy_from_slice(&message_len.to_be_bytes());
+
+        let mut actor = actor();
+        assert!(actor.handle_record(&message).is_err());
+        assert!(actor.deferred_sets.sets.is_empty());
+        assert_eq!(actor.deferred_sets.dropped, 0);
+        assert_eq!(actor.next_deferred_sequence, 1);
+    }
+
+    #[test]
+    fn full_deferred_buffer_does_not_drop_known_other_domain() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("known", 1, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        for index in 0..MAX_UNKNOWN_SETS {
+            actor
+                .handle_record(&data_message(
+                    0,
+                    &[(
+                        MIN_DATA_SET_ID + u16::try_from(index).unwrap(),
+                        vec![(1, vec![])],
+                    )],
+                ))
+                .unwrap();
+        }
+        let dropped_before = actor.deferred_sets.dropped;
+
+        let mut input = data_message(0, &[(600, vec![(2, vec![])])]);
+        input.extend_from_slice(&data_message(1, &[(300, vec![(3, vec![30])])]));
+        let batch = actor.handle_record(&input).unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 3);
+        assert_eq!(actor.deferred_sets.dropped, dropped_before + 1);
     }
 
     #[test]
@@ -2311,7 +2883,7 @@ mod tests {
             .unwrap();
 
         actor.handle_template(active).unwrap();
-        assert_eq!(actor.deferred_sets.sets.len(), 1);
+        assert!(actor.deferred_sets.sets.is_empty());
         let replayed = actor
             .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
             .unwrap();
@@ -2658,6 +3230,22 @@ mod tests {
         batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 3)]);
         assert!(actor.send_batch(batch).await.is_err());
         assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn resource_limit_terminates_the_actor_for_clean_retry() {
+        let (template_tx, template_rx) = channel(1);
+        let (_record_tx, record_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
+        let task = tokio::spawn(IpfixActor::run(actor));
+
+        template_tx
+            .send(template_message("candidate", 0, 6000, &[(1, 0x0001_0002)]))
+            .await
+            .unwrap();
+        let error = task.await.unwrap().unwrap_err();
+        assert!(is_resource_error(&error));
     }
 
     #[tokio::test(start_paused = true)]
