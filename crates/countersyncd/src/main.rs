@@ -219,6 +219,75 @@ fn reconcile_restart_intent(
     }
 }
 
+fn otel_failure_exit(message: String) -> SupervisorExit {
+    SupervisorExit {
+        actor_name: "OpenTelemetry",
+        exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
+        message,
+        restart: None,
+    }
+}
+
+fn reconcile_otel_failure(
+    exit: &mut SupervisorExit,
+    receiver: &mut tokio::sync::mpsc::Receiver<String>,
+) {
+    if exit.restart.is_none() && exit.exit_code != EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED {
+        if let Ok(message) = receiver.try_recv() {
+            *exit = otel_failure_exit(message);
+        }
+    }
+}
+
+async fn join_aborted_task<T>(handle: &mut tokio::task::JoinHandle<T>) {
+    // Completed joins may already have been consumed by the supervisor select.
+    // is_finished also guarantees their futures (and owned guards) were dropped.
+    if !handle.is_finished() {
+        let _ = handle.await;
+    }
+}
+
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct ShutdownWatchdog {
+    cancel: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ShutdownWatchdog {
+    fn start(
+        timeout: Duration,
+        on_timeout: impl FnOnce() + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let (cancel, receiver) = std::sync::mpsc::channel();
+        let started = std::time::Instant::now();
+        let thread = std::thread::Builder::new()
+            .name("countersyncd-shutdown".into())
+            .spawn(move || {
+                if matches!(
+                    receiver.recv_timeout(timeout.saturating_sub(started.elapsed())),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    on_timeout();
+                }
+            })?;
+        Ok(Self {
+            cancel,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for ShutdownWatchdog {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(thread) = self.thread.take() {
+            // Do not leave a watchdog callback/thread racing the FD sweep or exec.
+            let _ = thread.join();
+        }
+    }
+}
+
 fn restart_backoff(request: &RestartRequest, previous_retries: u32) -> (u32, u64) {
     match request {
         RestartRequest::Administrative(_) => (0, 0),
@@ -583,6 +652,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Configure OpenTelemetry export with settings from command line arguments
+    let (otel_failure_sender, mut otel_failure_receiver) = channel(1);
     let otel_actor = if args.enable_otel {
         let otel_config = OtelActorConfig {
             collector_endpoint: args.otel_endpoint.clone(),
@@ -593,7 +663,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add OTEL to ipfix recipients only when enabled
         ipfix.add_recipient(otel_sender.clone());
         match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
-            Ok(actor) => Some(actor),
+            Ok(mut actor) => {
+                actor.set_failure_notifier(otel_failure_sender);
+                Some(actor)
+            }
             Err(e) => {
                 error!("Failed to initialize OtelActor: {}", e);
                 return Err(e.into());
@@ -603,6 +676,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Drop the receiver if OTEL export is disabled
         drop(otel_receiver);
         drop(otel_shutdown_sender);
+        drop(otel_failure_sender);
         None
     };
 
@@ -683,6 +757,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 restart: Some(reason),
             }
         }
+        Some(message) = otel_failure_receiver.recv() => {
+            otel_failure_exit(message)
+        }
         res = &mut swss_handle => {
             classify_swss_join("SWSS", res)
         }
@@ -707,11 +784,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     reconcile_restart_intent(&mut first_exit, &mut restart_receiver);
+    reconcile_otel_failure(&mut first_exit, &mut otel_failure_receiver);
 
     error!(
         "Critical actor '{}' triggered daemon shutdown: {}",
         first_exit.actor_name, first_exit.message
     );
+
+    // A synchronous SWSS Redis operation can block its join guard on a runtime
+    // worker. A Tokio timeout cannot guarantee progress here. Never exec past an
+    // incomplete barrier. A timeout exits even if the deployment does not
+    // automatically restart failed services.
+    let exit_code = first_exit.exit_code;
+    let shutdown_watchdog = match ShutdownWatchdog::start(SHUTDOWN_TIMEOUT, move || {
+        error!("Actor shutdown exceeded {SHUTDOWN_TIMEOUT:?}; exiting with status {exit_code} without exec");
+        std::process::exit(exit_code);
+    }) {
+        Ok(watchdog) => watchdog,
+        Err(error) => {
+            error!("Cannot start shutdown watchdog: {error}; exiting with status {exit_code}");
+            std::process::exit(exit_code);
+        }
+    };
 
     data_netlink_handle.abort();
     control_netlink_handle.abort();
@@ -727,6 +821,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(handle) = otel_handle.as_mut() {
         handle.abort();
     }
+
+    // Abort only requests cancellation. Wait for owned sockets and the SWSS
+    // reader's stop/join guard before enumerating descriptors for exec.
+    join_aborted_task(&mut data_netlink_handle).await;
+    join_aborted_task(&mut control_netlink_handle).await;
+    join_aborted_task(&mut ipfix_handle).await;
+    join_aborted_task(&mut swss_handle).await;
+    if let Some(handle) = reporter_handle.as_mut() {
+        join_aborted_task(handle).await;
+    }
+    if let Some(handle) = counter_db_handle.as_mut() {
+        join_aborted_task(handle).await;
+    }
+    if let Some(handle) = otel_handle.as_mut() {
+        join_aborted_task(handle).await;
+    }
+    drop(shutdown_watchdog);
 
     if let Some(request) = &first_exit.restart {
         warn!("Restarting countersyncd in place to establish a clean HFT generation boundary");
@@ -775,6 +886,214 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, clap::Error> {
         Args::try_parse_from(args)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_watchdog_preserves_status_while_runtime_is_blocked() {
+        use std::sync::{
+            atomic::{AtomicI32, Ordering},
+            mpsc, Arc,
+        };
+
+        struct BlockOnDrop {
+            entered: mpsc::Sender<()>,
+            timeout: mpsc::Receiver<i32>,
+            status: Arc<AtomicI32>,
+        }
+        impl Drop for BlockOnDrop {
+            fn drop(&mut self) {
+                self.entered.send(()).unwrap();
+                // This blocks the only runtime thread, including Tokio timers.
+                let status = self.timeout.recv_timeout(Duration::from_secs(2)).unwrap();
+                self.status.store(status, Ordering::SeqCst);
+            }
+        }
+
+        for exit in [
+            otel_failure_exit("retry exhaustion".into()),
+            classify_swss_join("SWSS", Ok(Err(SwssError::RestartRequired("delete".into())))),
+        ] {
+            let (entered_sender, entered_receiver) = mpsc::channel();
+            let (timeout_sender, timeout_receiver) = mpsc::channel();
+            let status = Arc::new(AtomicI32::new(-1));
+            let guard = BlockOnDrop {
+                entered: entered_sender,
+                timeout: timeout_receiver,
+                status: status.clone(),
+            };
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let mut task = spawn(async move {
+                let _guard = guard;
+                started.send(()).unwrap();
+                std::future::pending::<()>().await;
+            });
+            tokio::time::timeout(Duration::from_secs(2), ready)
+                .await
+                .unwrap()
+                .unwrap();
+            let expected = exit.exit_code;
+            let watchdog = ShutdownWatchdog::start(Duration::from_millis(20), move || {
+                entered_receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap();
+                timeout_sender.send(expected).unwrap();
+            })
+            .unwrap();
+            task.abort();
+            join_aborted_task(&mut task).await;
+            drop(watchdog);
+            assert_eq!(status.load(Ordering::SeqCst), expected);
+        }
+    }
+
+    #[test]
+    fn shutdown_watchdog_cancellation_joins_without_firing() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let watchdog = ShutdownWatchdog::start(Duration::from_secs(2), move || {
+            sender.send(()).unwrap();
+        })
+        .unwrap();
+        drop(watchdog);
+        assert_eq!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn shutdown_barrier_sweep_and_exec_close_late_open_descriptors() {
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+        use wait_timeout::ChildExt;
+
+        const STAGE: &str = "COUNTERSYNCD_TEST_SHUTDOWN_EXEC_STAGE";
+        const TARGET: &str = "COUNTERSYNCD_TEST_SHUTDOWN_EXEC_TARGET";
+        const TEST: &str = "tests::shutdown_barrier_sweep_and_exec_close_late_open_descriptors";
+        match std::env::var(STAGE).as_deref() {
+            Ok("barrier") => {
+                let watchdog = ShutdownWatchdog::start(Duration::from_secs(2), || {
+                    std::process::exit(99);
+                })
+                .unwrap();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let mut peer =
+                    runtime.block_on(crate::actor::swss::tests::late_open_reader_barrier());
+                assert_eq!(
+                    peer.read(&mut [0]).unwrap(),
+                    0,
+                    "reader FD must close before exec"
+                );
+                drop(watchdog);
+                let fd = peer.as_raw_fd();
+                let target = std::fs::read_link(format!("/proc/self/fd/{fd}")).unwrap();
+                // Retain the late-open peer as well, so exec must exercise the sweep.
+                assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFD, 0) }, 0);
+                mark_open_fds_close_on_exec().unwrap();
+                let error = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", TEST, "--nocapture"])
+                    .env(STAGE, "probe")
+                    .env(TARGET, target)
+                    .exec();
+                panic!("exec failed: {error}");
+            }
+            Ok("probe") => {
+                let target = std::path::PathBuf::from(std::env::var_os(TARGET).unwrap());
+                for entry in std::fs::read_dir("/proc/self/fd").unwrap() {
+                    if let Ok(link) = std::fs::read_link(entry.unwrap().path()) {
+                        assert_ne!(link, target, "late-open socket survived exec");
+                    }
+                }
+            }
+            _ => {
+                let mut child = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", TEST, "--nocapture"])
+                    .env(STAGE, "barrier")
+                    .spawn()
+                    .unwrap();
+                let status = child.wait_timeout(Duration::from_secs(10)).unwrap();
+                if status.is_none() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("shutdown/exec subprocess timed out");
+                }
+                assert!(status.unwrap().success());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn otel_failure_has_priority_over_ready_dependent_exit() {
+        let (sender, mut receiver) = channel(1);
+        sender.try_send("retry exhaustion".into()).unwrap();
+        let exit = tokio::select! {
+            biased;
+            Some(message) = receiver.recv() => otel_failure_exit(message),
+            exit = std::future::ready(classify_join("IPFIX", Ok(()))) => exit,
+        };
+        assert_eq!(exit.exit_code, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
+        assert_eq!(exit.actor_name, "OpenTelemetry");
+    }
+
+    #[tokio::test]
+    async fn otel_failure_between_select_polls_overrides_dependent_exit() {
+        let (sender, mut receiver) = channel(1);
+        let dependency = std::future::poll_fn(move |_| {
+            sender.try_send("retry exhaustion".into()).unwrap();
+            std::task::Poll::Ready(classify_join("IPFIX", Ok(())))
+        });
+        let mut exit = tokio::select! {
+            biased;
+            _ = receiver.recv() => panic!("the empty receiver must be polled first"),
+            exit = dependency => exit,
+        };
+        assert_eq!(exit.exit_code, EXIT_FAILURE);
+        reconcile_otel_failure(&mut exit, &mut receiver);
+        assert_eq!(exit.exit_code, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
+        assert_eq!(exit.actor_name, "OpenTelemetry");
+        assert!(exit.restart.is_none());
+    }
+
+    #[test]
+    fn otel_reconciliation_preserves_restart_and_unnotified_exit() {
+        let (sender, mut receiver) = channel(1);
+        let mut exit = classify_join("IPFIX", Ok(()));
+        reconcile_otel_failure(&mut exit, &mut receiver);
+        assert_eq!(exit.exit_code, EXIT_FAILURE);
+        sender.try_send("retry exhaustion".into()).unwrap();
+        exit.restart = Some(RestartRequest::Administrative("delete".into()));
+        reconcile_otel_failure(&mut exit, &mut receiver);
+        assert!(exit.restart.is_some());
+        assert_eq!(exit.exit_code, EXIT_FAILURE);
+    }
+
+    #[tokio::test]
+    async fn aborted_task_join_waits_for_drop_and_skips_consumed_join() {
+        struct NotifyDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for NotifyDrop {
+            fn drop(&mut self) {
+                self.0.take().unwrap().send(()).unwrap();
+            }
+        }
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (dropped, mut drop_receiver) = tokio::sync::oneshot::channel();
+        let mut handle = spawn(async move {
+            let _guard = NotifyDrop(Some(dropped));
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        handle.abort();
+        join_aborted_task(&mut handle).await;
+        drop_receiver.try_recv().unwrap();
+        join_aborted_task(&mut handle).await;
+
+        let mut completed = spawn(async {});
+        (&mut completed).await.unwrap();
+        completed.abort();
+        join_aborted_task(&mut completed).await;
     }
 
     #[tokio::test]
@@ -942,6 +1261,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_restart_marks_open_descriptors_close_on_exec() {
         use std::os::fd::AsRawFd;
 

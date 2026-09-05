@@ -10,6 +10,34 @@ const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
+const SWSS_SELECT_TIMEOUT: Duration = Duration::from_millis(50);
+// Bound the raw Redis representation before copying/tokenizing. IPFIX keeps its
+// own admission checks for callers that bypass SWSS.
+const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
+
+struct SwssReader {
+    events: mpsc::Receiver<SwssEvent>,
+    failures: mpsc::Receiver<String>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for SwssReader {
+    fn drop(&mut self) {
+        // Closing both receivers releases blocking_send and signals the polling
+        // loop to stop. Join also covers a read_data call that opens an FD late.
+        // Synchronous Redis calls may outlast the select timeout; main's thread
+        // watchdog exits the process if this barrier cannot complete.
+        self.events.close();
+        self.failures.close();
+        if let Some(thread) = self.thread.take() {
+            if thread.join().is_err() {
+                error!("SwssActor reader thread panicked");
+            }
+        }
+    }
+}
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -103,10 +131,10 @@ impl SwssActor {
             template_recipient,
             restart_notifier,
         } = actor;
-        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
-        let (fatal_sender, mut fatal_receiver) = mpsc::channel(1);
+        let (event_sender, event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let (fatal_sender, fatal_receiver) = mpsc::channel(1);
 
-        let _reader_thread = match thread::Builder::new()
+        let reader_thread = match thread::Builder::new()
             .name("countersyncd-swss".to_string())
             .spawn(move || {
                 #[cfg(test)]
@@ -130,12 +158,7 @@ impl SwssActor {
                         }
                     }
 
-                    #[cfg(test)]
-                    let timeout = Duration::from_millis(50);
-                    #[cfg(not(test))]
-                    let timeout = Duration::from_secs(10);
-
-                    match Self::blocking_collect_events(&mut session_table, timeout) {
+                    match Self::blocking_collect_events(&mut session_table, SWSS_SELECT_TIMEOUT) {
                         Ok(events) => {
                             for event in events {
                                 if event_sender.blocking_send(event).is_err() {
@@ -162,17 +185,25 @@ impl SwssActor {
                 }
             };
 
+        // Owned inside the future: cancellation drops this guard and joins the
+        // reader rather than detaching it when the Tokio task is aborted.
+        let mut reader = SwssReader {
+            events: event_receiver,
+            failures: fatal_receiver,
+            thread: Some(reader_thread),
+        };
+
         loop {
             tokio::select! {
                 biased;
-                failure = fatal_receiver.recv() => {
+                failure = reader.failures.recv() => {
                     if let Some(failure) = failure {
                         error!("SwssActor reader failed: {failure}");
                         return Err(SwssError::ReaderFailed(failure));
                     }
                     break;
                 }
-                event = event_receiver.recv() => {
+                event = reader.events.recv() => {
                     let Some(event) = event else {
                         break;
                     };
@@ -193,7 +224,7 @@ impl SwssActor {
                     );
                     tokio::select! {
                         biased;
-                        failure = fatal_receiver.recv() => {
+                        failure = reader.failures.recv() => {
                             if let Some(failure) = failure {
                                 error!("SwssActor reader failed while forwarding an event: {failure}");
                                 return Err(SwssError::ReaderFailed(failure));
@@ -221,6 +252,9 @@ impl SwssActor {
                 swss_common::SelectResult::Data => match session_table.pops() {
                     Ok(items) => {
                         for item in items {
+                            if item.key.len() > MAX_OBJECT_METADATA_BYTES {
+                                return Err("Session key exceeds metadata byte limit".into());
+                            }
                             debug!(
                                 "SwssActor received: key={}, op={:?}",
                                 item.key, item.operation
@@ -255,19 +289,50 @@ impl SwssActor {
     }
 
     fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
+        // CxxString::len borrows the raw value without lossy UTF-8 allocation.
+        let mut metadata_bytes = 0usize;
+        let mut validation_error = None;
+        for (field, value) in field_values {
+            metadata_bytes = metadata_bytes.saturating_add(field.len());
+            if field == "session_config" {
+                if value.len() > MAX_TEMPLATE_CONFIG_BYTES {
+                    validation_error = Some("Session config exceeds byte limit");
+                }
+            } else {
+                metadata_bytes = metadata_bytes.saturating_add(value.len());
+            }
+            if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+                validation_error = Some("Session metadata exceeds byte limit");
+                break;
+            }
+        }
+        if validation_error.is_some() {
+            // Keep only bounded wire data for quarantine/conflict detection.
+            return SessionData {
+                validation_error,
+                session_config: field_values
+                    .get("session_config")
+                    .filter(|value| value.len() <= MAX_TEMPLATE_CONFIG_BYTES)
+                    .map(|value| value.as_bytes().to_vec())
+                    .unwrap_or_default(),
+                ..SessionData::default()
+            };
+        }
         let mut session_data = SessionData::default();
 
         for (field, value) in field_values {
             match field.as_str() {
-                "stream_status" => session_data.stream_status = value.to_string_lossy().to_string(),
-                "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
-                "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
-                "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
+                "stream_status" => {
+                    session_data.stream_status = value.to_string_lossy().into_owned()
+                }
+                "session_type" => session_data.session_type = value.to_string_lossy().into_owned(),
+                "object_names" => session_data.object_names = value.to_string_lossy().into_owned(),
+                "object_ids" => session_data.object_ids = value.to_string_lossy().into_owned(),
                 "session_config" => {
                     session_data.session_config = value.as_bytes().to_vec();
                 }
                 _ => {
-                    debug!("Unknown field in session data: {} = {:?}", field, value);
+                    debug!("Ignoring unknown session field ({} bytes)", field.len());
                 }
             }
         }
@@ -303,13 +368,11 @@ impl SwssActor {
         key: &str,
         field_values: &std::collections::HashMap<String, swss_common::CxxString>,
     ) {
-        debug!("Processing session update for key: {}", key);
-
         let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
         if let Err(e) = self.validate_and_process_session(key, &session_data).await {
-            error!("Failed to process session {}: {}", key, e);
+            error!("Failed to process session: {}", e);
         }
     }
 
@@ -320,7 +383,7 @@ impl SwssActor {
     ) {
         if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await
         {
-            error!("Failed to process session {}: {}", key, e);
+            error!("Failed to process session: {}", e);
         }
     }
 
@@ -348,8 +411,14 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
+        }
+        let size_error = session_data.validate_sizes().err();
         // A disabled or repurposed row deactivates any previously installed IPFIX session.
-        if session_data.stream_status != "enabled" || session_data.session_type != "ipfix" {
+        if size_error.is_none()
+            && (session_data.stream_status != "enabled" || session_data.session_type != "ipfix")
+        {
             if session_data.stream_status != "enabled" {
                 debug!("Deactivating disabled session: {}", key);
             } else {
@@ -364,13 +433,17 @@ impl SwssActor {
                 .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
         }
 
-        let message = match Self::validated_update(key, session_data) {
+        let message = match size_error.map_or_else(
+            || Self::validated_update(key, session_data),
+            |error| Err(error.to_string()),
+        ) {
             Ok(message) => message,
             Err(err) => {
                 template_recipient
                     .send(IPFixTemplatesMessage::quarantine(
                         key.to_string(),
-                        (!session_data.session_config.is_empty())
+                        (!session_data.session_config.is_empty()
+                            && session_data.session_config.len() <= MAX_TEMPLATE_CONFIG_BYTES)
                             .then(|| Arc::new(session_data.session_config.clone())),
                     ))
                     .await
@@ -392,29 +465,38 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<IPFixTemplatesMessage, String> {
+        session_data.validate_sizes()?;
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
+        }
         if session_data.session_config.is_empty() {
             return Err("Session config is empty".to_string());
         }
 
-        info!(
-            "Processing enabled IPFIX session: key={}, object_names={}, object_ids={}",
-            key, session_data.object_names, session_data.object_ids
-        );
+        info!("Processing enabled IPFIX session: key={}", key);
 
-        let object_names: Vec<String> = session_data
-            .object_names
-            .split(',')
-            .map(str::trim)
-            .map(str::to_string)
-            .collect();
-        if object_names.iter().any(String::is_empty) {
-            return Err("object_names must contain non-empty names".to_string());
+        let mut object_names = Vec::new();
+        for token in session_data.object_names.split(',') {
+            let name = token.trim();
+            if name.is_empty() {
+                return Err("object_names must contain non-empty names".to_string());
+            }
+            if object_names.len() >= MAX_OBJECTS_PER_UPDATE {
+                return Err("object_names exceeds entry limit".into());
+            }
+            object_names.push(name.to_string());
         }
 
         let mut object_ids = Vec::new();
         let mut unique_ids = std::collections::HashSet::new();
         for token in session_data.object_ids.split(',') {
             let trimmed = token.trim();
+            if trimmed.is_empty() {
+                return Err("object_ids must contain non-empty IDs".into());
+            }
+            if object_ids.len() >= MAX_OBJECTS_PER_UPDATE {
+                return Err("object_ids exceeds entry limit".into());
+            }
             let object_id = trimmed
                 .parse::<u16>()
                 .map_err(|e| format!("Invalid object ID '{}' for {}: {}", trimmed, key, e))?;
@@ -457,6 +539,7 @@ impl SwssActor {
 /// - session_config: Binary data containing the session configuration (IPFIX templates)
 #[derive(Default, Debug)]
 struct SessionData {
+    validation_error: Option<&'static str>,
     stream_status: String,
     session_type: String,
     object_names: String,
@@ -464,13 +547,223 @@ struct SessionData {
     session_config: Vec<u8>,
 }
 
+impl SessionData {
+    fn validate_sizes(&self) -> Result<(), &'static str> {
+        if let Some(error) = self.validation_error {
+            return Err(error);
+        }
+        if self.session_config.len() > MAX_TEMPLATE_CONFIG_BYTES {
+            return Err("Session config exceeds byte limit");
+        }
+        let metadata_bytes = self
+            .stream_status
+            .len()
+            .saturating_add(self.session_type.len())
+            .saturating_add(self.object_names.len())
+            .saturating_add(self.object_ids.len());
+        if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session metadata exceeds byte limit");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::message::ipfix::IPFixTemplateOperation;
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn abort_joins_reader_that_opens_a_descriptor_after_stop() {
+        use std::io::Read;
+        let mut peer = late_open_reader_barrier().await;
+        // EOF proves closure, without relying on a raw FD number not being reused.
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    }
+
+    pub(crate) async fn late_open_reader_barrier() -> std::os::unix::net::UnixStream {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+
+        let (event_sender, events) = channel(1);
+        let (_fatal_sender, failures) = channel(1);
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (peer_sender, peer_receiver) = std::sync::mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            assert!(!event_sender.is_closed());
+            started.send(()).unwrap();
+            // Gate the late open on the guard closing the receiver, not timing.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !event_sender.is_closed() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "reader was not stopped"
+                );
+                thread::yield_now();
+            }
+            let (peer, writer) = UnixStream::pair().unwrap();
+            assert_eq!(
+                unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETFD, 0) },
+                0
+            );
+            assert_eq!(
+                unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+                0
+            );
+            peer_sender.send(peer).unwrap();
+            assert!(event_sender
+                .blocking_send(SwssEvent::Delete { key: "late".into() })
+                .is_err());
+            drop(writer);
+        });
+        let reader = SwssReader {
+            events,
+            failures,
+            thread: Some(reader_thread),
+        };
+        let task = tokio::spawn(async move {
+            let _reader = reader;
+            std::future::pending::<()>().await;
+        });
+        tokio::time::timeout(Duration::from_secs(2), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let peer = peer_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        peer.set_nonblocking(true).unwrap();
+        peer
+    }
+
+    #[test]
+    fn reader_guard_releases_full_event_and_failure_channels() {
+        for block_on_failure in [false, true] {
+            let (event_sender, events) = channel(1);
+            let (fatal_sender, failures) = channel(1);
+            event_sender
+                .try_send(SwssEvent::Delete {
+                    key: "queued".into(),
+                })
+                .unwrap();
+            fatal_sender.try_send("queued".into()).unwrap();
+            let reader_thread = thread::spawn(move || {
+                if block_on_failure {
+                    assert!(fatal_sender.blocking_send("late".into()).is_err());
+                } else {
+                    assert!(event_sender
+                        .blocking_send(SwssEvent::Delete { key: "late".into() })
+                        .is_err());
+                }
+            });
+            drop(SwssReader {
+                events,
+                failures,
+                thread: Some(reader_thread),
+            });
+        }
+    }
+
+    #[test]
+    fn raw_session_limits_reject_before_copying_metadata_or_oversized_config() {
+        for field in [
+            "object_names",
+            "object_ids",
+            "stream_status",
+            "session_type",
+            "unknown",
+            "session_config",
+        ] {
+            let fields = HashMap::from([(
+                field.into(),
+                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES + 1]),
+            )]);
+            let session = SwssActor::parse_session_data(&fields);
+            assert!(session.validate_sizes().is_err(), "{field}");
+            assert!(session.object_names.is_empty());
+            assert!(session.object_ids.is_empty());
+            assert!(session.stream_status.is_empty());
+            assert!(session.session_type.is_empty());
+            assert!(session.session_config.is_empty());
+        }
+        let fields = HashMap::from([
+            (
+                "object_names".into(),
+                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES / 2]),
+            ),
+            (
+                "object_ids".into(),
+                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES / 2]),
+            ),
+            ("session_config".into(), CxxString::from("bounded config")),
+        ]);
+        let session = SwssActor::parse_session_data(&fields);
+        assert!(session.validate_sizes().is_err());
+        assert!(session.object_names.is_empty());
+        assert_eq!(session.session_config, b"bounded config");
+    }
+
+    #[tokio::test]
+    async fn oversized_session_is_quarantined_without_copying_config() {
+        let (sender, mut receiver) = channel(1);
+        let session = SessionData {
+            session_config: vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1],
+            ..SessionData::default()
+        };
+        assert!(
+            SwssActor::validate_and_send_session(&sender, "test", &session)
+                .await
+                .is_err()
+        );
+        let message = receiver.try_recv().unwrap();
+        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        assert!(message.templates.is_none());
+    }
+
+    #[test]
+    fn metadata_tokens_are_validated_incrementally_and_entry_capped() {
+        let mut session = SessionData {
+            stream_status: "enabled".into(),
+            session_type: "ipfix".into(),
+            object_names: ",".repeat(MAX_OBJECTS_PER_UPDATE + 1),
+            object_ids: "1".into(),
+            session_config: vec![1],
+            ..SessionData::default()
+        };
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("non-empty names"));
+        session.object_names = std::iter::repeat("x")
+            .take(MAX_OBJECTS_PER_UPDATE)
+            .collect::<Vec<_>>()
+            .join(",");
+        session.object_ids = (1..=MAX_OBJECTS_PER_UPDATE)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(SwssActor::validated_update("test", &session).is_ok());
+        session.object_ids.push_str(",1");
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("object_ids exceeds entry limit"));
+        session.object_names.push_str(",x");
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("object_names exceeds entry limit"));
+        session.object_names = "x".into();
+        session.object_ids = "1,".into();
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("non-empty IDs"));
+        session.object_names = "x".repeat(MAX_OBJECT_METADATA_BYTES + 1);
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("metadata exceeds byte limit"));
+    }
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
@@ -636,6 +929,7 @@ mod tests {
                 object_names: names.to_string(),
                 object_ids: ids.to_string(),
                 session_config: vec![1],
+                ..SessionData::default()
             };
             assert!(
                 SwssActor::validate_and_send_session(&template_sender, "test|PORT", &session)

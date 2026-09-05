@@ -505,6 +505,28 @@ fn repeat_single_record(mut message: Vec<u8>, count: usize) -> Vec<u8> {
     message
 }
 
+async fn assert_single_record_batches(
+    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
+    expected_batches: usize,
+    counters_per_record: usize,
+) {
+    // These fixtures fit one record, but not two, under the soft batch target.
+    // This is not a counter limit for a single oversized record.
+    for index in 0..expected_batches {
+        let batch = timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("timed out waiting for split SAI stats batch")
+            .expect("SAI stats channel closed early");
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.counter_count(), counters_per_record);
+        let mut records = batch.iter();
+        let record = records.next().expect("batch should contain one record");
+        assert_eq!(record.observation_time, (index + 1) as u64);
+        assert_eq!(record.stats.len(), counters_per_record);
+        assert!(records.next().is_none());
+    }
+}
+
 #[tokio::test]
 async fn reduced_width_records_are_split_at_batch_boundaries() {
     const COUNTERS: usize = 8_000;
@@ -529,14 +551,16 @@ async fn reduced_width_records_are_split_at_batch_boundaries() {
     let barrier = template_sender.reserve().await.unwrap();
     buffer_sender.send(Arc::new(records)).await.unwrap();
 
-    let records = receive_records(&mut saistats_receiver, RECORDS).await;
+    assert_single_record_batches(&mut saistats_receiver, RECORDS, COUNTERS).await;
     drop(barrier);
-    assert_eq!(records.len(), RECORDS);
-    assert!(records.iter().all(|(_, stats)| stats.len() == COUNTERS));
 
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());
+    assert!(
+        saistats_receiver.recv().await.is_none(),
+        "unexpected extra batch"
+    );
 }
 
 #[tokio::test]
@@ -550,6 +574,17 @@ async fn deferred_reduced_width_records_are_split_at_batch_boundaries() {
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
+    // A separate domain lets the barrier pass the unknown Set's domain fence.
+    let mut barrier_template = ipfix_test_helpers::generate_ipfix_templates(1, 401);
+    barrier_template[12..16].copy_from_slice(&1u32.to_be_bytes());
+    let mut barrier_record = ipfix_test_helpers::generate_ipfix_records(&barrier_template);
+    barrier_record[12..16].copy_from_slice(&1u32.to_be_bytes());
+    template_sender
+        .send(template_message("data_barrier", barrier_template, 1))
+        .await
+        .unwrap();
+    let barrier = template_sender.reserve().await.unwrap();
+
     let template =
         ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
     let records = repeat_single_record(
@@ -557,16 +592,25 @@ async fn deferred_reduced_width_records_are_split_at_batch_boundaries() {
         RECORDS,
     );
     buffer_sender.send(Arc::new(records)).await.unwrap();
-    tokio::task::yield_now().await;
+    buffer_sender.send(Arc::new(barrier_record)).await.unwrap();
+    // FIFO data-channel delivery proves the unknown Set was processed before
+    // this known record, while its template was still unavailable.
+    assert_eq!(
+        receive_records(&mut saistats_receiver, 1).await,
+        vec![(1, vec![(1, 1, 1)])]
+    );
+    drop(barrier);
     template_sender
         .send(template_message("wide", template, COUNTERS))
         .await
         .unwrap();
 
-    let records = receive_records(&mut saistats_receiver, RECORDS).await;
-    assert_eq!(records.len(), RECORDS);
-    assert!(records.iter().all(|(_, stats)| stats.len() == COUNTERS));
+    assert_single_record_batches(&mut saistats_receiver, RECORDS, COUNTERS).await;
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());
+    assert!(
+        saistats_receiver.recv().await.is_none(),
+        "unexpected extra batch"
+    );
 }
