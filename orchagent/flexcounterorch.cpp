@@ -218,6 +218,20 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         setFlexCounterGroupPollInterval(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
                     }
                 }
+                else if (field == SECONDARY_POLL_FACTOR_FIELD)
+                {
+                    // FEC FLR currently uses the secondary cadence only for
+                    // the PORT flex-counter group.
+                    if (key == PORT_KEY)
+                    {
+                        setFlexCounterGroupSecondaryPollFactor(flexCounterGroupMap[key], value);
+
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                        {
+                            setFlexCounterGroupSecondaryPollFactor(flexCounterGroupMap[key], value, true);
+                        }
+                    }
+                }
                 else if (field == BULK_CHUNK_SIZE_FIELD)
                 {
                     bulk_chunk_size = value;
