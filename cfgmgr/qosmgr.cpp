@@ -372,8 +372,7 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
                     if (maps.count(QOS_FIELD_SCHEDULER) &&
                         maps.at(QOS_FIELD_SCHEDULER) == name)
                     {
-                        string iface = kernutil::resolveInterface(port);
-                        applyMapsToPort(iface, maps, reason);
+                        applyMapsToPort(port, maps, reason);
                     }
                 }
 
@@ -391,11 +390,7 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
                     if (sep == string::npos)
                         continue;
                     string port = key.substr(0, sep);
-                    string queue = key.substr(sep + 1);
-                    string wred = cfg.count(QOS_FIELD_WRED_PROFILE) ?
-                                  cfg.at(QOS_FIELD_WRED_PROFILE) : "";
-                    string iface = kernutil::resolveInterface(port);
-                    applyQueueToPort(iface, queue, name, wred, reason);
+                    buildQueueTree(port, reason);
                 }
             }
 
@@ -450,7 +445,8 @@ void QosMgr::doWredTask(Consumer &consumer)
             bool ok = true;
             string reason;
             map<string, string> cfg;
-            long long redMin = -1, redMax = -1;
+            long long greenMin = -1, greenMax = -1, redMin = -1, redMax = -1;
+            bool haveGreen = false, haveRed = false;
 
             for (const auto &fv : kfvFieldsValues(t))
             {
@@ -458,46 +454,52 @@ void QosMgr::doWredTask(Consumer &consumer)
                 string value = fvValue(fv);
                 cfg[field] = value;
 
-                if (field == WRED_FIELD_RED_MIN_THRESHOLD)
+                if (field == WRED_FIELD_GREEN_MIN_THRESHOLD)
                 {
+                    haveGreen = true;
+                    if (!parseInt(value, greenMin) || greenMin < 0)
+                    { ok = false; reason = "invalid green_min_threshold"; }
+                }
+                else if (field == WRED_FIELD_GREEN_MAX_THRESHOLD)
+                {
+                    haveGreen = true;
+                    if (!parseInt(value, greenMax) || greenMax < 0)
+                    { ok = false; reason = "invalid green_max_threshold"; }
+                }
+                else if (field == WRED_FIELD_RED_MIN_THRESHOLD)
+                {
+                    haveRed = true;
                     if (!parseInt(value, redMin) || redMin < 0)
-                    {
-                        ok = false;
-                        reason = "invalid red_min_threshold";
-                    }
+                    { ok = false; reason = "invalid red_min_threshold"; }
                 }
                 else if (field == WRED_FIELD_RED_MAX_THRESHOLD)
                 {
+                    haveRed = true;
                     if (!parseInt(value, redMax) || redMax < 0)
-                    {
-                        ok = false;
-                        reason = "invalid red_max_threshold";
-                    }
+                    { ok = false; reason = "invalid red_max_threshold"; }
                 }
-                else if (field == WRED_FIELD_RED_DROP_PROBABILITY)
+                else if (field == WRED_FIELD_GREEN_DROP_PROBABILITY ||
+                         field == WRED_FIELD_RED_DROP_PROBABILITY)
                 {
                     if (!intInRange(value, 0, 100))
-                    {
-                        ok = false;
-                        reason = "invalid red_drop_probability (0..100)";
-                    }
+                    { ok = false; reason = "invalid " + field + " (0..100)"; }
                 }
-                else if (field == WRED_FIELD_GREEN_MIN_THRESHOLD ||
-                         field == WRED_FIELD_GREEN_MAX_THRESHOLD ||
-                         field == WRED_FIELD_YELLOW_MIN_THRESHOLD ||
+                else if (field == WRED_FIELD_YELLOW_MIN_THRESHOLD ||
                          field == WRED_FIELD_YELLOW_MAX_THRESHOLD ||
-                         field == WRED_FIELD_GREEN_DROP_PROBABILITY ||
-                         field == WRED_FIELD_YELLOW_DROP_PROBABILITY)
+                         field == WRED_FIELD_YELLOW_DROP_PROBABILITY ||
+                         field == WRED_FIELD_YELLOW_ENABLE)
                 {
-                    /* Color-aware WRED has no Linux 'red' equivalent; accepted
-                     * for compatibility but not programmed (logged-ignored). */
+                    /* Color-aware (yellow) WRED has no Linux 'red' equivalent;
+                     * accepted for compatibility but not programmed. */
                     SWSS_LOG_INFO("WRED_PROFILE %s: field %s accepted but ignored (no kernel equivalent)",
                                   name.c_str(), field.c_str());
                 }
-                else if (field == WRED_FIELD_ECN)
+                else if (field == WRED_FIELD_GREEN_ENABLE ||
+                         field == WRED_FIELD_RED_ENABLE ||
+                         field == WRED_FIELD_ECN)
                 {
-                    /* ecn_none / ecn_red / ... all accepted; only ecn != none
-                     * changes the tc red command at apply time. */
+                    /* Enable flags and ecn mode are accepted; the enabled
+                     * color's thresholds drive the tc red command at apply. */
                 }
                 else
                 {
@@ -506,13 +508,17 @@ void QosMgr::doWredTask(Consumer &consumer)
                 }
             }
 
-            if (cfg.find(WRED_FIELD_RED_MIN_THRESHOLD) == cfg.end() ||
-                cfg.find(WRED_FIELD_RED_MAX_THRESHOLD) == cfg.end())
+            if (!haveGreen && !haveRed)
             {
                 ok = false;
-                reason = "missing mandatory red_min/max_threshold";
+                reason = "missing thresholds (green_* or red_* min/max)";
             }
-            else if (ok && redMin > redMax)
+            else if (ok && haveGreen && greenMin > greenMax)
+            {
+                ok = false;
+                reason = "green_min_threshold > green_max_threshold";
+            }
+            else if (ok && haveRed && redMin > redMax)
             {
                 ok = false;
                 reason = "red_min_threshold > red_max_threshold";
@@ -602,44 +608,57 @@ void QosMgr::reapplyMapBindings(const string &field, const string &name)
         const map<string, string> &maps = entry.second;
         if (maps.count(field) && maps.at(field) == name)
         {
-            string iface = kernutil::resolveInterface(port);
             string reason;
-            applyMapsToPort(iface, maps, reason);
+            applyMapsToPort(port, maps, reason);
         }
     }
 }
 
-bool QosMgr::applyMapsToPort(const string &iface,
+bool QosMgr::isKnownPortQosField(const string &field)
+{
+    return field == QOS_FIELD_DSCP_TO_TC ||
+           field == QOS_FIELD_DOT1P_TO_TC ||
+           field == QOS_FIELD_TC_TO_QUEUE ||
+           field == QOS_FIELD_TC_TO_DSCP ||
+           field == QOS_FIELD_SCHEDULER ||
+           field == QOS_FIELD_WRED_PROFILE;
+}
+
+bool QosMgr::applyMapsToPort(const string &port,
                              const map<string, string> &maps, string &reason)
 {
-    /* Best-effort tc programming. Each map type is applied to the interface;
-     * failures are logged but do not abort the other maps. */
+    string iface = kernutil::resolveInterface(port);
     string res;
+
+    /* ---- ingress classification (clsact) ---- */
 
     if (maps.count(QOS_FIELD_DSCP_TO_TC))
     {
-        const auto &m = m_dscpToTcMap[maps.at(QOS_FIELD_DSCP_TO_TC)];
         /* DSCP_TO_TC_MAP is GLOBAL in SONiC — apply the classifier to every
-         * port's ingress, not just the PORT_QOS_MAP port. */
+         * port's ingress, not just the PORT_QOS_MAP port. A fixed prio per DSCP
+         * value + `filter replace` keeps this idempotent across re-applies. */
+        const auto &m = m_dscpToTcMap[maps.at(QOS_FIELD_DSCP_TO_TC)];
         vector<string> ports;
         getAllPorts(ports);
         if (ports.empty())
-            ports.push_back(iface);
-        for (const auto &port : ports)
+            ports.push_back(port);
+        for (const auto &p : ports)
         {
-            string piface = kernutil::resolveInterface(port);
+            string piface = kernutil::resolveInterface(p);
             if (!interfaceExists(piface))
                 continue;
             ensureClsact(piface);
-            uint32_t prio = 100;
             for (const auto &kv : m)
             {
                 string tos = kernutil::dscpToTos(kv.first);
                 if (tos.empty())
                     continue;
+                long long dscp = 0;
+                parseInt(kv.first, dscp);
                 ostringstream cmd;
-                cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
-                    << " flower ip_tos " << tos
+                cmd << TC_CMD << " filter replace dev " << piface << " ingress prio "
+                    << (100 + dscp)
+                    << " flower ip_tos " << tos << "/0xfc"
                     << " action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
                 swss::exec(cmd.str(), res);
@@ -653,18 +672,20 @@ bool QosMgr::applyMapsToPort(const string &iface,
         vector<string> ports;
         getAllPorts(ports);
         if (ports.empty())
-            ports.push_back(iface);
-        for (const auto &port : ports)
+            ports.push_back(port);
+        for (const auto &p : ports)
         {
-            string piface = kernutil::resolveInterface(port);
+            string piface = kernutil::resolveInterface(p);
             if (!interfaceExists(piface))
                 continue;
             ensureClsact(piface);
-            uint32_t prio = 200;
             for (const auto &kv : m)
             {
+                long long pcp = 0;
+                parseInt(kv.first, pcp);
                 ostringstream cmd;
-                cmd << TC_CMD << " filter add dev " << piface << " ingress prio " << prio++
+                cmd << TC_CMD << " filter replace dev " << piface << " ingress prio "
+                    << (200 + pcp)
                     << " flower vlan_prio " << kv.first
                     << " action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
@@ -673,37 +694,19 @@ bool QosMgr::applyMapsToPort(const string &iface,
         }
     }
 
-    if (maps.count(QOS_FIELD_TC_TO_QUEUE))
-    {
-        const auto &m = m_tcToQueueMap[maps.at(QOS_FIELD_TC_TO_QUEUE)];
-        /* Build the 16-entry skb->priority -> band map from TC_TO_QUEUE_MAP.
-         * Use the software `prio` qdisc instead of `mqprio`: veth interfaces
-         * have a single tx queue, so mqprio (which needs real hardware queues)
-         * fails with "Device does not support hardware offload". */
-        int priomap[16] = {0};
-        for (const auto &kv : m)
-        {
-            long long tc = 0, queue = 0;
-            if (parseInt(kv.first, tc) && parseInt(kv.second, queue) &&
-                tc >= 0 && tc < 16 && queue >= 0 && queue < 16)
-                priomap[tc] = (int)queue;
-        }
-        ostringstream cmd;
-        cmd << TC_CMD << " qdisc replace dev " << iface << " root handle 1: prio bands 8 priomap";
-        for (int i = 0; i < 16; i++)
-            cmd << " " << priomap[i];
-        SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-        swss::exec(cmd.str(), res);
-    }
-
     if (maps.count(QOS_FIELD_TC_TO_DSCP))
     {
+        /* Egress DSCP rewrite via pedit, matched on the skb priority set at
+         * ingress classification. */
         const auto &m = m_tcToDscpMap[maps.at(QOS_FIELD_TC_TO_DSCP)];
-        uint32_t prio = 300;
+        ensureClsact(iface);
         for (const auto &kv : m)
         {
+            long long tc = 0;
+            parseInt(kv.first, tc);
             ostringstream cmd;
-            cmd << TC_CMD << " filter add dev " << iface << " egress prio " << prio++
+            cmd << TC_CMD << " filter replace dev " << iface << " egress prio "
+                << (300 + tc)
                 << " flower match meta priority " << kv.first
                 << " " << kernutil::peditSetDscpToTc(kv.second);
             SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
@@ -711,82 +714,205 @@ bool QosMgr::applyMapsToPort(const string &iface,
         }
     }
 
-    if (maps.count(QOS_FIELD_SCHEDULER))
-    {
-        const auto &cfg = m_schedulerMap[maps.at(QOS_FIELD_SCHEDULER)];
-        string rate = cfg.count(SCHED_FIELD_PIR) ? cfg.at(SCHED_FIELD_PIR)
-                    : (cfg.count(SCHED_FIELD_CIR) ? cfg.at(SCHED_FIELD_CIR) : "");
-        string burst = cfg.count(SCHED_FIELD_PBS) ? cfg.at(SCHED_FIELD_PBS)
-                     : (cfg.count(SCHED_FIELD_CBS) ? cfg.at(SCHED_FIELD_CBS) : "");
-        if (!rate.empty() && !burst.empty())
-        {
-            /* Port-level scheduler = port shaping. A single tbf shaper caps the
-             * whole port to the scheduler's peak (max-bandwidth) rate/burst. */
-            ostringstream cmd;
-            cmd << TC_CMD << " qdisc replace dev " << iface
-                << " root handle 1: tbf rate " << rate << "bps burst " << burst
-                << " latency 50ms";
-            SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-            swss::exec(cmd.str(), res);
-        }
-    }
+    /* ---- egress queue/scheduler tree ---- */
+    buildQueueTree(port, reason);
 
     reason.clear();
     return true;
 }
 
-bool QosMgr::applyQueueToPort(const string &iface, const string &queue,
-                              const string &scheduler, const string &wred, string &reason)
+void QosMgr::buildQueueTree(const string &port, string &reason)
 {
+    auto pqi = m_portQosMap.find(port);
+    if (pqi == m_portQosMap.end())
+        return;
+    const auto &maps = pqi->second;
+    if (!maps.count(QOS_FIELD_TC_TO_QUEUE))
+        return;
+
+    string iface = kernutil::resolveInterface(port);
     string res;
 
-    /* The queue token may be a single index or a range ("0-1"); parse a safe
-     * numeric prefix for the tc handle, defaulting to 0. */
-    long long qnum = 0;
-    parseInt(queue, qnum);
-    if (qnum < 0)
-        qnum = 0;
+    const auto &tcq = m_tcToQueueMap[maps.at(QOS_FIELD_TC_TO_QUEUE)];
 
-    if (!scheduler.empty())
+    /* Gather per-queue scheduling: TC_TO_QUEUE_MAP gives tc -> queue, QUEUE
+     * table gives queue -> scheduler/wred. */
+    struct QInfo
     {
-        const auto &cfg = m_schedulerMap[scheduler];
-        string type = cfg.count(SCHED_FIELD_TYPE) ? cfg.at(SCHED_FIELD_TYPE) : SCHED_TYPE_WRR;
-        ostringstream cmd;
-        if (type == SCHED_TYPE_STRICT)
+        string type;
+        long long weight;
+        string wred;
+    };
+    map<int, QInfo> qinfo;
+    for (const auto &kv : tcq)
+    {
+        long long tc = 0, q = 0;
+        if (!parseInt(kv.first, tc) || !parseInt(kv.second, q))
+            continue;
+        QInfo info;
+        info.weight = 1;
+        string qkey = port + "|" + to_string(q);
+        auto qit = m_queueMap.find(qkey);
+        if (qit != m_queueMap.end())
         {
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
-                << " handle " << (10 + qnum) << ": prio";
+            const auto &qcfg = qit->second;
+            if (qcfg.count(QOS_FIELD_SCHEDULER) &&
+                m_schedulerMap.count(qcfg.at(QOS_FIELD_SCHEDULER)))
+            {
+                const auto &sched = m_schedulerMap.at(qcfg.at(QOS_FIELD_SCHEDULER));
+                info.type = sched.count(SCHED_FIELD_TYPE) ? sched.at(SCHED_FIELD_TYPE)
+                                                          : SCHED_TYPE_WRR;
+                if (sched.count(SCHED_FIELD_WEIGHT))
+                    parseInt(sched.at(SCHED_FIELD_WEIGHT), info.weight);
+            }
+            if (qcfg.count(QOS_FIELD_WRED_PROFILE))
+                info.wred = qcfg.at(QOS_FIELD_WRED_PROFILE);
+        }
+        qinfo[(int)q] = info;
+    }
+
+    /* Port shaping rate (mbit/sec): an explicit PORT_QOS_MAP scheduler pir/cir
+     * (bytes/sec) wins; otherwise derive self-contained congestion from the sum
+     * of queue weights (weight x 1mbit) so weighted/strict scheduling is
+     * observable on a veth that has no physical rate. */
+    long long rootMbit = 0;
+    if (maps.count(QOS_FIELD_SCHEDULER) &&
+        m_schedulerMap.count(maps.at(QOS_FIELD_SCHEDULER)))
+    {
+        const auto &ps = m_schedulerMap.at(maps.at(QOS_FIELD_SCHEDULER));
+        long long rateBps = 0;
+        if (ps.count(SCHED_FIELD_PIR))
+            parseInt(ps.at(SCHED_FIELD_PIR), rateBps);
+        else if (ps.count(SCHED_FIELD_CIR))
+            parseInt(ps.at(SCHED_FIELD_CIR), rateBps);
+        rootMbit = rateBps * 8 / 1000000;
+    }
+    if (rootMbit <= 0)
+    {
+        for (const auto &entry : qinfo)
+        {
+            long long w = entry.second.weight;
+            if (w < 1)
+                w = 1;
+            rootMbit += w;
+        }
+    }
+    if (rootMbit <= 0)
+        rootMbit = 1;
+
+    /* `htb` qdisc itself takes no `rate` — the port cap lives on the root class
+     * 1:1, and the per-queue classes hang off it as children. */
+    ostringstream root;
+    root << TC_CMD << " qdisc replace dev " << iface << " root handle 1: htb default 1";
+    SWSS_LOG_NOTICE("Executing: %s", root.str().c_str());
+    swss::exec(root.str(), res);
+
+    ostringstream rc;
+    rc << TC_CMD << " class replace dev " << iface << " parent 1: classid 1:1 htb rate "
+       << rootMbit << "mbit ceil " << rootMbit << "mbit";
+    SWSS_LOG_NOTICE("Executing: %s", rc.str().c_str());
+    swss::exec(rc.str(), res);
+
+    /* One class per queue (classid 1:(q+1), child of root 1:1). Queue 0 maps to
+     * the root class itself. STRICT uses htb prio (weight = priority, higher
+     * wins -> lower prio number); DWRR/WRR use htb rate (weight = bandwidth). */
+    for (const auto &entry : qinfo)
+    {
+        int q = entry.first;
+        const QInfo &info = entry.second;
+        if (q == 0)
+            continue; // queue 0 == root class 1:1
+        int classid = q + 1;
+
+        ostringstream cls;
+        cls << TC_CMD << " class replace dev " << iface << " parent 1:1 classid 1:"
+            << classid << " htb";
+        if (info.type == SCHED_TYPE_STRICT)
+        {
+            long long w = info.weight;
+            if (w < 0)
+                w = 0;
+            if (w > 7)
+                w = 7;
+            int prio = 7 - (int)w; // lower htb prio = higher priority
+            cls << " prio " << prio << " rate 1gbit ceil 1gbit";
         }
         else
         {
-            string quantum = cfg.count(SCHED_FIELD_WEIGHT) ? cfg.at(SCHED_FIELD_WEIGHT) : "1";
-            cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
-                << " handle " << (10 + qnum) << ": drr quantum " << quantum;
+            long long w = info.weight;
+            if (w < 1)
+                w = 1;
+            cls << " prio 7 rate " << w << "mbit ceil 1gbit";
         }
-        SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-        swss::exec(cmd.str(), res);
+        SWSS_LOG_NOTICE("Executing: %s", cls.str().c_str());
+        swss::exec(cls.str(), res);
+
+        /* WRED leaf under the queue class. Prefer green (single-color)
+         * thresholds; fall back to red. */
+        if (!info.wred.empty() && m_wredMap.count(info.wred))
+        {
+            const auto &cfg = m_wredMap.at(info.wred);
+            string mn, mx, prob;
+            bool haveThresh = false;
+            if (cfg.count(WRED_FIELD_GREEN_MIN_THRESHOLD) &&
+                cfg.count(WRED_FIELD_GREEN_MAX_THRESHOLD))
+            {
+                mn = cfg.at(WRED_FIELD_GREEN_MIN_THRESHOLD);
+                mx = cfg.at(WRED_FIELD_GREEN_MAX_THRESHOLD);
+                prob = cfg.count(WRED_FIELD_GREEN_DROP_PROBABILITY)
+                           ? cfg.at(WRED_FIELD_GREEN_DROP_PROBABILITY)
+                           : "10";
+                haveThresh = true;
+            }
+            else if (cfg.count(WRED_FIELD_RED_MIN_THRESHOLD) &&
+                     cfg.count(WRED_FIELD_RED_MAX_THRESHOLD))
+            {
+                mn = cfg.at(WRED_FIELD_RED_MIN_THRESHOLD);
+                mx = cfg.at(WRED_FIELD_RED_MAX_THRESHOLD);
+                prob = cfg.count(WRED_FIELD_RED_DROP_PROBABILITY)
+                           ? cfg.at(WRED_FIELD_RED_DROP_PROBABILITY)
+                           : "10";
+                haveThresh = true;
+            }
+            if (haveThresh)
+            {
+                long long maxBytes = 0, probPct = 0;
+                parseInt(mx, maxBytes);
+                parseInt(prob, probPct);
+                long long limit = maxBytes > 0 ? maxBytes * 2 : 1000000;
+                if (limit < 1000000)
+                    limit = 1000000;
+                string ecn = cfg.count(WRED_FIELD_ECN) ? cfg.at(WRED_FIELD_ECN)
+                                                       : "ecn_none";
+                double probFrac = static_cast<double>(probPct) / 100.0;
+                ostringstream red;
+                red << TC_CMD << " qdisc replace dev " << iface << " parent 1:"
+                    << classid << " handle " << (20 + q) << ": red"
+                    << " limit " << limit << " min " << mn << " max " << mx
+                    << " avpkt 1000 probability " << probFrac;
+                if (ecn != "ecn_none")
+                    red << " ecn";
+                SWSS_LOG_NOTICE("Executing: %s", red.str().c_str());
+                swss::exec(red.str(), res);
+            }
+        }
     }
 
-    if (!wred.empty())
+    /* Route ingress-classified traffic (skb->priority = tc) to the correct
+     * queue class. `htb` does not consult skb->priority on its own, so attach
+     * one `basic meta(priority eq <tc>)` filter per tc -> queue mapping. */
+    for (const auto &kv : tcq)
     {
-        const auto &cfg = m_wredMap[wred];
-        string mn = cfg.count(WRED_FIELD_RED_MIN_THRESHOLD) ? cfg.at(WRED_FIELD_RED_MIN_THRESHOLD) : "0";
-        string mx = cfg.count(WRED_FIELD_RED_MAX_THRESHOLD) ? cfg.at(WRED_FIELD_RED_MAX_THRESHOLD) : "100";
-        string prob = cfg.count(WRED_FIELD_RED_DROP_PROBABILITY) ? cfg.at(WRED_FIELD_RED_DROP_PROBABILITY) : "10";
-        string ecn = cfg.count(WRED_FIELD_ECN) ? cfg.at(WRED_FIELD_ECN) : "ecn_none";
-
-        ostringstream cmd;
-        cmd << TC_CMD << " qdisc replace dev " << iface << " parent 1:" << (qnum + 1)
-            << " handle " << (20 + qnum) << ": red min " << mn << " max " << mx
-            << " probability " << prob << "%";
-        if (ecn != "ecn_none")
-            cmd << " ecn";
-        SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-        swss::exec(cmd.str(), res);
+        long long tc = 0, q = 0;
+        if (!parseInt(kv.first, tc) || !parseInt(kv.second, q))
+            continue;
+        ostringstream filt;
+        filt << TC_CMD << " filter replace dev " << iface << " parent 1: prio "
+             << tc << " basic match \"meta(priority eq " << tc << ")\" classid 1:"
+             << (q + 1);
+        SWSS_LOG_NOTICE("Executing: %s", filt.str().c_str());
+        swss::exec(filt.str(), res);
     }
-
-    reason.clear();
-    return true;
 }
 
 /* ------------------------------------------------------------------------ *
@@ -804,9 +930,12 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            /* Resolve all referenced maps first; defer if any is missing. */
+            /* Resolve all referenced maps first; defer only if a referenced map
+             * is genuinely not created yet. Unknown/unimplemented fields are
+             * rejected outright (inactive) rather than deferring forever. */
             map<string, string> maps;
             bool allResolved = true;
+            bool invalidField = false;
             string reason;
 
             for (const auto &fv : kfvFieldsValues(t))
@@ -814,6 +943,13 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
                 string field = fvField(fv);
                 string mapName = fvValue(fv);
                 maps[field] = mapName;
+                if (!isKnownPortQosField(field))
+                {
+                    reason = "unsupported field: " + field;
+                    SWSS_LOG_WARN("PORT_QOS_MAP %s: %s", key.c_str(), reason.c_str());
+                    invalidField = true;
+                    break;
+                }
                 if (!resolvePortQosField(field, mapName, reason))
                 {
                     SWSS_LOG_WARN("PORT_QOS_MAP %s: %s -> %s not resolved yet, deferring",
@@ -821,6 +957,16 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
                     allResolved = false;
                     break;
                 }
+            }
+
+            if (invalidField)
+            {
+                vector<FieldValueTuple> fvs;
+                fvs.emplace_back("status", "inactive");
+                fvs.emplace_back("reason", reason);
+                m_statePortQosMapTable.set(key, fvs);
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (!allResolved)
@@ -842,7 +988,7 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
                 reason = "interface " + iface + " not found";
                 SWSS_LOG_WARN("PORT_QOS_MAP %s: %s", key.c_str(), reason.c_str());
             }
-            else if (!applyMapsToPort(iface, maps, reason))
+            else if (!applyMapsToPort(key, maps, reason))
             {
                 ok = false;
                 status = "inactive";
@@ -896,12 +1042,11 @@ void QosMgr::doQueueTask(Consumer &consumer)
         {
             /* key: "<port>|<queue>" (queue may be a single index or a range;
              * for the kernel path we support a single queue index). */
-            string port, queue;
+            string port;
             size_t sep = key.find('|');
             if (sep != string::npos)
             {
                 port = key.substr(0, sep);
-                queue = key.substr(sep + 1);
             }
             else
             {
@@ -961,10 +1106,11 @@ void QosMgr::doQueueTask(Consumer &consumer)
                 reason = "interface " + iface + " not found";
                 SWSS_LOG_WARN("QUEUE %s: %s", key.c_str(), reason.c_str());
             }
-            else if (!applyQueueToPort(iface, queue, scheduler, wred, reason))
+            else
             {
-                ok = false;
-                status = "inactive";
+                /* Rebuild the port's queue tree so the new scheduler/wred
+                 * binding is reflected (no-op until PORT_QOS_MAP exists). */
+                buildQueueTree(port, reason);
             }
 
             vector<FieldValueTuple> fvs;

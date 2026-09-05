@@ -61,6 +61,9 @@
 #define WRED_FIELD_GREEN_DROP_PROBABILITY    "green_drop_probability"
 #define WRED_FIELD_YELLOW_DROP_PROBABILITY   "yellow_drop_probability"
 #define WRED_FIELD_ECN                       "ecn"
+#define WRED_FIELD_GREEN_ENABLE              "wred_green_enable"
+#define WRED_FIELD_YELLOW_ENABLE             "wred_yellow_enable"
+#define WRED_FIELD_RED_ENABLE                "wred_red_enable"
 
 /* SCHEDULER fields */
 #define SCHED_FIELD_TYPE                     "type"
@@ -165,12 +168,11 @@ private:
     void getAllPorts(std::vector<std::string> &ports);
     void ensureClsact(const std::string &iface);
     void reapplyMapBindings(const std::string &field, const std::string &name);
-    bool applyMapsToPort(const std::string &iface,
+    bool isKnownPortQosField(const std::string &field);
+    bool applyMapsToPort(const std::string &port,
                          const std::map<std::string, std::string> &maps,
                          std::string &reason);
-    bool applyQueueToPort(const std::string &iface, const std::string &queue,
-                          const std::string &scheduler, const std::string &wred,
-                          std::string &reason);
+    void buildQueueTree(const std::string &port, std::string &reason);
 };
 
 } // namespace swss
