@@ -143,4 +143,3 @@ macsecmgrd_SOURCES += $(ASAN_SOURCES)
 fabricmgrd_SOURCES += $(ASAN_SOURCES)
 stpmgrd_SOURCES += $(ASAN_SOURCES)
 endif
-
