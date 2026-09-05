@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_linklocalresyncstate tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_linklocalresyncstate tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -271,6 +271,16 @@ tests_portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GT
 tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lnl-3 -lnl-route-3 -lpthread
 
+## link-local neighbor resync unit tests
+
+tests_linklocalresyncstate_SOURCES = neighsyncd/linklocalresyncstate_ut.cpp \
+                           $(top_srcdir)/neighsyncd/linklocalresyncstate.cpp
+
+tests_linklocalresyncstate_INCLUDES = -I$(top_srcdir)/neighsyncd
+tests_linklocalresyncstate_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
+tests_linklocalresyncstate_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_linklocalresyncstate_INCLUDES)
+tests_linklocalresyncstate_LDADD = $(LDADD_GTEST) -lswsscommon -lgtest -lgtest_main -lpthread
+
 ## intfmgrd unit tests
 
 tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
@@ -380,6 +390,8 @@ tests_neighsyncd_SOURCES = neighsyncd/neighsync_ut.cpp \
 tests_neighsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/neighsyncd
 tests_neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
 tests_neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_neighsyncd_INCLUDES)
+tests_neighsyncd_CXXFLAGS = -Wl,--wrap=if_nametoindex -Wl,--wrap=nl_send_auto \
+        -Wl,--wrap=nl_cb_set -Wl,--wrap=nl_cb_err -Wl,--wrap=poll -Wl,--wrap=nl_recvmsgs
 tests_neighsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis \
         -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
