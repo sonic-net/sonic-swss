@@ -414,25 +414,38 @@ namespace evpnmhorch_test
         gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
         static_cast<Orch *>(gEvpnMhOrch)->doTask();
 
-        bool df_attr_found;
-        bool df_attr_value;
+        bool df_attr_found = false;
+        bool df_attr_value = false;
+        bool df_attr_in_create = false;
 
         auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
         vlanSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
             uint32_t i;
 
-            for (i = 0; i < count && !df_attr_found; i++)
+            for (i = 0; i < count && !df_attr_in_create; i++)
             {
                 // TODO: Use the correct attribute once its available in SAI
                 if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
                 {
-                    df_attr_found = true;
-                    // This is inverted from the currently proposed NON_DF SAI attribute
-                    df_attr_value = attrs[i].value.booldata;
+                    df_attr_in_create = true;
                 }
             }
 
             return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
+        });
+
+        auto vlanMemberAttrSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        vlanMemberAttrSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            // TODO: Use the correct attribute once its available in SAI
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+            {
+                df_attr_found = true;
+                df_attr_received = attr->id;
+                // This is inverted from the currently proposed NON_DF SAI attribute
+                df_attr_value = attr->value.booldata;
+            }
+
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
         });
 
         ApplyDualTorConfigsForSingleVlan();
@@ -440,16 +453,11 @@ namespace evpnmhorch_test
         ASSERT_TRUE(gEvpnMhOrch->isPortInterfaceAssociatedToEs("Ethernet1"));
         ASSERT_TRUE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 10));
         ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+        /* The DF role is applied after create so an unimplemented attribute cannot
+         * fail the VLAN member itself. */
+        ASSERT_FALSE(df_attr_in_create);
         ASSERT_TRUE(df_attr_found);
         ASSERT_FALSE(df_attr_value);
-
-        auto vlanMemberAttrSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
-        vlanMemberAttrSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
-            df_attr_received = attr->id;
-            df_attr_value = attr->value.booldata;
-
-            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
-        });
 
         std::deque<KeyOpFieldsValuesTuple> entries;
         entries.clear();
