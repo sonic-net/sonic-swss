@@ -1170,14 +1170,24 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
         nexthops_selected = nhg_custom;
         return true;
     }
-    else if (!hasNextHopGroup(vnet, nexthops_primary))
+    else
     {
-        SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
-        setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+        bool next_hop_group_exists = hasNextHopGroup(vnet, nexthops_primary);
+        bool route_exists = syncd_tunnel_routes_[vnet].find(ipPrefix) != syncd_tunnel_routes_[vnet].end();
+
+        if (!next_hop_group_exists || !route_exists)
         {
-            delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
-            return false;
+            setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+        }
+
+        if (!next_hop_group_exists)
+        {
+            SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
+            if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+            {
+                delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
+                return false;
+            }
         }
     }
     nexthops_selected = nexthops_primary;
