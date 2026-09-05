@@ -219,18 +219,6 @@ impl DeferredSetBuffer {
         }
         self.sets = retained;
     }
-
-    fn remove_domains_before(&mut self, domains: &HashSet<u32>, sequence: u64) {
-        let mut retained = VecDeque::with_capacity(self.sets.len());
-        while let Some(set) = self.sets.pop_front() {
-            if domains.contains(&set.key.observation_domain_id) && set.sequence < sequence {
-                self.bytes = self.bytes.saturating_sub(set.bytes.len());
-            } else {
-                retained.push_back(set);
-            }
-        }
-        self.sets = retained;
-    }
 }
 
 #[derive(Debug, Default)]
@@ -626,8 +614,7 @@ impl IpfixActor {
                 0
             };
             if has_owner_fence {
-                self.deferred_sets
-                    .remove_domains_before(&domains, deferred_floor);
+                self.purge_session_deferred(&owner, &domains, deferred_floor);
             }
             self.lifecycle_markers.remove(&owner);
             self.history.activate_generation(&generation);
@@ -774,10 +761,14 @@ impl IpfixActor {
                     .as_ref()
                     .unwrap_or_else(|| session.active.as_ref().expect("active generation")),
             );
-            self.deferred_sets
-                .remove_domains_before(&domains, session.deferred_floor);
+            let floor = session.deferred_floor;
+            self.purge_session_deferred(&owner, &domains, floor);
             self.lifecycle_markers.remove(&owner);
         }
+        let session = self
+            .sessions
+            .get_mut(owner.as_ref())
+            .expect("existing session");
         self.deferred_sets
             .remove_keys_before(&updated_keys, session.deferred_floor);
         session.enabled = true;
@@ -930,13 +921,18 @@ impl IpfixActor {
             .map(|key| key.observation_domain_id)
             .collect::<HashSet<_>>();
         self.lifecycle_markers.insert(Arc::<str>::from(key));
+        self.purge_session_deferred(key, &domains, self.next_deferred_sequence);
+    }
+
+    fn purge_session_deferred(&mut self, owner: &str, domains: &HashSet<u32>, before: u64) {
         let installed = &self.installed;
         let sessions = &self.sessions;
         let deferred = &mut self.deferred_sets;
         deferred.sets.retain(|set| {
-            let keep = !domains.contains(&set.key.observation_domain_id)
+            let keep = set.sequence >= before
+                || !domains.contains(&set.key.observation_domain_id)
                 || installed.get(&set.key).is_some_and(|template| {
-                    template.owner.as_ref() != key
+                    template.owner.as_ref() != owner
                         && sessions
                             .get(template.owner.as_ref())
                             .is_some_and(|session| session.enabled)
@@ -1113,7 +1109,8 @@ impl IpfixActor {
         self.drain_deferred_sets(batch, Instant::now());
     }
 
-    fn drain_deferred_sets(&mut self, batch: &mut SAIStatsBatch, now: Instant) {
+    /// Returns true only when ready work needs a batch flush to make progress.
+    fn drain_deferred_sets(&mut self, batch: &mut SAIStatsBatch, now: Instant) -> bool {
         let expired = self.deferred_sets.expire(now);
         self.log_deferred_drops(expired);
 
@@ -1172,7 +1169,7 @@ impl IpfixActor {
                 && batch.counter_count().saturating_add(layout.counter_count)
                     > TARGET_COUNTERS_PER_BATCH
             {
-                return;
+                return true;
             }
 
             let ready = self
@@ -1188,6 +1185,7 @@ impl IpfixActor {
                 self.decode_set(&template, &ready.bytes, layout, batch);
             }
         }
+        false
     }
 
     fn log_deferred_drops(&self, dropped: u64) {
@@ -1240,9 +1238,8 @@ impl IpfixActor {
         };
         let dropped_before = self.deferred_sets.dropped;
         for validated in input.messages {
-            if !self.deferred_sets.sets.is_empty() {
-                self.send_batch_and_drain_deferred(std::mem::take(batch))
-                    .await?;
+            while self.drain_deferred_sets(batch, Instant::now()) {
+                self.send_batch(std::mem::take(batch)).await?;
             }
             let counters = validated.counter_count;
             if !batch.is_empty()
@@ -3473,6 +3470,140 @@ mod tests {
         assert!(actor.deferred_sets.sets.is_empty());
         assert_eq!(actor.deferred_sets.bytes, 0);
         assert!(actor.sessions["B"].enabled);
+    }
+
+    #[test]
+    fn activation_preserves_other_enabled_session_in_the_same_domain() {
+        // First install after a disable, unchanged reactivation, and replacement.
+        for mode in 0..3 {
+            let mut actor = actor();
+            if mode != 0 {
+                actor
+                    .handle_template(template_message("A", 0, 300, &[(1, 0x0001_0002)]))
+                    .unwrap();
+            }
+            actor
+                .handle_template(template_message("B", 0, 301, &[(1, 0x0001_0003)]))
+                .unwrap();
+            actor
+                .handle_template(IPFixTemplatesMessage::deactivate("A".into()))
+                .unwrap();
+            assert!(actor
+                .handle_record(&data_message(
+                    0,
+                    &[
+                        (302, vec![(1, vec![10])]),
+                        (301, vec![(2, vec![20])]),
+                        (301, vec![(3, vec![30])]),
+                    ]
+                ))
+                .unwrap()
+                .is_empty());
+            let id = if mode == 2 { 303 } else { 300 };
+            let batch = actor
+                .handle_template(template_message("A", 0, id, &[(1, 0x0001_0002)]))
+                .unwrap();
+            assert_eq!(batch.record_count(), 2);
+            let times = batch
+                .iter()
+                .map(|record| {
+                    assert_eq!(record.stats[0].stat_id, 3);
+                    record.observation_time
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(times, vec![2, 3]);
+            assert!(actor.sessions["B"].enabled);
+            assert!(actor.deferred_sets.sets.is_empty());
+            assert_eq!(actor.deferred_sets.bytes, 0);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unrelated_unknown_domain_does_not_fragment_batches() {
+        for unknown in [false, true] {
+            for concatenated in [false, true] {
+                let mut actor = actor();
+                actor
+                    .handle_template(template_message("B", 1, 300, &[(1, 0x0001_0002)]))
+                    .unwrap();
+                if unknown {
+                    actor
+                        .handle_record(&data_message(0, &[(400, vec![(0, vec![0])])]))
+                        .unwrap();
+                }
+                let (tx, mut rx) = channel(16);
+                actor.add_recipient(tx);
+                let mut batch = SAIStatsBatch::default();
+                let messages = (1..=8)
+                    .map(|time| data_message(1, &[(300, vec![(time, vec![time])])]))
+                    .collect::<Vec<_>>();
+                if concatenated {
+                    actor
+                        .process_record_input(&messages.concat(), &mut batch)
+                        .await
+                        .unwrap();
+                } else {
+                    for message in messages {
+                        actor
+                            .process_record_input(&message, &mut batch)
+                            .await
+                            .unwrap();
+                    }
+                }
+                assert!(rx.try_recv().is_err(), "small records should stay batched");
+                actor.send_batch_and_drain_deferred(batch).await.unwrap();
+                let delivered = rx.try_recv().unwrap();
+                assert_eq!(delivered.record_count(), 8);
+                assert_eq!(
+                    delivered
+                        .iter()
+                        .map(|record| record.observation_time)
+                        .collect::<Vec<_>>(),
+                    (1..=8).collect::<Vec<_>>()
+                );
+                assert!(rx.try_recv().is_err());
+                assert_eq!(actor.deferred_sets.sets.len(), usize::from(unknown));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ready_deferred_work_flushes_only_when_target_blocks_progress() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("known", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(
+                0,
+                &[(301, vec![(1, vec![10])]), (300, vec![(2, vec![20])])],
+            ))
+            .unwrap();
+        actor.deferred_sets.remove(0); // Model removal of the unknown barrier.
+        let (tx, mut rx) = channel(3);
+        actor.add_recipient(tx);
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(
+            0,
+            (0..TARGET_COUNTERS_PER_BATCH).map(|_| SAIStat::new("Ethernet0", 1, 2, 0)),
+        );
+        actor
+            .process_record_input(&data_message(0, &[(300, vec![(3, vec![30])])]), &mut batch)
+            .await
+            .unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap().counter_count(),
+            TARGET_COUNTERS_PER_BATCH
+        );
+        assert!(rx.try_recv().is_err());
+        assert_eq!(
+            batch
+                .iter()
+                .map(|record| record.observation_time)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(actor.deferred_sets.sets.is_empty());
     }
 
     #[tokio::test(start_paused = true)]
