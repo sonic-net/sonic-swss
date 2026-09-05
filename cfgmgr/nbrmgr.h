@@ -26,10 +26,14 @@ private:
     void reconcileNeighResolveTable(DBConnector *appDb);
     bool isIntfStateOk(const std::string &alias);
     bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);
+    bool setFailedNeighborIncomplete(const std::string& alias, const IpAddress& ip);
+    bool sendNeighborSolicitation(const std::string& alias, const IpAddress& ip);
+    void processKernelFailedNeighbor(const std::string& key, const std::string& tableSeparator);
 
     vector<string> parseAliasIp(const string &app_db_nbr_tbl_key, const char *delimiter);
 
     void doResolveNeighTask(Consumer &consumer);
+    void doKernelFailedNeighTask(Consumer &consumer);
     void doSetNeighTask(Consumer &consumer);
     void doTask(Consumer &consumer);
     void doStateSystemNeighTask(Consumer &consumer);

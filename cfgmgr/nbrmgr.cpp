@@ -2,7 +2,8 @@
 #include <netinet/in.h>
 #include <net/if.h>
 #include <unistd.h>
-#include <netlink/cache.h>
+#include <linux/neighbour.h>
+#include <netlink/msg.h>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -14,6 +15,8 @@
 #include "subscriberstatetable.h"
 
 using namespace swss;
+
+static constexpr const char *NDISC6_CMD = "/usr/bin/ndisc6";
 
 static bool send_message(struct nl_sock *sk, struct nl_msg *msg)
 {
@@ -65,6 +68,12 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                               TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto consumer = new Consumer(consumerStateTable, this, APP_NEIGH_RESOLVE_TABLE_NAME);
     Orch::addExecutor(consumer);
+
+    auto failedNeighConsumerStateTable = new swss::ConsumerStateTable(
+        appDb, APP_NEIGH_FAILED_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+    auto failedNeighConsumer = new Consumer(
+        failedNeighConsumerStateTable, this, APP_NEIGH_FAILED_TABLE_NAME);
+    Orch::addExecutor(failedNeighConsumer);
 
     /* Reconcile any pending entries in NEIGH_RESOLVE_TABLE from before restart */
     reconcileNeighResolveTable(appDb);
@@ -208,6 +217,121 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
     return send_message(m_nl_sock, msg);
 }
 
+bool NbrMgr::setFailedNeighborIncomplete(const string& alias, const IpAddress& ip)
+{
+    SWSS_LOG_ENTER();
+
+    struct nl_msg *msg = nlmsg_alloc();
+    if (!msg)
+    {
+        SWSS_LOG_ERROR("Netlink message alloc failed for '%s'", ip.to_string().c_str());
+        return false;
+    }
+
+    auto flags = (NLM_F_REQUEST | NLM_F_ACK | NLM_F_REPLACE);
+    struct nlmsghdr *hdr = nlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, RTM_NEWNEIGH, 0, flags);
+    if (!hdr)
+    {
+        SWSS_LOG_ERROR("Netlink message header alloc failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    struct ndmsg *nd_msg = static_cast<struct ndmsg *>(
+        nlmsg_reserve(msg, sizeof(struct ndmsg), NLMSG_ALIGNTO));
+    if (!nd_msg)
+    {
+        SWSS_LOG_ERROR("Netlink ndmsg reserve failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    memset(nd_msg, 0, sizeof(struct ndmsg));
+    nd_msg->ndm_ifindex = static_cast<int>(if_nametoindex(alias.c_str()));
+    if (nd_msg->ndm_ifindex == 0)
+    {
+        SWSS_LOG_ERROR("Interface '%s' does not exist for failed neighbor '%s'",
+                       alias.c_str(), ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    auto ipAddr = ip.getIp();
+    auto addrLen = sizeof(struct in6_addr);
+    struct rtattr *rta = static_cast<struct rtattr *>(
+        nlmsg_reserve(msg, sizeof(struct rtattr) + addrLen, NLMSG_ALIGNTO));
+    if (!rta)
+    {
+        SWSS_LOG_ERROR("Netlink rtattr (IP) failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
+    rta->rta_type = NDA_DST;
+    rta->rta_len = static_cast<short>(RTA_LENGTH(addrLen));
+    memcpy(RTA_DATA(rta), &ipAddr.ip_addr.ipv6_addr, addrLen);
+
+    nd_msg->ndm_family = AF_INET6;
+    nd_msg->ndm_type = RTN_UNICAST;
+    nd_msg->ndm_state = NUD_INCOMPLETE;
+
+    return send_message(m_nl_sock, msg);
+}
+
+bool NbrMgr::sendNeighborSolicitation(const string& alias, const IpAddress& ip)
+{
+    string command = string(NDISC6_CMD) + " -q -w 0 -1 " +
+                     shellquote(ip.to_string()) + " " + shellquote(alias);
+    string output;
+    int32_t result = swss::exec(command, output);
+    if (result != 0)
+    {
+        SWSS_LOG_WARN("Failed to send neighbor solicitation for '%s' on '%s', error: %d, output: %s",
+                      ip.to_string().c_str(), alias.c_str(), result, output.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+void NbrMgr::processKernelFailedNeighbor(const string& key, const string& tableSeparator)
+{
+    try
+    {
+        if (key.find(tableSeparator) == string::npos)
+        {
+            SWSS_LOG_ERROR("Invalid failed kernel neighbor entry '%s'", key.c_str());
+        }
+        else
+        {
+            vector<string> parsedKeys = parseAliasIp(key, tableSeparator.c_str());
+            string alias(parsedKeys[0]);
+            IpAddress ip(parsedKeys[1]);
+
+            if (ip.isV4())
+            {
+                SWSS_LOG_ERROR("Ignoring non-IPv6 failed kernel neighbor '%s'", key.c_str());
+            }
+            else if (!setFailedNeighborIncomplete(alias, ip))
+            {
+                SWSS_LOG_ERROR("Failed to move kernel neighbor '%s' to INCOMPLETE", key.c_str());
+            }
+            else if (sendNeighborSolicitation(alias, ip))
+            {
+                SWSS_LOG_NOTICE("Moved kernel neighbor '%s' to INCOMPLETE and sent one NS", key.c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("Moved kernel neighbor '%s' to INCOMPLETE but failed to send NS", key.c_str());
+            }
+        }
+    }
+    catch (const std::invalid_argument& e)
+    {
+        SWSS_LOG_ERROR("Failed to process kernel neighbor '%s': %s", key.c_str(), e.what());
+    }
+}
+
 /**
  * Parse APPL_DB neighbors resolve table.
  *
@@ -310,6 +434,22 @@ void NbrMgr::doResolveNeighTask(Consumer &consumer)
     }
 }
 
+void NbrMgr::doKernelFailedNeighTask(Consumer& consumer)
+{
+    const string tableSeparator = consumer.getConsumerTable()->getTableNameSeparator();
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        if (kfvOp(t) == SET_COMMAND)
+        {
+            processKernelFailedNeighbor(kfvKey(t), tableSeparator);
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void NbrMgr::doSetNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -393,6 +533,9 @@ void NbrMgr::doTask(Consumer &consumer)
     } else if (table_name == APP_NEIGH_RESOLVE_TABLE_NAME)
     {
         doResolveNeighTask(consumer);
+    } else if (table_name == APP_NEIGH_FAILED_TABLE_NAME)
+    {
+        doKernelFailedNeighTask(consumer);
     } else if(table_name == STATE_SYSTEM_NEIGH_TABLE_NAME)
     {
         doStateSystemNeighTask(consumer);
