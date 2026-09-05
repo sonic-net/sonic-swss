@@ -88,7 +88,6 @@ struct ValidatedDataSet<'a> {
     template: Option<Arc<CompiledTemplate>>,
     layout: Option<DataSetLayout>,
     retired: bool,
-    domain_blocked: bool,
 }
 
 #[derive(Debug)]
@@ -532,7 +531,7 @@ impl IpfixActor {
         match templates.operation {
             IPFixTemplateOperation::Deactivate => {
                 self.handle_template_deactivation(&templates.key);
-                return Ok(SAIStatsBatch::default());
+                return Ok(self.finish_template_update());
             }
             IPFixTemplateOperation::Delete => {
                 self.handle_template_deletion(&templates.key);
@@ -604,7 +603,9 @@ impl IpfixActor {
                     "observation domain(s) {blocked_domains:?} cannot accept a new generation"
                 )));
             }
-            self.history.validate_tracking(&generation)?;
+            self.history
+                .validate_tracking(&generation)
+                .map_err(restart_error)?;
             if let Err(err) = validate_generation_reactivation(&generation, &self.history) {
                 self.poison_generation(&generation);
                 return Err(err);
@@ -615,7 +616,8 @@ impl IpfixActor {
                 &HashSet::new(),
                 self.live_template_bytes,
                 0,
-            )?;
+            )
+            .map_err(restart_error)?;
             let domains = generation_domains(&generation);
             let has_owner_fence = self.lifecycle_markers.requires_fresh_data(&owner);
             let deferred_floor = if has_owner_fence {
@@ -723,14 +725,17 @@ impl IpfixActor {
                     return Err(err);
                 }
             };
-            self.history.validate_tracking(&generation)?;
+            self.history
+                .validate_tracking(&generation)
+                .map_err(restart_error)?;
             validate_projected_capacity(
                 &generation,
                 &self.installed,
                 &plan.retire_keys,
                 self.live_template_bytes,
                 pending.as_ref().map_or(0, |pending| pending.compiled_bytes),
-            )?;
+            )
+            .map_err(restart_error)?;
 
             let session = self
                 .sessions
@@ -925,7 +930,22 @@ impl IpfixActor {
             .map(|key| key.observation_domain_id)
             .collect::<HashSet<_>>();
         self.lifecycle_markers.insert(Arc::<str>::from(key));
-        self.deferred_sets.remove_domains(&domains);
+        let installed = &self.installed;
+        let sessions = &self.sessions;
+        let deferred = &mut self.deferred_sets;
+        deferred.sets.retain(|set| {
+            let keep = !domains.contains(&set.key.observation_domain_id)
+                || installed.get(&set.key).is_some_and(|template| {
+                    template.owner.as_ref() != key
+                        && sessions
+                            .get(template.owner.as_ref())
+                            .is_some_and(|session| session.enabled)
+                });
+            if !keep {
+                deferred.bytes -= set.bytes.len();
+            }
+            keep
+        });
     }
 
     #[cfg(test)]
@@ -948,14 +968,8 @@ impl IpfixActor {
         let mut messages = Vec::new();
         let mut total_sets = 0usize;
         let mut unresolved_sets = 0usize;
-        let mut blocked_domains = self
-            .deferred_sets
-            .sets
-            .iter()
-            .map(|set| set.key.observation_domain_id)
-            .collect::<HashSet<_>>();
         for message in IpfixMessages::new(records) {
-            let validated = self.validate_data_message(message?, &mut blocked_domains)?;
+            let validated = self.validate_data_message(message?)?;
             total_sets = total_sets
                 .checked_add(validated.sets.len())
                 .ok_or("data Set count overflow")?;
@@ -988,7 +1002,6 @@ impl IpfixActor {
     fn validate_data_message<'a>(
         &self,
         message: &'a [u8],
-        blocked_domains: &mut HashSet<u32>,
     ) -> Result<ValidatedDataMessage<'a>, IpfixError> {
         let domain = NetworkEndian::read_u32(&message[12..16]);
         let mut offset = IPFIX_HEADER_LEN;
@@ -1020,10 +1033,6 @@ impl IpfixActor {
             } else {
                 None
             };
-            let domain_blocked = blocked_domains.contains(&key.observation_domain_id);
-            if template.is_none() && !self.history.was_used(&key) {
-                blocked_domains.insert(key.observation_domain_id);
-            }
             if enabled {
                 counter_count = counter_count
                     .checked_add(layout.expect("installed template has layout").counter_count)
@@ -1035,7 +1044,6 @@ impl IpfixActor {
                 template,
                 layout,
                 retired: self.history.was_used(&key),
-                domain_blocked,
             });
         }
         if sets.is_empty() {
@@ -1052,6 +1060,7 @@ impl IpfixActor {
         message: ValidatedDataMessage<'_>,
         batch: &mut SAIStatsBatch,
     ) {
+        self.drain_deferred_sets(batch, Instant::now());
         for set in message.sets {
             let ValidatedDataSet {
                 key,
@@ -1059,8 +1068,12 @@ impl IpfixActor {
                 template,
                 layout,
                 retired,
-                domain_blocked,
             } = set;
+            let domain_blocked = self
+                .deferred_sets
+                .sets
+                .iter()
+                .any(|queued| queued.key.observation_domain_id == key.observation_domain_id);
             match (template, layout) {
                 (Some(template), Some(layout)) if !domain_blocked => {
                     self.promote_pending_for(key);
@@ -1218,9 +1231,19 @@ impl IpfixActor {
         records: &[u8],
         batch: &mut SAIStatsBatch,
     ) -> Result<(), IpfixError> {
-        let input = self.validate_record_input(records)?;
+        let input = match self.validate_record_input(records) {
+            Ok(input) => input,
+            Err(err) => {
+                warn!("Dropping invalid HFT IPFIX message: {err}");
+                return Ok(());
+            }
+        };
         let dropped_before = self.deferred_sets.dropped;
         for validated in input.messages {
+            if !self.deferred_sets.sets.is_empty() {
+                self.send_batch_and_drain_deferred(std::mem::take(batch))
+                    .await?;
+            }
             let counters = validated.counter_count;
             if !batch.is_empty()
                 && batch.counter_count().saturating_add(counters) > TARGET_COUNTERS_PER_BATCH
@@ -1320,7 +1343,10 @@ impl IpfixActor {
                                 }
                                 return Err(err);
                             }
-                            Err(err) => error!("HFT template update rejected: {err}"),
+                            Err(err) => {
+                                error!("HFT template update rejected: {err}");
+                                actor.send_batch_and_drain_deferred(SAIStatsBatch::default()).await?;
+                            }
                         }
                     }
                     None => return Err("IPFIX template input channel closed".into()),
@@ -1334,9 +1360,7 @@ impl IpfixActor {
                         let mut batch = SAIStatsBatch::default();
                         let mut input_count = 1usize;
                         let mut input_bytes = record.len();
-                        if let Err(err) = actor.process_record_input(&record, &mut batch).await {
-                            warn!("Dropping invalid HFT IPFIX message: {err}");
-                        }
+                        actor.process_record_input(&record, &mut batch).await?;
                         while input_count < MAX_RECORD_INPUTS_PER_BATCH
                             && input_bytes < MAX_RECORD_INPUT_BYTES_PER_BATCH
                             && actor.template_recipient.is_empty()
@@ -1346,9 +1370,7 @@ impl IpfixActor {
                             };
                             input_count += 1;
                             input_bytes = input_bytes.saturating_add(next.len());
-                            if let Err(err) = actor.process_record_input(&next, &mut batch).await {
-                                warn!("Dropping invalid HFT IPFIX message: {err}");
-                            }
+                            actor.process_record_input(&next, &mut batch).await?;
                         }
                         actor.send_batch_and_drain_deferred(batch).await?;
                     }
@@ -2636,18 +2658,21 @@ mod tests {
 
     #[test]
     fn capacity_rejection_does_not_poison_a_fresh_id() {
-        let mut actor = actor();
-        actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
+        let mut rejected_actor = actor();
+        rejected_actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
         let candidate = template_message("candidate", 0, 6000, &[(1, 0x0001_0002)]);
 
-        assert!(actor.handle_template(candidate.clone()).is_err());
-        assert!(!actor.history.was_used(&TemplateKey {
+        let error = rejected_actor
+            .handle_template(candidate.clone())
+            .unwrap_err();
+        assert!(is_restart_required(&error));
+        assert!(!rejected_actor.history.was_used(&TemplateKey {
             observation_domain_id: 0,
             template_id: 6000,
         }));
 
-        actor.live_template_bytes = 0;
-        actor.handle_template(candidate).unwrap();
+        let mut reconciled = actor();
+        reconciled.handle_template(candidate).unwrap();
     }
 
     #[test]
@@ -2658,9 +2683,10 @@ mod tests {
         let bytes_before = actor.live_template_bytes;
         actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
 
-        assert!(actor
+        let error = actor
             .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
-            .is_err());
+            .unwrap_err();
+        assert!(is_restart_required(&error));
         assert!(actor.sessions["session"].pending.is_none());
         assert!(actor.installed.contains_key(&TemplateKey {
             observation_domain_id: 0,
@@ -3387,21 +3413,181 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_limit_rejection_keeps_the_actor_running() {
+    async fn resource_limit_rejection_requests_reconciliation_before_more_data() {
         let (template_tx, template_rx) = channel(1);
         let (record_tx, record_rx) = channel(1);
+        let (restart_tx, mut restart_rx) = channel(1);
+        let (stats_tx, mut stats_rx) = channel(1);
         let mut actor = IpfixActor::new(template_rx, record_rx);
         actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
+        actor.set_restart_notifier(restart_tx);
+        actor.add_recipient(stats_tx);
         let task = tokio::spawn(IpfixActor::run(actor));
 
         template_tx
             .send(template_message("candidate", 0, 6000, &[(1, 0x0001_0002)]))
             .await
             .unwrap();
-        tokio::task::yield_now().await;
-        assert!(!task.is_finished());
+        let request = tokio::time::timeout(Duration::from_secs(1), restart_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(request, RestartRequest::Failure(_)));
+        let error = task.await.unwrap().unwrap_err();
+        assert!(is_restart_required(&error));
+        assert!(stats_rx.recv().await.is_none());
+        assert!(record_tx
+            .send(Arc::new(data_message(0, &[(6000, vec![(1, vec![10])])])))
+            .await
+            .is_err());
         drop(record_tx);
-        assert!(task.await.unwrap().is_err());
+    }
+
+    #[test]
+    fn deactivate_preserves_other_enabled_session_in_the_same_domain() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("A", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("B", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        assert!(actor
+            .handle_record(&data_message(
+                0,
+                &[
+                    (302, vec![(1, vec![10])]),
+                    (300, vec![(2, vec![20])]),
+                    (301, vec![(3, vec![30])]),
+                ]
+            ))
+            .unwrap()
+            .is_empty());
+        let batch = actor
+            .handle_template(IPFixTemplatesMessage::deactivate("A".into()))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        let record = batch.iter().next().unwrap();
+        assert_eq!(record.observation_time, 3);
+        assert_eq!(record.stats[0].stat_id, 3);
+        assert!(actor.deferred_sets.sets.is_empty());
+        assert_eq!(actor.deferred_sets.bytes, 0);
+        assert!(actor.sessions["B"].enabled);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_blocker_does_not_force_later_messages_through_unknown_queue() {
+        for preliminary_message in [false, true] {
+            let mut actor = actor();
+            actor
+                .handle_template(template_message("known", 0, 300, &[(1, 0x0001_0002)]))
+                .unwrap();
+            actor
+                .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+                .unwrap();
+            tokio::time::advance(UNKNOWN_SET_TTL).await;
+            let mut input = if preliminary_message {
+                data_message(0, &[(300, vec![(2, vec![20])])])
+            } else {
+                Vec::new()
+            };
+            let sets = (0..257)
+                .map(|index| (300, vec![(3 + index, vec![30 + index])]))
+                .collect::<Vec<_>>();
+            input.extend_from_slice(&data_message(0, &sets));
+            let batch = actor.handle_record(&input).unwrap();
+            assert_eq!(batch.record_count(), 257 + usize::from(preliminary_message));
+            assert_eq!(actor.deferred_sets.dropped, 1); // Only the expired unknown Set.
+            assert!(actor.deferred_sets.sets.is_empty());
+            let times = batch
+                .iter()
+                .map(|record| record.observation_time)
+                .collect::<Vec<_>>();
+            let first = if preliminary_message { 2 } else { 3 };
+            assert_eq!(times, (first..260).collect::<Vec<_>>());
+        }
+    }
+
+    #[tokio::test]
+    async fn nonfatal_template_rejection_drains_newly_ready_followers_while_idle() {
+        let (template_tx, template_rx) = channel(1);
+        let (_record_tx, record_rx) = channel(1);
+        let (stats_tx, mut stats_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor
+            .handle_template(template_message("A", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("A", 0, 301, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(301, vec![(1, vec![10])])]))
+            .unwrap();
+        actor
+            .handle_template(template_message("B", 0, 302, &[(1, 0x0001_0003)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(
+                0,
+                &[(303, vec![(2, vec![20])]), (302, vec![(3, vec![30])])],
+            ))
+            .unwrap();
+        actor.add_recipient(stats_tx);
+        let mut rejected = template_message("C", 0, 300, &[(1, 0x0001_0004)]);
+        let extra = template_message("C", 0, 303, &[(1, 0x0001_0004)]);
+        Arc::make_mut(rejected.templates.as_mut().unwrap())
+            .extend_from_slice(extra.templates.as_ref().unwrap());
+        let task = tokio::spawn(IpfixActor::run(actor));
+        template_tx.send(rejected).await.unwrap();
+        let batch = tokio::time::timeout(Duration::from_secs(1), stats_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 3);
+        assert!(!task.is_finished());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn delivery_error_propagates_from_initial_and_queued_inputs() {
+        for queued in [false, true] {
+            let (_template_tx, template_rx) = channel(1);
+            let (record_tx, record_rx) = channel(2);
+            let (healthy_tx, mut healthy_rx) = channel(2);
+            let (closed_tx, closed_rx) = channel(1);
+            drop(closed_rx);
+            let mut actor = IpfixActor::new(template_rx, record_rx);
+            let fields = (1..=4000)
+                .map(|label| (label, 0x0001_0002))
+                .collect::<Vec<_>>();
+            actor
+                .handle_template(template_message("large", 0, 300, &fields))
+                .unwrap();
+            actor.add_recipient(healthy_tx);
+            actor.add_recipient(closed_tx);
+            if queued {
+                record_tx.send(Arc::new(vec![1, 2, 3])).await.unwrap();
+            }
+            // The first message stays below the batching target, so message 2
+            // triggers the failing preflush rather than the end-of-input send.
+            let mut input = data_message(0, &[(300, vec![(1, vec![10; 4000])])]);
+            input.extend_from_slice(&data_message(
+                0,
+                &[(300, vec![(2, vec![20; 4000]), (3, vec![30; 4000])])],
+            ));
+            record_tx.send(Arc::new(input)).await.unwrap();
+            let task = tokio::spawn(IpfixActor::run(actor));
+            let error = tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err();
+            assert!(error.to_string().contains("recipient"));
+            let delivered = healthy_rx.recv().await.unwrap();
+            assert_eq!(delivered.iter().next().unwrap().observation_time, 1);
+        }
     }
 
     #[tokio::test(start_paused = true)]
