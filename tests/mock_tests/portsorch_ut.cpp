@@ -616,6 +616,13 @@ namespace portsorch_test
         }
     }
 
+    class NonDropDebugCounter : public DebugCounter
+    {
+    public:
+        NonDropDebugCounter(const string &name) : DebugCounter(name, PORT_INGRESS_DROPS) {}
+        string getDebugCounterSAIStat() const override { return ""; }
+    };
+
     struct PortsOrchTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -641,6 +648,20 @@ namespace portsorch_test
                 "CHASSIS_APP_DB", 0);
             m_asic_db = make_shared<swss::DBConnector>(
                 "ASIC_DB", 0);
+        }
+
+        task_process_status addReasonToNonDropCounter(const string &name)
+        {
+            gDebugCounterOrch->supported_ingress_drop_reasons.insert("L2_ANY");
+            gDebugCounterOrch->debug_counters[name] = make_unique<NonDropDebugCounter>(name);
+            return gDebugCounterOrch->addDropReason(name, "L2_ANY");
+        }
+
+        task_process_status removeReasonFromNonDropCounter(const string &name)
+        {
+            gDebugCounterOrch->supported_ingress_drop_reasons.insert("L2_ANY");
+            gDebugCounterOrch->debug_counters[name] = make_unique<NonDropDebugCounter>(name);
+            return gDebugCounterOrch->removeDropReason(name, "L2_ANY");
         }
 
         virtual void SetUp() override
@@ -4479,6 +4500,12 @@ namespace portsorch_test
         static_cast<Orch*>(gDebugCounterOrch)->doTask();
         ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
         entries.clear();
+    }
+
+    TEST_F(PortsOrchTest, DebugCounterRejectsDropReasonForNonDropCounter)
+    {
+        EXPECT_EQ(task_process_status::task_failed, addReasonToNonDropCounter("NOT_A_DROP_COUNTER"));
+        EXPECT_EQ(task_process_status::task_failed, removeReasonFromNonDropCounter("NOT_A_DROP_COUNTER"));
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
