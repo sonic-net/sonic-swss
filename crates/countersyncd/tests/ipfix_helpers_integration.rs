@@ -36,10 +36,6 @@ async fn receive_records(
             .expect("timed out waiting for SAI stats batch")
             .expect("SAI stats channel closed early");
         let batch_counter_count = batch.counter_count();
-        assert!(
-            batch_counter_count <= 8192,
-            "SAI stats batch exceeded the configured counter limit"
-        );
         let mut iterated_counters = 0usize;
         for record in batch.iter() {
             iterated_counters += record.stats.len();

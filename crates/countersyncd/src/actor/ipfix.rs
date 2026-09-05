@@ -45,7 +45,8 @@ const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 4096;
 const MAX_UNRESOLVED_SETS_PER_RECORD_INPUT: usize = MAX_UNKNOWN_SETS;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
 const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
-const MAX_COUNTERS_PER_BATCH: usize = 8192;
+// A batching target, not a limit on a template or logical record.
+const TARGET_COUNTERS_PER_BATCH: usize = 8192;
 const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
 
@@ -1297,7 +1298,7 @@ impl IpfixActor {
             };
             if !batch.is_empty()
                 && batch.counter_count().saturating_add(layout.counter_count)
-                    > MAX_COUNTERS_PER_BATCH
+                    > TARGET_COUNTERS_PER_BATCH
             {
                 return Ok(());
             }
@@ -1364,12 +1365,12 @@ impl IpfixActor {
         for validated in input.messages {
             let counters = validated.counter_count;
             if !batch.is_empty()
-                && batch.counter_count().saturating_add(counters) > MAX_COUNTERS_PER_BATCH
+                && batch.counter_count().saturating_add(counters) > TARGET_COUNTERS_PER_BATCH
             {
                 self.send_batch(std::mem::take(batch)).await?;
             }
             self.process_data_message(validated, batch)?;
-            if batch.counter_count() >= MAX_COUNTERS_PER_BATCH {
+            if batch.counter_count() >= TARGET_COUNTERS_PER_BATCH {
                 self.send_batch(std::mem::take(batch)).await?;
             }
         }
@@ -1381,8 +1382,8 @@ impl IpfixActor {
         if batch.is_empty() || self.saistats_recipients.is_empty() {
             return Ok(());
         }
-        if batch.counter_count() <= MAX_COUNTERS_PER_BATCH {
-            let closed = self.send_bounded_batch(batch).await;
+        if batch.counter_count() <= TARGET_COUNTERS_PER_BATCH || batch.record_count() == 1 {
+            let closed = self.send_chunk(batch).await;
             return if closed == 0 {
                 Ok(())
             } else {
@@ -1390,8 +1391,8 @@ impl IpfixActor {
             };
         }
         let mut closed = 0usize;
-        for batch in batch.into_counter_bounded_batches(MAX_COUNTERS_PER_BATCH) {
-            closed = closed.saturating_add(self.send_bounded_batch(batch).await);
+        for batch in batch.into_record_batches(TARGET_COUNTERS_PER_BATCH) {
+            closed = closed.saturating_add(self.send_chunk(batch).await);
         }
         if closed > 0 {
             return Err(format!("{closed} SAI stats recipient send(s) closed").into());
@@ -1399,8 +1400,7 @@ impl IpfixActor {
         Ok(())
     }
 
-    async fn send_bounded_batch(&self, batch: SAIStatsBatch) -> usize {
-        debug_assert!(batch.counter_count() <= MAX_COUNTERS_PER_BATCH);
+    async fn send_chunk(&self, batch: SAIStatsBatch) -> usize {
         let batch = Arc::new(batch);
         let mut blocked = Vec::new();
         let mut closed = 0usize;
@@ -1640,16 +1640,6 @@ fn validate_projected_capacity(
     if projected_bytes > MAX_LIVE_TEMPLATE_BYTES {
         return Err(format!(
             "live compiled template limit {MAX_LIVE_TEMPLATE_BYTES} bytes exceeded"
-        )
-        .into());
-    }
-    Ok(())
-}
-
-fn validate_record_counter_count(template_id: u16, counter_count: usize) -> Result<(), IpfixError> {
-    if counter_count > MAX_COUNTERS_PER_BATCH {
-        return Err(format!(
-            "template {template_id} contains {counter_count} counters per record; maximum is {MAX_COUNTERS_PER_BATCH}"
         )
         .into());
     }
@@ -2038,7 +2028,6 @@ fn compile_template_set(
             )
             .into());
         }
-        validate_record_counter_count(template_id, counters.len())?;
 
         let key = TemplateKey {
             observation_domain_id: domain,
@@ -3103,7 +3092,7 @@ mod tests {
     async fn resolved_deferred_sets_do_not_expire_between_batches() {
         let mut actor = actor();
         actor.deferred_set_ttl = Duration::from_millis(20);
-        let counters = MAX_COUNTERS_PER_BATCH - 4;
+        let counters = TARGET_COUNTERS_PER_BATCH - 4;
         let fields = (1..=counters)
             .map(|label| {
                 (
@@ -3497,11 +3486,24 @@ mod tests {
         assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
     }
 
-    #[test]
-    fn rejects_one_logical_record_above_the_batch_limit() {
-        let error = validate_record_counter_count(300, MAX_COUNTERS_PER_BATCH + 1).unwrap_err();
-        assert!(error.to_string().contains("8193"));
-        assert!(error.to_string().contains("8192"));
+    #[tokio::test]
+    async fn sends_a_record_above_the_batch_target_intact() {
+        let mut actor = actor();
+        let (tx, mut rx) = channel(1);
+        actor.add_recipient(tx);
+        let counters = TARGET_COUNTERS_PER_BATCH + 1;
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(
+            42,
+            (0..counters).map(|index| SAIStat::new("Ethernet0", 1, 2, index as u64)),
+        );
+        actor.send_batch(batch).await.unwrap();
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received.record_count(), 1);
+        assert_eq!(received.counter_count(), counters);
+        let record = received.iter().next().unwrap();
+        assert_eq!(record.observation_time, 42);
+        assert_eq!(record.stats.last().unwrap().counter, (counters - 1) as u64);
     }
 
     #[tokio::test]

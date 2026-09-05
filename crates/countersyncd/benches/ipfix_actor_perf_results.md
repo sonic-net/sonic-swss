@@ -36,6 +36,10 @@ Every sample produced the expected logical records and counters. These are
 end-to-end actor/API measurements. The output-count columns make the batching
 component explicit; they are not parser-only measurements.
 
+The internal 8,192-counter batching target is not an input or record limit.
+Records larger than the target are sent intact in their own batch; channel
+capacity limits the number of items, not a fixed maximum number of counters.
+
 ## Eight-byte specialization
 
 The candidate uses one unsigned big-endian decoder for every template-defined

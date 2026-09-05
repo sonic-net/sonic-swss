@@ -111,7 +111,7 @@ pub struct SAIStatsBatch {
 pub struct SAIStatsBatchChunks {
     records: std::iter::Peekable<std::vec::IntoIter<SAIStatsRecord>>,
     stats: std::vec::IntoIter<SAIStat>,
-    max_counters: usize,
+    target_counters: usize,
 }
 
 impl Iterator for SAIStatsBatchChunks {
@@ -121,9 +121,8 @@ impl Iterator for SAIStatsBatchChunks {
         let mut batch = SAIStatsBatch::default();
         while let Some(record) = self.records.peek() {
             let record_len = record.stats.len();
-            assert!(record_len <= self.max_counters);
             if !batch.is_empty()
-                && batch.counter_count().saturating_add(record_len) > self.max_counters
+                && batch.counter_count().saturating_add(record_len) > self.target_counters
             {
                 break;
             }
@@ -186,13 +185,14 @@ impl SAIStatsBatch {
         })
     }
 
-    pub fn into_counter_bounded_batches(self, max_counters: usize) -> SAIStatsBatchChunks {
-        assert!(max_counters > 0);
+    /// Group whole records toward a target size. A larger record is emitted alone.
+    pub fn into_record_batches(self, target_counters: usize) -> SAIStatsBatchChunks {
+        assert!(target_counters > 0);
         let Self { records, stats } = self;
         SAIStatsBatchChunks {
             records: records.into_iter().peekable(),
             stats: stats.into_iter(),
-            max_counters,
+            target_counters,
         }
     }
 }
@@ -251,12 +251,33 @@ mod tests {
                 (0..4).map(|counter| SAIStat::new("Ethernet0", 1, counter, counter as u64)),
             );
         }
-        let batches = batch.into_counter_bounded_batches(8).collect::<Vec<_>>();
+        let batches = batch.into_record_batches(8).collect::<Vec<_>>();
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].counter_count(), 8);
         assert_eq!(batches[0].record_count(), 2);
         assert_eq!(batches[1].counter_count(), 4);
         assert_eq!(batches[1].iter().next().unwrap().observation_time, 3);
+    }
+
+    #[test]
+    fn large_record_is_kept_whole_between_small_records() {
+        let mut batch = SAIStatsBatch::default();
+        for (time, counters) in [(1, 2), (2, 8193), (3, 2)] {
+            batch.push_record(
+                time,
+                (0..counters).map(|value| SAIStat::new("Ethernet0", 1, 2, value)),
+            );
+        }
+        let batches = batch.into_record_batches(8192).collect::<Vec<_>>();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[1].counter_count(), 8193);
+        for (index, batch) in batches.iter().enumerate() {
+            assert_eq!(batch.record_count(), 1);
+            assert_eq!(
+                batch.iter().next().unwrap().observation_time,
+                index as u64 + 1
+            );
+        }
     }
 
     #[test]
