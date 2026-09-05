@@ -1137,10 +1137,6 @@ impl IpfixActor {
         let mut index = 0usize;
         while index < self.deferred_sets.sets.len() {
             let key = self.deferred_sets.sets[index].key;
-            if blocked_domains.contains(&key.observation_domain_id) {
-                index += 1;
-                continue;
-            }
             let Some(template) = self.installed.get(&key).cloned() else {
                 if self.history.was_used(&key) {
                     self.deferred_sets.remove(index);
@@ -1150,6 +1146,10 @@ impl IpfixActor {
                 index += 1;
                 continue;
             };
+            if blocked_domains.contains(&key.observation_domain_id) {
+                index += 1;
+                continue;
+            }
             let enabled = self
                 .sessions
                 .get(template.owner.as_ref())
@@ -3720,6 +3720,77 @@ mod tests {
         assert_eq!(actor.deferred_sets.dropped, 1); // Expired unknown, no valid loss.
         assert_eq!(actor.deferred_sets.bytes, 0);
         assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retired_buffered_pending_sets_do_not_displace_live_followers() {
+        for replacement in [false, true] {
+            let mut actor = actor();
+            let active = template_message("A", 0, 300, &[(1, 0x0001_0002)]);
+            actor.handle_template(active.clone()).unwrap();
+            actor
+                .handle_template(template_message("A", 0, 301, &[(1, 0x0001_0003)]))
+                .unwrap();
+            actor
+                .handle_template(template_message("B", 0, 302, &[(1, 0x0001_0004)]))
+                .unwrap();
+
+            let unknown = data_message(0, &[(400, vec![(1, vec![10])])]);
+            let unknown_bytes = unknown.len() - IPFIX_HEADER_LEN;
+            let mut input = unknown;
+            let pending = (0..254)
+                .map(|index| (301, vec![(index + 2, vec![20])]))
+                .collect::<Vec<_>>();
+            input.extend_from_slice(&data_message(0, &pending));
+            assert!(actor.handle_record(&input).unwrap().is_empty());
+            assert_eq!(actor.deferred_sets.sets.len(), 255);
+            assert_eq!(actor.deferred_sets.bytes, 255 * unknown_bytes);
+
+            let update = if replacement {
+                template_message("A", 0, 303, &[(1, 0x0001_0005)])
+            } else {
+                active
+            };
+            assert!(actor.handle_template(update).unwrap().is_empty());
+            assert!(!actor.installed.contains_key(&TemplateKey {
+                observation_domain_id: 0,
+                template_id: 301,
+            }));
+            assert_eq!(actor.deferred_sets.sets.len(), 1);
+            assert_eq!(actor.deferred_sets.bytes, unknown_bytes);
+            assert_eq!(actor.deferred_sets.sets[0].key.template_id, 400);
+            assert!(actor.deferred_sets.sets[0].expires_at.is_some());
+
+            assert!(actor
+                .handle_record(&data_message(
+                    0,
+                    &[
+                        (302, vec![(256, vec![2560])]),
+                        (302, vec![(257, vec![2570])]),
+                    ]
+                ))
+                .unwrap()
+                .is_empty());
+            assert_eq!(actor.deferred_sets.sets.len(), 3);
+            assert_eq!(actor.deferred_sets.dropped, 0);
+
+            tokio::time::advance(UNKNOWN_SET_TTL).await;
+            let mut ready = SAIStatsBatch::default();
+            assert!(!actor.drain_deferred_sets(&mut ready, Instant::now()));
+            assert_eq!(ready.record_count(), 2);
+            let values = ready
+                .iter()
+                .map(|record| {
+                    assert_eq!(record.stats[0].stat_id, 4);
+                    (record.observation_time, record.stats[0].counter)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(values, vec![(256, 2560), (257, 2570)]);
+            assert!(actor.deferred_sets.sets.is_empty());
+            assert_eq!(actor.deferred_sets.bytes, 0);
+            assert_eq!(actor.deferred_sets.dropped, 1); // Only the expired unknown barrier.
+            assert!(actor.sessions["B"].enabled);
+        }
     }
 
     #[tokio::test(start_paused = true)]
