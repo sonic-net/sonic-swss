@@ -6,6 +6,7 @@ pub type IPFixTemplates = Arc<Vec<u8>>;
 pub enum IPFixTemplateOperation {
     Update,
     Deactivate,
+    #[allow(dead_code)]
     Delete,
     Quarantine,
 }
@@ -35,6 +36,7 @@ impl IPFixTemplatesMessage {
         }
     }
 
+    #[allow(dead_code)]
     pub fn delete(key: String) -> Self {
         Self {
             key,

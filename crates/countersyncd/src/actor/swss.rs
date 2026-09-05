@@ -28,6 +28,22 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
+    restart_notifier: Option<Sender<String>>,
+}
+
+#[derive(Debug)]
+pub enum SwssError {
+    RestartRequired(String),
+    ReaderFailed(String),
+}
+
+impl std::fmt::Display for SwssError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RestartRequired(message) => write!(formatter, "restart required: {message}"),
+            Self::ReaderFailed(message) => write!(formatter, "reader failed: {message}"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -60,7 +76,12 @@ impl SwssActor {
         Ok(SwssActor {
             session_table,
             template_recipient,
+            restart_notifier: None,
         })
+    }
+
+    pub fn set_restart_notifier(&mut self, notifier: Sender<String>) {
+        self.restart_notifier = Some(notifier);
     }
 
     /// Main event loop for the SwssActor
@@ -70,7 +91,7 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
-    pub async fn run(actor: SwssActor) {
+    pub async fn run(actor: SwssActor) -> Result<(), SwssError> {
         info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
 
         #[cfg(test)]
@@ -80,6 +101,7 @@ impl SwssActor {
         let SwssActor {
             mut session_table,
             template_recipient,
+            restart_notifier,
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
         let (fatal_sender, mut fatal_receiver) = mpsc::channel(1);
@@ -136,7 +158,7 @@ impl SwssActor {
                 Ok(handle) => handle,
                 Err(e) => {
                     error!("Failed to spawn SwssActor reader thread: {}", e);
-                    return;
+                    return Err(SwssError::ReaderFailed(e.to_string()));
                 }
             };
 
@@ -146,6 +168,7 @@ impl SwssActor {
                 failure = fatal_receiver.recv() => {
                     if let Some(failure) = failure {
                         error!("SwssActor reader failed: {failure}");
+                        return Err(SwssError::ReaderFailed(failure));
                     }
                     break;
                 }
@@ -153,21 +176,31 @@ impl SwssActor {
                     let Some(event) = event else {
                         break;
                     };
-                    let processing = async {
-                        match event {
-                            SwssEvent::Update { key, session_data } => {
-                                Self::process_session_update(&template_recipient, &key, &session_data).await;
+                    let (key, session_data) = match event {
+                        SwssEvent::Update { key, session_data } => (key, session_data),
+                        SwssEvent::Delete { key } => {
+                            let message = format!("HFT session {key} was deleted");
+                            if let Some(notifier) = &restart_notifier {
+                                let _ = notifier.try_send(message.clone());
                             }
-                            SwssEvent::Delete { key } => {
-                                Self::process_session_delete(&template_recipient, &key).await;
-                            }
+                            let _ = template_recipient
+                                .try_send(IPFixTemplatesMessage::quarantine(key.clone(), None));
+                            return Err(SwssError::RestartRequired(format!(
+                                "{message}"
+                            )));
                         }
                     };
+                    let processing = Self::process_session_update(
+                        &template_recipient,
+                        &key,
+                        &session_data,
+                    );
                     tokio::select! {
                         biased;
                         failure = fatal_receiver.recv() => {
                             if let Some(failure) = failure {
                                 error!("SwssActor reader failed while forwarding an event: {failure}");
+                                return Err(SwssError::ReaderFailed(failure));
                             }
                             break;
                         }
@@ -178,6 +211,7 @@ impl SwssActor {
         }
 
         debug!("SwssActor terminated");
+        Ok(())
     }
 
     fn blocking_collect_events(
@@ -294,6 +328,7 @@ impl SwssActor {
         }
     }
 
+    #[cfg(test)]
     async fn process_session_delete(template_recipient: &Sender<IPFixTemplatesMessage>, key: &str) {
         info!("Session deleted: {}", key);
 
@@ -813,7 +848,7 @@ mod tests {
         let actor = create_test_actor(template_sender);
 
         // Run actor (will auto-terminate in test mode)
-        SwssActor::run(actor).await;
+        let _ = SwssActor::run(actor).await;
 
         // Check messages received
         let mut received_messages = Vec::new();
@@ -876,7 +911,7 @@ mod tests {
         .await;
 
         // Run actor (will auto-terminate in test mode)
-        SwssActor::run(actor).await;
+        let _ = SwssActor::run(actor).await;
 
         // Check if we received the data
         let mut received_messages = Vec::new();
@@ -952,7 +987,7 @@ mod tests {
         let actor = create_test_actor(template_sender);
 
         // Run actor (will auto-terminate in test mode)
-        SwssActor::run(actor).await;
+        let _ = SwssActor::run(actor).await;
 
         // Step 3: Collect all messages
         let mut all_messages = Vec::new();

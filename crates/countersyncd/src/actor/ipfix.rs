@@ -408,10 +408,10 @@ pub struct IpfixActor {
     history: TemplateHistory,
     lifecycle_markers: LifecycleMarkers,
     live_template_bytes: usize,
-    globally_quarantined: bool,
     deferred_sets: DeferredSetBuffer,
     deferred_set_ttl: Duration,
     next_deferred_sequence: u64,
+    restart_notifier: Option<Sender<String>>,
 }
 
 impl IpfixActor {
@@ -428,15 +428,19 @@ impl IpfixActor {
             history: TemplateHistory::default(),
             lifecycle_markers: LifecycleMarkers::default(),
             live_template_bytes: 0,
-            globally_quarantined: false,
             deferred_sets: DeferredSetBuffer::default(),
             deferred_set_ttl: UNKNOWN_SET_TTL,
             next_deferred_sequence: 1,
+            restart_notifier: None,
         }
     }
 
     pub fn add_recipient(&mut self, recipient: Sender<SAIStatsBatchMessage>) {
         self.saistats_recipients.push(recipient);
+    }
+
+    pub fn set_restart_notifier(&mut self, notifier: Sender<String>) {
+        self.restart_notifier = Some(notifier);
     }
 
     fn compile_generation(
@@ -562,9 +566,6 @@ impl IpfixActor {
         &mut self,
         templates: IPFixTemplatesMessage,
     ) -> Result<SAIStatsBatch, IpfixError> {
-        if self.globally_quarantined {
-            return Err("IPFIX decoding is globally quarantined until restart".into());
-        }
         match templates.operation {
             IPFixTemplateOperation::Deactivate => {
                 self.handle_template_deactivation(&templates.key);
@@ -575,10 +576,30 @@ impl IpfixActor {
                 return Ok(SAIStatsBatch::default());
             }
             IPFixTemplateOperation::Quarantine => {
-                self.handle_template_quarantine(&templates);
+                self.handle_template_quarantine(&templates)?;
                 return Ok(SAIStatsBatch::default());
             }
             IPFixTemplateOperation::Update => {}
+        }
+        if let Err(err) = validate_template_update_limits(&templates) {
+            self.handle_template_deactivation(&templates.key);
+            if let Some(bytes) = templates.templates.as_deref() {
+                let keys = extract_template_keys(bytes.as_slice()).map_err(|_| {
+                    restart_error(format!(
+                        "cannot identify every template in rejected update for {}",
+                        templates.key
+                    ))
+                })?;
+                let owners = keys
+                    .iter()
+                    .filter_map(|key| self.installed.get(key))
+                    .map(|template| Arc::clone(&template.owner))
+                    .collect::<HashSet<_>>();
+                for owner in owners {
+                    self.quarantine_session(&owner);
+                }
+            }
+            return Err(err);
         }
 
         let generation = match Self::compile_generation(&templates) {
@@ -591,15 +612,14 @@ impl IpfixActor {
                 self.handle_template_quarantine(&IPFixTemplatesMessage::quarantine(
                     templates.key.clone(),
                     templates.templates.clone(),
-                ));
+                ))?;
                 return Err(err);
             }
         };
         if self.lifecycle_markers.drop_all_preinstall {
-            return Err(
-                "lifecycle marker capacity was exceeded; restart is required before installing templates"
-                    .into(),
-            );
+            return Err(restart_error(
+                "lifecycle marker capacity was exceeded before template installation",
+            ));
         }
         let owner = Arc::clone(&generation.owner);
         let updated_keys = generation.templates.keys().copied().collect::<HashSet<_>>();
@@ -641,14 +661,11 @@ impl IpfixActor {
                 .collect::<HashSet<_>>();
             if !blocked_domains.is_empty() {
                 self.poison_generation(&generation);
-                return Err(format!(
-                    "observation domain(s) {blocked_domains:?} cannot accept a new generation until restart"
-                )
-                .into());
+                return Err(restart_error(format!(
+                    "observation domain(s) {blocked_domains:?} cannot accept a new generation"
+                )));
             }
-            self.history
-                .validate_tracking(&generation)
-                .map_err(resource_error)?;
+            self.history.validate_tracking(&generation)?;
             if let Err(err) = validate_generation_reactivation(&generation, &self.history) {
                 self.poison_generation(&generation);
                 return Err(err);
@@ -660,7 +677,7 @@ impl IpfixActor {
                 self.live_template_bytes,
                 0,
             ) {
-                return Err(resource_error(err));
+                return Err(err);
             }
             let domains = generation_domains(&generation);
             let fenced_domains = domains
@@ -751,10 +768,9 @@ impl IpfixActor {
             if !blocked_domains.is_empty() {
                 self.quarantine_session(owner.as_ref());
                 self.poison_generation(&generation);
-                return Err(format!(
-                    "observation domain(s) {blocked_domains:?} cannot accept a new generation until restart"
-                )
-                .into());
+                return Err(restart_error(format!(
+                    "observation domain(s) {blocked_domains:?} cannot accept a new generation"
+                )));
             }
             let plan = match (|| {
                 for (key, candidate) in &generation.templates {
@@ -793,9 +809,7 @@ impl IpfixActor {
                     return Err(err);
                 }
             };
-            self.history
-                .validate_tracking(&generation)
-                .map_err(resource_error)?;
+            self.history.validate_tracking(&generation)?;
             if let Err(err) = validate_projected_capacity(
                 &generation,
                 &self.installed,
@@ -803,7 +817,7 @@ impl IpfixActor {
                 self.live_template_bytes,
                 pending.as_ref().map_or(0, |pending| pending.compiled_bytes),
             ) {
-                return Err(resource_error(err));
+                return Err(err);
             }
             let domains = generation_domains(&generation);
             let fenced_domains = domains
@@ -899,7 +913,10 @@ impl IpfixActor {
         self.lifecycle_markers.insert_domains(domains);
     }
 
-    fn handle_template_quarantine(&mut self, templates: &IPFixTemplatesMessage) {
+    fn handle_template_quarantine(
+        &mut self,
+        templates: &IPFixTemplatesMessage,
+    ) -> Result<(), IpfixError> {
         self.quarantine_session(&templates.key);
         let keys = templates
             .templates
@@ -926,19 +943,14 @@ impl IpfixActor {
                 self.deferred_sets.remove_domains(&domains);
                 self.lifecycle_markers.insert_domains(domains);
             }
-            _ => self.enter_global_quarantine(),
+            _ => {
+                return Err(restart_error(format!(
+                    "cannot identify every template affected by quarantine for {}",
+                    templates.key
+                )))
+            }
         }
-    }
-
-    fn enter_global_quarantine(&mut self) {
-        let owners = self.sessions.keys().cloned().collect::<Vec<_>>();
-        for owner in owners {
-            self.quarantine_session(&owner);
-        }
-        self.installed.clear();
-        self.deferred_sets = DeferredSetBuffer::default();
-        self.live_template_bytes = 0;
-        self.globally_quarantined = true;
+        Ok(())
     }
 
     fn poison_generation(&mut self, generation: &TemplateGeneration) {
@@ -1065,11 +1077,6 @@ impl IpfixActor {
     ) -> Result<ValidatedRecordInput<'a>, IpfixError> {
         if records.is_empty() {
             return Err("empty IPFIX payload".into());
-        }
-        if self.globally_quarantined {
-            return Ok(ValidatedRecordInput {
-                messages: Vec::new(),
-            });
         }
         let mut messages = Vec::new();
         let mut total_sets = 0usize;
@@ -1374,6 +1381,26 @@ impl IpfixActor {
         if batch.is_empty() || self.saistats_recipients.is_empty() {
             return Ok(());
         }
+        if batch.counter_count() <= MAX_COUNTERS_PER_BATCH {
+            let closed = self.send_bounded_batch(batch).await;
+            return if closed == 0 {
+                Ok(())
+            } else {
+                Err(format!("{closed} SAI stats recipient(s) closed").into())
+            };
+        }
+        let mut closed = 0usize;
+        for batch in batch.into_counter_bounded_batches(MAX_COUNTERS_PER_BATCH) {
+            closed = closed.saturating_add(self.send_bounded_batch(batch).await);
+        }
+        if closed > 0 {
+            return Err(format!("{closed} SAI stats recipient send(s) closed").into());
+        }
+        Ok(())
+    }
+
+    async fn send_bounded_batch(&self, batch: SAIStatsBatch) -> usize {
+        debug_assert!(batch.counter_count() <= MAX_COUNTERS_PER_BATCH);
         let batch = Arc::new(batch);
         let mut blocked = Vec::new();
         let mut closed = 0usize;
@@ -1391,10 +1418,7 @@ impl IpfixActor {
                 closed += 1;
             }
         }
-        if closed > 0 {
-            return Err(format!("{closed} SAI stats recipient(s) closed").into());
-        }
-        Ok(())
+        closed
     }
 
     async fn send_batch_and_drain_deferred(
@@ -1432,7 +1456,12 @@ impl IpfixActor {
                         );
                         match actor.handle_template(template) {
                             Ok(batch) => actor.send_batch_and_drain_deferred(batch).await?,
-                            Err(err) if is_resource_error(&err) => return Err(err),
+                            Err(err) if is_restart_required(&err) => {
+                                if let Some(notifier) = &actor.restart_notifier {
+                                    let _ = notifier.try_send(err.to_string());
+                                }
+                                return Err(err);
+                            }
                             Err(err) => error!("HFT template update rejected: {err}"),
                         }
                     }
@@ -1617,14 +1646,24 @@ fn validate_projected_capacity(
     Ok(())
 }
 
-const RESOURCE_ERROR_PREFIX: &str = "fatal resource limit: ";
-
-fn resource_error(err: IpfixError) -> IpfixError {
-    format!("{RESOURCE_ERROR_PREFIX}{err}").into()
+fn validate_record_counter_count(template_id: u16, counter_count: usize) -> Result<(), IpfixError> {
+    if counter_count > MAX_COUNTERS_PER_BATCH {
+        return Err(format!(
+            "template {template_id} contains {counter_count} counters per record; maximum is {MAX_COUNTERS_PER_BATCH}"
+        )
+        .into());
+    }
+    Ok(())
 }
 
-fn is_resource_error(err: &IpfixError) -> bool {
-    err.0.starts_with(RESOURCE_ERROR_PREFIX)
+const RESTART_ERROR_PREFIX: &str = "restart required: ";
+
+fn restart_error(message: impl Display) -> IpfixError {
+    format!("{RESTART_ERROR_PREFIX}{message}").into()
+}
+
+pub fn is_restart_required(err: &IpfixError) -> bool {
+    err.0.starts_with(RESTART_ERROR_PREFIX)
 }
 
 fn generation_domains(generation: &TemplateGeneration) -> HashSet<u32> {
@@ -1633,6 +1672,48 @@ fn generation_domains(generation: &TemplateGeneration) -> HashSet<u32> {
         .keys()
         .map(|key| key.observation_domain_id)
         .collect()
+}
+
+fn validate_template_update_limits(templates: &IPFixTemplatesMessage) -> Result<(), IpfixError> {
+    let bytes = templates
+        .templates
+        .as_ref()
+        .ok_or("template update has no template data")?;
+    if bytes.len() > MAX_TEMPLATE_CONFIG_BYTES {
+        return Err(format!(
+            "template update is {} bytes; maximum is {MAX_TEMPLATE_CONFIG_BYTES}",
+            bytes.len()
+        )
+        .into());
+    }
+    let names = templates
+        .object_names
+        .as_ref()
+        .ok_or("HFT template update has no object_names")?;
+    let ids = templates
+        .object_ids
+        .as_ref()
+        .ok_or("HFT template update has no object_ids")?;
+    if names.len() > MAX_OBJECTS_PER_UPDATE || ids.len() > MAX_OBJECTS_PER_UPDATE {
+        return Err(format!("object metadata exceeds {MAX_OBJECTS_PER_UPDATE} entries").into());
+    }
+    let metadata_bytes = names
+        .iter()
+        .try_fold(0usize, |total, name| total.checked_add(name.len()))
+        .ok_or("object metadata size overflow")?
+        .checked_add(
+            ids.len()
+                .checked_mul(std::mem::size_of::<u16>())
+                .ok_or("object metadata size overflow")?,
+        )
+        .ok_or("object metadata size overflow")?;
+    if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+        return Err(format!(
+            "object metadata is {metadata_bytes} bytes; maximum is {MAX_OBJECT_METADATA_BYTES}"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn extract_template_keys(bytes: &[u8]) -> Result<HashSet<TemplateKey>, IpfixError> {
@@ -1836,6 +1917,9 @@ fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<DataSetL
 
 fn read_be_u64(bytes: &[u8]) -> u64 {
     debug_assert!((1..=8).contains(&bytes.len()));
+    if bytes.len() == 8 {
+        return NetworkEndian::read_u64(bytes);
+    }
     bytes
         .iter()
         .fold(0u64, |value, byte| (value << 8) | u64::from(*byte))
@@ -1954,6 +2038,7 @@ fn compile_template_set(
             )
             .into());
         }
+        validate_record_counter_count(template_id, counters.len())?;
 
         let key = TemplateKey {
             observation_domain_id: domain,
@@ -2682,26 +2767,18 @@ mod tests {
     }
 
     #[test]
-    fn unidentifiable_quarantine_disables_decoding_until_restart() {
+    fn unidentifiable_quarantine_requests_restart() {
         let mut actor = actor();
         actor
             .handle_template(template_message("incumbent", 0, 300, &[(1, 0x0001_0002)]))
             .unwrap();
-        actor
+        let error = actor
             .handle_template(IPFixTemplatesMessage::quarantine(
                 "invalid".to_string(),
                 Some(Arc::new(vec![1, 2, 3])),
             ))
-            .unwrap();
-
-        assert!(actor.globally_quarantined);
-        assert!(actor
-            .handle_template(template_message("new", 1, 301, &[(1, 0x0001_0002)]))
-            .is_err());
-        assert!(actor
-            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
-            .unwrap()
-            .is_empty());
+            .unwrap_err();
+        assert!(is_restart_required(&error));
     }
 
     #[test]
@@ -2775,6 +2852,24 @@ mod tests {
             .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
             .unwrap();
         assert!(actor.sessions["session"].pending.is_some());
+    }
+
+    #[test]
+    fn admission_limit_quarantines_affected_wire_keys() {
+        let mut actor = actor();
+        let active = template_message("session", 0, 300, &[(1, 0x0001_0002)]);
+        actor.handle_template(active.clone()).unwrap();
+        let mut oversized = active.clone();
+        oversized.object_names = Some(vec!["x".repeat(MAX_OBJECT_METADATA_BYTES + 1)]);
+
+        assert!(actor.handle_template(oversized).is_err());
+        assert!(!actor.sessions.contains_key("session"));
+        assert!(actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+            .unwrap()
+            .is_empty());
+
+        assert!(actor.handle_template(active).is_err());
     }
 
     #[test]
@@ -3355,9 +3450,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_limit_terminates_the_actor_for_clean_retry() {
+    async fn send_batch_splits_only_at_record_boundaries() {
+        let (_, template_rx) = channel(1);
+        let (_, record_rx) = channel(1);
+        let (stats_tx, mut stats_rx) = channel(2);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(stats_tx);
+        let stat = SAIStat::new("Ethernet0", 1, 2, 3);
+        let mut batch = SAIStatsBatch::default();
+        for observation_time in 1..=3 {
+            batch.push_record(
+                observation_time,
+                std::iter::repeat(stat.clone()).take(4_000),
+            );
+        }
+
+        actor.send_batch(batch).await.unwrap();
+        let first = stats_rx.recv().await.unwrap();
+        let second = stats_rx.recv().await.unwrap();
+        assert_eq!(first.counter_count(), 8_000);
+        assert_eq!(first.record_count(), 2);
+        assert_eq!(second.counter_count(), 4_000);
+        assert_eq!(second.iter().next().unwrap().observation_time, 3);
+    }
+
+    #[tokio::test]
+    async fn split_batch_reaches_healthy_recipient_after_closed_sink() {
+        let (_, template_rx) = channel(1);
+        let (_, record_rx) = channel(1);
+        let (closed_tx, closed_rx) = channel(1);
+        let (healthy_tx, mut healthy_rx) = channel(2);
+        drop(closed_rx);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(closed_tx);
+        actor.add_recipient(healthy_tx);
+        let mut batch = SAIStatsBatch::default();
+        for observation_time in 1..=3 {
+            batch.push_record(
+                observation_time,
+                (0..4_000).map(|counter| SAIStat::new("Ethernet0", 1, counter, u64::from(counter))),
+            );
+        }
+
+        assert!(actor.send_batch(batch).await.is_err());
+        assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 2);
+        assert_eq!(healthy_rx.recv().await.unwrap().record_count(), 1);
+    }
+
+    #[test]
+    fn rejects_one_logical_record_above_the_batch_limit() {
+        let error = validate_record_counter_count(300, MAX_COUNTERS_PER_BATCH + 1).unwrap_err();
+        assert!(error.to_string().contains("8193"));
+        assert!(error.to_string().contains("8192"));
+    }
+
+    #[tokio::test]
+    async fn resource_limit_rejection_keeps_the_actor_running() {
         let (template_tx, template_rx) = channel(1);
-        let (_record_tx, record_rx) = channel(1);
+        let (record_tx, record_rx) = channel(1);
         let mut actor = IpfixActor::new(template_rx, record_rx);
         actor.live_template_bytes = MAX_LIVE_TEMPLATE_BYTES;
         let task = tokio::spawn(IpfixActor::run(actor));
@@ -3366,8 +3516,10 @@ mod tests {
             .send(template_message("candidate", 0, 6000, &[(1, 0x0001_0002)]))
             .await
             .unwrap();
-        let error = task.await.unwrap().unwrap_err();
-        assert!(is_resource_error(&error));
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        drop(record_tx);
+        assert!(task.await.unwrap().is_err());
     }
 
     #[tokio::test(start_paused = true)]

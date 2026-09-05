@@ -159,34 +159,28 @@ async fn deactivate_is_reversible_but_delete_reuse_is_fail_closed() {
         .send(template_message("session", template, 1))
         .await
         .unwrap();
-    let rejected_barrier = template_sender.reserve().await.unwrap();
-    drop(rejected_barrier);
-    let rejected_reuse = Arc::new(ipfix_test_helpers::generate_ipfix_records(
-        &ipfix_test_helpers::generate_ipfix_templates(1, 300),
-    ));
-    buffer_sender.send(rejected_reuse).await.unwrap();
-    assert!(
-        timeout(Duration::from_millis(50), saistats_receiver.recv())
-            .await
-            .is_err(),
-        "a deleted template ID must remain retired until restart"
-    );
+    let restart = actor_handle.await.unwrap().unwrap_err();
+    assert!(restart.to_string().starts_with("restart required:"));
+    drop(buffer_sender);
+    drop(template_sender);
 
-    let fresh_template = ipfix_test_helpers::generate_ipfix_templates(1, 305);
-    let fresh_record = ipfix_test_helpers::generate_ipfix_records(&fresh_template);
-    // A new observation domain is the only safe destructive rejoin boundary.
-    let mut fresh_template = fresh_template;
-    fresh_template[12..16].copy_from_slice(&1u32.to_be_bytes());
-    let mut fresh_record = fresh_record;
-    fresh_record[12..16].copy_from_slice(&1u32.to_be_bytes());
+    // A fresh actor models the in-place exec and startup table reconciliation.
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut saistats_receiver) = channel(1);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
+    let record = ipfix_test_helpers::generate_ipfix_records(&template);
     template_sender
-        .send(template_message("session", fresh_template, 1))
+        .send(template_message("session", template, 1))
         .await
         .unwrap();
-    let template_barrier = template_sender.reserve().await.unwrap();
-    drop(template_barrier);
-    buffer_sender.send(Arc::new(fresh_record)).await.unwrap();
+    let barrier = template_sender.reserve().await.unwrap();
+    buffer_sender.send(Arc::new(record)).await.unwrap();
     assert_eq!(receive_records(&mut saistats_receiver, 1).await.len(), 1);
+    drop(barrier);
 
     drop(buffer_sender);
     drop(template_sender);
@@ -502,6 +496,89 @@ async fn template_defined_counter_widths_reach_sai_stats() {
         vec![1, 2, 3, 4, 5, 6, 7, 8]
     );
 
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+}
+
+fn repeat_single_record(mut message: Vec<u8>, count: usize) -> Vec<u8> {
+    let record = message[20..].to_vec();
+    let set_len = 4 + record.len() * count;
+    let message_len = 16 + set_len;
+    assert!(message_len <= usize::from(u16::MAX));
+    message.truncate(20);
+    for observation_time in 1..=count {
+        let start = message.len();
+        message.extend_from_slice(&record);
+        message[start..start + 8]
+            .copy_from_slice(&u64::try_from(observation_time).unwrap().to_be_bytes());
+    }
+    message[2..4].copy_from_slice(&u16::try_from(message_len).unwrap().to_be_bytes());
+    message[18..20].copy_from_slice(&u16::try_from(set_len).unwrap().to_be_bytes());
+    message
+}
+
+#[tokio::test]
+async fn reduced_width_records_are_split_at_batch_boundaries() {
+    const COUNTERS: usize = 8_000;
+    const RECORDS: usize = 8;
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut saistats_receiver) = channel(8);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let template =
+        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
+    let records = repeat_single_record(
+        ipfix_test_helpers::generate_ipfix_records(&template),
+        RECORDS,
+    );
+    template_sender
+        .send(template_message("wide", template, COUNTERS))
+        .await
+        .unwrap();
+    let barrier = template_sender.reserve().await.unwrap();
+    buffer_sender.send(Arc::new(records)).await.unwrap();
+
+    let records = receive_records(&mut saistats_receiver, RECORDS).await;
+    drop(barrier);
+    assert_eq!(records.len(), RECORDS);
+    assert!(records.iter().all(|(_, stats)| stats.len() == COUNTERS));
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn deferred_reduced_width_records_are_split_at_batch_boundaries() {
+    const COUNTERS: usize = 8_000;
+    const RECORDS: usize = 8;
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(2);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut saistats_receiver) = channel(8);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let template =
+        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
+    let records = repeat_single_record(
+        ipfix_test_helpers::generate_ipfix_records(&template),
+        RECORDS,
+    );
+    buffer_sender.send(Arc::new(records)).await.unwrap();
+    tokio::task::yield_now().await;
+    template_sender
+        .send(template_message("wide", template, COUNTERS))
+        .await
+        .unwrap();
+
+    let records = receive_records(&mut saistats_receiver, RECORDS).await;
+    assert_eq!(records.len(), RECORDS);
+    assert!(records.iter().all(|(_, stats)| stats.len() == COUNTERS));
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());

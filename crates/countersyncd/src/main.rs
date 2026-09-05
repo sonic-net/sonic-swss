@@ -8,7 +8,7 @@ mod utilities;
 use clap::Parser;
 use log::{error, info, warn};
 use opentelemetry::ExportError;
-use std::time::Duration;
+use std::{os::unix::process::CommandExt, process::Command, time::Duration};
 use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
@@ -16,10 +16,10 @@ use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
-    ipfix::{IpfixActor, IpfixError},
+    ipfix::{is_restart_required, IpfixActor, IpfixError},
     otel::{OtelActor, OtelActorConfig},
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
-    swss::SwssActor,
+    swss::{SwssActor, SwssError},
 };
 
 // Internal exit codes
@@ -90,6 +90,7 @@ struct SupervisorExit {
     actor_name: &'static str,
     exit_code: i32,
     message: String,
+    restart_required: bool,
 }
 
 fn describe_join_error(e: tokio::task::JoinError) -> String {
@@ -110,12 +111,14 @@ fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>)
                 actor_name: name,
                 exit_code: EXIT_FAILURE,
                 message: "exited unexpectedly".to_string(),
+                restart_required: false,
             }
         }
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
+            restart_required: false,
         },
     }
 }
@@ -131,17 +134,20 @@ fn classify_otel_join(
                 actor_name: name,
                 exit_code: EXIT_FAILURE,
                 message: "exited unexpectedly".to_string(),
+                restart_required: false,
             }
         }
         Ok(Err(e)) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
             message: format!("export failed after retries: {:?}", e),
+            restart_required: false,
         },
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
+            restart_required: false,
         },
     }
 }
@@ -155,16 +161,54 @@ fn classify_ipfix_join(
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: "exited unexpectedly".to_string(),
+            restart_required: false,
         },
-        Ok(Err(e)) => SupervisorExit {
+        Ok(Err(e)) => {
+            let restart_required = is_restart_required(&e);
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: e.to_string(),
+                restart_required,
+            }
+        }
+        Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
-            message: e.to_string(),
+            message: describe_join_error(e),
+            restart_required: false,
+        },
+    }
+}
+
+fn classify_swss_join(
+    name: &'static str,
+    result: Result<Result<(), SwssError>, tokio::task::JoinError>,
+) -> SupervisorExit {
+    match result {
+        Ok(Ok(())) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message: "exited unexpectedly".to_string(),
+            restart_required: false,
+        },
+        Ok(Err(SwssError::RestartRequired(message))) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message,
+            restart_required: true,
+        },
+        Ok(Err(SwssError::ReaderFailed(message))) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message,
+            restart_required: false,
         },
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
+            restart_required: false,
         },
     }
 }
@@ -179,12 +223,34 @@ fn parse_positive_capacity(value: &str) -> Result<usize, String> {
     Ok(capacity)
 }
 
-fn parse_batch_capacity(value: &str) -> Result<usize, String> {
-    let capacity = parse_positive_capacity(value)?;
-    if capacity > 64 {
-        return Err("SAI stats batch channel capacity must not exceed 64".to_string());
+const MAX_BATCH_CHANNEL_CAPACITY: usize = 64;
+
+fn clamp_batch_capacity(option: &str, capacity: usize) -> usize {
+    if capacity > MAX_BATCH_CHANNEL_CAPACITY {
+        warn!(
+            "{option}={capacity} exceeds the effective maximum {MAX_BATCH_CHANNEL_CAPACITY}; clamping for bounded batch memory"
+        );
+        MAX_BATCH_CHANNEL_CAPACITY
+    } else {
+        capacity
     }
-    Ok(capacity)
+}
+
+fn mark_open_fds_close_on_exec() -> std::io::Result<()> {
+    for entry in std::fs::read_dir("/proc/self/fd")? {
+        let entry = entry?;
+        let Ok(fd) = entry.file_name().to_string_lossy().parse::<libc::c_int>() else {
+            continue;
+        };
+        if fd < 3 {
+            continue;
+        }
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags >= 0 && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 /// SONiC High Frequency Telemetry Counter Sync Daemon
@@ -281,8 +347,8 @@ struct Args {
     #[arg(
         long,
         default_value = "32",
-        value_parser = parse_batch_capacity,
-        help = "Set the SAI stats batch channel capacity for stats_reporter (1-64)"
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for stats_reporter; values above 64 are accepted and clamped to 64"
     )]
     stats_reporter_capacity: usize,
 
@@ -290,8 +356,8 @@ struct Args {
     #[arg(
         long,
         default_value = "32",
-        value_parser = parse_batch_capacity,
-        help = "Set the SAI stats batch channel capacity for counter_db (1-64)"
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for counter_db; values above 64 are accepted and clamped to 64"
     )]
     counter_db_capacity: usize,
 
@@ -311,8 +377,8 @@ struct Args {
     #[arg(
         long,
         default_value = "32",
-        value_parser = parse_batch_capacity,
-        help = "Set the SAI stats batch channel capacity for otel (1-64)"
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for otel; values above 64 are accepted and clamped to 64"
     )]
     otel_capacity: usize,
 
@@ -336,10 +402,15 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
+    args.stats_reporter_capacity =
+        clamp_batch_capacity("--stats-reporter-capacity", args.stats_reporter_capacity);
+    args.counter_db_capacity =
+        clamp_batch_capacity("--counter-db-capacity", args.counter_db_capacity);
+    args.otel_capacity = clamp_batch_capacity("--otel-capacity", args.otel_capacity);
 
     if let Some(value) = args.socket_readiness_timeout_ms {
         warn!(
@@ -420,14 +491,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     data_netlink.add_recipient(ipfix_record_sender);
 
-    let control_netlink =
-        ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
+    let control_netlink = ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
+    let (restart_sender, mut restart_receiver) = channel::<String>(1);
+    ipfix.set_restart_notifier(restart_sender.clone());
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
     let swss = match SwssActor::new(ipfix_template_sender) {
-        Ok(actor) => actor,
+        Ok(mut actor) => {
+            actor.set_restart_notifier(restart_sender);
+            actor
+        }
         Err(e) => {
             error!("Failed to initialize SwssActor: {}", e);
             return Err(e.into());
@@ -528,8 +603,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut swss_handle = spawn(async move {
         info!("SWSS actor started");
-        SwssActor::run(swss).await;
+        let result = SwssActor::run(swss).await;
         info!("SWSS actor terminated");
+        result
     });
 
     // Only spawn stats reporter if enabled
@@ -571,6 +647,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // All actors are treated as critical. If any actor exits, abort the rest and terminate.
     let first_exit = tokio::select! {
+        biased;
+        Some(reason) = restart_receiver.recv() => {
+            SupervisorExit {
+                actor_name: "HFT lifecycle",
+                exit_code: EXIT_FAILURE,
+                message: reason,
+                restart_required: true,
+            }
+        }
+        res = &mut swss_handle => {
+            classify_swss_join("SWSS", res)
+        }
         res = &mut data_netlink_handle => {
             classify_join("Data netlink", res)
         }
@@ -579,9 +667,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         res = &mut ipfix_handle => {
             classify_ipfix_join("IPFIX", res)
-        }
-        res = &mut swss_handle => {
-            classify_join("SWSS", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
             classify_join("Stats reporter", res)
@@ -614,6 +699,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.abort();
     }
 
+    if first_exit.restart_required {
+        warn!("Restarting countersyncd in place to establish a clean HFT generation boundary");
+        let started_at = std::env::var("COUNTERSYNCD_STARTED_AT")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let previous_retries =
+            if started_at.is_some_and(|started| now.saturating_sub(started) >= 60) {
+                0
+            } else {
+                std::env::var("COUNTERSYNCD_RESTART_RETRIES")
+                    .ok()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(0)
+            };
+        let retries = previous_retries.saturating_add(1);
+        if retries > 0 {
+            let delay = 1u64 << retries.saturating_sub(1).min(6);
+            warn!("Delaying restart by {delay}s after persistent invalid HFT configuration");
+            std::thread::sleep(Duration::from_secs(delay));
+        }
+        mark_open_fds_close_on_exec()?;
+        let error = Command::new(std::env::current_exe()?)
+            .args(std::env::args_os().skip(1))
+            .env("COUNTERSYNCD_RESTART_RETRIES", retries.to_string())
+            .env(
+                "COUNTERSYNCD_STARTED_AT",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .to_string(),
+            )
+            .exec();
+        return Err(error.into());
+    }
     std::process::exit(first_exit.exit_code);
 }
 
@@ -664,17 +788,40 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_channel_capacity_bounds() {
+    fn test_batch_channel_capacity_legacy_values_are_accepted() {
         for option in [
             "--stats-reporter-capacity",
             "--counter-db-capacity",
             "--otel-capacity",
         ] {
             assert!(parse(&["countersyncd", option, "0"]).is_err());
-            assert!(parse(&["countersyncd", option, "65"]).is_err());
+            assert!(parse(&["countersyncd", option, "65"]).is_ok());
+            assert!(parse(&["countersyncd", option, "1024"]).is_ok());
             assert!(parse(&["countersyncd", option, "64"]).is_ok());
         }
         assert!(parse(&["countersyncd", "--data-netlink-capacity", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_batch_channel_capacity_is_clamped() {
+        assert_eq!(clamp_batch_capacity("--test", 1), 1);
+        assert_eq!(clamp_batch_capacity("--test", 64), 64);
+        assert_eq!(clamp_batch_capacity("--test", 65), 64);
+        assert_eq!(clamp_batch_capacity("--test", 1024), 64);
+    }
+
+    #[test]
+    fn test_restart_marks_open_descriptors_close_on_exec() {
+        use std::os::fd::AsRawFd;
+
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = file.as_raw_fd();
+        unsafe {
+            libc::fcntl(fd, libc::F_SETFD, 0);
+        }
+        mark_open_fds_close_on_exec().unwrap();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
     }
 
     #[test]

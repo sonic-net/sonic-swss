@@ -108,6 +108,35 @@ pub struct SAIStatsBatch {
     stats: Vec<SAIStat>,
 }
 
+pub struct SAIStatsBatchChunks {
+    records: std::iter::Peekable<std::vec::IntoIter<SAIStatsRecord>>,
+    stats: std::vec::IntoIter<SAIStat>,
+    max_counters: usize,
+}
+
+impl Iterator for SAIStatsBatchChunks {
+    type Item = SAIStatsBatch;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut batch = SAIStatsBatch::default();
+        while let Some(record) = self.records.peek() {
+            let record_len = record.stats.len();
+            assert!(record_len <= self.max_counters);
+            if !batch.is_empty()
+                && batch.counter_count().saturating_add(record_len) > self.max_counters
+            {
+                break;
+            }
+            let record = self.records.next().expect("record was peeked");
+            batch.push_record(
+                record.observation_time,
+                self.stats.by_ref().take(record_len),
+            );
+        }
+        (!batch.is_empty()).then_some(batch)
+    }
+}
+
 impl SAIStatsBatch {
     pub fn with_capacity(records: usize, stats: usize) -> Self {
         Self {
@@ -156,6 +185,16 @@ impl SAIStatsBatch {
             stats: &self.stats[record.stats.clone()],
         })
     }
+
+    pub fn into_counter_bounded_batches(self, max_counters: usize) -> SAIStatsBatchChunks {
+        assert!(max_counters > 0);
+        let Self { records, stats } = self;
+        SAIStatsBatchChunks {
+            records: records.into_iter().peekable(),
+            stats: stats.into_iter(),
+            max_counters,
+        }
+    }
 }
 
 impl From<SAIStats> for SAIStatsBatch {
@@ -201,6 +240,23 @@ mod tests {
         assert_eq!(records[0].stats[1].object_name.as_ref(), "Ethernet4");
         assert_eq!(records[1].observation_time, 20);
         assert_eq!(records[1].stats[0].counter, 5);
+    }
+
+    #[test]
+    fn counter_bounded_batches_preserve_complete_records() {
+        let mut batch = SAIStatsBatch::default();
+        for observation_time in 1..=3 {
+            batch.push_record(
+                observation_time,
+                (0..4).map(|counter| SAIStat::new("Ethernet0", 1, counter, counter as u64)),
+            );
+        }
+        let batches = batch.into_counter_bounded_batches(8).collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].counter_count(), 8);
+        assert_eq!(batches[0].record_count(), 2);
+        assert_eq!(batches[1].counter_count(), 4);
+        assert_eq!(batches[1].iter().next().unwrap().observation_time, 3);
     }
 
     #[test]
