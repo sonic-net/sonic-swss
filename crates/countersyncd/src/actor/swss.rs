@@ -1,4 +1,4 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::ipfix::{IPFixTemplatesMessage, RestartRequest};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
@@ -28,7 +28,7 @@ const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
-    restart_notifier: Option<Sender<String>>,
+    restart_notifier: Option<Sender<RestartRequest>>,
 }
 
 #[derive(Debug)]
@@ -80,7 +80,7 @@ impl SwssActor {
         })
     }
 
-    pub fn set_restart_notifier(&mut self, notifier: Sender<String>) {
+    pub fn set_restart_notifier(&mut self, notifier: Sender<RestartRequest>) {
         self.restart_notifier = Some(notifier);
     }
 
@@ -181,13 +181,9 @@ impl SwssActor {
                         SwssEvent::Delete { key } => {
                             let message = format!("HFT session {key} was deleted");
                             if let Some(notifier) = &restart_notifier {
-                                let _ = notifier.try_send(message.clone());
+                                let _ = notifier.try_send(RestartRequest::Administrative(message.clone()));
                             }
-                            let _ = template_recipient
-                                .try_send(IPFixTemplatesMessage::quarantine(key.clone(), None));
-                            return Err(SwssError::RestartRequired(format!(
-                                "{message}"
-                            )));
+                            return Err(SwssError::RestartRequired(message));
                         }
                     };
                     let processing = Self::process_session_update(
@@ -880,6 +876,50 @@ mod tests {
             .as_ref()
             .expect("Should have object_names");
         assert_eq!(object_names, &vec!["Ethernet0"]);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn runtime_delete_publishes_administrative_restart_without_quarantine() {
+        let table = setup_test_table();
+        let key = "test_administrative_restart";
+        insert_test_session(&table, key, "Ethernet0", "1", "template").await;
+        let (template_sender, mut template_receiver) = channel(10);
+        let (restart_sender, mut restart_receiver) = channel(1);
+        let mut actor = create_test_actor(template_sender);
+        actor.set_restart_notifier(restart_sender);
+        let task = tokio::spawn(SwssActor::run(actor));
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("startup update");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        cleanup_test_session(&table, key);
+        let request = tokio::time::timeout(Duration::from_secs(2), restart_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(request, RestartRequest::Administrative(ref message) if message.contains(key))
+        );
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, Err(SwssError::RestartRequired(_))));
+        while let Ok(message) = template_receiver.try_recv() {
+            assert_ne!(
+                message.key, key,
+                "Delete must not emit a synthetic quarantine"
+            );
+        }
     }
 
     #[tokio::test]

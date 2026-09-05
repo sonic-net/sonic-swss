@@ -7,6 +7,7 @@ mod utilities;
 // External dependencies
 use clap::Parser;
 use log::{error, info, warn};
+use message::ipfix::RestartRequest;
 use opentelemetry::ExportError;
 use std::{os::unix::process::CommandExt, process::Command, time::Duration};
 use tokio::{spawn, sync::mpsc::channel};
@@ -90,7 +91,7 @@ struct SupervisorExit {
     actor_name: &'static str,
     exit_code: i32,
     message: String,
-    restart_required: bool,
+    restart: Option<RestartRequest>,
 }
 
 fn describe_join_error(e: tokio::task::JoinError) -> String {
@@ -111,14 +112,14 @@ fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>)
                 actor_name: name,
                 exit_code: EXIT_FAILURE,
                 message: "exited unexpectedly".to_string(),
-                restart_required: false,
+                restart: None,
             }
         }
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
-            restart_required: false,
+            restart: None,
         },
     }
 }
@@ -134,20 +135,20 @@ fn classify_otel_join(
                 actor_name: name,
                 exit_code: EXIT_FAILURE,
                 message: "exited unexpectedly".to_string(),
-                restart_required: false,
+                restart: None,
             }
         }
         Ok(Err(e)) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
             message: format!("export failed after retries: {:?}", e),
-            restart_required: false,
+            restart: None,
         },
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
-            restart_required: false,
+            restart: None,
         },
     }
 }
@@ -161,22 +162,22 @@ fn classify_ipfix_join(
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: "exited unexpectedly".to_string(),
-            restart_required: false,
+            restart: None,
         },
         Ok(Err(e)) => {
-            let restart_required = is_restart_required(&e);
+            let restart = is_restart_required(&e).then(|| RestartRequest::Failure(e.to_string()));
             SupervisorExit {
                 actor_name: name,
                 exit_code: EXIT_FAILURE,
                 message: e.to_string(),
-                restart_required,
+                restart,
             }
         }
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
-            restart_required: false,
+            restart: None,
         },
     }
 }
@@ -190,25 +191,25 @@ fn classify_swss_join(
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: "exited unexpectedly".to_string(),
-            restart_required: false,
+            restart: None,
         },
         Ok(Err(SwssError::RestartRequired(message))) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
-            message,
-            restart_required: true,
+            message: message.clone(),
+            restart: Some(RestartRequest::Administrative(message)),
         },
         Ok(Err(SwssError::ReaderFailed(message))) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message,
-            restart_required: false,
+            restart: None,
         },
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
-            restart_required: false,
+            restart: None,
         },
     }
 }
@@ -221,6 +222,47 @@ fn parse_positive_capacity(value: &str) -> Result<usize, String> {
         return Err("channel capacity must be at least 1".to_string());
     }
     Ok(capacity)
+}
+
+fn reconcile_restart_intent(
+    exit: &mut SupervisorExit,
+    receiver: &mut tokio::sync::mpsc::Receiver<RestartRequest>,
+) {
+    if exit.restart.is_some() {
+        return;
+    }
+    // A notifier may have become ready after recv was polled Pending but
+    // before a dependent actor's join completed in the same select poll.
+    if let Ok(request) = receiver.try_recv() {
+        exit.message = request.message().to_string();
+        exit.restart = Some(request);
+    }
+}
+
+fn restart_backoff(request: &RestartRequest, previous_retries: u32) -> (u32, u64) {
+    match request {
+        RestartRequest::Administrative(_) => (0, 0),
+        RestartRequest::Failure(_) => {
+            let retries = previous_retries.saturating_add(1);
+            (retries, 1u64 << retries.saturating_sub(1).min(6))
+        }
+    }
+}
+
+fn set_close_on_exec(
+    fd: libc::c_int,
+    mut fcntl: impl FnMut(libc::c_int, libc::c_int, libc::c_int) -> std::io::Result<libc::c_int>,
+) -> std::io::Result<()> {
+    let flags = match fcntl(fd, libc::F_GETFD, 0) {
+        Ok(flags) => flags,
+        Err(error) if error.raw_os_error() == Some(libc::EBADF) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    match fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) {
+        Ok(_) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::EBADF) => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 const MAX_BATCH_CHANNEL_CAPACITY: usize = 64;
@@ -245,10 +287,15 @@ fn mark_open_fds_close_on_exec() -> std::io::Result<()> {
         if fd < 3 {
             continue;
         }
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        if flags >= 0 && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+        set_close_on_exec(fd, |fd, operation, argument| {
+            // fcntl does not transfer ownership; a concurrent close is benign.
+            let result = unsafe { libc::fcntl(fd, operation, argument) };
+            if result < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(result)
+            }
+        })?;
     }
     Ok(())
 }
@@ -494,7 +541,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_netlink = ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
-    let (restart_sender, mut restart_receiver) = channel::<String>(1);
+    let (restart_sender, mut restart_receiver) = channel::<RestartRequest>(1);
     ipfix.set_restart_notifier(restart_sender.clone());
 
     // Initialize SwssActor to monitor SONiC orchestrator messages
@@ -646,14 +693,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // All actors are treated as critical. If any actor exits, abort the rest and terminate.
-    let first_exit = tokio::select! {
+    let mut first_exit = tokio::select! {
         biased;
         Some(reason) = restart_receiver.recv() => {
             SupervisorExit {
                 actor_name: "HFT lifecycle",
                 exit_code: EXIT_FAILURE,
-                message: reason,
-                restart_required: true,
+                message: reason.message().to_string(),
+                restart: Some(reason),
             }
         }
         res = &mut swss_handle => {
@@ -679,6 +726,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    reconcile_restart_intent(&mut first_exit, &mut restart_receiver);
+
     error!(
         "Critical actor '{}' triggered daemon shutdown: {}",
         first_exit.actor_name, first_exit.message
@@ -699,7 +748,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.abort();
     }
 
-    if first_exit.restart_required {
+    if let Some(request) = &first_exit.restart {
         warn!("Restarting countersyncd in place to establish a clean HFT generation boundary");
         let started_at = std::env::var("COUNTERSYNCD_STARTED_AT")
             .ok()
@@ -717,9 +766,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|value| value.parse::<u32>().ok())
                     .unwrap_or(0)
             };
-        let retries = previous_retries.saturating_add(1);
-        if retries > 0 {
-            let delay = 1u64 << retries.saturating_sub(1).min(6);
+        let (retries, delay) = restart_backoff(request, previous_retries);
+        if delay > 0 {
             warn!("Delaying restart by {delay}s after persistent invalid HFT configuration");
             std::thread::sleep(Duration::from_secs(delay));
         }
@@ -747,6 +795,109 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, clap::Error> {
         Args::try_parse_from(args)
+    }
+
+    #[tokio::test]
+    async fn restart_arriving_between_select_polls_overrides_dependent_exit() {
+        let (sender, mut receiver) = channel(1);
+        let request = RestartRequest::Administrative("delete".into());
+        let expected = request.clone();
+        let mut dependency = std::future::poll_fn(move |_| {
+            sender.try_send(request.clone()).unwrap();
+            std::task::Poll::Ready(classify_join("dependent", Ok(())))
+        });
+        let mut exit = tokio::select! {
+            biased;
+            _ = receiver.recv() => panic!("the empty receiver must be polled first"),
+            exit = &mut dependency => exit,
+        };
+        assert!(exit.restart.is_none());
+        reconcile_restart_intent(&mut exit, &mut receiver);
+        assert_eq!(exit.restart, Some(expected));
+    }
+
+    #[test]
+    fn ordinary_exit_without_restart_intent_is_preserved() {
+        let (_sender, mut receiver) = channel(1);
+        let mut exit = classify_join("dependent", Ok(()));
+        reconcile_restart_intent(&mut exit, &mut receiver);
+        assert!(exit.restart.is_none());
+    }
+
+    #[test]
+    fn selected_restart_cause_is_not_overwritten_by_a_later_request() {
+        let (sender, mut receiver) = channel(1);
+        sender
+            .try_send(RestartRequest::Failure("later failure".into()))
+            .unwrap();
+        let mut exit =
+            classify_swss_join("SWSS", Ok(Err(SwssError::RestartRequired("delete".into()))));
+        reconcile_restart_intent(&mut exit, &mut receiver);
+        assert_eq!(
+            exit.restart,
+            Some(RestartRequest::Administrative("delete".into()))
+        );
+    }
+
+    #[test]
+    fn administrative_restarts_never_accumulate_failure_backoff() {
+        let request = RestartRequest::Administrative("delete".into());
+        for previous in [0, 1, 2, 6, 100, u32::MAX] {
+            assert_eq!(restart_backoff(&request, previous), (0, 0));
+        }
+        let exit = classify_swss_join("SWSS", Ok(Err(SwssError::RestartRequired("delete".into()))));
+        assert_eq!(exit.restart, Some(request));
+    }
+
+    #[test]
+    fn failure_restarts_retain_capped_exponential_backoff() {
+        let request = RestartRequest::Failure("invalid config".into());
+        for (previous, delay) in [(0, 1), (1, 2), (2, 4), (5, 32), (6, 64), (100, 64)] {
+            assert_eq!(restart_backoff(&request, previous), (previous + 1, delay));
+        }
+    }
+
+    #[test]
+    fn close_on_exec_tolerates_concurrent_close_at_either_fcntl() {
+        for failed_operation in [libc::F_GETFD, libc::F_SETFD] {
+            set_close_on_exec(123, |_, operation, _| {
+                if operation == failed_operation {
+                    Err(std::io::Error::from_raw_os_error(libc::EBADF))
+                } else {
+                    Ok(0)
+                }
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn close_on_exec_propagates_other_errors_and_preserves_flags() {
+        for failed_operation in [libc::F_GETFD, libc::F_SETFD] {
+            let error = set_close_on_exec(123, |_, operation, _| {
+                if operation == failed_operation {
+                    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+                } else {
+                    Ok(0)
+                }
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+        }
+        let mut calls = 0;
+        set_close_on_exec(123, |fd, operation, argument| {
+            assert_eq!(fd, 123);
+            calls += 1;
+            if operation == libc::F_GETFD {
+                Ok(0x10)
+            } else {
+                assert_eq!(operation, libc::F_SETFD);
+                assert_eq!(argument, 0x10 | libc::FD_CLOEXEC);
+                Ok(0)
+            }
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
     }
 
     #[test]

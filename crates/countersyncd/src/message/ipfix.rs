@@ -2,6 +2,20 @@ use std::sync::Arc;
 
 pub type IPFixTemplates = Arc<Vec<u8>>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartRequest {
+    Administrative(String),
+    Failure(String),
+}
+
+impl RestartRequest {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Administrative(message) | Self::Failure(message) => message,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IPFixTemplateOperation {
     Update,

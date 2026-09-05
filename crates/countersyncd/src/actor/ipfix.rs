@@ -17,7 +17,7 @@ use tokio::{
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage},
+    ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage, RestartRequest},
     saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
@@ -412,7 +412,7 @@ pub struct IpfixActor {
     deferred_sets: DeferredSetBuffer,
     deferred_set_ttl: Duration,
     next_deferred_sequence: u64,
-    restart_notifier: Option<Sender<String>>,
+    restart_notifier: Option<Sender<RestartRequest>>,
 }
 
 impl IpfixActor {
@@ -440,7 +440,7 @@ impl IpfixActor {
         self.saistats_recipients.push(recipient);
     }
 
-    pub fn set_restart_notifier(&mut self, notifier: Sender<String>) {
+    pub fn set_restart_notifier(&mut self, notifier: Sender<RestartRequest>) {
         self.restart_notifier = Some(notifier);
     }
 
@@ -583,23 +583,7 @@ impl IpfixActor {
             IPFixTemplateOperation::Update => {}
         }
         if let Err(err) = validate_template_update_limits(&templates) {
-            self.handle_template_deactivation(&templates.key);
-            if let Some(bytes) = templates.templates.as_deref() {
-                let keys = extract_template_keys(bytes.as_slice()).map_err(|_| {
-                    restart_error(format!(
-                        "cannot identify every template in rejected update for {}",
-                        templates.key
-                    ))
-                })?;
-                let owners = keys
-                    .iter()
-                    .filter_map(|key| self.installed.get(key))
-                    .map(|template| Arc::clone(&template.owner))
-                    .collect::<HashSet<_>>();
-                for owner in owners {
-                    self.quarantine_session(&owner);
-                }
-            }
+            self.handle_template_quarantine(&templates)?;
             return Err(err);
         }
 
@@ -1458,7 +1442,7 @@ impl IpfixActor {
                             Ok(batch) => actor.send_batch_and_drain_deferred(batch).await?,
                             Err(err) if is_restart_required(&err) => {
                                 if let Some(notifier) = &actor.restart_notifier {
-                                    let _ = notifier.try_send(err.to_string());
+                                    let _ = notifier.try_send(RestartRequest::Failure(err.to_string()));
                                 }
                                 return Err(err);
                             }
@@ -2859,6 +2843,54 @@ mod tests {
             .is_empty());
 
         assert!(actor.handle_template(active).is_err());
+    }
+
+    #[test]
+    fn admission_rejection_fences_uninstalled_keys_across_owners() {
+        for retry_owner in ["A", "B"] {
+            let mut actor = actor();
+            let wire_key = TemplateKey {
+                observation_domain_id: 0,
+                template_id: 300,
+            };
+            actor
+                .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+                .unwrap();
+            let mut rejected = template_message("A", 0, 300, &[(1, 0x0001_0002)]);
+            rejected.object_names = Some(vec!["x".repeat(MAX_OBJECT_METADATA_BYTES + 1)]);
+            assert!(actor.handle_template(rejected).is_err());
+            assert!(actor.history.was_used(&wire_key));
+            assert!(actor.lifecycle_markers.domains.contains(&0));
+            assert!(actor.deferred_sets.sets.is_empty());
+
+            assert!(actor
+                .handle_record(&data_message(0, &[(300, vec![(2, vec![20])])]))
+                .unwrap()
+                .is_empty());
+            assert!(actor.deferred_sets.sets.is_empty());
+            let stat = if retry_owner == "A" {
+                0x0001_0002
+            } else {
+                0x0001_0003
+            };
+            let error = actor
+                .handle_template(template_message(retry_owner, 0, 300, &[(1, stat)]))
+                .unwrap_err();
+            assert!(is_restart_required(&error));
+            assert!(actor.installed.is_empty());
+        }
+    }
+
+    #[test]
+    fn admission_rejection_without_identifiable_keys_requests_restart() {
+        for bytes in [None, Some(Arc::new(vec![1, 2, 3]))] {
+            let mut actor = actor();
+            let mut rejected = template_message("A", 0, 300, &[(1, 0x0001_0002)]);
+            rejected.templates = bytes;
+            rejected.object_names = Some(vec!["x".repeat(MAX_OBJECT_METADATA_BYTES + 1)]);
+            let error = actor.handle_template(rejected).unwrap_err();
+            assert!(is_restart_required(&error));
+        }
     }
 
     #[test]
