@@ -7,7 +7,9 @@ use tokio::time::{timeout, Duration};
 
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
-    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
+    buffer::SocketBufferMessage,
+    ipfix::{IPFixOwnerUpdate, IPFixTemplatesMessage},
+    saistats::SAIStatsBatchMessage,
 };
 use ipfix_test_helpers::{
     generate_ipfix_records, generate_ipfix_templates, generate_ipfix_templates_with_counter_widths,
@@ -18,12 +20,12 @@ type ReceivedRecord = (u64, Vec<(u32, u32, u64)>);
 
 fn template_message(key: &str, templates: Vec<u8>, counters: usize) -> IPFixTemplatesMessage {
     let (object_names, object_ids) = generate_object_metadata(counters);
-    IPFixTemplatesMessage::new(
+    IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
         key.to_string(),
         Arc::new(templates),
         Some(object_names),
         Some(object_ids),
-    )
+    ))
 }
 
 async fn apply_template(sender: &Sender<IPFixTemplatesMessage>, update: IPFixTemplatesMessage) {
@@ -145,10 +147,7 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
         template_message("healthy", healthy.clone(), 1),
     )
     .await;
-    for remove in [
-        IPFixTemplatesMessage::delete,
-        IPFixTemplatesMessage::deactivate,
-    ] {
+    for remove in [IPFixOwnerUpdate::delete, IPFixOwnerUpdate::deactivate] {
         let original = [
             generate_ipfix_templates(2, 301),
             generate_ipfix_templates(3, 302),
@@ -184,7 +183,11 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
             &[(1, 2), (2, 3), (3, 1)],
         )
         .await;
-        apply_template(&template_sender, remove("target".to_string())).await;
+        apply_template(
+            &template_sender,
+            IPFixTemplatesMessage::Owner(remove("target".to_string())),
+        )
+        .await;
         assert_data(
             &buffer_sender,
             &mut receiver,
@@ -211,7 +214,11 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
             &[(1, 2), (2, 3), (3, 1)],
         )
         .await;
-        apply_template(&template_sender, remove("target".to_string())).await;
+        apply_template(
+            &template_sender,
+            IPFixTemplatesMessage::Owner(remove("target".to_string())),
+        )
+        .await;
         assert_data(
             &buffer_sender,
             &mut receiver,
@@ -286,7 +293,7 @@ async fn first_new_key_switches_the_whole_session_snapshot_regardless_of_counter
         .await;
         apply_template(
             &template_sender,
-            IPFixTemplatesMessage::delete("target".to_string()),
+            IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::delete("target".to_string())),
         )
         .await;
     }

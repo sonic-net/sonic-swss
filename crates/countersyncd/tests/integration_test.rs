@@ -9,6 +9,7 @@ mod end_to_end_tests {
         ipfix::IpfixActor,
         stats_reporter::{StatsReporterActor, StatsReporterConfig},
     };
+    use countersyncd::message::ipfix::{IPFixOwnerUpdate, IPFixTemplatesMessage};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -121,12 +122,12 @@ mod end_to_end_tests {
 
         // Step 1: Send IPFIX template (simulating SwssActor -> IpfixActor)
         let template_data = create_test_ipfix_template();
-        let template_message = countersyncd::message::ipfix::IPFixTemplatesMessage::new(
+        let template_message = IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
             "test_session|PORT".to_string(),
             Arc::new(template_data),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
-        );
+        ));
 
         ipfix_template_sender
             .send(template_message)
@@ -246,12 +247,12 @@ mod end_to_end_tests {
 
         // Step 1: Send IPFIX template
         let template_data = create_test_ipfix_template();
-        let template_message = countersyncd::message::ipfix::IPFixTemplatesMessage::new(
+        let template_message = IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
             "direct_test".to_string(),
             Arc::new(template_data),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
-        );
+        ));
 
         ipfix_template_sender
             .send(template_message)

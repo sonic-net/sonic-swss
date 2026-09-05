@@ -1,4 +1,7 @@
-use super::super::message::ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage};
+use super::super::message::ipfix::{
+    IPFixOwnerUpdate, IPFixTemplateOperation, IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE,
+    MAX_OBJECT_METADATA_BYTES, MAX_TEMPLATE_CONFIG_BYTES,
+};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
@@ -15,11 +18,6 @@ const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 const SWSS_SELECT_TIMEOUT: Duration = Duration::from_millis(50);
-// Bound the raw Redis representation before copying/tokenizing. IPFIX keeps its
-// own admission checks for callers that bypass SWSS.
-const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
-const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
-const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -55,6 +53,12 @@ impl std::fmt::Display for SwssError {
 
 #[derive(Debug)]
 enum SwssEvent {
+    Owner(SwssRow),
+    Reconcile(Vec<SwssRow>),
+}
+
+#[derive(Debug)]
+enum SwssRow {
     Update {
         key: String,
         session_data: SessionData,
@@ -62,8 +66,6 @@ enum SwssEvent {
     Delete {
         key: String,
     },
-    // Complete current owner rows; children must be Update or Delete, never Reconcile.
-    Reconcile(Vec<SwssEvent>),
 }
 
 impl SwssActor {
@@ -222,14 +224,14 @@ impl SwssActor {
                             match item.operation {
                                 KeyOperation::Set => {
                                     known_keys.insert(item.key.clone());
-                                    events.push(SwssEvent::Update {
+                                    events.push(SwssEvent::Owner(SwssRow::Update {
                                         key: item.key,
                                         session_data: Self::parse_session_data(&item.field_values),
-                                    });
+                                    }));
                                 }
                                 KeyOperation::Del => {
                                     known_keys.remove(&item.key);
-                                    events.push(SwssEvent::Delete { key: item.key })
+                                    events.push(SwssEvent::Owner(SwssRow::Delete { key: item.key }))
                                 }
                             }
                         }
@@ -276,30 +278,31 @@ impl SwssActor {
                                     }
                                 }),
                         );
+                        let mut rows = Vec::new();
                         for key in keys {
                             // Table::get_keys uses the same relative-key contract.
                             match table.get(&key) {
                                 Ok(Some(fields)) => {
                                     known_keys.insert(key.clone());
-                                    events.push(SwssEvent::Update {
+                                    rows.push(SwssRow::Update {
                                         key,
                                         session_data: Self::parse_session_data(&fields),
                                     });
                                 }
                                 Ok(None) => {
                                     known_keys.remove(&key);
-                                    events.push(SwssEvent::Delete { key });
+                                    rows.push(SwssRow::Delete { key });
                                 }
                                 Err(e) if Self::is_wrongtype_row(e.message()) => {
                                     known_keys.remove(&key);
-                                    events.push(SwssEvent::Delete { key });
+                                    rows.push(SwssRow::Delete { key });
                                 }
                                 Err(e) => {
                                     return Err(format!("Error reconciling session table: {e}"))
                                 }
                             }
                         }
-                        Ok(vec![SwssEvent::Reconcile(events)])
+                        Ok(vec![SwssEvent::Reconcile(rows)])
                     }
                     Err(e) => Err(format!("Error popping items from session table: {}", e)),
                 },
@@ -327,6 +330,7 @@ impl SwssActor {
     }
 
     fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
+        // Apply the shared admission limits before copying/tokenizing Redis values.
         // CxxString::len borrows the raw value without lossy UTF-8 allocation.
         let mut metadata_bytes = 0usize;
         let mut validation_error = None;
@@ -393,7 +397,7 @@ impl SwssActor {
 
     async fn process_event(template_recipient: &Sender<IPFixTemplatesMessage>, event: SwssEvent) {
         let message = match event {
-            SwssEvent::Update { key, session_data } => {
+            SwssEvent::Owner(SwssRow::Update { key, session_data }) => {
                 if let Err(e) =
                     Self::validate_and_send_session(template_recipient, &key, &session_data).await
                 {
@@ -401,26 +405,27 @@ impl SwssActor {
                 }
                 return;
             }
-            SwssEvent::Delete { key } => IPFixTemplatesMessage::delete(key),
-            SwssEvent::Reconcile(rows) => IPFixTemplatesMessage::reconcile(
+            SwssEvent::Owner(SwssRow::Delete { key }) => {
+                IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::delete(key))
+            }
+            SwssEvent::Reconcile(rows) => IPFixTemplatesMessage::Reconcile(
                 rows.into_iter()
                     .map(|row| match row {
-                        SwssEvent::Update { key, session_data } => {
+                        SwssRow::Update { key, session_data } => {
                             match Self::validated_session(&key, &session_data) {
                                 Ok(message)
                                     if message.operation == IPFixTemplateOperation::Update =>
                                 {
                                     message
                                 }
-                                Ok(_) => IPFixTemplatesMessage::delete(key),
+                                Ok(_) => IPFixOwnerUpdate::delete(key),
                                 Err(e) => {
                                     error!("Failed to reconcile session {}: {}", key, e);
-                                    IPFixTemplatesMessage::delete(key)
+                                    IPFixOwnerUpdate::delete(key)
                                 }
                             }
                         }
-                        SwssEvent::Delete { key } => IPFixTemplatesMessage::delete(key),
-                        SwssEvent::Reconcile(_) => unreachable!("nested SWSS reconciliation"),
+                        SwssRow::Delete { key } => IPFixOwnerUpdate::delete(key),
                     })
                     .collect(),
             ),
@@ -461,7 +466,9 @@ impl SwssActor {
             Ok(message) => message,
             Err(err) => {
                 template_recipient
-                    .send(IPFixTemplatesMessage::delete(key.to_string()))
+                    .send(IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::delete(
+                        key.to_string(),
+                    )))
                     .await
                     .map_err(|e| format!("{err}; failed to delete IPFIX session {key}: {e}"))?;
                 return Err(err);
@@ -469,7 +476,7 @@ impl SwssActor {
         };
 
         template_recipient
-            .send(message)
+            .send(IPFixTemplatesMessage::Owner(message))
             .await
             .map_err(|e| format!("Failed to send IPFix templates to recipient: {}", e))?;
 
@@ -480,7 +487,7 @@ impl SwssActor {
     fn validated_session(
         key: &str,
         session_data: &SessionData,
-    ) -> Result<IPFixTemplatesMessage, String> {
+    ) -> Result<IPFixOwnerUpdate, String> {
         if key.len() > MAX_OBJECT_METADATA_BYTES {
             return Err("Session key exceeds metadata byte limit".into());
         }
@@ -495,15 +502,12 @@ impl SwssActor {
                     key, session_data.session_type
                 );
             }
-            return Ok(IPFixTemplatesMessage::deactivate(key.to_string()));
+            return Ok(IPFixOwnerUpdate::deactivate(key.to_string()));
         }
         Self::validated_update(key, session_data)
     }
 
-    fn validated_update(
-        key: &str,
-        session_data: &SessionData,
-    ) -> Result<IPFixTemplatesMessage, String> {
+    fn validated_update(key: &str, session_data: &SessionData) -> Result<IPFixOwnerUpdate, String> {
         session_data.validate_sizes()?;
         if key.len() > MAX_OBJECT_METADATA_BYTES {
             return Err("Session key exceeds metadata byte limit".into());
@@ -559,7 +563,7 @@ impl SwssActor {
             ));
         }
 
-        Ok(IPFixTemplatesMessage::new(
+        Ok(IPFixOwnerUpdate::new(
             key.to_string(),
             Arc::new(session_data.session_config.clone()),
             Some(object_names),
@@ -615,6 +619,53 @@ mod tests {
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
 
+    // Domain 0: observationTimeNanoseconds and one 64-bit enterprise counter
+    // (object label 1, SAI type/stat 1). Only the template ID varies across owners.
+    fn template(id: u16) -> Vec<u8> {
+        let mut bytes = vec![
+            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20,
+        ];
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&[0, 2, 1, 69, 0, 8, 128, 1, 0, 8, 0, 1, 0, 1]);
+        bytes
+    }
+
+    fn fields(name: &str, id: u16) -> [(&'static str, CxxString); 5] {
+        [
+            ("stream_status", CxxString::from("enabled")),
+            ("session_type", CxxString::from("ipfix")),
+            ("object_names", CxxString::from(name)),
+            ("object_ids", CxxString::from("1")),
+            ("session_config", CxxString::from(template(id))),
+        ]
+    }
+
+    fn record(id: u16) -> Arc<Vec<u8>> {
+        let mut bytes = vec![0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&20u16.to_be_bytes());
+        bytes.extend_from_slice(&7u64.to_be_bytes());
+        bytes.extend_from_slice(&42u64.to_be_bytes());
+        Arc::new(bytes)
+    }
+
+    async fn probe(
+        sender: &Sender<crate::message::buffer::SocketBufferMessage>,
+        receiver: &mut mpsc::Receiver<crate::message::saistats::SAIStatsBatchMessage>,
+        id: u16,
+        expected_name: &str,
+    ) {
+        sender.send(record(id)).await.unwrap();
+        let batch = receiver.recv().await.expect("expected decoded output");
+        assert_eq!(batch.record_count(), 1);
+        let record = batch.iter().next().unwrap();
+        assert_eq!(record.observation_time, 7);
+        assert_eq!(record.stats.len(), 1);
+        assert_eq!(record.stats[0].object_name.as_ref(), expected_name);
+        assert_eq!(record.stats[0].counter, 42);
+        assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+    }
+
     async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
         for event in events {
             SwssActor::process_event(sender, event).await;
@@ -624,13 +675,10 @@ mod tests {
         }
     }
 
-    fn reconciliation_rows(events: &mut [SwssEvent]) -> &mut Vec<SwssEvent> {
+    fn reconciliation_rows(events: &mut [SwssEvent]) -> &mut Vec<SwssRow> {
         let [SwssEvent::Reconcile(rows)] = events else {
             panic!("expected one reconciliation envelope: {events:?}");
         };
-        assert!(rows
-            .iter()
-            .all(|row| !matches!(row, SwssEvent::Reconcile(_))));
         rows
     }
 
@@ -690,7 +738,9 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             let mut initial = HashSet::new();
             while initial.len() < 2 {
-                let message = receiver.recv().await.unwrap();
+                let IPFixTemplatesMessage::Owner(message) = receiver.recv().await.unwrap() else {
+                    panic!("expected owner update");
+                };
                 assert_eq!(message.operation, IPFixTemplateOperation::Update);
                 initial.insert(message.key);
             }
@@ -700,8 +750,9 @@ mod tests {
                 .recv()
                 .await
                 .expect("WRONGTYPE must not stop the actor");
-            assert_eq!(message.operation, IPFixTemplateOperation::Reconcile);
-            let rows = message.reconciliation.unwrap();
+            let IPFixTemplatesMessage::Reconcile(rows) = message else {
+                panic!("expected reconciliation envelope");
+            };
             assert_eq!(rows.len(), 2);
             assert!(rows
                 .iter()
@@ -716,10 +767,13 @@ mod tests {
                 .hset("healthy", "session_config", &CxxString::from("updated"))
                 .unwrap();
             loop {
-                let message = receiver
+                let IPFixTemplatesMessage::Owner(message) = receiver
                     .recv()
                     .await
-                    .expect("healthy update after WRONGTYPE");
+                    .expect("healthy update after WRONGTYPE")
+                else {
+                    panic!("expected owner update");
+                };
                 if message.key == "healthy"
                     && message.templates.as_deref().map(Vec::as_slice) == Some(b"updated")
                 {
@@ -793,13 +847,13 @@ mod tests {
         assert_eq!(events.len(), 5);
         for key in ["before", "after"] {
             assert!(events.iter().any(|event| matches!(event,
-                SwssEvent::Update { key: k, session_data } if k == key && session_data.session_config == b"updated")), "{events:?}");
+                SwssRow::Update { key: k, session_data } if k == key && session_data.session_config == b"updated")), "{events:?}");
         }
         for key in ["bad", "bad_new", "deleted"] {
             assert!(
                 events
                     .iter()
-                    .any(|event| matches!(event, SwssEvent::Delete { key: k } if k == key)),
+                    .any(|event| matches!(event, SwssRow::Delete { key: k } if k == key)),
                 "{events:?}"
             );
             assert!(!known_keys.contains(key));
@@ -815,16 +869,6 @@ mod tests {
     async fn reconciliation_releases_owners_before_id_reuse_without_another_write() {
         use crate::actor::ipfix::IpfixActor;
 
-        // Domain 0, template 300: observationTimeNanoseconds and one 64-bit
-        // enterprise counter (object label 1, SAI type/stat 1).
-        let template = vec![
-            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2, 1, 69, 0,
-            8, 128, 1, 0, 8, 0, 1, 0, 1,
-        ];
-        let data = Arc::new(vec![
-            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0, 0, 7,
-            0, 0, 0, 0, 0, 0, 0, 42,
-        ]);
         for removal in [
             "delete",
             "disabled",
@@ -837,16 +881,7 @@ mod tests {
             let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
             let name = format!("test_swss_reuse_{}_{removal}", std::process::id());
             let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-            let fields = |object_name: &str| {
-                [
-                    ("stream_status", CxxString::from("enabled")),
-                    ("session_type", CxxString::from("ipfix")),
-                    ("object_names", CxxString::from(object_name)),
-                    ("object_ids", CxxString::from("1")),
-                    ("session_config", CxxString::from(template.clone())),
-                ]
-            };
-            table.set("a", fields("Ethernet0")).unwrap();
+            table.set("a", fields("Ethernet0", 300)).unwrap();
             let mut subscriber =
                 SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, Some(1), None)
                     .unwrap();
@@ -863,12 +898,7 @@ mod tests {
 
             tokio::time::timeout(Duration::from_secs(3), async {
                 forward(initial, &templates).await;
-                records.send(Arc::clone(&data)).await.unwrap();
-                let batch = stats_receiver.recv().await.unwrap();
-                assert_eq!(
-                    batch.iter().next().unwrap().stats[0].object_name.as_ref(),
-                    "Ethernet0"
-                );
+                probe(&records, &mut stats_receiver, 300, "Ethernet0").await;
 
                 match removal {
                     "delete" => table.del("a").unwrap(),
@@ -906,7 +936,7 @@ mod tests {
                     subscriber.read_data(Duration::from_secs(1), false).unwrap(),
                     swss_common::SelectResult::Data
                 );
-                table.set("b", fields("Ethernet4")).unwrap();
+                table.set("b", fields("Ethernet4", 300)).unwrap();
                 assert_eq!(
                     subscriber.read_data(Duration::from_secs(1), false).unwrap(),
                     swss_common::SelectResult::Data
@@ -919,9 +949,8 @@ mod tests {
                     Duration::from_secs(1),
                 )
                 .unwrap();
-                let key = |event: &SwssEvent| match event {
-                    SwssEvent::Update { key, .. } | SwssEvent::Delete { key } => key.clone(),
-                    SwssEvent::Reconcile(_) => unreachable!(),
+                let key = |event: &SwssRow| match event {
+                    SwssRow::Update { key, .. } | SwssRow::Delete { key } => key.clone(),
                 };
                 let rows = reconciliation_rows(&mut events);
                 assert_eq!(rows.len(), 3);
@@ -935,18 +964,7 @@ mod tests {
                 rows.sort_by_key(|event| key(event) != "b");
                 forward(events, &templates).await;
                 // No Redis write or admission retry: B must already own ID 300.
-                records.send(Arc::clone(&data)).await.unwrap();
-                let batch = stats_receiver.recv().await.unwrap();
-                let record = batch.iter().next().unwrap();
-                assert_eq!(record.observation_time, 7);
-                assert_eq!(record.stats.len(), 1);
-                assert_eq!(
-                    record.stats[0].object_name.as_ref(),
-                    "Ethernet4",
-                    "{removal}"
-                );
-                assert_eq!(record.stats[0].counter, 42);
-                assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+                probe(&records, &mut stats_receiver, 300, "Ethernet4").await;
             })
             .await
             .expect(removal);
@@ -965,25 +983,22 @@ mod tests {
     #[tokio::test]
     async fn reconciliation_forwards_validated_rows_in_one_envelope() {
         let rows = vec![
-            SwssEvent::Update {
+            SwssRow::Update {
                 key: "b".into(),
                 session_data: SessionData {
                     stream_status: "enabled".into(),
                     session_type: "ipfix".into(),
                     object_names: "Ethernet4".into(),
                     object_ids: "1".into(),
-                    session_config: vec![
-                        0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2,
-                        1, 69, 0, 8, 128, 1, 0, 8, 0, 1, 0, 1,
-                    ],
+                    session_config: template(300),
                     ..SessionData::default()
                 },
             },
-            SwssEvent::Update {
+            SwssRow::Update {
                 key: "disabled".into(),
                 session_data: SessionData::default(),
             },
-            SwssEvent::Update {
+            SwssRow::Update {
                 key: "nonipfix".into(),
                 session_data: SessionData {
                     stream_status: "enabled".into(),
@@ -991,7 +1006,7 @@ mod tests {
                     ..SessionData::default()
                 },
             },
-            SwssEvent::Update {
+            SwssRow::Update {
                 key: "invalid".into(),
                 session_data: SessionData {
                     stream_status: "enabled".into(),
@@ -1002,22 +1017,23 @@ mod tests {
                     ..SessionData::default()
                 },
             },
-            SwssEvent::Update {
+            SwssRow::Update {
                 key: "oversized".into(),
                 session_data: SessionData {
                     validation_error: Some("Session metadata exceeds byte limit"),
                     ..SessionData::default()
                 },
             },
-            SwssEvent::Delete {
+            SwssRow::Delete {
                 key: "absent".into(),
             },
         ];
         let (sender, mut receiver) = channel(1);
         SwssActor::process_event(&sender, SwssEvent::Reconcile(rows)).await;
         let message = receiver.try_recv().unwrap();
-        assert_eq!(message.operation, IPFixTemplateOperation::Reconcile);
-        let rows = message.reconciliation.unwrap();
+        let IPFixTemplatesMessage::Reconcile(rows) = message else {
+            panic!("expected reconciliation envelope");
+        };
         assert_eq!(rows.len(), 6);
         assert_eq!(rows[0].key, "b");
         assert_eq!(rows[0].operation, IPFixTemplateOperation::Update);
@@ -1032,57 +1048,37 @@ mod tests {
             assert_eq!(row.operation, IPFixTemplateOperation::Delete);
             assert!(row.templates.is_none());
         }
-        assert!(rows.iter().all(|row| row.reconciliation.is_none()));
         assert!(receiver.try_recv().is_err());
     }
 
-    async fn exercise_lost_notification_history(mode: &str) {
-        use crate::actor::ipfix::IpfixActor;
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum LostNotificationScenario {
+        Recreate,
+        Cancel,
+        Supersede,
+        Incumbent,
+        IncumbentPending,
+        RelativeAliases,
+    }
 
-        fn template(id: u16) -> Vec<u8> {
-            let mut bytes = vec![
-                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2, 1, 69,
-                0, 8, 128, 1, 0, 8, 0, 1, 0, 1,
-            ];
-            bytes[20..22].copy_from_slice(&id.to_be_bytes());
-            bytes
-        }
-        fn fields(name: &str, id: u16) -> [(&'static str, CxxString); 5] {
-            [
-                ("stream_status", CxxString::from("enabled")),
-                ("session_type", CxxString::from("ipfix")),
-                ("object_names", CxxString::from(name)),
-                ("object_ids", CxxString::from("1")),
-                ("session_config", CxxString::from(template(id))),
-            ]
-        }
-        fn record(id: u16) -> Arc<Vec<u8>> {
-            let mut bytes = vec![
-                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0,
-                0, 7, 0, 0, 0, 0, 0, 0, 0, 42,
-            ];
-            bytes[16..18].copy_from_slice(&id.to_be_bytes());
-            Arc::new(bytes)
-        }
-        async fn probe(
-            sender: &Sender<crate::message::buffer::SocketBufferMessage>,
-            receiver: &mut tokio::sync::mpsc::Receiver<
-                crate::message::saistats::SAIStatsBatchMessage,
-            >,
-            id: u16,
-            expected_name: &str,
-        ) {
-            sender.send(record(id)).await.unwrap();
-            let batch = receiver.recv().await.expect("expected decoded output");
-            assert_eq!(batch.record_count(), 1);
-            let record = batch.iter().next().unwrap();
-            assert_eq!(record.observation_time, 7);
-            assert_eq!(record.stats[0].object_name.as_ref(), expected_name);
-            assert_eq!(record.stats[0].counter, 42);
-        }
+    #[derive(Clone, Copy, Debug)]
+    enum OwnerOrder {
+        AFirst,
+        BFirst,
+    }
+
+    async fn exercise_lost_notification_history(
+        scenario: LostNotificationScenario,
+        order: OwnerOrder,
+    ) {
+        use crate::actor::ipfix::IpfixActor;
+        use LostNotificationScenario::*;
 
         let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        let name = format!("test_swss_lost_history_{}_{mode}", std::process::id());
+        let name = format!(
+            "test_swss_lost_history_{}_{scenario:?}_{order:?}",
+            std::process::id()
+        );
         let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
         table.set("a", fields("Ethernet0", 300)).unwrap();
         table.set("peer", fields("Ethernet8", 700)).unwrap();
@@ -1091,7 +1087,7 @@ mod tests {
             format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT"),
             format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}|PORT"),
         ];
-        if mode == "relative-aliases" {
+        if scenario == RelativeAliases {
             for key in &alias_keys {
                 table.set(key, [("stream_status", "disabled")]).unwrap();
             }
@@ -1112,9 +1108,56 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_secs(3), async {
             forward(initial, &templates).await;
             probe(&records, &mut stats_rx, 300, "Ethernet0").await;
-            let incumbent = mode.starts_with("incumbent");
-            if incumbent {
-                if mode.starts_with("incumbent-pending") {
+            let incumbent = match scenario {
+                Incumbent | IncumbentPending => true,
+                Recreate | Cancel | Supersede | RelativeAliases => false,
+            };
+            match scenario {
+                Incumbent | IncumbentPending => {
+                    if scenario == IncumbentPending {
+                        table.set("a", fields("Ethernet0", 400)).unwrap();
+                        let pending = SwssActor::blocking_collect_events(
+                            &mut subscriber,
+                            &mut known,
+                            Duration::from_secs(1),
+                        )
+                        .unwrap();
+                        assert!(matches!(pending.as_slice(),
+                            [SwssEvent::Owner(SwssRow::Update { key, .. })] if key == "a"));
+                        forward(pending, &templates).await;
+                        // Leave Redis at pending400 without data that would promote it.
+                        probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                    }
+                    table.set("b", fields("Ethernet4", 300)).unwrap();
+                    let rejected = SwssActor::blocking_collect_events(
+                        &mut subscriber,
+                        &mut known,
+                        Duration::from_secs(1),
+                    )
+                    .unwrap();
+                    assert!(matches!(rejected.as_slice(),
+                        [SwssEvent::Owner(SwssRow::Update { key, .. })] if key == "b"));
+                    forward(rejected, &templates).await;
+                    probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                    assert!(
+                        table.get("b").unwrap().is_some(),
+                        "rejected row remains in Redis"
+                    );
+                }
+                Recreate | RelativeAliases => {
+                    table.del("a").unwrap();
+                    assert_eq!(
+                        subscriber.read_data(Duration::from_secs(1), false).unwrap(),
+                        swss_common::SelectResult::Data
+                    );
+                    table
+                        .set(
+                            if scenario == Recreate { "a" } else { "b" },
+                            fields("Ethernet4", 300),
+                        )
+                        .unwrap();
+                }
+                Cancel | Supersede => {
                     table.set("a", fields("Ethernet0", 400)).unwrap();
                     let pending = SwssActor::blocking_collect_events(
                         &mut subscriber,
@@ -1122,57 +1165,16 @@ mod tests {
                         Duration::from_secs(1),
                     )
                     .unwrap();
-                    assert!(matches!(pending.as_slice(),
-                        [SwssEvent::Update { key, .. }] if key == "a"));
                     forward(pending, &templates).await;
-                    // Leave Redis at pending400 without data that would promote it.
-                    probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                    // Keep pending400 unpromoted, then lose its cancellation/supersession.
+                    let new_id = if scenario == Cancel { 300 } else { 500 };
+                    table.set("a", fields("Ethernet0", new_id)).unwrap();
+                    assert_eq!(
+                        subscriber.read_data(Duration::from_secs(1), false).unwrap(),
+                        swss_common::SelectResult::Data
+                    );
+                    table.set("b", fields("Ethernet4", 400)).unwrap();
                 }
-                table.set("b", fields("Ethernet4", 300)).unwrap();
-                let rejected = SwssActor::blocking_collect_events(
-                    &mut subscriber,
-                    &mut known,
-                    Duration::from_secs(1),
-                )
-                .unwrap();
-                assert!(
-                    matches!(rejected.as_slice(), [SwssEvent::Update { key, .. }] if key == "b")
-                );
-                forward(rejected, &templates).await;
-                probe(&records, &mut stats_rx, 300, "Ethernet0").await;
-                assert!(
-                    table.get("b").unwrap().is_some(),
-                    "rejected row remains in Redis"
-                );
-            } else if mode == "recreate" || mode == "relative-aliases" {
-                table.del("a").unwrap();
-                assert_eq!(
-                    subscriber.read_data(Duration::from_secs(1), false).unwrap(),
-                    swss_common::SelectResult::Data
-                );
-                table
-                    .set(
-                        if mode == "recreate" { "a" } else { "b" },
-                        fields("Ethernet4", 300),
-                    )
-                    .unwrap();
-            } else {
-                table.set("a", fields("Ethernet0", 400)).unwrap();
-                let pending = SwssActor::blocking_collect_events(
-                    &mut subscriber,
-                    &mut known,
-                    Duration::from_secs(1),
-                )
-                .unwrap();
-                forward(pending, &templates).await;
-                // Keep pending400 unpromoted, then lose its cancellation/supersession.
-                let new_id = if mode == "cancel" { 300 } else { 500 };
-                table.set("a", fields("Ethernet0", new_id)).unwrap();
-                assert_eq!(
-                    subscriber.read_data(Duration::from_secs(1), false).unwrap(),
-                    swss_common::SelectResult::Data
-                );
-                table.set("b", fields("Ethernet4", 400)).unwrap();
             }
             if !incumbent {
                 assert_eq!(
@@ -1191,32 +1193,35 @@ mod tests {
             assert!(subscriber.pops().unwrap().is_empty());
             // Force the owner order independently of HashSet's seed. Recovery
             // must converge in one envelope without another Redis write.
-            let first = if mode.ends_with("a-first") { "a" } else { "b" };
+            let first = match order {
+                OwnerOrder::AFirst => "a",
+                OwnerOrder::BFirst => "b",
+            };
             let rows = reconciliation_rows(&mut events);
             if incumbent {
                 assert_eq!(rows.len(), 4);
                 for owner in ["a", "b", "peer"] {
                     assert!(rows.iter().any(|row| matches!(row,
-                        SwssEvent::Update { key, .. } if key == owner)));
+                        SwssRow::Update { key, .. } if key == owner)));
                 }
                 assert!(rows.iter().any(|row| matches!(row,
-                    SwssEvent::Delete { key } if key == "bad")));
-                if mode.starts_with("incumbent-pending") {
+                    SwssRow::Delete { key } if key == "bad")));
+                if scenario == IncumbentPending {
                     assert!(rows.iter().any(|row| matches!(row,
-                        SwssEvent::Update { key, session_data }
+                        SwssRow::Update { key, session_data }
                             if key == "a" && session_data.session_config == template(400))));
                 }
             }
             rows.sort_by_key(|event| match event {
-                SwssEvent::Delete { .. } => 0,
-                SwssEvent::Update { key, .. } if key == first => 1,
-                _ => 2,
+                SwssRow::Delete { .. } => 0,
+                SwssRow::Update { key, .. } if key == first => 1,
+                SwssRow::Update { .. } => 2,
             });
             if incumbent {
                 let (sender, mut receiver) = channel(1);
                 SwssActor::process_event(&sender, events.pop().unwrap()).await;
                 let snapshot = receiver.try_recv().unwrap();
-                assert_eq!(snapshot.operation, IPFixTemplateOperation::Reconcile);
+                assert!(matches!(snapshot, IPFixTemplatesMessage::Reconcile(_)));
                 // Replaying the same snapshot must not promote unchanged pending
                 // state or release active300 to the rejected B300 row.
                 for _ in 0..2 {
@@ -1234,28 +1239,34 @@ mod tests {
                 .is_empty());
                 // No Redis writes or retries. Removing only A directly on the
                 // actor channel must leave ID 300 unknown, not installed for B.
-                forward(vec![SwssEvent::Delete { key: "a".into() }], &templates).await;
+                forward(
+                    vec![SwssEvent::Owner(SwssRow::Delete { key: "a".into() })],
+                    &templates,
+                )
+                .await;
                 records.send(record(300)).await.unwrap();
                 probe(&records, &mut stats_rx, 700, "Ethernet8").await;
                 assert!(stats_rx.try_recv().is_err());
                 return;
             }
             forward(events, &templates).await;
-            let id = if mode == "recreate" || mode == "relative-aliases" {
-                300
-            } else {
-                400
-            };
-            probe(&records, &mut stats_rx, id, "Ethernet4").await;
-            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
-            if mode != "recreate" && mode != "relative-aliases" {
-                probe(
-                    &records,
-                    &mut stats_rx,
-                    if mode == "cancel" { 300 } else { 500 },
-                    "Ethernet0",
-                )
-                .await;
+            match scenario {
+                Recreate | RelativeAliases => {
+                    probe(&records, &mut stats_rx, 300, "Ethernet4").await;
+                    probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                }
+                Cancel | Supersede => {
+                    probe(&records, &mut stats_rx, 400, "Ethernet4").await;
+                    probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                    probe(
+                        &records,
+                        &mut stats_rx,
+                        if scenario == Cancel { 300 } else { 500 },
+                        "Ethernet0",
+                    )
+                    .await;
+                }
+                Incumbent | IncumbentPending => unreachable!("incumbent verified above"),
             }
             assert!(!known.contains("bad"));
         })
@@ -1265,84 +1276,56 @@ mod tests {
         for key in ["a", "b", "peer", "bad"] {
             table.del(key).unwrap();
         }
-        if mode == "relative-aliases" {
+        if scenario == RelativeAliases {
             for key in &alias_keys {
                 table.del(key).unwrap();
             }
         }
-        result.expect(mode);
+        result.unwrap_or_else(|error| panic!("{scenario:?}, {order:?}: {error}"));
     }
 
     #[tokio::test]
     async fn lost_delete_recreate_reinstalls_same_owner_with_changed_metadata() {
-        exercise_lost_notification_history("recreate").await;
+        exercise_lost_notification_history(LostNotificationScenario::Recreate, OwnerOrder::BFirst)
+            .await;
     }
 
     #[tokio::test]
     async fn lost_pending_cancellation_releases_id_before_admission() {
-        exercise_lost_notification_history("cancel").await;
+        exercise_lost_notification_history(LostNotificationScenario::Cancel, OwnerOrder::BFirst)
+            .await;
     }
 
     #[tokio::test]
     async fn lost_pending_supersession_releases_id_before_admission() {
-        exercise_lost_notification_history("supersede").await;
+        exercise_lost_notification_history(LostNotificationScenario::Supersede, OwnerOrder::BFirst)
+            .await;
     }
 
     #[tokio::test]
     async fn wrongtype_reconciliation_preserves_incumbent_over_rejected_row_in_both_orders() {
-        exercise_lost_notification_history("incumbent-a-first").await;
-        exercise_lost_notification_history("incumbent-b-first").await;
-        exercise_lost_notification_history("incumbent-pending-a-first").await;
-        exercise_lost_notification_history("incumbent-pending-b-first").await;
+        for scenario in [
+            LostNotificationScenario::Incumbent,
+            LostNotificationScenario::IncumbentPending,
+        ] {
+            for order in [OwnerOrder::AFirst, OwnerOrder::BFirst] {
+                exercise_lost_notification_history(scenario, order).await;
+            }
+        }
     }
 
     #[tokio::test]
     async fn table_like_disabled_profile_names_do_not_block_unrelated_recovery() {
-        exercise_lost_notification_history("relative-aliases").await;
+        exercise_lost_notification_history(
+            LostNotificationScenario::RelativeAliases,
+            OwnerOrder::BFirst,
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn table_like_active_profiles_isolate_promotion_and_removal() {
         use crate::actor::ipfix::IpfixActor;
-
-        fn fields(name: &str, id: u16) -> [(&'static str, CxxString); 5] {
-            let mut template = vec![
-                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2, 1, 69,
-                0, 8, 128, 1, 0, 8, 0, 1, 0, 1,
-            ];
-            template[20..22].copy_from_slice(&id.to_be_bytes());
-            [
-                ("stream_status", CxxString::from("enabled")),
-                ("session_type", CxxString::from("ipfix")),
-                ("object_names", CxxString::from(name)),
-                ("object_ids", CxxString::from("1")),
-                ("session_config", CxxString::from(template)),
-            ]
-        }
-        fn record(id: u16) -> Arc<Vec<u8>> {
-            let mut bytes = vec![
-                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0,
-                0, 7, 0, 0, 0, 0, 0, 0, 0, 42,
-            ];
-            bytes[16..18].copy_from_slice(&id.to_be_bytes());
-            Arc::new(bytes)
-        }
-        async fn probe(
-            sender: &Sender<crate::message::buffer::SocketBufferMessage>,
-            receiver: &mut mpsc::Receiver<crate::message::saistats::SAIStatsBatchMessage>,
-            id: u16,
-            name: &str,
-        ) {
-            sender.send(record(id)).await.unwrap();
-            let batch = receiver.recv().await.expect("expected decoded output");
-            assert_eq!(batch.record_count(), 1);
-            let record = batch.iter().next().unwrap();
-            assert_eq!(record.observation_time, 7);
-            assert_eq!(record.stats.len(), 1);
-            assert_eq!(record.stats[0].object_name.as_ref(), name);
-            assert_eq!(record.stats[0].counter, 42);
-            assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
-        }
 
         let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
         let name = format!("test_swss_active_profiles_{}", std::process::id());
@@ -1456,7 +1439,7 @@ mod tests {
         let observed = initial
             .into_iter()
             .map(|event| match event {
-                SwssEvent::Update { key, .. } => key,
+                SwssEvent::Owner(SwssRow::Update { key, .. }) => key,
                 _ => panic!("expected startup update"),
             })
             .collect::<HashSet<_>>();
@@ -1471,7 +1454,9 @@ mod tests {
                 Duration::from_secs(1),
             )
             .unwrap();
-            assert!(matches!(events.as_slice(),[SwssEvent::Update{key:k,..}] if k==key));
+            assert!(
+                matches!(events.as_slice(),[SwssEvent::Owner(SwssRow::Update{key:k,..})] if k==key)
+            );
         }
         db.set(&format!("{table_name}|bad"), &CxxString::from("wrong type"))
             .unwrap();
@@ -1482,8 +1467,8 @@ mod tests {
         let recovered_keys = rows
             .iter()
             .filter_map(|row| match row {
-                SwssEvent::Update { key, .. } => Some(key.clone()),
-                _ => None,
+                SwssRow::Update { key, .. } => Some(key.clone()),
+                SwssRow::Delete { .. } => None,
             })
             .collect::<HashSet<_>>();
         assert_eq!(recovered_keys, keys.iter().cloned().collect());
@@ -1496,7 +1481,9 @@ mod tests {
                 Duration::from_secs(1),
             )
             .unwrap();
-            assert!(matches!(events.as_slice(),[SwssEvent::Delete{key:k}] if k==key));
+            assert!(
+                matches!(events.as_slice(),[SwssEvent::Owner(SwssRow::Delete{key:k})] if k==key)
+            );
             assert!(!known.contains(key));
         }
         table.del("bad").unwrap();
@@ -1585,7 +1572,9 @@ mod tests {
                 .await
                 .is_err()
         );
-        let message = receiver.try_recv().unwrap();
+        let IPFixTemplatesMessage::Owner(message) = receiver.try_recv().unwrap() else {
+            panic!("expected owner deletion");
+        };
         assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, "test");
         assert!(message.templates.is_none());
@@ -1679,9 +1668,12 @@ mod tests {
         actor.handle_session_update(key, &field_values).await;
 
         // Verify the message was sent
-        let received_message = template_receiver
+        let IPFixTemplatesMessage::Owner(received_message) = template_receiver
             .try_recv()
-            .expect("Should have received a message");
+            .expect("Should have received a message")
+        else {
+            panic!("expected owner update");
+        };
         assert_eq!(received_message.key, "test_session|PORT");
         assert_eq!(received_message.operation, IPFixTemplateOperation::Update);
         assert!(received_message.templates.is_some());
@@ -1714,7 +1706,11 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("delete message");
+        let IPFixTemplatesMessage::Owner(message) =
+            template_receiver.try_recv().expect("delete message")
+        else {
+            panic!("expected owner deletion");
+        };
         assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, key);
     }
@@ -1735,7 +1731,11 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("deactivation message");
+        let IPFixTemplatesMessage::Owner(message) =
+            template_receiver.try_recv().expect("deactivation message")
+        else {
+            panic!("expected owner deactivation");
+        };
         assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
         assert_eq!(message.key, key);
     }
@@ -1756,7 +1756,11 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("deactivation message");
+        let IPFixTemplatesMessage::Owner(message) =
+            template_receiver.try_recv().expect("deactivation message")
+        else {
+            panic!("expected owner deactivation");
+        };
         assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
         assert_eq!(message.key, key);
     }
@@ -1781,7 +1785,11 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("delete message");
+        let IPFixTemplatesMessage::Owner(message) =
+            template_receiver.try_recv().expect("delete message")
+        else {
+            panic!("expected owner deletion");
+        };
         assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, key);
     }
@@ -1803,7 +1811,11 @@ mod tests {
                     .await
                     .is_err()
             );
-            let message = template_receiver.try_recv().expect("delete message");
+            let IPFixTemplatesMessage::Owner(message) =
+                template_receiver.try_recv().expect("delete message")
+            else {
+                panic!("expected owner deletion");
+            };
             assert_eq!(message.operation, IPFixTemplateOperation::Delete);
             assert_eq!(message.key, "test|PORT");
             assert!(message.templates.is_none());
@@ -1835,12 +1847,15 @@ mod tests {
 
         let object_ids = Some(vec![1, 2]);
 
-        let message = IPFixTemplatesMessage::new(
+        let message = IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
             "test_key".to_string(),
             templates.clone(),
             object_names.clone(),
             object_ids.clone(),
-        );
+        ));
+        let IPFixTemplatesMessage::Owner(message) = message else {
+            panic!("expected owner update");
+        };
 
         assert_eq!(message.key, "test_key");
         assert_eq!(message.templates, Some(templates));
@@ -1851,7 +1866,11 @@ mod tests {
 
     #[test]
     fn test_ipfix_templates_message_delete() {
-        let message = IPFixTemplatesMessage::delete("test_key".to_string());
+        let message =
+            IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::delete("test_key".to_string()));
+        let IPFixTemplatesMessage::Owner(message) = message else {
+            panic!("expected owner deletion");
+        };
 
         assert_eq!(message.key, "test_key");
         assert!(message.templates.is_none());
@@ -1936,6 +1955,9 @@ mod tests {
         // Check messages received
         let mut received_messages = Vec::new();
         while let Ok(msg) = template_receiver.try_recv() {
+            let IPFixTemplatesMessage::Owner(msg) = msg else {
+                panic!("expected owner update");
+            };
             received_messages.push(msg);
         }
 
@@ -1977,7 +1999,11 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let message = template_receiver.recv().await.expect("startup update");
+                let IPFixTemplatesMessage::Owner(message) =
+                    template_receiver.recv().await.expect("startup update")
+                else {
+                    panic!("expected owner update");
+                };
                 if message.key == key {
                     assert_eq!(message.operation, IPFixTemplateOperation::Update);
                     break;
@@ -1989,7 +2015,11 @@ mod tests {
         cleanup_test_session(&table, key);
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let message = template_receiver.recv().await.expect("runtime delete");
+                let IPFixTemplatesMessage::Owner(message) =
+                    template_receiver.recv().await.expect("runtime delete")
+                else {
+                    panic!("expected owner deletion");
+                };
                 if message.key == key {
                     assert_eq!(message.operation, IPFixTemplateOperation::Delete);
                     assert!(message.templates.is_none());
@@ -2007,7 +2037,11 @@ mod tests {
         insert_test_session(&table, key, "Ethernet4", "2", "updated_template").await;
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let message = template_receiver.recv().await.expect("update after delete");
+                let IPFixTemplatesMessage::Owner(message) =
+                    template_receiver.recv().await.expect("update after delete")
+                else {
+                    panic!("expected owner update");
+                };
                 if message.key == key {
                     assert_eq!(message.operation, IPFixTemplateOperation::Update);
                     assert_eq!(message.templates.as_deref().unwrap(), b"updated_template");
@@ -2066,6 +2100,9 @@ mod tests {
         // Check if we received the data
         let mut received_messages = Vec::new();
         while let Ok(msg) = template_receiver.try_recv() {
+            let IPFixTemplatesMessage::Owner(msg) = msg else {
+                panic!("expected owner update");
+            };
             received_messages.push(msg);
         }
 
@@ -2142,6 +2179,9 @@ mod tests {
         // Step 3: Collect all messages
         let mut all_messages = Vec::new();
         while let Ok(msg) = template_receiver.try_recv() {
+            let IPFixTemplatesMessage::Owner(msg) = msg else {
+                panic!("expected owner update");
+            };
             all_messages.push(msg);
         }
 

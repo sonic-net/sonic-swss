@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use byteorder::{ByteOrder, NetworkEndian};
-use countersyncd::message::{buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage};
+use countersyncd::message::{
+    buffer::SocketBufferMessage,
+    ipfix::{IPFixOwnerUpdate, IPFixTemplatesMessage},
+};
 
 #[path = "../tests/ipfix_test_helpers.rs"]
 mod ipfix_test_helpers;
@@ -86,12 +89,12 @@ impl PreparedDataset {
             .map(|(key, (bytes, counters))| {
                 let (object_names, object_ids) =
                     ipfix_test_helpers::generate_object_metadata(counters);
-                IPFixTemplatesMessage::new(
+                IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
                     key,
                     Arc::new(bytes),
                     Some(object_names),
                     Some(object_ids),
-                )
+                ))
             })
             .collect();
 
@@ -109,12 +112,12 @@ impl PreparedDataset {
             &readiness_template_bytes,
         ));
         let (readiness_names, readiness_ids) = ipfix_test_helpers::generate_object_metadata(1);
-        let readiness_template = IPFixTemplatesMessage::new(
+        let readiness_template = IPFixTemplatesMessage::Owner(IPFixOwnerUpdate::new(
             "__benchmark_readiness_probe".to_string(),
             Arc::new(readiness_template_bytes),
             Some(readiness_names),
             Some(readiness_ids),
-        );
+        ));
         template_messages.push(readiness_template);
 
         Self {
