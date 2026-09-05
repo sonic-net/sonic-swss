@@ -128,7 +128,7 @@ async fn unknown_data_is_dropped_before_install_and_known_data_keeps_flowing() {
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -230,7 +230,7 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -300,7 +300,7 @@ async fn first_new_key_switches_the_whole_session_snapshot_regardless_of_counter
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -391,7 +391,7 @@ async fn shared_key_does_not_promote_and_latest_pending_snapshot_replaces_unused
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -465,7 +465,7 @@ async fn malformed_new_key_data_does_not_emit_or_promote_pending_snapshot() {
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -488,7 +488,7 @@ async fn template_defined_counter_widths_reach_sai_stats() {
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none());
 }
 
@@ -544,6 +544,6 @@ async fn reduced_width_records_are_split_at_batch_boundaries() {
 
     drop(buffer_sender);
     drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
+    actor_handle.await.expect("IPFIX actor task should join");
     assert!(receiver.recv().await.is_none(), "unexpected extra batch");
 }

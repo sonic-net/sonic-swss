@@ -124,16 +124,9 @@ async fn run_prepared_dataset(
             for task in &mut sender_tasks {
                 task.await.expect("record sender should join");
             }
-            let actor_error = (&mut actor_handle)
+            (&mut actor_handle)
                 .await
-                .expect("IPFIX actor task should join")
-                .expect_err("IPFIX actor should report a closed input channel");
-            assert!(
-                actor_error
-                    .to_string()
-                    .contains("IPFIX record input channel closed"),
-                "unexpected actor termination: {actor_error}"
-            );
+                .expect("IPFIX actor task should join");
 
             measured_elapsed.expect("stats channel closed before complete output")
         }),

@@ -279,10 +279,7 @@ async fn run_end_to_end(
     drop(buffer_tx);
     drop(template_tx);
 
-    ipfix_handle
-        .await
-        .expect("ipfix join")
-        .expect_err("IPFIX actor should report closed input channels");
+    ipfix_handle.await.expect("ipfix join");
     let (observed_records, observed_counters) =
         readiness_drain.await.expect("readiness drain should join");
     assert_eq!(observed_records, expected_messages);

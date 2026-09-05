@@ -39,19 +39,6 @@ pub struct SwssActor {
 }
 
 #[derive(Debug)]
-pub enum SwssError {
-    ReaderFailed(String),
-}
-
-impl std::fmt::Display for SwssError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ReaderFailed(message) => write!(formatter, "reader failed: {message}"),
-        }
-    }
-}
-
-#[derive(Debug)]
 enum SwssEvent {
     Owner(SwssRow),
     Reconcile(Vec<SwssRow>),
@@ -97,7 +84,7 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `actor` - SwssActor instance to run
-    pub async fn run(actor: SwssActor) -> Result<(), SwssError> {
+    pub async fn run(actor: SwssActor) {
         info!("SwssActor started, monitoring HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE");
 
         #[cfg(test)]
@@ -109,9 +96,8 @@ impl SwssActor {
             template_recipient,
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
-        let (fatal_sender, mut fatal_receiver) = mpsc::channel(1);
 
-        // Dropping the receivers on cancellation releases blocking_send and stops
+        // Dropping the receiver on cancellation releases blocking_send and stops
         // polling. Do not join: synchronous Redis calls may block indefinitely.
         match thread::Builder::new()
             .name("countersyncd-swss".to_string())
@@ -149,8 +135,7 @@ impl SwssActor {
                         }
                         Err(e) => {
                             error!("Error reading from session table: {}", e);
-                            let _ = fatal_sender.blocking_send(e);
-                            break;
+                            thread::sleep(Duration::from_millis(100));
                         }
                     }
                 }
@@ -161,42 +146,15 @@ impl SwssActor {
                 Ok(_) => {},
                 Err(e) => {
                     error!("Failed to spawn SwssActor reader thread: {}", e);
-                    return Err(SwssError::ReaderFailed(e.to_string()));
+                    return;
                 }
             };
 
-        loop {
-            tokio::select! {
-                biased;
-                failure = fatal_receiver.recv() => {
-                    if let Some(failure) = failure {
-                        error!("SwssActor reader failed: {failure}");
-                        return Err(SwssError::ReaderFailed(failure));
-                    }
-                    break;
-                }
-                event = event_receiver.recv() => {
-                    let Some(event) = event else {
-                        break;
-                    };
-                    let processing = Self::process_event(&template_recipient, event);
-                    tokio::select! {
-                        biased;
-                        failure = fatal_receiver.recv() => {
-                            if let Some(failure) = failure {
-                                error!("SwssActor reader failed while forwarding an event: {failure}");
-                                return Err(SwssError::ReaderFailed(failure));
-                            }
-                            break;
-                        }
-                        _ = processing => {}
-                    }
-                }
-            }
+        while let Some(event) = event_receiver.recv().await {
+            Self::process_event(&template_recipient, event).await;
         }
 
         debug!("SwssActor terminated");
-        Ok(())
     }
 
     fn blocking_collect_events(
@@ -703,9 +661,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_wrongtype_recovers_owner_and_healthy_updates_transport_is_fatal() {
-        use std::os::fd::AsRawFd;
-
+    async fn runtime_wrongtype_recovers_owner_and_healthy_updates() {
         let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
         let name = format!("test_swss_wrongtype_{}", std::process::id());
         let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
@@ -725,11 +681,6 @@ mod tests {
         }
         let session_table =
             SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
-        let subscription = session_table
-            .get_fd()
-            .unwrap()
-            .try_clone_to_owned()
-            .unwrap();
         let (template_recipient, mut receiver) = channel(16);
         let task = tokio::spawn(SwssActor::run(SwssActor {
             session_table,
@@ -785,21 +736,48 @@ mod tests {
         .await
         .unwrap();
         assert!(!task.is_finished());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        table.del("healthy").unwrap();
+        table.del("bad").unwrap();
+    }
+
+    #[tokio::test]
+    async fn reader_transport_errors_retry_with_delay_instead_of_exiting() {
+        use std::os::fd::AsRawFd;
+
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_reader_retry_{}", std::process::id());
+        let mut session_table = SubscriberStateTable::new(db, &name, None, None).unwrap();
+        let subscription = session_table
+            .get_fd()
+            .unwrap()
+            .try_clone_to_owned()
+            .unwrap();
         // Shut down only this actor's subscription, not the shared Redis server.
         assert_eq!(
             unsafe { libc::shutdown(subscription.as_raw_fd(), libc::SHUT_RDWR) },
             0
         );
-        let result = tokio::time::timeout(Duration::from_secs(2), task)
+        assert!(SwssActor::blocking_collect_events(
+            &mut session_table,
+            &mut HashSet::new(),
+            Duration::ZERO,
+        )
+        .is_err());
+        let (template_recipient, mut receiver) = channel(1);
+        let started = std::time::Instant::now();
+        let task = tokio::spawn(SwssActor::run(SwssActor {
+            session_table,
+            template_recipient,
+        }));
+        tokio::time::timeout(Duration::from_secs(5), task)
             .await
             .unwrap()
             .unwrap();
-        assert!(
-            matches!(result, Err(SwssError::ReaderFailed(_))),
-            "{result:?}"
-        );
-        table.del("healthy").unwrap();
-        table.del("bad").unwrap();
+        // The test-only reader limit is 20 iterations, each failed read sleeps 100 ms.
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        assert!(receiver.recv().await.is_none());
     }
 
     #[test]
@@ -969,11 +947,10 @@ mod tests {
             .await
             .expect(removal);
             drop(templates);
-            assert!(tokio::time::timeout(Duration::from_secs(1), task)
+            tokio::time::timeout(Duration::from_secs(1), task)
                 .await
                 .unwrap()
-                .unwrap()
-                .is_err());
+                .unwrap();
             for key in ["a", "b", "bad"] {
                 table.del(key).unwrap();
             }
@@ -1390,7 +1367,7 @@ mod tests {
                 assert!(stats_rx.try_recv().is_err(), "{removal}");
             }
             drop(templates);
-            assert!((&mut task).await.unwrap().is_err());
+            (&mut task).await.unwrap();
         })
         .await;
         task.abort();
@@ -1950,7 +1927,7 @@ mod tests {
         let actor = create_test_actor(template_sender);
 
         // Run actor (will auto-terminate in test mode)
-        let _ = SwssActor::run(actor).await;
+        SwssActor::run(actor).await;
 
         // Check messages received
         let mut received_messages = Vec::new();
@@ -2095,7 +2072,7 @@ mod tests {
         .await;
 
         // Run actor (will auto-terminate in test mode)
-        let _ = SwssActor::run(actor).await;
+        SwssActor::run(actor).await;
 
         // Check if we received the data
         let mut received_messages = Vec::new();
@@ -2174,7 +2151,7 @@ mod tests {
         let actor = create_test_actor(template_sender);
 
         // Run actor (will auto-terminate in test mode)
-        let _ = SwssActor::run(actor).await;
+        SwssActor::run(actor).await;
 
         // Step 3: Collect all messages
         let mut all_messages = Vec::new();

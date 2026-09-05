@@ -184,8 +184,7 @@ mod end_to_end_tests {
         timeout(TEST_TIMEOUT, ipfix_handle)
             .await
             .expect("IPFIX shutdown timed out")
-            .expect("IPFIX task should join")
-            .expect_err("IPFIX actor should report closed input channels");
+            .expect("IPFIX task should join");
         timeout(TEST_TIMEOUT, stats_handle)
             .await
             .expect("stats reporter shutdown timed out")
@@ -287,8 +286,7 @@ mod end_to_end_tests {
         timeout(TEST_TIMEOUT, ipfix_handle)
             .await
             .expect("IPFIX shutdown timed out")
-            .expect("IPFIX task should join")
-            .expect_err("IPFIX actor should report closed input channels");
+            .expect("IPFIX task should join");
         timeout(TEST_TIMEOUT, stats_handle)
             .await
             .expect("stats reporter shutdown timed out")

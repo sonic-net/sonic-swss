@@ -508,16 +508,12 @@ impl IpfixActor {
         }
     }
 
-    async fn process_record_input(
-        &mut self,
-        records: &[u8],
-        batch: &mut SAIStatsBatch,
-    ) -> Result<(), IpfixError> {
+    async fn process_record_input(&mut self, records: &[u8], batch: &mut SAIStatsBatch) {
         let input = match self.validate_record_input(records) {
             Ok(input) => input,
             Err(err) => {
                 warn!("Dropping invalid HFT IPFIX message: {err}");
-                return Ok(());
+                return;
             }
         };
         for validated in input.messages {
@@ -527,60 +523,44 @@ impl IpfixActor {
                     .saturating_add(validated.counter_count)
                     > TARGET_COUNTERS_PER_BATCH
             {
-                self.send_batch(std::mem::take(batch)).await?;
+                self.send_batch(std::mem::take(batch)).await;
             }
             self.process_data_message(validated, batch);
             if batch.counter_count() >= TARGET_COUNTERS_PER_BATCH {
-                self.send_batch(std::mem::take(batch)).await?;
+                self.send_batch(std::mem::take(batch)).await;
             }
         }
-        Ok(())
     }
 
-    async fn send_batch(&self, batch: SAIStatsBatch) -> Result<(), IpfixError> {
+    async fn send_batch(&self, batch: SAIStatsBatch) {
         if batch.is_empty() || self.saistats_recipients.is_empty() {
-            return Ok(());
+            return;
         }
         if batch.counter_count() <= TARGET_COUNTERS_PER_BATCH || batch.record_count() == 1 {
-            let closed = self.send_chunk(batch).await;
-            return if closed == 0 {
-                Ok(())
-            } else {
-                Err(format!("{closed} SAI stats recipient(s) closed").into())
-            };
+            self.send_chunk(batch).await;
+            return;
         }
-        let mut closed = 0usize;
         for batch in batch.into_record_batches(TARGET_COUNTERS_PER_BATCH) {
-            closed = closed.saturating_add(self.send_chunk(batch).await);
+            self.send_chunk(batch).await;
         }
-        if closed > 0 {
-            return Err(format!("{closed} SAI stats recipient send(s) closed").into());
-        }
-        Ok(())
     }
 
-    async fn send_chunk(&self, batch: SAIStatsBatch) -> usize {
+    async fn send_chunk(&self, batch: SAIStatsBatch) {
         let batch = Arc::new(batch);
         let mut blocked = Vec::new();
-        let mut closed = 0usize;
         for recipient in &self.saistats_recipients {
             match recipient.try_reserve() {
                 Ok(permit) => permit.send(Arc::clone(&batch)),
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => blocked.push(recipient),
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    closed += 1;
-                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
             }
         }
         for recipient in blocked {
-            if recipient.send(Arc::clone(&batch)).await.is_err() {
-                closed += 1;
-            }
+            let _ = recipient.send(Arc::clone(&batch)).await;
         }
-        closed
     }
 
-    pub async fn run(mut actor: IpfixActor) -> Result<(), IpfixError> {
+    pub async fn run(mut actor: IpfixActor) {
         loop {
             select! {
                 template = actor.template_recipient.recv() => match template {
@@ -590,7 +570,7 @@ impl IpfixActor {
                             error!("HFT template update rejected: {err}");
                         }
                     }
-                    None => return Err("IPFIX template input channel closed".into()),
+                    None => break,
                 },
                 record = actor.record_recipient.recv() => match record {
                     Some(record) => {
@@ -598,7 +578,7 @@ impl IpfixActor {
                         let mut batch = SAIStatsBatch::default();
                         let mut input_count = 1usize;
                         let mut input_bytes = record.len();
-                        actor.process_record_input(&record, &mut batch).await?;
+                        actor.process_record_input(&record, &mut batch).await;
                         while input_count < MAX_RECORD_INPUTS_PER_BATCH
                             && input_bytes < MAX_RECORD_INPUT_BYTES_PER_BATCH
                             && actor.template_recipient.is_empty()
@@ -607,11 +587,11 @@ impl IpfixActor {
                             record_comm_stats(ChannelLabel::DataNetlinkToIpfixRecords, actor.record_recipient.len());
                             input_count += 1;
                             input_bytes = input_bytes.saturating_add(next.len());
-                            actor.process_record_input(&next, &mut batch).await?;
+                            actor.process_record_input(&next, &mut batch).await;
                         }
-                        actor.send_batch(batch).await?;
+                        actor.send_batch(batch).await;
                     }
-                    None => return Err("IPFIX record input channel closed".into()),
+                    None => break,
                 }
             }
         }
@@ -2189,7 +2169,7 @@ mod tests {
         ] {
             batch.push_record(time, (0..count).map(|i| SAIStat::new("x", 1, 2, i as u64)));
         }
-        actor.send_batch(batch).await.unwrap();
+        actor.send_batch(batch).await;
         for (time, count) in [
             (1, 5000),
             (2, 5000),
@@ -2219,11 +2199,8 @@ mod tests {
             input.extend_from_slice(&data_message(0, &[(300, vec![(time, vec![time; 4000])])]));
         }
         let mut batch = SAIStatsBatch::default();
-        actor
-            .process_record_input(&input, &mut batch)
-            .await
-            .unwrap();
-        actor.send_batch(batch).await.unwrap();
+        actor.process_record_input(&input, &mut batch).await;
+        actor.send_batch(batch).await;
         let first = rx.recv().await.unwrap();
         let second = rx.recv().await.unwrap();
         assert_eq!(
@@ -2251,17 +2228,14 @@ mod tests {
         let mut input = data_message(0, &[(400, vec![(1, vec![1])])]);
         input.extend_from_slice(&[1, 2, 3]);
         let mut batch = SAIStatsBatch::default();
-        actor
-            .process_record_input(&input, &mut batch)
-            .await
-            .unwrap();
+        actor.process_record_input(&input, &mut batch).await;
         assert!(batch.is_empty());
         assert!(rx.try_recv().is_err());
         assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
     }
 
     #[tokio::test]
-    async fn delivery_error_propagates_from_initial_and_queued_inputs() {
+    async fn closed_recipient_does_not_stop_healthy_delivery_or_later_inputs() {
         for queued in [false, true] {
             let (_template_tx, template_rx) = channel(1);
             let (record_tx, record_rx) = channel(2);
@@ -2284,22 +2258,47 @@ mod tests {
                 &[(300, vec![(2, vec![20; 4000]), (3, vec![30; 4000])])],
             ));
             record_tx.send(Arc::new(input)).await.unwrap();
-            let error = tokio::time::timeout(Duration::from_secs(1), IpfixActor::run(actor))
+            let task = tokio::spawn(IpfixActor::run(actor));
+            let first = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
                 .await
                 .unwrap()
-                .unwrap_err();
-            assert!(error.to_string().contains("recipient"));
+                .unwrap();
+            let second = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(
-                healthy_rx
-                    .recv()
-                    .await
-                    .unwrap()
+                first
                     .iter()
-                    .next()
-                    .unwrap()
-                    .observation_time,
-                1
+                    .map(|record| record.observation_time)
+                    .collect::<Vec<_>>(),
+                vec![1]
             );
+            assert_eq!(
+                second
+                    .iter()
+                    .map(|record| record.observation_time)
+                    .collect::<Vec<_>>(),
+                vec![2, 3]
+            );
+            assert!(!task.is_finished());
+            record_tx
+                .send(Arc::new(data_message(
+                    0,
+                    &[(300, vec![(4, vec![40; 4000])])],
+                )))
+                .await
+                .unwrap();
+            let later = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(later.iter().next().unwrap().observation_time, 4);
+            drop(record_tx);
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
         }
     }
 }

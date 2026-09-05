@@ -16,10 +16,10 @@ use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
-    ipfix::{IpfixActor, IpfixError},
+    ipfix::IpfixActor,
     otel::{OtelActor, OtelActorConfig},
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
-    swss::{SwssActor, SwssError},
+    swss::SwssActor,
 };
 
 // Internal exit codes
@@ -143,36 +143,6 @@ fn classify_otel_join(
             exit_code: EXIT_FAILURE,
             message: describe_join_error(e),
         },
-    }
-}
-
-fn classify_ipfix_join(
-    name: &'static str,
-    result: Result<Result<(), IpfixError>, tokio::task::JoinError>,
-) -> SupervisorExit {
-    match result {
-        Ok(Ok(())) => classify_join(name, Ok(())),
-        Ok(Err(e)) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: e.to_string(),
-        },
-        Err(e) => classify_join(name, Err(e)),
-    }
-}
-
-fn classify_swss_join(
-    name: &'static str,
-    result: Result<Result<(), SwssError>, tokio::task::JoinError>,
-) -> SupervisorExit {
-    match result {
-        Ok(Ok(())) => classify_join(name, Ok(())),
-        Ok(Err(SwssError::ReaderFailed(message))) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message,
-        },
-        Err(e) => classify_join(name, Err(e)),
     }
 }
 
@@ -537,16 +507,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut ipfix_handle = spawn(async move {
         info!("IPFIX actor started");
-        let result = IpfixActor::run(ipfix).await;
+        IpfixActor::run(ipfix).await;
         info!("IPFIX actor terminated");
-        result
     });
 
     let mut swss_handle = spawn(async move {
         info!("SWSS actor started");
-        let result = SwssActor::run(swss).await;
+        SwssActor::run(swss).await;
         info!("SWSS actor terminated");
-        result
     });
 
     // Only spawn stats reporter if enabled
@@ -595,10 +563,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             classify_join("Control netlink", res)
         }
         res = &mut ipfix_handle => {
-            classify_ipfix_join("IPFIX", res)
+            classify_join("IPFIX", res)
         }
         res = &mut swss_handle => {
-            classify_swss_join("SWSS", res)
+            classify_join("SWSS", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
             classify_join("Stats reporter", res)
