@@ -949,6 +949,7 @@ impl IpfixActor {
         let mut batch = SAIStatsBatch::default();
         let input = self.validate_record_input(records)?;
         for validated in input.messages {
+            self.drain_deferred_sets(&mut batch, Instant::now());
             self.process_data_message(validated, &mut batch);
         }
         Ok(batch)
@@ -1056,7 +1057,6 @@ impl IpfixActor {
         message: ValidatedDataMessage<'_>,
         batch: &mut SAIStatsBatch,
     ) {
-        self.drain_deferred_sets(batch, Instant::now());
         for set in message.sets {
             let ValidatedDataSet {
                 key,
@@ -1081,7 +1081,14 @@ impl IpfixActor {
                         self.decode_set(&template, bytes, layout, batch);
                     }
                 }
-                (Some(_), Some(_)) => {
+                (Some(template), Some(_)) => {
+                    if !self
+                        .installed
+                        .get(&key)
+                        .is_some_and(|installed| Arc::ptr_eq(installed, &template))
+                    {
+                        continue;
+                    }
                     let sequence = self.next_deferred_sequence;
                     self.next_deferred_sequence = self.next_deferred_sequence.saturating_add(1);
                     self.deferred_sets.push(BufferedSet {
@@ -1238,14 +1245,17 @@ impl IpfixActor {
         };
         let dropped_before = self.deferred_sets.dropped;
         for validated in input.messages {
-            while self.drain_deferred_sets(batch, Instant::now()) {
-                self.send_batch(std::mem::take(batch)).await?;
-            }
             let counters = validated.counter_count;
-            if !batch.is_empty()
-                && batch.counter_count().saturating_add(counters) > TARGET_COUNTERS_PER_BATCH
-            {
+            loop {
+                let ready_needs_flush = self.drain_deferred_sets(batch, Instant::now());
+                let input_needs_flush = !batch.is_empty()
+                    && batch.counter_count().saturating_add(counters) > TARGET_COUNTERS_PER_BATCH;
+                if !ready_needs_flush && !input_needs_flush {
+                    break;
+                }
                 self.send_batch(std::mem::take(batch)).await?;
+                // A slow sink can outlast a deferred barrier's TTL. Recheck
+                // after every await before admitting more Sets to the queue.
             }
             self.process_data_message(validated, batch);
             if batch.counter_count() >= TARGET_COUNTERS_PER_BATCH {
@@ -3637,6 +3647,110 @@ mod tests {
             let first = if preliminary_message { 2 } else { 3 };
             assert_eq!(times, (first..260).collect::<Vec<_>>());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_expiring_during_preflush_does_not_drop_ready_followers() {
+        let mut actor = actor();
+        let fields = (1..=5000).map(|id| (id, 0x0001_0002)).collect::<Vec<_>>();
+        actor
+            .handle_template(template_message("large", 0, 300, &fields))
+            .unwrap();
+        actor
+            .handle_template(template_message("small", 0, 302, &[(1, 0x0001_0003)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(400, vec![(1, vec![10])])]))
+            .unwrap();
+        for time in [2, 3] {
+            actor
+                .handle_record(&data_message(0, &[(300, vec![(time, vec![time; 5000])])]))
+                .unwrap();
+        }
+        assert_eq!(actor.deferred_sets.sets.len(), 3);
+
+        let (tx, mut rx) = channel(1);
+        tx.send(Arc::new(SAIStatsBatch::default())).await.unwrap();
+        actor.add_recipient(tx);
+        let incoming = data_message(
+            0,
+            &(4..261)
+                .map(|time| (302, vec![(time, vec![time])]))
+                .collect::<Vec<_>>(),
+        );
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(
+            0,
+            (0..8000).map(|value| SAIStat::new("initial", 1, 2, value)),
+        );
+        let processing = async move {
+            actor
+                .process_record_input(&incoming, &mut batch)
+                .await
+                .unwrap();
+            actor.send_batch_and_drain_deferred(batch).await.unwrap();
+            actor
+        };
+        tokio::pin!(processing);
+        // Poll into the size-preflush, which must wait on the full sink.
+        tokio::select! {
+            biased;
+            _ = &mut processing => panic!("preflush must be backpressured"),
+            _ = std::future::ready(()) => {}
+        }
+        tokio::time::advance(UNKNOWN_SET_TTL).await;
+        assert!(rx.recv().await.unwrap().is_empty());
+        let drain = async {
+            let mut counters = 0;
+            let mut times = Vec::new();
+            for _ in 0..3 {
+                let batch = rx.recv().await.unwrap();
+                counters += batch.counter_count();
+                times.extend(batch.iter().map(|record| record.observation_time));
+            }
+            (counters, times)
+        };
+        let (actor, (counters, times)) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(processing, drain)
+        })
+        .await
+        .unwrap();
+        assert_eq!(counters, 18_257);
+        assert_eq!(times, std::iter::once(0).chain(2..261).collect::<Vec<_>>());
+        assert_eq!(actor.deferred_sets.dropped, 1); // Expired unknown, no valid loss.
+        assert_eq!(actor.deferred_sets.bytes, 0);
+        assert!(actor.deferred_sets.sets.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retired_preflight_descriptors_do_not_displace_a_live_follower() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("session", 0, 300, &[(1, 0x0001_0002)]))
+            .unwrap();
+        actor
+            .handle_template(template_message("session", 0, 301, &[(1, 0x0001_0003)]))
+            .unwrap();
+        let mut sets = vec![(301, vec![(1, vec![10])]), (400, vec![(2, vec![20])])];
+        sets.extend((0..255).map(|index| (300, vec![(3 + index, vec![30])])));
+        sets.push((301, vec![(258, vec![2580])]));
+        let batch = actor.handle_record(&data_message(0, &sets)).unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 1);
+        assert_eq!(actor.deferred_sets.sets.len(), 2); // Unknown and live follower only.
+        assert_eq!(actor.deferred_sets.dropped, 0);
+
+        tokio::time::advance(UNKNOWN_SET_TTL).await;
+        let mut ready = SAIStatsBatch::default();
+        assert!(!actor.drain_deferred_sets(&mut ready, Instant::now()));
+        assert_eq!(ready.record_count(), 1);
+        let record = ready.iter().next().unwrap();
+        assert_eq!(record.observation_time, 258);
+        assert_eq!(record.stats[0].stat_id, 3);
+        assert_eq!(record.stats[0].counter, 2580);
+        assert_eq!(actor.deferred_sets.dropped, 1);
+        assert_eq!(actor.deferred_sets.bytes, 0);
+        assert!(actor.deferred_sets.sets.is_empty());
     }
 
     #[tokio::test]
