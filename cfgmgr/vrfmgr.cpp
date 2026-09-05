@@ -1,4 +1,5 @@
 #include <string.h>
+#include <exception>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -17,14 +18,75 @@
 
 using namespace swss;
 
+namespace
+{
+
+/* Matches the CFG table name generated from the companion YANG model. */
+constexpr auto KERNEL_VRF_FALLBACK_CONFIG_TABLE = "KERNEL_VRF_FALLBACK";
+constexpr auto KERNEL_VRF_FALLBACK_GLOBAL_KEY = "GLOBAL";
+constexpr auto KERNEL_VRF_FALLBACK_STATUS_FIELD = "status";
+constexpr auto KERNEL_VRF_FALLBACK_ENABLED = "enabled";
+constexpr auto KERNEL_VRF_FALLBACK_DISABLED = "disabled";
+constexpr auto KERNEL_VRF_SENTINEL_METRIC = "4278198272";
+
+bool hasManagedKernelVrfSentinel(const string& routes)
+{
+    istringstream routeStream(routes);
+    string line;
+
+    while (getline(routeStream, line))
+    {
+        istringstream lineStream(line);
+        vector<string> fields;
+        string field;
+        while (lineStream >> field)
+        {
+            fields.push_back(field);
+        }
+        if (fields.size() < 4 || fields[0] != "unreachable" || fields[1] != "default")
+        {
+            continue;
+        }
+
+        for (size_t i = 2; i + 1 < fields.size(); ++i)
+        {
+            if (fields[i] == "metric" && fields[i + 1] == KERNEL_VRF_SENTINEL_METRIC)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool executeKernelVrfCommand(const string& command, string& result, int& rc)
+{
+    try
+    {
+        rc = swss::exec(command, result);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed: %s", command.c_str(), e.what());
+        return false;
+    }
+}
+
+} // namespace
+
 VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        m_cfgKernelVrfFallbackTable(cfgDb, KERNEL_VRF_FALLBACK_CONFIG_TABLE),
+        m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
+        m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME),
         m_appVrfTableProducer(appDb, APP_VRF_TABLE_NAME),
         m_appVnetTableProducer(appDb, APP_VNET_TABLE_NAME),
-        m_appVxlanVrfTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME),
-        m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
-        m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME)
+        m_appVxlanVrfTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME)
 {
+    loadKernelVrfFallbackState();
+
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
     {
         m_freeTables.emplace(i);
@@ -109,6 +171,208 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     {
         WarmStart::setWarmStartState("vrfmgrd", WarmStart::WSDISABLED);
     }
+
+    reconcileAllKernelVrfs();
+}
+
+bool VrfMgr::parseKernelVrfFallbackState(const vector<FieldValueTuple>& values)
+{
+    for (const auto& value : values)
+    {
+        if (fvField(value) != KERNEL_VRF_FALLBACK_STATUS_FIELD)
+        {
+            continue;
+        }
+
+        if (fvValue(value) == KERNEL_VRF_FALLBACK_ENABLED)
+        {
+            return true;
+        }
+        if (fvValue(value) == KERNEL_VRF_FALLBACK_DISABLED)
+        {
+            return false;
+        }
+
+        SWSS_LOG_ERROR("Invalid %s value '%s' in %s|%s; using disabled",
+                       KERNEL_VRF_FALLBACK_STATUS_FIELD, fvValue(value).c_str(),
+                       KERNEL_VRF_FALLBACK_CONFIG_TABLE, KERNEL_VRF_FALLBACK_GLOBAL_KEY);
+        return false;
+    }
+
+    SWSS_LOG_ERROR("Missing %s field in %s|%s; using disabled",
+                   KERNEL_VRF_FALLBACK_STATUS_FIELD, KERNEL_VRF_FALLBACK_CONFIG_TABLE,
+                   KERNEL_VRF_FALLBACK_GLOBAL_KEY);
+    return false;
+}
+
+void VrfMgr::loadKernelVrfFallbackState()
+{
+    vector<FieldValueTuple> values;
+    if (!m_cfgKernelVrfFallbackTable.get(KERNEL_VRF_FALLBACK_GLOBAL_KEY, values))
+    {
+        m_kernelVrfFallbackEnabled = false;
+        return;
+    }
+
+    m_kernelVrfFallbackEnabled = parseKernelVrfFallbackState(values);
+}
+
+void VrfMgr::handleKernelVrfFallbackConfig(const KeyOpFieldsValuesTuple& t)
+{
+    const auto& key = kfvKey(t);
+    const auto& op = kfvOp(t);
+
+    if (key != KERNEL_VRF_FALLBACK_GLOBAL_KEY)
+    {
+        SWSS_LOG_ERROR("Ignore invalid key %s in %s; only %s is supported", key.c_str(),
+                       KERNEL_VRF_FALLBACK_CONFIG_TABLE, KERNEL_VRF_FALLBACK_GLOBAL_KEY);
+        return;
+    }
+
+    if (op == SET_COMMAND)
+    {
+        m_kernelVrfFallbackEnabled = parseKernelVrfFallbackState(kfvFieldsValues(t));
+    }
+    else if (op == DEL_COMMAND)
+    {
+        m_kernelVrfFallbackEnabled = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation %s for %s|%s", op.c_str(),
+                       KERNEL_VRF_FALLBACK_CONFIG_TABLE, KERNEL_VRF_FALLBACK_GLOBAL_KEY);
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Kernel VRF fallback is %s",
+                    m_kernelVrfFallbackEnabled ? "enabled" : "disabled");
+    reconcileAllKernelVrfs();
+}
+
+bool VrfMgr::runKernelVrfRouteCommand(uint32_t table, bool ipv6)
+{
+    stringstream cmd;
+    string result;
+
+    cmd << IP_CMD;
+    if (ipv6)
+    {
+        cmd << " -6";
+    }
+
+    if (!m_kernelVrfFallbackEnabled)
+    {
+        cmd << " route replace table " << table << " unreachable default metric "
+            << KERNEL_VRF_SENTINEL_METRIC;
+        int rc;
+        if (!executeKernelVrfCommand(cmd.str(), result, rc))
+        {
+            return false;
+        }
+        if (rc != 0)
+        {
+            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), rc);
+            return false;
+        }
+        return true;
+    }
+
+    cmd << " route del table " << table << " unreachable default metric "
+        << KERNEL_VRF_SENTINEL_METRIC;
+    int rc;
+    if (!executeKernelVrfCommand(cmd.str(), result, rc))
+    {
+        return false;
+    }
+    if (rc == 0)
+    {
+        return true;
+    }
+
+    cmd.str("");
+    cmd.clear();
+    cmd << IP_CMD;
+    if (ipv6)
+    {
+        cmd << " -6";
+    }
+    cmd << " route show table " << table << " type unreachable";
+    if (!executeKernelVrfCommand(cmd.str(), result, rc))
+    {
+        return false;
+    }
+    if (rc != 0)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), rc);
+        return false;
+    }
+
+    if (hasManagedKernelVrfSentinel(result))
+    {
+        SWSS_LOG_ERROR("Managed unreachable route is still present in table %u", table);
+        return false;
+    }
+
+    return true;
+}
+
+bool VrfMgr::reconcileKernelVrf(const string& vrfName)
+{
+    auto table = m_vrfTableMap.find(vrfName);
+    if (table == m_vrfTableMap.end() || vrfName == MGMT_VRF)
+    {
+        m_pendingKernelVrfReconcile.erase(vrfName);
+        return true;
+    }
+
+    bool ipv4Success = runKernelVrfRouteCommand(table->second, false);
+    bool ipv6Success = runKernelVrfRouteCommand(table->second, true);
+    if (ipv4Success && ipv6Success)
+    {
+        m_pendingKernelVrfReconcile.erase(vrfName);
+        return true;
+    }
+
+    m_pendingKernelVrfReconcile.insert(vrfName);
+    SWSS_LOG_ERROR("Failed to reconcile kernel VRF fallback routes for %s", vrfName.c_str());
+    return false;
+}
+
+void VrfMgr::reconcileAllKernelVrfs()
+{
+    for (auto it = m_pendingKernelVrfReconcile.begin(); it != m_pendingKernelVrfReconcile.end();)
+    {
+        if (m_vrfTableMap.find(*it) == m_vrfTableMap.end() || *it == MGMT_VRF)
+        {
+            it = m_pendingKernelVrfReconcile.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    vector<string> vrfs;
+    vrfs.reserve(m_vrfTableMap.size());
+    for (const auto& vrf : m_vrfTableMap)
+    {
+        vrfs.push_back(vrf.first);
+    }
+
+    for (const auto& vrf : vrfs)
+    {
+        reconcileKernelVrf(vrf);
+    }
+}
+
+void VrfMgr::retryPendingKernelVrfs()
+{
+    const vector<string> pending(m_pendingKernelVrfReconcile.begin(),
+                                 m_pendingKernelVrfReconcile.end());
+    for (const auto& vrf : pending)
+    {
+        reconcileKernelVrf(vrf);
+    }
 }
 
 uint32_t VrfMgr::getFreeTable(void)
@@ -149,6 +413,7 @@ bool VrfMgr::delLink(const string& vrfName)
     {
         recycleTable(m_vrfTableMap[vrfName]);
         m_vrfTableMap.erase(vrfName);
+        m_pendingKernelVrfReconcile.erase(vrfName);
         return true;
     }
 
@@ -157,6 +422,7 @@ bool VrfMgr::delLink(const string& vrfName)
 
     recycleTable(m_vrfTableMap[vrfName]);
     m_vrfTableMap.erase(vrfName);
+    m_pendingKernelVrfReconcile.erase(vrfName);
 
     return true;
 }
@@ -217,6 +483,18 @@ bool VrfMgr::isVrfObjExist(const string& vrfName)
 void VrfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+    retryPendingKernelVrfs();
+
+    if (consumer.getTableName() == KERNEL_VRF_FALLBACK_CONFIG_TABLE)
+    {
+        auto config = consumer.m_toSync.begin();
+        while (config != consumer.m_toSync.end())
+        {
+            handleKernelVrfFallbackConfig(config->second);
+            config = consumer.m_toSync.erase(config);
+        }
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -281,6 +559,14 @@ void VrfMgr::doTask(Consumer &consumer)
                 if (!setLink(vrfName))
                 {
                     SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
+                    it++;
+                    continue;
+                }
+
+                if (!reconcileKernelVrf(vrfName))
+                {
+                    SWSS_LOG_ERROR("Kernel VRF fallback reconciliation pending for %s",
+                                   vrfName.c_str());
                 }
 
                 bool status = true;
@@ -552,4 +838,3 @@ uint32_t VrfMgr::getVRFmappedVNI(const std::string& vrf_name)
         return 0;
     }
 }
-
