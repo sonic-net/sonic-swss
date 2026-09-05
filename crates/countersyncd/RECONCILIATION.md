@@ -6,6 +6,11 @@ owners. Unknown data is dropped under the best-effort exporter contract.
 
 ## Recovery Boundary
 
+SWSS SubscriberStateTable events and Table::get_keys already contain table-relative
+keys. Those keys are opaque owner identities and are forwarded unchanged, even
+when a profile name starts with or equals the table name. Only raw Redis commands
+use physical table-prefixed keys; Table methods receive relative keys.
+
 `SubscriberStateTable::pops()` can consume notifications and then fail on a
 non-hash row. Its exception discards the successful batch prefix, including
 Delete/recreate or pending-cancellation boundaries. The final Redis rows alone

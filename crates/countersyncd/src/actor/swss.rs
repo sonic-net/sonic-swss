@@ -218,18 +218,18 @@ impl SwssActor {
                                 item.key, item.operation
                             );
 
-                            let session_key = Self::extract_session_key(&item.key);
+                            // SubscriberStateTable already returns table-relative keys.
                             match item.operation {
                                 KeyOperation::Set => {
-                                    known_keys.insert(item.key);
+                                    known_keys.insert(item.key.clone());
                                     events.push(SwssEvent::Update {
-                                        key: session_key,
+                                        key: item.key,
                                         session_data: Self::parse_session_data(&item.field_values),
                                     });
                                 }
                                 KeyOperation::Del => {
                                     known_keys.remove(&item.key);
-                                    events.push(SwssEvent::Delete { key: session_key })
+                                    events.push(SwssEvent::Delete { key: item.key })
                                 }
                             }
                         }
@@ -277,22 +277,22 @@ impl SwssActor {
                                 }),
                         );
                         for key in keys {
-                            let session_key = Self::extract_session_key(&key);
+                            // Table::get_keys uses the same relative-key contract.
                             match table.get(&key) {
                                 Ok(Some(fields)) => {
-                                    known_keys.insert(key);
+                                    known_keys.insert(key.clone());
                                     events.push(SwssEvent::Update {
-                                        key: session_key,
+                                        key,
                                         session_data: Self::parse_session_data(&fields),
                                     });
                                 }
                                 Ok(None) => {
                                     known_keys.remove(&key);
-                                    events.push(SwssEvent::Delete { key: session_key });
+                                    events.push(SwssEvent::Delete { key });
                                 }
                                 Err(e) if Self::is_wrongtype_row(e.message()) => {
                                     known_keys.remove(&key);
-                                    events.push(SwssEvent::Delete { key: session_key });
+                                    events.push(SwssEvent::Delete { key });
                                 }
                                 Err(e) => {
                                     return Err(format!("Error reconciling session table: {e}"))
@@ -370,23 +370,6 @@ impl SwssActor {
         }
 
         session_data
-    }
-
-    /// Extracts the session key from the full Redis key by removing the table name prefix
-    ///
-    /// # Arguments
-    /// * `full_key` - Full Redis key (e.g., "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|session_name|PORT")
-    ///
-    /// # Returns
-    /// Session key without table prefix (e.g., "session_name|PORT")
-    fn extract_session_key(full_key: &str) -> String {
-        if let Some(pos) = full_key.find('|') {
-            if full_key.starts_with(STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE) {
-                return full_key[pos + 1..].to_string();
-            }
-        }
-        // If no table prefix found, return as-is
-        full_key.to_string()
     }
 
     /// Processes session update messages from the state database
@@ -1103,6 +1086,16 @@ mod tests {
         let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
         table.set("a", fields("Ethernet0", 300)).unwrap();
         table.set("peer", fields("Ethernet8", 700)).unwrap();
+        let alias_keys = [
+            format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_A|PORT"),
+            format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT"),
+            format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}|PORT"),
+        ];
+        if mode == "relative-aliases" {
+            for key in &alias_keys {
+                table.set(key, [("stream_status", "disabled")]).unwrap();
+            }
+        }
         let mut subscriber =
             SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, Some(1), None).unwrap();
         let mut known = HashSet::new();
@@ -1151,13 +1144,18 @@ mod tests {
                     table.get("b").unwrap().is_some(),
                     "rejected row remains in Redis"
                 );
-            } else if mode == "recreate" {
+            } else if mode == "recreate" || mode == "relative-aliases" {
                 table.del("a").unwrap();
                 assert_eq!(
                     subscriber.read_data(Duration::from_secs(1), false).unwrap(),
                     swss_common::SelectResult::Data
                 );
-                table.set("a", fields("Ethernet4", 300)).unwrap();
+                table
+                    .set(
+                        if mode == "recreate" { "a" } else { "b" },
+                        fields("Ethernet4", 300),
+                    )
+                    .unwrap();
             } else {
                 table.set("a", fields("Ethernet0", 400)).unwrap();
                 let pending = SwssActor::blocking_collect_events(
@@ -1243,10 +1241,14 @@ mod tests {
                 return;
             }
             forward(events, &templates).await;
-            let id = if mode == "recreate" { 300 } else { 400 };
+            let id = if mode == "recreate" || mode == "relative-aliases" {
+                300
+            } else {
+                400
+            };
             probe(&records, &mut stats_rx, id, "Ethernet4").await;
             probe(&records, &mut stats_rx, 700, "Ethernet8").await;
-            if mode != "recreate" {
+            if mode != "recreate" && mode != "relative-aliases" {
                 probe(
                     &records,
                     &mut stats_rx,
@@ -1262,6 +1264,11 @@ mod tests {
         let _ = task.await;
         for key in ["a", "b", "peer", "bad"] {
             table.del(key).unwrap();
+        }
+        if mode == "relative-aliases" {
+            for key in &alias_keys {
+                table.del(key).unwrap();
+            }
         }
         result.expect(mode);
     }
@@ -1287,6 +1294,244 @@ mod tests {
         exercise_lost_notification_history("incumbent-b-first").await;
         exercise_lost_notification_history("incumbent-pending-a-first").await;
         exercise_lost_notification_history("incumbent-pending-b-first").await;
+    }
+
+    #[tokio::test]
+    async fn table_like_disabled_profile_names_do_not_block_unrelated_recovery() {
+        exercise_lost_notification_history("relative-aliases").await;
+    }
+
+    #[tokio::test]
+    async fn table_like_active_profiles_isolate_promotion_and_removal() {
+        use crate::actor::ipfix::IpfixActor;
+
+        fn fields(name: &str, id: u16) -> [(&'static str, CxxString); 5] {
+            let mut template = vec![
+                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2, 1, 69,
+                0, 8, 128, 1, 0, 8, 0, 1, 0, 1,
+            ];
+            template[20..22].copy_from_slice(&id.to_be_bytes());
+            [
+                ("stream_status", CxxString::from("enabled")),
+                ("session_type", CxxString::from("ipfix")),
+                ("object_names", CxxString::from(name)),
+                ("object_ids", CxxString::from("1")),
+                ("session_config", CxxString::from(template)),
+            ]
+        }
+        fn record(id: u16) -> Arc<Vec<u8>> {
+            let mut bytes = vec![
+                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0,
+                0, 7, 0, 0, 0, 0, 0, 0, 0, 42,
+            ];
+            bytes[16..18].copy_from_slice(&id.to_be_bytes());
+            Arc::new(bytes)
+        }
+        async fn probe(
+            sender: &Sender<crate::message::buffer::SocketBufferMessage>,
+            receiver: &mut mpsc::Receiver<crate::message::saistats::SAIStatsBatchMessage>,
+            id: u16,
+            name: &str,
+        ) {
+            sender.send(record(id)).await.unwrap();
+            let batch = receiver.recv().await.expect("expected decoded output");
+            assert_eq!(batch.record_count(), 1);
+            let record = batch.iter().next().unwrap();
+            assert_eq!(record.observation_time, 7);
+            assert_eq!(record.stats.len(), 1);
+            assert_eq!(record.stats[0].object_name.as_ref(), name);
+            assert_eq!(record.stats[0].counter, 42);
+            assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+        }
+
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_active_profiles_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        let a = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_A|PORT");
+        let b = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT");
+        let (templates, template_rx) = channel(1);
+        let (records, record_rx) = channel(1);
+        let (stats, mut stats_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(stats);
+        let mut task = tokio::spawn(IpfixActor::run(actor));
+
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            table.set(&a, fields("Ethernet0", 300)).unwrap();
+            table.set(&b, fields("Ethernet8", 700)).unwrap();
+            let mut subscriber = SubscriberStateTable::new(db, &name, Some(1), None).unwrap();
+            let mut known = HashSet::new();
+            let mut collect = || {
+                SwssActor::blocking_collect_events(
+                    &mut subscriber,
+                    &mut known,
+                    Duration::from_secs(1),
+                )
+                .unwrap()
+            };
+            let initial = collect();
+            assert_eq!(initial.len(), 2);
+            forward(initial, &templates).await;
+            probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+
+            table.set(&a, fields("Ethernet4", 400)).unwrap();
+            forward(collect(), &templates).await;
+            // Old A remains active until data on its new ID promotes the snapshot.
+            probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+            probe(&records, &mut stats_rx, 400, "Ethernet4").await;
+            // FIFO B output fences the retired-ID probe, including batched output.
+            records.send(record(300)).await.unwrap();
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+            assert!(stats_rx.try_recv().is_err());
+
+            for removal in ["disabled", "delete", "malformed"] {
+                table.set(&a, fields("Ethernet4", 400)).unwrap();
+                forward(collect(), &templates).await;
+                probe(&records, &mut stats_rx, 400, "Ethernet4").await;
+                match removal {
+                    "disabled" => table
+                        .hset(&a, "stream_status", &CxxString::from("disabled"))
+                        .unwrap(),
+                    "delete" => table.del(&a).unwrap(),
+                    "malformed" => table
+                        .hset(&a, "session_config", &CxxString::from("not IPFIX"))
+                        .unwrap(),
+                    _ => unreachable!(),
+                }
+                forward(collect(), &templates).await;
+                records.send(record(300)).await.unwrap();
+                records.send(record(400)).await.unwrap();
+                probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                assert!(stats_rx.try_recv().is_err(), "{removal}");
+            }
+            drop(templates);
+            assert!((&mut task).await.unwrap().is_err());
+        })
+        .await;
+        task.abort();
+        for key in [&a, &b] {
+            table.del(key).unwrap();
+        }
+        result.expect("active table-looking profiles must remain independent");
+    }
+
+    #[test]
+    fn swss_relative_keys_are_opaque_in_startup_notifications_and_reconciliation() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let table_name = format!("test_swss_relative_keys_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &table_name).unwrap();
+        let prefix = STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE;
+        let keys = [
+            "profile|PORT".to_string(),
+            "profile|QUEUE".to_string(),
+            format!("{prefix}|PORT"),
+            format!("{prefix}_A|PORT"),
+            format!("{prefix}_B|PORT"),
+            format!("{prefix}|profile|PORT"),
+            format!("{prefix}|{prefix}|PORT"),
+            format!("X{prefix}|PORT"),
+            format!("{}|PORT", prefix.to_lowercase()),
+            prefix.to_string(),
+        ];
+        for key in &keys {
+            table.set(key, [("stream_status", "disabled")]).unwrap();
+        }
+        assert_eq!(
+            table
+                .get_keys()
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            keys.iter().cloned().collect()
+        );
+        let mut subscriber =
+            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &table_name, None, None)
+                .unwrap();
+        let mut known = HashSet::new();
+        let initial =
+            SwssActor::blocking_collect_events(&mut subscriber, &mut known, Duration::ZERO)
+                .unwrap();
+        let observed = initial
+            .into_iter()
+            .map(|event| match event {
+                SwssEvent::Update { key, .. } => key,
+                _ => panic!("expected startup update"),
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(observed, keys.iter().cloned().collect());
+        for key in &keys {
+            table
+                .hset(key, "stream_status", &CxxString::from("enabled"))
+                .unwrap();
+            let events = SwssActor::blocking_collect_events(
+                &mut subscriber,
+                &mut known,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            assert!(matches!(events.as_slice(),[SwssEvent::Update{key:k,..}] if k==key));
+        }
+        db.set(&format!("{table_name}|bad"), &CxxString::from("wrong type"))
+            .unwrap();
+        let mut recovered =
+            SwssActor::blocking_collect_events(&mut subscriber, &mut known, Duration::from_secs(1))
+                .unwrap();
+        let rows = reconciliation_rows(&mut recovered);
+        let recovered_keys = rows
+            .iter()
+            .filter_map(|row| match row {
+                SwssEvent::Update { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(recovered_keys, keys.iter().cloned().collect());
+        assert_eq!(rows.len(), keys.len() + 1);
+        for key in &keys {
+            table.del(key).unwrap();
+            let events = SwssActor::blocking_collect_events(
+                &mut subscriber,
+                &mut known,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            assert!(matches!(events.as_slice(),[SwssEvent::Delete{key:k}] if k==key));
+            assert!(!known.contains(key));
+        }
+        table.del("bad").unwrap();
+        assert!(known.is_empty());
+    }
+
+    #[tokio::test]
+    async fn redis_fixture_helpers_use_exact_relative_keys() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_fixture_keys_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        let first = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_A|PORT");
+        let second = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT");
+        for key in [&first, &second] {
+            insert_test_session(&table, key, "Ethernet0", "1", "config").await;
+        }
+        assert_eq!(
+            table
+                .get_keys()
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([first.clone(), second.clone()])
+        );
+        assert!(db
+            .get(&format!(
+                "{name}|{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}|{first}"
+            ))
+            .unwrap()
+            .is_none());
+        cleanup_test_session(&table, &first);
+        assert!(table.get(&first).unwrap().is_none());
+        assert!(table.get(&second).unwrap().is_some());
+        cleanup_test_session(&table, &second);
+        assert!(table.get_keys().unwrap().is_empty());
     }
 
     #[test]
@@ -1625,12 +1870,6 @@ mod tests {
     ) {
         use swss_common::CxxString;
 
-        // The full Redis key includes the table name prefix
-        let full_redis_key = format!(
-            "{}|{}",
-            STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE, session_key
-        );
-
         // Use table.set to set all field-value pairs at once
         let field_values = vec![
             ("stream_status", CxxString::from("enabled")),
@@ -1641,7 +1880,7 @@ mod tests {
         ];
 
         table
-            .set(&full_redis_key, field_values)
+            .set(session_key, field_values)
             .expect("Should be able to insert session data using table.set");
     }
 
@@ -1654,31 +1893,14 @@ mod tests {
         let table = Table::new(table_conn, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE)
             .expect("Should be able to create table");
 
-        // More aggressive cleanup: try to delete all possible test patterns
-        let test_patterns = [
-            "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|test*",
-            "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|*test*",
-            "test*",
-            "*test*",
-        ];
-        for pattern in &test_patterns {
-            table.del(pattern).ok();
-        }
-
-        // Also try FLUSHDB to completely clear the test database
-        // Note: This is aggressive but necessary for test isolation
-        // table.flushdb().ok();  // Uncomment if needed
-
         table
     }
 
     // Helper function to cleanup test data
     fn cleanup_test_session(table: &swss_common::Table, session_key: &str) {
-        let full_redis_key = format!(
-            "{}|{}",
-            STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE, session_key
-        );
-        table.del(&full_redis_key).ok();
+        table
+            .del(session_key)
+            .expect("Should delete the exact relative fixture key");
     }
 
     #[tokio::test]
