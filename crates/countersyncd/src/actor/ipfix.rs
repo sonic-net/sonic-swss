@@ -162,10 +162,6 @@ impl IpfixActor {
         self.saistats_recipients.push(recipient);
     }
 
-    pub(crate) fn validate_templates(update: &IPFixTemplatesMessage) -> Result<(), IpfixError> {
-        Self::compile_generation(update).map(|_| ())
-    }
-
     fn compile_generation(
         templates: &IPFixTemplatesMessage,
     ) -> Result<TemplateGeneration, IpfixError> {
