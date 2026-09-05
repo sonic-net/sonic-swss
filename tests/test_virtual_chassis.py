@@ -1370,7 +1370,7 @@ class TestVirtualChassis(object):
         nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
         print("3:nexthop_entrty:",nexthop_entry)
         rif3 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
-        assert rif1 != rif3, "Neighbor is not replaced with new rif"
+        assert rif1 == rif3, "Remote neighbor next hop moved off the inband rif"
 
         #del the neighbor
         self.configure_neighbor(local_lc_dvs, "del", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_2)
