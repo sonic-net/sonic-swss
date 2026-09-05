@@ -428,6 +428,12 @@ int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
 
+#ifdef SWITCHDEV_FLAG
+    /* Switchdev mode: orchagent's SAI layer is bypassed; the kernel is the dataplane. */
+    SWSS_LOG_NOTICE("orchagent disabled: SWITCHDEV_FLAG enabled");
+    return 0;
+#endif
+
     SWSS_LOG_ENTER();
 
     WarmStart::initialize("orchagent", "swss");

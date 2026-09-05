@@ -1,16 +1,9 @@
 #include <unistd.h>
 #include <vector>
-#include <sstream>
-#include <fstream>
-#include <iostream>
-#include <mutex>
-#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
-#include "exec.h"
 #include "schema.h"
-#include "producerstatetable.h"
-#include "aclmgr.h"
+#include "mirrormgr.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
 
@@ -22,29 +15,27 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("aclmgrd");
+    Logger::linkToDbNative("mirrormgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting aclmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting mirrormgrd ---");
 
     try
     {
-        /* CONFIG_DB tables that aclmgrd subscribes to */
-        vector<string> cfg_acl_tables = {
-            CFG_ACL_TABLE_TABLE_NAME,
-            CFG_ACL_RULE_TABLE_NAME,
-            CFG_ACL_TABLE_TYPE_TABLE_NAME,
+        /* CONFIG_DB tables that mirrormgrd subscribes to */
+        vector<string> cfg_mirror_tables = {
+            CFG_MIRROR_SESSION_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("aclmgrd", "swss");
-        WarmStart::checkWarmStart("aclmgrd", "swss");
+        WarmStart::initialize("mirrormgrd", "swss");
+        WarmStart::checkWarmStart("mirrormgrd", "swss");
 
-        AclMgr aclmgr(&cfgDb, &stateDb, cfg_acl_tables);
+        MirrorMgr mirrormgr(&cfgDb, &stateDb, cfg_mirror_tables);
 
-        std::vector<Orch *> cfgOrchList = {&aclmgr};
+        std::vector<Orch *> cfgOrchList = {&mirrormgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -66,7 +57,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                aclmgr.doTask();
+                mirrormgr.doTask();
                 continue;
             }
 

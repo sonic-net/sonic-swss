@@ -50,7 +50,7 @@ namespace swss {
 class AclMgr : public Orch
 {
 public:
-    AclMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
+    AclMgr(DBConnector *cfgDb, DBConnector *stateDb,
            const std::vector<std::string> &tableNames);
     using Orch::doTask;
 

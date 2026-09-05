@@ -1,50 +1,39 @@
 #include <unistd.h>
 #include <vector>
-#include <sstream>
-#include <fstream>
-#include <iostream>
-#include <mutex>
-#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
-#include "exec.h"
 #include "schema.h"
-#include "producerstatetable.h"
-#include "aclmgr.h"
+#include "policermgr.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
 
-/* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("aclmgrd");
+    Logger::linkToDbNative("policermgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting aclmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting policermgrd ---");
 
     try
     {
-        /* CONFIG_DB tables that aclmgrd subscribes to */
-        vector<string> cfg_acl_tables = {
-            CFG_ACL_TABLE_TABLE_NAME,
-            CFG_ACL_RULE_TABLE_NAME,
-            CFG_ACL_TABLE_TYPE_TABLE_NAME,
+        vector<string> cfg_policer_tables = {
+            CFG_POLICER_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("aclmgrd", "swss");
-        WarmStart::checkWarmStart("aclmgrd", "swss");
+        WarmStart::initialize("policermgrd", "swss");
+        WarmStart::checkWarmStart("policermgrd", "swss");
 
-        AclMgr aclmgr(&cfgDb, &stateDb, cfg_acl_tables);
+        PolicerMgr policermgr(&cfgDb, &stateDb, cfg_policer_tables);
 
-        std::vector<Orch *> cfgOrchList = {&aclmgr};
+        std::vector<Orch *> cfgOrchList = {&policermgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -66,7 +55,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                aclmgr.doTask();
+                policermgr.doTask();
                 continue;
             }
 
