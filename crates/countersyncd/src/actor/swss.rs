@@ -3,7 +3,11 @@ use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
 use std::time::Duration;
-use std::{collections::HashMap, sync::Arc, thread};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    thread,
+};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
@@ -108,6 +112,7 @@ impl SwssActor {
         match thread::Builder::new()
             .name("countersyncd-swss".to_string())
             .spawn(move || {
+                let mut known_keys = HashSet::new();
                 #[cfg(test)]
                 let mut iteration_count = 0;
 
@@ -129,7 +134,7 @@ impl SwssActor {
                         }
                     }
 
-                    match Self::blocking_collect_events(&mut session_table, SWSS_SELECT_TIMEOUT) {
+                    match Self::blocking_collect_events(&mut session_table, &mut known_keys, SWSS_SELECT_TIMEOUT) {
                         Ok(events) => {
                             for event in events {
                                 if event_sender.blocking_send(event).is_err() {
@@ -203,6 +208,7 @@ impl SwssActor {
 
     fn blocking_collect_events(
         session_table: &mut SubscriberStateTable,
+        known_keys: &mut HashSet<String>,
         timeout: Duration,
     ) -> Result<Vec<SwssEvent>, String> {
         let mut events = Vec::new();
@@ -223,15 +229,86 @@ impl SwssActor {
 
                             let session_key = Self::extract_session_key(&item.key);
                             match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::Update {
-                                    key: session_key,
-                                    session_data: Self::parse_session_data(&item.field_values),
-                                }),
+                                KeyOperation::Set => {
+                                    known_keys.insert(item.key);
+                                    events.push(SwssEvent::Update {
+                                        key: session_key,
+                                        session_data: Self::parse_session_data(&item.field_values),
+                                    });
+                                }
                                 KeyOperation::Del => {
+                                    known_keys.remove(&item.key);
                                     events.push(SwssEvent::Delete { key: session_key })
                                 }
                             }
                         }
+                        Ok(events)
+                    }
+                    Err(e) if Self::is_wrongtype_row(e.message()) => {
+                        // pops removes notifications before HGETALL; its C wrapper discards
+                        // the successful prefix on exception. Reconcile that lost prefix,
+                        // including deletes, rather than only retrying the remaining queue.
+                        error!("Non-hash session row; reconciling session table");
+                        // Drain the remaining cached notifications first: read_data's
+                        // temporary Select may not wake for them, and replaying stale
+                        // deletes after reconciliation would invalidate current rows.
+                        loop {
+                            match session_table.pops() {
+                                Ok(_) => break,
+                                Err(e) if Self::is_wrongtype_row(e.message()) => continue,
+                                Err(e) => return Err(format!("Error draining session table: {e}")),
+                            }
+                        }
+                        let db = session_table.db_connector().clone_timeout(0).map_err(|e| {
+                            format!("Error connecting for session reconciliation: {e}")
+                        })?;
+                        let table = swss_common::Table::new(db, session_table.table_name())
+                            .map_err(|e| {
+                                format!("Error opening session table for reconciliation: {e}")
+                            })?;
+                        let mut keys = known_keys.clone();
+                        keys.extend(
+                            table
+                                .get_keys()
+                                .map_err(|e| {
+                                    format!("Error listing sessions for reconciliation: {e}")
+                                })?
+                                .into_iter()
+                                .filter(|key| {
+                                    if key.len() > MAX_OBJECT_METADATA_BYTES {
+                                        error!(
+                                            "Ignoring session key exceeding metadata byte limit"
+                                        );
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                }),
+                        );
+                        for key in keys {
+                            let session_key = Self::extract_session_key(&key);
+                            match table.get(&key) {
+                                Ok(Some(fields)) => {
+                                    known_keys.insert(key);
+                                    events.push(SwssEvent::Update {
+                                        key: session_key,
+                                        session_data: Self::parse_session_data(&fields),
+                                    });
+                                }
+                                Ok(None) => {
+                                    known_keys.remove(&key);
+                                    events.push(SwssEvent::Delete { key: session_key });
+                                }
+                                Err(e) if Self::is_wrongtype_row(e.message()) => {
+                                    known_keys.remove(&key);
+                                    events.push(SwssEvent::Delete { key: session_key });
+                                }
+                                Err(e) => {
+                                    return Err(format!("Error reconciling session table: {e}"))
+                                }
+                            }
+                        }
+                        Self::order_reconciled_events(&mut events);
                         Ok(events)
                     }
                     Err(e) => Err(format!("Error popping items from session table: {}", e)),
@@ -247,6 +324,31 @@ impl SwssActor {
             },
             Err(e) => Err(format!("Error reading from session table: {}", e)),
         }
+    }
+
+    fn order_reconciled_events(events: &mut [SwssEvent]) {
+        // Release owners before admitting replacements that may reuse their IDs.
+        // An Update can also remove an owner via deactivation or local validation.
+        events.sort_by_cached_key(|event| match event {
+            SwssEvent::Delete { .. } => false,
+            SwssEvent::Update { key, session_data } => {
+                session_data.stream_status == "enabled"
+                    && session_data.session_type == "ipfix"
+                    && Self::validated_update(key, session_data).is_ok_and(|update| {
+                        super::ipfix::IpfixActor::validate_templates(&update).is_ok()
+                    })
+            }
+        });
+    }
+
+    fn is_wrongtype_row(message: &str) -> bool {
+        // SWSSResult exposes only what()/location, not the C++ exception type.
+        // Match the HGETALL reply and its complete reason, never a substring in
+        // the (untrusted) key or a generic I/O error. Unknown formats fail closed.
+        message.starts_with("RedisReply catches system_error: command: *2\\r\\n$7\\r\\nHGETALL\\r\\n$")
+            && message.rsplit_once(", reason: ").is_some_and(|(_, reason)| {
+                reason == "WRONGTYPE Operation against a key holding the wrong kind of value: Input/output error: Input/output error"
+            })
     }
 
     fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
@@ -525,6 +627,345 @@ mod tests {
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
+
+    #[test]
+    fn wrongtype_classification_excludes_transport_and_other_redis_errors() {
+        let command = "RedisReply catches system_error: command: *2\\r\\n$7\\r\\nHGETALL\\r\\n$5\\r\\ntable\\r\\n";
+        let reason = "WRONGTYPE Operation against a key holding the wrong kind of value: Input/output error: Input/output error";
+        assert!(SwssActor::is_wrongtype_row(&format!(
+            "{command}, reason: {reason}"
+        )));
+        for error in [
+            "Unable to read redis reply".to_string(),
+            format!("RedisError: Failed to redisGetReply with {command}, err=1: errstr=Connection reset by peer"),
+            format!("{command}, reason: LOADING Redis is loading the dataset in memory: Input/output error: Input/output error"),
+            format!("{command}, reason: NOPERM this user has no permissions: Input/output error: Input/output error"),
+            // A key containing WRONGTYPE must not disguise a different Redis error.
+            format!("{command}, reason: {reason}, reason: NOAUTH Authentication required: Input/output error: Input/output error"),
+            reason.to_string(),
+        ] {
+            assert!(!SwssActor::is_wrongtype_row(&error), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_wrongtype_recovers_owner_and_healthy_updates_transport_is_fatal() {
+        use std::os::fd::AsRawFd;
+
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_wrongtype_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        for key in ["healthy", "bad"] {
+            table
+                .set(
+                    key,
+                    [
+                        ("stream_status", "enabled"),
+                        ("session_type", "ipfix"),
+                        ("object_names", "Ethernet0"),
+                        ("object_ids", "1"),
+                        ("session_config", "initial"),
+                    ],
+                )
+                .unwrap();
+        }
+        let session_table =
+            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
+        let subscription = session_table
+            .get_fd()
+            .unwrap()
+            .try_clone_to_owned()
+            .unwrap();
+        let (template_recipient, mut receiver) = channel(16);
+        let task = tokio::spawn(SwssActor::run(SwssActor {
+            session_table,
+            template_recipient,
+        }));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut initial = HashSet::new();
+            while initial.len() < 2 {
+                let message = receiver.recv().await.unwrap();
+                assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                initial.insert(message.key);
+            }
+            db.set(&format!("{name}|bad"), &CxxString::from("not a hash"))
+                .unwrap();
+            loop {
+                let message = receiver
+                    .recv()
+                    .await
+                    .expect("WRONGTYPE must not stop the actor");
+                if message.key == "bad" {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+                    break;
+                }
+            }
+            table
+                .hset("healthy", "session_config", &CxxString::from("updated"))
+                .unwrap();
+            loop {
+                let message = receiver
+                    .recv()
+                    .await
+                    .expect("healthy update after WRONGTYPE");
+                if message.key == "healthy"
+                    && message.templates.as_deref().map(Vec::as_slice) == Some(b"updated")
+                {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!task.is_finished());
+        // Shut down only this actor's subscription, not the shared Redis server.
+        assert_eq!(
+            unsafe { libc::shutdown(subscription.as_raw_fd(), libc::SHUT_RDWR) },
+            0
+        );
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(result, Err(SwssError::ReaderFailed(_))),
+            "{result:?}"
+        );
+        table.del("healthy").unwrap();
+        table.del("bad").unwrap();
+    }
+
+    #[test]
+    fn wrongtype_reconciliation_recovers_discarded_batch_prefix_and_deletes() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_wrongtype_batch_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        for key in ["before", "deleted", "bad", "after"] {
+            table.set(key, [("session_config", "initial")]).unwrap();
+        }
+        let mut subscriber =
+            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, Some(1), None).unwrap();
+        let mut known_keys = HashSet::new();
+        assert_eq!(
+            SwssActor::blocking_collect_events(&mut subscriber, &mut known_keys, Duration::ZERO)
+                .unwrap()
+                .len(),
+            4
+        );
+
+        // Buffer the entire small batch before pops. Even Some(1) does not limit
+        // SubscriberStateTable::pops: it drains until empty or the first error.
+        table
+            .hset("before", "session_config", &CxxString::from("updated"))
+            .unwrap();
+        table.del("deleted").unwrap();
+        db.set(&format!("{name}|bad"), &CxxString::from("not a hash"))
+            .unwrap();
+        db.set(
+            &format!("{name}|bad_new"),
+            &CxxString::from("also not a hash"),
+        )
+        .unwrap();
+        table
+            .hset("after", "session_config", &CxxString::from("updated"))
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+        let events = SwssActor::blocking_collect_events(
+            &mut subscriber,
+            &mut known_keys,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        for key in ["before", "after"] {
+            assert!(events.iter().any(|event| matches!(event,
+                SwssEvent::Update { key: k, session_data } if k == key && session_data.session_config == b"updated")), "{events:?}");
+        }
+        for key in ["bad", "bad_new", "deleted"] {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, SwssEvent::Delete { key: k } if k == key)),
+                "{events:?}"
+            );
+            assert!(!known_keys.contains(key));
+        }
+        // No stale notifications remain to undo the reconciled state later.
+        assert!(subscriber.pops().unwrap().is_empty());
+        for key in ["before", "bad", "bad_new", "after"] {
+            table.del(key).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reconciliation_releases_owners_before_id_reuse_without_another_write() {
+        use crate::actor::ipfix::IpfixActor;
+
+        async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
+            for event in events {
+                match event {
+                    SwssEvent::Update { key, session_data } => {
+                        SwssActor::process_session_update(sender, &key, &session_data).await;
+                    }
+                    SwssEvent::Delete { key } => {
+                        sender
+                            .send(IPFixTemplatesMessage::delete(key))
+                            .await
+                            .unwrap();
+                    }
+                }
+                // Capacity one: the actor handles each template synchronously
+                // after receiving it, before it can process our next data probe.
+                drop(sender.reserve().await.unwrap());
+            }
+        }
+
+        // Domain 0, template 300: observationTimeNanoseconds and one 64-bit
+        // enterprise counter (object label 1, SAI type/stat 1).
+        let template = vec![
+            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 44, 0, 2, 1, 69, 0,
+            8, 128, 1, 0, 8, 0, 1, 0, 1,
+        ];
+        let data = Arc::new(vec![
+            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0, 0, 7,
+            0, 0, 0, 0, 0, 0, 0, 42,
+        ]);
+        for removal in [
+            "delete",
+            "disabled",
+            "nonipfix",
+            "invalid",
+            "oversized",
+            "empty",
+            "malformed-template",
+        ] {
+            let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+            let name = format!("test_swss_reuse_{}_{removal}", std::process::id());
+            let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+            let fields = |object_name: &str| {
+                [
+                    ("stream_status", CxxString::from("enabled")),
+                    ("session_type", CxxString::from("ipfix")),
+                    ("object_names", CxxString::from(object_name)),
+                    ("object_ids", CxxString::from("1")),
+                    ("session_config", CxxString::from(template.clone())),
+                ]
+            };
+            table.set("a", fields("Ethernet0")).unwrap();
+            let mut subscriber =
+                SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, Some(1), None)
+                    .unwrap();
+            let mut known = HashSet::new();
+            let initial =
+                SwssActor::blocking_collect_events(&mut subscriber, &mut known, Duration::ZERO)
+                    .unwrap();
+            let (templates, template_receiver) = channel(1);
+            let (records, record_receiver) = channel(1);
+            let (stats, mut stats_receiver) = channel(1);
+            let mut actor = IpfixActor::new(template_receiver, record_receiver);
+            actor.add_recipient(stats);
+            let task = tokio::spawn(IpfixActor::run(actor));
+
+            tokio::time::timeout(Duration::from_secs(3), async {
+                forward(initial, &templates).await;
+                records.send(Arc::clone(&data)).await.unwrap();
+                let batch = stats_receiver.recv().await.unwrap();
+                assert_eq!(
+                    batch.iter().next().unwrap().stats[0].object_name.as_ref(),
+                    "Ethernet0"
+                );
+
+                match removal {
+                    "delete" => table.del("a").unwrap(),
+                    "disabled" => table
+                        .hset("a", "stream_status", &CxxString::from("disabled"))
+                        .unwrap(),
+                    "nonipfix" => table
+                        .hset("a", "session_type", &CxxString::from("netflow"))
+                        .unwrap(),
+                    "invalid" => table
+                        .hset("a", "object_ids", &CxxString::from("invalid"))
+                        .unwrap(),
+                    "oversized" => table
+                        .hset(
+                            "a",
+                            "unknown",
+                            &CxxString::from(vec![b'x'; MAX_OBJECT_METADATA_BYTES + 1]),
+                        )
+                        .unwrap(),
+                    "empty" => table
+                        .hset("a", "session_config", &CxxString::from(""))
+                        .unwrap(),
+                    "malformed-template" => table
+                        .hset(
+                            "a",
+                            "session_config",
+                            &CxxString::from("not an IPFIX template"),
+                        )
+                        .unwrap(),
+                    _ => unreachable!(),
+                }
+                // Explicitly cache A's removal and B's admission in that order.
+                // C++ pops will discard both when the subsequent WRONGTYPE throws.
+                assert_eq!(
+                    subscriber.read_data(Duration::from_secs(1), false).unwrap(),
+                    swss_common::SelectResult::Data
+                );
+                table.set("b", fields("Ethernet4")).unwrap();
+                assert_eq!(
+                    subscriber.read_data(Duration::from_secs(1), false).unwrap(),
+                    swss_common::SelectResult::Data
+                );
+                db.set(&format!("{name}|bad"), &CxxString::from("not a hash"))
+                    .unwrap();
+                let mut events = SwssActor::blocking_collect_events(
+                    &mut subscriber,
+                    &mut known,
+                    Duration::from_secs(1),
+                )
+                .unwrap();
+                let key = |event: &SwssEvent| match event {
+                    SwssEvent::Update { key, .. } | SwssEvent::Delete { key } => key.clone(),
+                };
+                let a = events.iter().position(|event| key(event) == "a").unwrap();
+                let b = events.iter().position(|event| key(event) == "b").unwrap();
+                let bad = events.iter().position(|event| key(event) == "bad").unwrap();
+                assert!(a < b && bad < b, "{removal}: {events:?}");
+                assert!(subscriber.pops().unwrap().is_empty());
+
+                // Also force the adverse order, independently of HashSet's seed,
+                // so this regression deterministically detects enum-only sorting.
+                events.sort_by_key(|event| key(event) != "b");
+                SwssActor::order_reconciled_events(&mut events);
+                assert_eq!(key(events.last().unwrap()), "b", "{removal}");
+                forward(events, &templates).await;
+                // No Redis write or admission retry: B must already own ID 300.
+                records.send(Arc::clone(&data)).await.unwrap();
+                let batch = stats_receiver.recv().await.unwrap();
+                let record = batch.iter().next().unwrap();
+                assert_eq!(record.observation_time, 7);
+                assert_eq!(record.stats.len(), 1);
+                assert_eq!(
+                    record.stats[0].object_name.as_ref(),
+                    "Ethernet4",
+                    "{removal}"
+                );
+                assert_eq!(record.stats[0].counter, 42);
+                assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+            })
+            .await
+            .expect(removal);
+            drop(templates);
+            assert!(tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err());
+            for key in ["a", "b", "bad"] {
+                table.del(key).unwrap();
+            }
+        }
+    }
 
     #[test]
     fn raw_session_limits_reject_before_copying_metadata_or_oversized_config() {

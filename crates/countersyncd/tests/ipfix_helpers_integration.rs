@@ -167,12 +167,29 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
         )
         .await;
 
-        apply_template(&template_sender, remove("target".to_string())).await;
+        let pending = [
+            generate_ipfix_templates(4, 303),
+            generate_ipfix_templates(5, 304),
+        ]
+        .concat();
+        apply_template(
+            &template_sender,
+            template_message("target", pending.clone(), 5),
+        )
+        .await;
         assert_data(
             &buffer_sender,
             &mut receiver,
             &[&original, &healthy],
-            &[(3, 1)],
+            &[(1, 2), (2, 3), (3, 1)],
+        )
+        .await;
+        apply_template(&template_sender, remove("target".to_string())).await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&original, &pending, &healthy],
+            &[(5, 1)],
         )
         .await;
 
@@ -211,7 +228,168 @@ async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
 }
 
 #[tokio::test]
-async fn active_and_pending_templates_handover_independently() {
+async fn first_new_key_switches_the_whole_session_snapshot_regardless_of_counter_identity() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut receiver) = channel(4);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let healthy = generate_ipfix_templates(1, 300);
+    apply_template(
+        &template_sender,
+        template_message("healthy", healthy.clone(), 1),
+    )
+    .await;
+    // Unique matches, entirely changed counter lists, and ambiguous matches must
+    // all use the session snapshot, not a semantic old-to-new template pairing.
+    for (old_a_count, old_b_count, new_a_count, new_b_count) in
+        [(2, 3, 2, 3), (2, 3, 4, 5), (2, 2, 2, 2)]
+    {
+        let old_a = generate_ipfix_templates(old_a_count, 301);
+        let old_b = generate_ipfix_templates(old_b_count, 302);
+        let new_a = generate_ipfix_templates_with_counter_widths(&vec![1; new_a_count], 303);
+        let new_b = generate_ipfix_templates_with_counter_widths(&vec![4; new_b_count], 304);
+        apply_template(
+            &template_sender,
+            template_message("target", [&old_a[..], &old_b[..]].concat(), 3),
+        )
+        .await;
+        apply_template(
+            &template_sender,
+            template_message("target", [&new_a[..], &new_b[..]].concat(), 5),
+        )
+        .await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&old_a, &old_b, &healthy],
+            &[(1, old_a_count), (2, old_b_count), (3, 1)],
+        )
+        .await;
+        // Old data before the trigger is accepted; both old keys after it are
+        // retired, even within the same channel input and before new B is used.
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&old_b, &new_a, &old_a, &old_b, &healthy],
+            &[(1, old_b_count), (2, new_a_count), (5, 1)],
+        )
+        .await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&old_a, &old_b, &new_b, &new_a, &healthy],
+            &[(3, new_b_count), (4, new_a_count), (5, 1)],
+        )
+        .await;
+        apply_template(
+            &template_sender,
+            IPFixTemplatesMessage::delete("target".to_string()),
+        )
+        .await;
+    }
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
+}
+
+#[tokio::test]
+async fn shared_key_does_not_promote_and_latest_pending_snapshot_replaces_unused_pending() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut receiver) = channel(4);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let healthy = generate_ipfix_templates(1, 300);
+    let shared = generate_ipfix_templates(2, 301);
+    let old = generate_ipfix_templates(3, 302);
+    let superseded = generate_ipfix_templates(4, 303);
+    let latest_a = generate_ipfix_templates(5, 304);
+    let latest_b = generate_ipfix_templates(6, 305);
+    apply_template(
+        &template_sender,
+        template_message("healthy", healthy.clone(), 1),
+    )
+    .await;
+    apply_template(
+        &template_sender,
+        template_message("target", [&shared[..], &old[..]].concat(), 3),
+    )
+    .await;
+    apply_template(
+        &template_sender,
+        template_message("target", [&shared[..], &superseded[..]].concat(), 4),
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&shared, &old, &healthy],
+        &[(1, 2), (2, 3), (3, 1)],
+    )
+    .await;
+    apply_template(
+        &template_sender,
+        template_message(
+            "target",
+            [&shared[..], &latest_a[..], &latest_b[..]].concat(),
+            6,
+        ),
+    )
+    .await;
+    // The old active snapshot survives a second update. The unused pending
+    // snapshot is gone, and neither its data nor shared data can trigger cutover.
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&superseded, &shared, &old, &healthy],
+        &[(2, 2), (3, 3), (4, 1)],
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&latest_a, &old, &superseded, &shared, &healthy],
+        &[(1, 5), (4, 2), (5, 1)],
+    )
+    .await;
+    // Even unused latest B became active with A. A subsequent snapshot must
+    // retain it until that snapshot's first new-key data arrives.
+    let next = generate_ipfix_templates(7, 306);
+    apply_template(
+        &template_sender,
+        template_message("target", next.clone(), 7),
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&latest_b, &latest_a, &shared, &old, &superseded, &healthy],
+        &[(1, 6), (2, 5), (3, 2), (6, 1)],
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&next, &latest_a, &latest_b, &shared, &healthy],
+        &[(1, 7), (5, 1)],
+    )
+    .await;
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
+}
+
+#[tokio::test]
+async fn malformed_new_key_data_does_not_emit_or_promote_pending_snapshot() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
     let (template_sender, template_receiver) = channel(1);
     let (saistats_sender, mut receiver) = channel(4);
@@ -222,10 +400,8 @@ async fn active_and_pending_templates_handover_independently() {
     let healthy = generate_ipfix_templates(1, 300);
     let old_a = generate_ipfix_templates(2, 301);
     let old_b = generate_ipfix_templates(3, 302);
-    // The helper gives each pair the same ordered object/type/stat identities;
-    // different counter counts distinguish A from B despite changed widths.
-    let new_a = generate_ipfix_templates_with_counter_widths(&[1, 1], 303);
-    let new_b = generate_ipfix_templates_with_counter_widths(&[4, 4, 4], 304);
+    let new_a = generate_ipfix_templates_with_counter_widths(&[1, 2, 3, 4], 303);
+    let new_b = generate_ipfix_templates(5, 304);
     apply_template(
         &template_sender,
         template_message("healthy", healthy.clone(), 1),
@@ -238,29 +414,45 @@ async fn active_and_pending_templates_handover_independently() {
     .await;
     apply_template(
         &template_sender,
-        template_message("target", [&new_a[..], &new_b[..]].concat(), 3),
+        template_message("target", [&new_a[..], &new_b[..]].concat(), 5),
     )
     .await;
+
+    let mut short_record = generate_ipfix_records(&new_a);
+    short_record.pop();
+    let message_len = u16::try_from(short_record.len()).unwrap();
+    short_record[2..4].copy_from_slice(&message_len.to_be_bytes());
+    short_record[18..20].copy_from_slice(&(message_len - 16).to_be_bytes());
+    let mut empty_set = generate_ipfix_records(&new_a);
+    empty_set.truncate(20);
+    empty_set[2..4].copy_from_slice(&20u16.to_be_bytes());
+    empty_set[18..20].copy_from_slice(&4u16.to_be_bytes());
+    let mut invalid_later_message = generate_ipfix_records(&new_a);
+    invalid_later_message.extend_from_slice(&short_record);
+    let mut invalid_framing = generate_ipfix_records(&new_a);
+    invalid_framing.push(0xff);
+    for malformed in [
+        short_record,
+        empty_set,
+        invalid_later_message,
+        invalid_framing,
+    ] {
+        buffer_sender.send(Arc::new(malformed)).await.unwrap();
+        // A separate FIFO probe proves the bad input was dropped, without a
+        // timing-based assertion, and proves every old key is still active.
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&old_a, &old_b, &healthy],
+            &[(1, 2), (2, 3), (3, 1)],
+        )
+        .await;
+    }
     assert_data(
         &buffer_sender,
         &mut receiver,
-        &[&old_a, &old_b, &healthy],
-        &[(1, 2), (2, 3), (3, 1)],
-    )
-    .await;
-    // A's first new-ID record retires only old A; old B is still usable.
-    assert_data(
-        &buffer_sender,
-        &mut receiver,
-        &[&new_a, &old_a, &old_b, &healthy],
-        &[(1, 2), (3, 3), (4, 1)],
-    )
-    .await;
-    assert_data(
-        &buffer_sender,
-        &mut receiver,
-        &[&new_b, &old_a, &old_b, &new_a, &healthy],
-        &[(1, 3), (4, 2), (5, 1)],
+        &[&new_a, &old_a, &old_b, &new_b, &healthy],
+        &[(1, 4), (4, 5), (5, 1)],
     )
     .await;
 

@@ -61,13 +61,23 @@ Deactivate remove only the owning session; valid same-ID installation in the
 same observation domain is supported afterward, without distinguishing late
 packets from an earlier use of that ID.
 
-Active and pending templates coexist, with per-template handover only for a
-unique match of ordered (object name, type ID, stat ID) counters in the same
-domain. Widths may change. Ambiguous pairing is unsupported: the actor does not
-guess a replacement or perform a session-wide cutover. A complete accepted
-snapshot removes omitted active templates without a unique replacement; only
-matched old/new pairs coexist until valid new data arrives. Successfully used
-additions become active and participate in subsequent handovers.
+The entire incoming snapshot is compiled and checked for collisions before
+installation. Active and pending session snapshots coexist regardless of stat
+additions, removals, reordering, or width changes. The first validated nonempty
+data Set on a genuinely new pending key promotes the whole pending snapshot and
+removes every old-only key. Shared unchanged keys do not trigger promotion;
+neither do malformed inputs. A removal-only snapshot with no new key therefore
+remains pending. A newer snapshot supersedes pending state, and resending the
+active snapshot cancels pending state.
+
+An in-use (observation domain, template ID) with a different schema or owner is
+an ERROR: the incoming registration is rejected without changing any existing
+state, including the incoming owner's active and pending snapshots. Identical
+refreshes and shared unchanged keys are accepted. Malformed configuration may
+locally remove its owner. Keys can be reused after local removal.
+
+There are no artificial live-template count or byte quotas, or per-update
+template-count quotas. Input byte limits and framing validation remain in place.
 
 ## Historical Helper Revision Comparison
 

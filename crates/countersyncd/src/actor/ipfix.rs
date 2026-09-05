@@ -30,10 +30,7 @@ const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 const OBSERVATION_TIME_LEN: u16 = 8;
 const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 16;
 const DROP_WARNING_INTERVAL: Duration = Duration::from_secs(5);
-const MAX_INSTALLED_TEMPLATE_KEYS: usize = 4096;
-const MAX_LIVE_TEMPLATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
-const MAX_TEMPLATES_PER_UPDATE: usize = 1024;
 const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 4096;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
 const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
@@ -97,14 +94,11 @@ struct TemplateGeneration {
     templates: HashMap<TemplateKey, Arc<CompiledTemplate>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionTemplates {
-    // Initial templates plus individually validated replacements/additions.
     active: TemplateGeneration,
-    // Latest complete snapshot while any of its templates has not become active.
+    // Latest complete snapshot, promoted by valid data on a new pending key.
     pending: Option<TemplateGeneration>,
-    // Only unique semantic matches, never a session-wide cutover signal.
-    cutover: HashMap<TemplateKey, TemplateKey>,
 }
 
 #[derive(Debug)]
@@ -134,11 +128,10 @@ impl From<String> for IpfixError {
 ///
 /// Template IDs are expected to increase, with reuse only after a long wrap.
 /// Unknown Sets are dropped; transition delivery is best effort, without replay.
-/// Complete snapshots retain unchanged current templates and uniquely matched
-/// old counterparts until their replacements produce valid nonempty data.
-/// Omitted current templates without an unambiguous counterpart are dropped on
-/// snapshot acceptance, as are superseded, never-used pending templates. Every
-/// validated pending template becomes current independently, including additions.
+/// Active and pending snapshots coexist regardless of counter-list changes.
+/// Valid nonempty data on a new pending key promotes the entire snapshot and
+/// retires all old-only keys. Shared unchanged keys do not trigger promotion.
+/// A newer snapshot supersedes pending state; resending active cancels it.
 pub struct IpfixActor {
     saistats_recipients: Vec<Sender<SAIStatsBatchMessage>>,
     template_recipient: Receiver<IPFixTemplatesMessage>,
@@ -167,6 +160,10 @@ impl IpfixActor {
 
     pub fn add_recipient(&mut self, recipient: Sender<SAIStatsBatchMessage>) {
         self.saistats_recipients.push(recipient);
+    }
+
+    pub(crate) fn validate_templates(update: &IPFixTemplatesMessage) -> Result<(), IpfixError> {
+        Self::compile_generation(update).map(|_| ())
     }
 
     fn compile_generation(
@@ -254,130 +251,61 @@ impl IpfixActor {
             return Ok(());
         }
 
-        let result = (|| {
-            let mut generation = Self::compile_generation(&update)?;
-            for (key, template) in &mut generation.templates {
-                if let Some(installed) = self.installed.get(key) {
-                    if installed.owner.as_ref() != update.key {
-                        return Err(
-                            format!("template {key:?} belongs to {}", installed.owner).into()
-                        );
-                    }
-                    if installed.as_ref() != template.as_ref() {
-                        return Err(
-                            format!("template {key:?} changed schema without a new ID").into()
-                        );
-                    }
-                    // Shared keys have one decoder/allocation across both generations.
-                    *template = Arc::clone(installed);
-                }
+        let mut generation = match Self::compile_generation(&update) {
+            Ok(generation) => generation,
+            Err(err) => {
+                // Malformed configuration locally deactivates its owner.
+                self.remove_session(&update.key);
+                return Err(err);
             }
-            let mut session = SessionTemplates {
-                active: generation.clone(),
+        };
+        // Check the entire candidate before changing any installed/session state.
+        // Conflicts, unlike compile errors, must preserve both owners' snapshots.
+        for (key, template) in &mut generation.templates {
+            if let Some(installed) = self.installed.get(key) {
+                if installed.as_ref() != template.as_ref() {
+                    return Err(format!(
+                        "template collision at {key:?}: incoming owner {:?}, existing owner {:?}; different schema or owner",
+                        update.key, installed.owner
+                    )
+                    .into());
+                }
+                // Shared keys have one decoder/allocation across both generations.
+                *template = Arc::clone(installed);
+            }
+        }
+        let owner = Arc::clone(
+            &generation
+                .templates
+                .values()
+                .next()
+                .expect("nonempty generation")
+                .owner,
+        );
+        let session = match self.sessions.get(update.key.as_str()) {
+            Some(previous) => SessionTemplates {
+                active: previous.active.clone(),
+                pending: (generation != previous.active).then_some(generation),
+            },
+            None => SessionTemplates {
+                active: generation,
                 pending: None,
-                cutover: HashMap::new(),
-            };
-            let owner = Arc::clone(
-                &generation
-                    .templates
-                    .values()
-                    .next()
-                    .expect("nonempty generation")
-                    .owner,
-            );
-            if let Some(previous) = self.sessions.get(update.key.as_str()) {
-                session.active = previous.active.clone();
-                // No old->new mapping is carried on the wire. Match ordered
-                // (object name, type, stat) identities, ignoring width/offset.
-                // Ambiguity on either side, even a shared key, prevents pairing.
-                let mut identities = HashMap::new();
-                for (old, templates) in [
-                    (true, &session.active.templates),
-                    (false, &generation.templates),
-                ] {
-                    for (key, template) in templates {
-                        let identity = (
-                            key.observation_domain_id,
-                            template
-                                .counters
-                                .iter()
-                                .map(|counter| {
-                                    (
-                                        counter.object_name.as_ref(),
-                                        counter.type_id,
-                                        counter.stat_id,
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        );
-                        let pair = identities
-                            .entry(identity)
-                            .or_insert_with(|| (Vec::new(), Vec::new()));
-                        if old {
-                            pair.0.push(*key);
-                        } else {
-                            pair.1.push(*key);
-                        }
-                    }
-                }
-                for (old, new) in identities.values() {
-                    if old.len() == 1
-                        && new.len() == 1
-                        && !generation.templates.contains_key(&old[0])
-                        && !session.active.templates.contains_key(&new[0])
-                    {
-                        session.cutover.insert(new[0], old[0]);
-                    }
-                }
-                let retained: HashSet<_> = session.cutover.values().copied().collect();
-                session.active.templates.retain(|key, _| {
-                    generation.templates.contains_key(key) || retained.contains(key)
-                });
-                session.active.templates.shrink_to_fit();
-                if generation
-                    .templates
-                    .keys()
-                    .any(|key| !session.active.templates.contains_key(key))
-                {
-                    session.pending = Some(generation);
-                }
-            }
+            },
+        };
 
-            // Rebuild from current templates and the latest snapshot only.
-            // Project removals before checking capacity; no historical generations.
-            let mut installed = self.installed.clone();
-            installed.retain(|_, template| template.owner.as_ref() != update.key);
-            installed.extend(
-                session
-                    .active
+        // Keep active plus the latest pending snapshot, never historical pending keys.
+        self.installed
+            .retain(|_, template| template.owner.as_ref() != update.key);
+        for generation in std::iter::once(&session.active).chain(session.pending.iter()) {
+            self.installed.extend(
+                generation
                     .templates
                     .iter()
                     .map(|(key, template)| (*key, Arc::clone(template))),
             );
-            if let Some(pending) = &session.pending {
-                installed.extend(
-                    pending
-                        .templates
-                        .iter()
-                        .map(|(key, template)| (*key, Arc::clone(template))),
-                );
-            }
-            if installed.len() > MAX_INSTALLED_TEMPLATE_KEYS {
-                return Err("live template key limit exceeded".into());
-            }
-            if live_template_bytes(&installed)? > MAX_LIVE_TEMPLATE_BYTES {
-                return Err("live template byte limit exceeded".into());
-            }
-            self.installed = installed;
-            self.sessions.remove(update.key.as_str());
-            self.sessions.insert(owner, session);
-            Ok(())
-        })();
-        if result.is_err() {
-            // Rejection affects only the incoming owner, never an incumbent peer.
-            self.remove_session(&update.key);
         }
-        result
+        self.sessions.insert(owner, session);
+        Ok(())
     }
 
     fn promote_pending_for(&mut self, template: &CompiledTemplate) {
@@ -388,30 +316,17 @@ impl IpfixActor {
         let Some(pending) = &session.pending else {
             return;
         };
-        let Some(new) = pending.templates.get(&template.key) else {
-            return;
-        };
-        if session.active.templates.contains_key(&template.key) {
-            return;
-        }
-        session
-            .active
-            .templates
-            .insert(template.key, Arc::clone(new));
-        if let Some(old) = session.cutover.remove(&template.key) {
-            session.active.templates.remove(&old);
-            session.active.templates.shrink_to_fit();
-            session.cutover.shrink_to_fit();
-            self.installed.remove(&old);
-        }
-        if pending
-            .templates
-            .keys()
-            .all(|key| session.active.templates.contains_key(key))
+        if !pending.templates.contains_key(&template.key)
+            || session.active.templates.contains_key(&template.key)
         {
-            session.pending = None;
-            session.cutover.clear();
+            return;
         }
+        for key in session.active.templates.keys() {
+            if !pending.templates.contains_key(key) {
+                self.installed.remove(key);
+            }
+        }
+        session.active = session.pending.take().expect("pending generation");
     }
 
     #[cfg(test)]
@@ -700,49 +615,6 @@ fn validate_template_update_limits(templates: &IPFixTemplatesMessage) -> Result<
     Ok(())
 }
 
-fn live_template_bytes(
-    installed: &HashMap<TemplateKey, Arc<CompiledTemplate>>,
-) -> Result<usize, IpfixError> {
-    // Recount only live allocations. Strings may be shared across templates,
-    // while equal strings from different updates may be distinct allocations.
-    // Allow overhead for Arc allocations, session/generation maps and cutovers.
-    const ENTRY_OVERHEAD: usize = 512;
-    const ARC_OVERHEAD: usize = 32;
-    let mut strings = HashSet::new();
-    let mut owners = HashSet::new();
-    let mut total = 0usize;
-    for template in installed.values() {
-        // The session map's owner may come from an earlier generation.
-        if owners.insert(template.owner.as_ref()) {
-            total = total
-                .checked_add(template.owner.len())
-                .and_then(|total| total.checked_add(ARC_OVERHEAD))
-                .ok_or("compiled template size overflow")?;
-        }
-        total = total
-            .checked_add(std::mem::size_of::<CompiledTemplate>() + ENTRY_OVERHEAD)
-            .and_then(|total| {
-                template
-                    .counters
-                    .len()
-                    .checked_mul(std::mem::size_of::<CompiledCounter>())
-                    .and_then(|bytes| total.checked_add(bytes))
-            })
-            .ok_or("compiled template size overflow")?;
-        for string in std::iter::once(&template.owner)
-            .chain(template.counters.iter().map(|counter| &counter.object_name))
-        {
-            if strings.insert(Arc::as_ptr(string) as *const u8) {
-                total = total
-                    .checked_add(string.len())
-                    .and_then(|total| total.checked_add(ARC_OVERHEAD))
-                    .ok_or("compiled template size overflow")?;
-            }
-        }
-    }
-    Ok(total)
-}
-
 struct IpfixMessages<'a> {
     remaining: &'a [u8],
     failed: bool,
@@ -984,11 +856,6 @@ fn compile_template_set(
                 format!("duplicate template ({domain}, {template_id}) in one update").into(),
             );
         }
-        if output.len() > MAX_TEMPLATES_PER_UPDATE {
-            return Err(
-                format!("template update exceeds {MAX_TEMPLATES_PER_UPDATE} templates").into(),
-            );
-        }
     }
     Ok(())
 }
@@ -1097,15 +964,25 @@ mod tests {
     }
 
     #[test]
-    fn independent_templates_switch_only_on_their_own_records() {
+    fn changed_stats_promote_whole_snapshot_on_first_new_key() {
         let mut actor = actor();
+        actor
+            .handle_template(snapshot("peer", &[(1, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("peer", &[(1, 400, 2)]))
+            .unwrap();
+        let peer = actor.sessions["peer"].clone();
         actor
             .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
             .unwrap();
         actor
-            .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
+            .handle_template(snapshot("s", &[(0, 400, 3), (0, 401, 4)]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 400), (0, 401)]);
+        assert_eq!(
+            keys(&actor),
+            vec![(0, 300), (0, 301), (0, 400), (0, 401), (1, 300), (1, 400)]
+        );
         let batch = actor
             .handle_record(&data_message(
                 0,
@@ -1122,19 +999,21 @@ mod tests {
                 .iter()
                 .map(|record| record.observation_time)
                 .collect::<Vec<_>>(),
-            vec![1, 2, 4]
+            vec![1, 2]
         );
-        assert_eq!(keys(&actor), vec![(0, 301), (0, 400), (0, 401)]);
-        assert!(actor.sessions["s"].pending.is_some());
+        assert_eq!(batch.iter().nth(1).unwrap().stats[0].stat_id, 3);
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (1, 300), (1, 400)]);
+        assert_eq!(actor.sessions["peer"], peer);
+        assert!(actor.sessions["s"].pending.is_none());
         actor
             .handle_record(&data_message(0, &[(401, vec![(5, vec![50])])]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 400), (0, 401)]);
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (1, 300), (1, 400)]);
         assert!(actor.sessions["s"].pending.is_none());
     }
 
     #[test]
-    fn snapshots_drop_unpaired_omissions_without_guessing_cutovers() {
+    fn snapshots_coexist_across_additions_removals_and_domains() {
         for (old, new) in [
             (vec![(0, 300, 1)], vec![(0, 400, 2)]),
             (vec![(0, 300, 1)], vec![(1, 400, 1)]),
@@ -1148,39 +1027,53 @@ mod tests {
             let mut actor = actor();
             actor.handle_template(snapshot("s", &old)).unwrap();
             actor.handle_template(snapshot("s", &new)).unwrap();
+            let active = actor.sessions["s"].active.clone();
+            assert_eq!(
+                active,
+                IpfixActor::compile_generation(&snapshot("s", &old)).unwrap()
+            );
             let mut expected = new
                 .iter()
                 .map(|(domain, id, _)| (*domain, *id))
                 .collect::<Vec<_>>();
             expected.sort_unstable();
-            assert_eq!(keys(&actor), expected);
-            assert!(actor.sessions["s"].cutover.is_empty());
+            let mut coexist = expected.clone();
+            coexist.extend(old.iter().map(|(domain, id, _)| (*domain, *id)));
+            coexist.sort_unstable();
+            coexist.dedup();
+            assert_eq!(keys(&actor), coexist);
             for (domain, id, _) in &old {
                 assert_eq!(
-                    actor.sessions["s"]
-                        .active
-                        .templates
-                        .contains_key(&TemplateKey {
-                            observation_domain_id: *domain,
-                            template_id: *id,
-                        }),
-                    expected.contains(&(*domain, *id))
+                    actor
+                        .handle_record(&data_message(*domain, &[(*id, vec![(1, vec![1])])]))
+                        .unwrap()
+                        .record_count(),
+                    1
                 );
+                assert_eq!(actor.sessions["s"].active, active);
+                assert!(actor.sessions["s"].pending.is_some());
             }
-            for (domain, id, _) in new {
-                actor
-                    .handle_record(&data_message(domain, &[(id, vec![(1, vec![1])])]))
-                    .unwrap();
-            }
+            let (domain, id, _) = new
+                .iter()
+                .find(|(domain, id, _)| {
+                    !old.iter()
+                        .any(|(old_domain, old_id, _)| (old_domain, old_id) == (domain, id))
+                })
+                .unwrap();
+            actor
+                .handle_record(&data_message(*domain, &[(*id, vec![(2, vec![2])])]))
+                .unwrap();
             assert_eq!(keys(&actor), expected);
             assert!(actor.sessions["s"].pending.is_none());
         }
     }
 
     #[test]
-    fn semantic_identity_includes_object_type_stat_and_order() {
+    fn counter_additions_removals_and_reordering_do_not_prevent_handover() {
         let original = template_message("s", 0, 300, &[(1, 0x0001_0001), (2, 0x0001_0002)]);
         for fields in [
+            vec![(1, 0x0001_0001)],
+            vec![(1, 0x0001_0001), (2, 0x0001_0002), (3, 0x0001_0003)],
             vec![(2, 0x0001_0002), (1, 0x0001_0001)],
             vec![(3, 0x0001_0001), (2, 0x0001_0002)],
             vec![(1, 0x0002_0001), (2, 0x0001_0002)],
@@ -1191,7 +1084,32 @@ mod tests {
             actor
                 .handle_template(template_message("s", 0, 400, &fields))
                 .unwrap();
-            assert!(actor.sessions["s"].cutover.is_empty());
+            assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
+            assert_eq!(
+                actor
+                    .handle_record(&data_message(0, &[(300, vec![(1, vec![10, 20])])]))
+                    .unwrap()
+                    .counter_count(),
+                2
+            );
+            let batch = actor
+                .handle_record(&data_message(
+                    0,
+                    &[(400, vec![(2, vec![30; fields.len()])])],
+                ))
+                .unwrap();
+            let record = batch.iter().next().unwrap();
+            assert_eq!(record.stats.len(), fields.len());
+            for (counter, (object, enterprise)) in record.stats.iter().zip(&fields) {
+                assert_eq!(counter.object_name.as_ref(), format!("Ethernet{object}"));
+                assert_eq!(
+                    (counter.type_id, counter.stat_id),
+                    decode_sai_ids(*enterprise)
+                );
+                assert_eq!(counter.counter, 30);
+            }
+            assert_eq!(keys(&actor), vec![(0, 400)]);
+            assert!(actor.sessions["s"].pending.is_none());
         }
     }
 
@@ -1272,29 +1190,33 @@ mod tests {
         let mut actor = actor();
         let active = snapshot("s", &[(0, 300, 1), (0, 301, 2)]);
         actor.handle_template(active.clone()).unwrap();
+        let original = actor.sessions["s"].clone();
+        actor
+            .handle_template(snapshot("s", &[(0, 301, 2), (0, 300, 1)]))
+            .unwrap();
+        assert_eq!(actor.sessions["s"], original);
         actor
             .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
             .unwrap();
-        actor
-            .handle_record(&data_message(0, &[(400, vec![(1, vec![1])])]))
-            .unwrap();
         let before = keys(&actor);
+        let pending = actor.sessions["s"].clone();
         actor
             .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
             .unwrap();
         assert_eq!(keys(&actor), before);
+        assert_eq!(actor.sessions["s"], pending);
         actor
             .handle_template(snapshot("s", &[(0, 400, 1), (0, 402, 2)]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 301), (0, 400), (0, 402)]);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 400), (0, 402)]);
         actor.handle_template(active).unwrap();
-        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 400)]);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
         assert_eq!(
             actor
                 .handle_record(&data_message(0, &[(400, vec![(2, vec![2])])]))
                 .unwrap()
                 .record_count(),
-            1
+            0
         );
         actor
             .handle_record(&data_message(0, &[(300, vec![(3, vec![3])])]))
@@ -1304,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_cutover_remains_active_during_a_subsequent_handover() {
+    fn promoted_snapshot_remains_active_during_subsequent_handover() {
         let mut actor = actor();
         actor
             .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
@@ -1324,11 +1246,12 @@ mod tests {
                 &[(400, vec![(2, vec![2])]), (301, vec![(3, vec![3])])],
             ))
             .unwrap();
-        assert_eq!(batch.record_count(), 2);
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (0, 500)]);
         actor
             .handle_record(&data_message(0, &[(500, vec![(4, vec![4])])]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 301), (0, 401), (0, 500)]);
+        assert_eq!(keys(&actor), vec![(0, 401), (0, 500)]);
         actor
             .handle_record(&data_message(0, &[(401, vec![(5, vec![5])])]))
             .unwrap();
@@ -1336,9 +1259,8 @@ mod tests {
     }
 
     #[test]
-    fn validated_addition_survives_replacement_before_independent_cutover() {
+    fn shared_keys_do_not_promote_but_additions_promote_the_whole_snapshot() {
         let mut actor = actor();
-        // A stays unchanged; B is switching while addition C starts reporting.
         actor
             .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
             .unwrap();
@@ -1349,6 +1271,19 @@ mod tests {
             observation_domain_id: 0,
             template_id: 402,
         };
+        let shared = TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        };
+        assert!(Arc::ptr_eq(
+            &actor.sessions["s"].active.templates[&shared],
+            &actor.sessions["s"].pending.as_ref().unwrap().templates[&shared]
+        ));
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![1])])]))
+            .unwrap();
+        assert!(actor.sessions["s"].pending.is_some());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 401), (0, 402)]);
         let mut malformed = data_message(0, &[(402, vec![(1, vec![1])])]);
         malformed.extend_from_slice(&[1]);
         assert!(actor.handle_record(&malformed).is_err());
@@ -1357,16 +1292,13 @@ mod tests {
             .handle_record(&data_message(0, &[(402, vec![(2, vec![2])])]))
             .unwrap();
         assert!(actor.sessions["s"].active.templates.contains_key(&c));
-        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 401), (0, 402)]);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 402)]);
+        assert!(actor.sessions["s"].pending.is_none());
 
-        // C' must match the successfully used C, even though B' is still pending.
         let next = snapshot("s", &[(0, 300, 1), (0, 401, 2), (0, 502, 3)]);
         actor.handle_template(next.clone()).unwrap();
         actor.handle_template(next).unwrap();
-        assert_eq!(
-            keys(&actor),
-            vec![(0, 300), (0, 301), (0, 401), (0, 402), (0, 502)]
-        );
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 402), (0, 502)]);
         let batch = actor
             .handle_record(&data_message(
                 0,
@@ -1377,12 +1309,13 @@ mod tests {
                 ],
             ))
             .unwrap();
-        assert_eq!(batch.record_count(), 3);
+        assert_eq!(batch.record_count(), 2);
+        assert!(actor.sessions["s"].pending.is_some());
         actor
             .handle_record(&data_message(0, &[(502, vec![(6, vec![6])])]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 401), (0, 502)]);
-        assert!(actor.sessions["s"].pending.is_some());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 502)]);
+        assert!(actor.sessions["s"].pending.is_none());
         actor
             .handle_record(&data_message(0, &[(401, vec![(7, vec![7])])]))
             .unwrap();
@@ -1391,53 +1324,54 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_additions_do_not_promote_each_other_or_accumulate() {
+    fn removal_only_snapshot_waits_for_a_new_key_or_cancellation() {
         let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
+            .unwrap();
         actor
             .handle_template(snapshot("s", &[(0, 300, 1)]))
             .unwrap();
         actor
-            .handle_template(snapshot("s", &[(0, 300, 1), (0, 400, 2), (0, 401, 3)]))
-            .unwrap();
-        actor
-            .handle_record(&data_message(0, &[(400, vec![(1, vec![1])])]))
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![1])])]))
             .unwrap();
         assert_eq!(actor.sessions["s"].active.templates.len(), 2);
         assert!(actor.sessions["s"].pending.is_some());
-        // Explicitly omit used addition 400 and never-used addition 401.
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
         actor
             .handle_template(snapshot("s", &[(0, 300, 1), (0, 500, 4)]))
             .unwrap();
-        assert_eq!(keys(&actor), vec![(0, 300), (0, 500)]);
-        assert_eq!(actor.sessions["s"].active.templates.len(), 1);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 500)]);
+        assert_eq!(actor.sessions["s"].active.templates.len(), 2);
         actor
             .handle_record(&data_message(0, &[(500, vec![(2, vec![2])])]))
             .unwrap();
         assert_eq!(actor.sessions["s"].active.templates.len(), 2);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 500)]);
         assert!(actor.sessions["s"].pending.is_none());
     }
 
     #[test]
-    fn repeated_unpaired_snapshots_drop_obsolete_current_and_pending_entries() {
+    fn repeated_snapshots_retain_only_active_and_latest_pending() {
         let mut actor = actor();
         actor
             .handle_template(snapshot("s", &[(0, 300, 1)]))
             .unwrap();
-        let initial_bytes = live_template_bytes(&actor.installed).unwrap();
+        let mut active_id = 300;
         for id in 400..1500 {
             actor
                 .handle_template(snapshot("s", &[(0, id, u32::from(id))]))
                 .unwrap();
-            assert_eq!(keys(&actor), vec![(0, id)]);
-            assert!(actor.sessions["s"].active.templates.is_empty());
+            assert_eq!(keys(&actor), vec![(0, active_id), (0, id)]);
+            assert_eq!(actor.sessions["s"].active.templates.len(), 1);
             if id % 2 == 0 {
                 actor
                     .handle_record(&data_message(0, &[(id, vec![(1, vec![1])])]))
                     .unwrap();
                 assert_eq!(actor.sessions["s"].active.templates.len(), 1);
                 assert!(actor.sessions["s"].pending.is_none());
+                active_id = id;
             }
-            assert!(live_template_bytes(&actor.installed).unwrap() <= initial_bytes);
         }
         actor
             .handle_template(snapshot("s", &[(0, 1500, 1)]))
@@ -1450,8 +1384,8 @@ mod tests {
     }
 
     #[test]
-    fn rejected_updates_remove_only_incoming_owner_and_valid_updates_recover() {
-        for mode in 0..3 {
+    fn malformed_updates_remove_only_incoming_owner_and_valid_updates_recover() {
+        for malformed_suffix in [false, true] {
             let mut actor = actor();
             actor
                 .handle_template(snapshot("a", &[(0, 300, 1)]))
@@ -1459,12 +1393,14 @@ mod tests {
             actor
                 .handle_template(snapshot("b", &[(0, 301, 2)]))
                 .unwrap();
-            let mut bad = snapshot("a", &[(0, 300, 3)]);
-            if mode == 1 {
+            actor
+                .handle_template(snapshot("a", &[(0, 400, 3)]))
+                .unwrap();
+            let mut bad = snapshot("a", &[(0, 500, 4)]);
+            if malformed_suffix {
+                Arc::make_mut(bad.templates.as_mut().unwrap()).extend_from_slice(&[0, 10, 0]);
+            } else {
                 bad.templates = Some(Arc::new(vec![0, 10, 0, 0]));
-            }
-            if mode == 2 {
-                bad = snapshot("a", &[(0, 301, 3)]);
             }
             assert!(actor.handle_template(bad).is_err());
             assert_eq!(keys(&actor), vec![(0, 301)]);
@@ -1478,6 +1414,85 @@ mod tests {
                 .unwrap();
             assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 2);
         }
+    }
+
+    #[test]
+    fn collisions_preserve_all_owners_active_pending_and_installed_state() {
+        let mut actor = actor();
+        for (owner, active, pending) in [("a", 300, 400), ("b", 301, 401)] {
+            actor
+                .handle_template(snapshot(owner, &[(7, active, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot(owner, &[(7, pending, 2)]))
+                .unwrap();
+        }
+        let sessions = actor.sessions.clone();
+        let installed = actor.installed.clone();
+        for (owner, id, stat, incumbent) in [
+            ("a", 300, 3, "a"),
+            ("a", 400, 3, "a"),
+            ("a", 301, 1, "b"),
+            ("a", 401, 3, "b"),
+            ("new", 301, 1, "b"),
+        ] {
+            let error = actor
+                .handle_template(snapshot(owner, &[(7, 500, 4), (7, id, stat)]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("collision"));
+            assert!(error.contains(&format!("incoming owner {owner:?}")));
+            assert!(error.contains(&format!("existing owner {incumbent:?}")));
+            assert!(error.contains(&format!("template_id: {id}")));
+            assert!(error.contains("observation_domain_id: 7"));
+            assert_eq!(actor.sessions, sessions);
+            assert_eq!(actor.installed, installed);
+            for (key, template) in &installed {
+                assert!(Arc::ptr_eq(&actor.installed[key], template));
+            }
+        }
+        let batch = actor
+            .handle_record(&data_message(
+                7,
+                &[(300, vec![(1, vec![10])]), (301, vec![(2, vec![20])])],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 2);
+        assert_eq!(actor.sessions, sessions);
+    }
+
+    #[test]
+    fn retired_and_superseded_keys_allow_different_owner_and_schema_reuse() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("a", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("a", &[(0, 400, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("a", &[(0, 500, 3)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("b", &[(0, 400, 4)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(500, vec![(1, vec![1])])]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("c", &[(0, 300, 5)]))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[(300, vec![(2, vec![2])]), (400, vec![(3, vec![3])])],
+            ))
+            .unwrap();
+        assert_eq!(
+            batch.iter().map(|r| r.stats[0].stat_id).collect::<Vec<_>>(),
+            vec![5, 4]
+        );
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 400), (0, 500)]);
     }
 
     #[test]
@@ -1652,10 +1667,6 @@ mod tests {
         assert!(IpfixActor::compile_generation(&update).is_err());
         update.object_names = Some(vec!["x".into(); MAX_OBJECTS_PER_UPDATE + 1]);
         assert!(IpfixActor::compile_generation(&update).is_err());
-        let templates = (300..300 + MAX_TEMPLATES_PER_UPDATE as u16 + 1)
-            .map(|id| (0, id, 1))
-            .collect::<Vec<_>>();
-        assert!(IpfixActor::compile_generation(&snapshot("s", &templates)).is_err());
         let mut actor = actor();
         actor
             .handle_template(snapshot("s", &[(0, 300, 1)]))
@@ -1673,77 +1684,43 @@ mod tests {
     }
 
     #[test]
-    fn live_key_capacity_is_reclaimed_by_deletion() {
+    fn template_counts_are_not_subject_to_artificial_quotas() {
         let mut actor = actor();
-        for domain in 0..4 {
-            let templates = (300..300 + MAX_TEMPLATES_PER_UPDATE as u16)
-                .map(|id| (domain, id, 1))
-                .collect::<Vec<_>>();
+        for domain in 0..2 {
+            let templates = (300..3300).map(|id| (domain, id, 1)).collect::<Vec<_>>();
             actor
                 .handle_template(snapshot(&format!("s{domain}"), &templates))
                 .unwrap();
         }
-        assert_eq!(actor.installed.len(), MAX_INSTALLED_TEMPLATE_KEYS);
-        let extra = snapshot("extra", &[(9, 300, 1)]);
-        assert!(actor.handle_template(extra.clone()).is_err());
-        assert!(!actor.sessions.contains_key("extra"));
+        assert_eq!(actor.installed.len(), 6000);
+        let replacement = (3300..6300).map(|id| (0, id, 2)).collect::<Vec<_>>();
+        actor.handle_template(snapshot("s0", &replacement)).unwrap();
+        assert_eq!(actor.installed.len(), 9000);
         actor
-            .handle_template(IPFixTemplatesMessage::delete("s0".into()))
+            .handle_record(&data_message(0, &[(3300, vec![(1, vec![1])])]))
             .unwrap();
-        actor.handle_template(extra).unwrap();
-        assert_eq!(actor.installed.len(), 3 * MAX_TEMPLATES_PER_UPDATE + 1);
+        assert_eq!(actor.installed.len(), 6000);
+        assert!(actor.sessions["s0"].pending.is_none());
+        assert_eq!(actor.sessions["s1"].active.templates.len(), 3000);
     }
 
     #[test]
-    fn supersession_releases_pending_keys_before_capacity_check() {
+    fn aggregate_template_storage_has_no_artificial_byte_quota() {
         let mut actor = actor();
-        for domain in 0..4 {
-            let count = MAX_TEMPLATES_PER_UPDATE - if domain == 3 { 2 } else { 0 };
-            let templates = (300..300 + count as u16)
-                .map(|id| (domain, id, 1))
-                .collect::<Vec<_>>();
-            actor
-                .handle_template(snapshot(&format!("peer{domain}"), &templates))
-                .unwrap();
-        }
-        actor
-            .handle_template(snapshot("s", &[(9, 300, 1)]))
-            .unwrap();
-        for id in 400..405 {
-            actor.handle_template(snapshot("s", &[(9, id, 1)])).unwrap();
-            assert_eq!(actor.installed.len(), MAX_INSTALLED_TEMPLATE_KEYS);
-            assert_eq!(actor.sessions["s"].active.templates.len(), 1);
-            assert_eq!(
-                actor.sessions["s"]
-                    .pending
-                    .as_ref()
-                    .unwrap()
-                    .templates
-                    .len(),
-                1
-            );
-        }
-    }
-
-    #[test]
-    fn live_byte_capacity_recounts_real_allocations_and_reclaims_on_delete() {
-        let mut actor = actor();
-        let mut rejected = None;
         for domain in 0..65 {
             let mut update = snapshot(&format!("s{domain}"), &[(domain, 300, 1)]);
             update.object_names = Some(vec!["x".repeat(1024 * 1024)]);
-            if actor.handle_template(update.clone()).is_err() {
-                rejected = Some(update);
-                break;
-            }
-            assert!(live_template_bytes(&actor.installed).unwrap() <= MAX_LIVE_TEMPLATE_BYTES);
+            actor.handle_template(update).unwrap();
         }
-        let rejected = rejected.expect("64 MiB must reject before 65 distinct 1 MiB allocations");
-        assert!(!actor.sessions.contains_key(rejected.key.as_str()));
-        actor
-            .handle_template(IPFixTemplatesMessage::delete("s0".into()))
-            .unwrap();
-        actor.handle_template(rejected).unwrap();
+        assert_eq!(actor.sessions.len(), 65);
+        assert_eq!(actor.installed.len(), 65);
+        assert_eq!(
+            actor
+                .handle_record(&data_message(64, &[(300, vec![(1, vec![1])])]))
+                .unwrap()
+                .record_count(),
+            1
+        );
     }
 
     #[test]
