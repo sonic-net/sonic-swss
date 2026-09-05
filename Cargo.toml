@@ -5,6 +5,11 @@ members = [
 ]
 exclude = []
 
+# Enable debug symbols in the bench profile so profilers (cargo-flamegraph, perf)
+# can resolve function names.
+[profile.bench]
+debug = true
+
 [workspace.package]
 version = "0.1.0"
 authors = ["SONiC"]
