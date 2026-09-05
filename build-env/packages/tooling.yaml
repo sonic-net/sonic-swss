@@ -1,0 +1,4 @@
+# Build-only tooling for sonic-swss. This file does not cascade downstream.
+
+packages:
+  - { name: lcov_cobertura, type: pip }
