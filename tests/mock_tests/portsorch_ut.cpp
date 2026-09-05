@@ -3025,6 +3025,66 @@ namespace portsorch_test
         _unhook_sai_bridge_api();
     }
 
+    /**
+     * Cover removeVlanMember() skip of default-PVID restore when a RIF is
+     * already active (intfmgrd vs vlanmgrd race). setPortPvid() would return
+     * false and leave vlan.m_members inconsistent with m_portVlanMember.
+     */
+    TEST_F(PortsOrchTest, removeVlanMemberSkipsPvidRestoreOnRouterPort)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan70",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        vlanMemberTable.set(
+            string("Vlan70") + vlanMemberTable.getTableNameSeparator() + "Ethernet0",
+            { {"tagging_mode", "untagged"} }
+        );
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port, vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan70", vlan));
+        ASSERT_EQ(port.m_port_vlan_id, 70);
+        ASSERT_TRUE(gPortsOrch->isVlanMember(vlan, port));
+
+        /* Simulate IntfsOrch creating the RIF before VLAN_MEMBER DEL. */
+        port.m_rif_id = 1;
+        ASSERT_TRUE(gPortsOrch->removeVlanMember(vlan, port));
+
+        ASSERT_FALSE(gPortsOrch->isVlanMember(vlan, port));
+        ASSERT_EQ(port.m_port_vlan_id, 70)
+            << "PVID restore must be skipped while a router interface is active";
+
+        Port portAfter, vlanAfter;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", portAfter));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan70", vlanAfter));
+        ASSERT_EQ(portAfter.m_rif_id, 1);
+        ASSERT_EQ(portAfter.m_port_vlan_id, 70);
+        ASSERT_EQ(vlanAfter.m_members.find("Ethernet0"), vlanAfter.m_members.end());
+        ASSERT_EQ(gPortsOrch->m_portVlanMember.count("Ethernet0"), 0u);
+    }
+
     TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmSuccess)
     {
         _hook_sai_port_api();
