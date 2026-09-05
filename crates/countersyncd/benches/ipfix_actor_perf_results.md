@@ -3,9 +3,9 @@
 These historical measurements compare candidate commit
 `bff4dc878ac4ce6a135b1edef6e1fa4edf980bf1` (`bff4dc87`) against upstream baseline
 `0b4057cde6ccdea51c21b626b3d91699fd0cf0bc` (`0b4057cd`). Later revisions changed
-executed hot paths, including live domain lookups, identity checks, and repeated
-ready drains. These numbers do not establish the final head's performance or
-show a regression; the final head has not been remeasured for this report.
+the actor's executed hot paths. These numbers do not establish the final head's
+performance or show a regression; the final head has not been remeasured for
+this report.
 
 The baseline uses the zero-context
 patch in `ipfix_actor_perf_upstream.patch` (apply with `git apply
@@ -51,6 +51,23 @@ component explicit; they are not parser-only measurements.
 The internal 8,192-counter batching target is not an input or record limit.
 Records larger than the target are sent intact in their own batch; channel
 capacity limits the number of items, not a fixed maximum number of counters.
+
+## Exporter Assumptions
+
+The exporter is expected to allocate increasing template IDs, reusing them only
+after a long wrap. Delivery during template changes is best effort: unknown
+data is dropped immediately, not replayed after installation. Delete and
+Deactivate remove only the owning session; valid same-ID installation in the
+same observation domain is supported afterward, without distinguishing late
+packets from an earlier use of that ID.
+
+Active and pending templates coexist, with per-template handover only for a
+unique match of ordered (object name, type ID, stat ID) counters in the same
+domain. Widths may change. Ambiguous pairing is unsupported: the actor does not
+guess a replacement or perform a session-wide cutover. A complete accepted
+snapshot removes omitted active templates without a unique replacement; only
+matched old/new pairs coexist until valid new data arrives. Successfully used
+additions become active and participate in subsequent handovers.
 
 ## Historical Helper Revision Comparison
 

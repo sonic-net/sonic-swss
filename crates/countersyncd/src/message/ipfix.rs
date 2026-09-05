@@ -2,27 +2,11 @@ use std::sync::Arc;
 
 pub type IPFixTemplates = Arc<Vec<u8>>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RestartRequest {
-    Administrative(String),
-    Failure(String),
-}
-
-impl RestartRequest {
-    pub fn message(&self) -> &str {
-        match self {
-            Self::Administrative(message) | Self::Failure(message) => message,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IPFixTemplateOperation {
     Update,
     Deactivate,
-    #[allow(dead_code)]
     Delete,
-    Quarantine,
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +34,6 @@ impl IPFixTemplatesMessage {
         }
     }
 
-    #[allow(dead_code)]
     pub fn delete(key: String) -> Self {
         Self {
             key,
@@ -68,16 +51,6 @@ impl IPFixTemplatesMessage {
             object_names: None,
             object_ids: None,
             operation: IPFixTemplateOperation::Deactivate,
-        }
-    }
-
-    pub fn quarantine(key: String, templates: Option<IPFixTemplates>) -> Self {
-        Self {
-            key,
-            templates,
-            object_names: None,
-            object_ids: None,
-            operation: IPFixTemplateOperation::Quarantine,
         }
     }
 }

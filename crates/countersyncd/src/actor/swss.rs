@@ -1,4 +1,4 @@
-use super::super::message::ipfix::{IPFixTemplatesMessage, RestartRequest};
+use super::super::message::ipfix::IPFixTemplatesMessage;
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
@@ -17,28 +17,6 @@ const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
 
-struct SwssReader {
-    events: mpsc::Receiver<SwssEvent>,
-    failures: mpsc::Receiver<String>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl Drop for SwssReader {
-    fn drop(&mut self) {
-        // Closing both receivers releases blocking_send and signals the polling
-        // loop to stop. Join also covers a read_data call that opens an FD late.
-        // Synchronous Redis calls may outlast the select timeout; main's thread
-        // watchdog exits the process if this barrier cannot complete.
-        self.events.close();
-        self.failures.close();
-        if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                error!("SwssActor reader thread panicked");
-            }
-        }
-    }
-}
-
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
 /// HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE updates and forwards IPFIX template
@@ -56,19 +34,16 @@ impl Drop for SwssReader {
 pub struct SwssActor {
     pub session_table: SubscriberStateTable,
     template_recipient: Sender<IPFixTemplatesMessage>,
-    restart_notifier: Option<Sender<RestartRequest>>,
 }
 
 #[derive(Debug)]
 pub enum SwssError {
-    RestartRequired(String),
     ReaderFailed(String),
 }
 
 impl std::fmt::Display for SwssError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RestartRequired(message) => write!(formatter, "restart required: {message}"),
             Self::ReaderFailed(message) => write!(formatter, "reader failed: {message}"),
         }
     }
@@ -104,12 +79,7 @@ impl SwssActor {
         Ok(SwssActor {
             session_table,
             template_recipient,
-            restart_notifier: None,
         })
-    }
-
-    pub fn set_restart_notifier(&mut self, notifier: Sender<RestartRequest>) {
-        self.restart_notifier = Some(notifier);
     }
 
     /// Main event loop for the SwssActor
@@ -129,12 +99,13 @@ impl SwssActor {
         let SwssActor {
             mut session_table,
             template_recipient,
-            restart_notifier,
         } = actor;
-        let (event_sender, event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
-        let (fatal_sender, fatal_receiver) = mpsc::channel(1);
+        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
+        let (fatal_sender, mut fatal_receiver) = mpsc::channel(1);
 
-        let reader_thread = match thread::Builder::new()
+        // Dropping the receivers on cancellation releases blocking_send and stops
+        // polling. Do not join: synchronous Redis calls may block indefinitely.
+        match thread::Builder::new()
             .name("countersyncd-swss".to_string())
             .spawn(move || {
                 #[cfg(test)]
@@ -178,53 +149,42 @@ impl SwssActor {
                 #[cfg(test)]
                 debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
             }) {
-                Ok(handle) => handle,
+                Ok(_) => {},
                 Err(e) => {
                     error!("Failed to spawn SwssActor reader thread: {}", e);
                     return Err(SwssError::ReaderFailed(e.to_string()));
                 }
             };
 
-        // Owned inside the future: cancellation drops this guard and joins the
-        // reader rather than detaching it when the Tokio task is aborted.
-        let mut reader = SwssReader {
-            events: event_receiver,
-            failures: fatal_receiver,
-            thread: Some(reader_thread),
-        };
-
         loop {
             tokio::select! {
                 biased;
-                failure = reader.failures.recv() => {
+                failure = fatal_receiver.recv() => {
                     if let Some(failure) = failure {
                         error!("SwssActor reader failed: {failure}");
                         return Err(SwssError::ReaderFailed(failure));
                     }
                     break;
                 }
-                event = reader.events.recv() => {
+                event = event_receiver.recv() => {
                     let Some(event) = event else {
                         break;
                     };
-                    let (key, session_data) = match event {
-                        SwssEvent::Update { key, session_data } => (key, session_data),
-                        SwssEvent::Delete { key } => {
-                            let message = format!("HFT session {key} was deleted");
-                            if let Some(notifier) = &restart_notifier {
-                                let _ = notifier.try_send(RestartRequest::Administrative(message.clone()));
+                    let processing = async {
+                        match event {
+                            SwssEvent::Update { key, session_data } => {
+                                Self::process_session_update(&template_recipient, &key, &session_data).await;
                             }
-                            return Err(SwssError::RestartRequired(message));
+                            SwssEvent::Delete { key } => {
+                                if let Err(e) = template_recipient.send(IPFixTemplatesMessage::delete(key)).await {
+                                    error!("Failed to delete IPFIX session: {e}");
+                                }
+                            }
                         }
                     };
-                    let processing = Self::process_session_update(
-                        &template_recipient,
-                        &key,
-                        &session_data,
-                    );
                     tokio::select! {
                         biased;
-                        failure = reader.failures.recv() => {
+                        failure = fatal_receiver.recv() => {
                             if let Some(failure) = failure {
                                 error!("SwssActor reader failed while forwarding an event: {failure}");
                                 return Err(SwssError::ReaderFailed(failure));
@@ -253,7 +213,8 @@ impl SwssActor {
                     Ok(items) => {
                         for item in items {
                             if item.key.len() > MAX_OBJECT_METADATA_BYTES {
-                                return Err("Session key exceeds metadata byte limit".into());
+                                error!("Ignoring session key exceeding metadata byte limit");
+                                continue;
                             }
                             debug!(
                                 "SwssActor received: key={}, op={:?}",
@@ -307,14 +268,8 @@ impl SwssActor {
             }
         }
         if validation_error.is_some() {
-            // Keep only bounded wire data for quarantine/conflict detection.
             return SessionData {
                 validation_error,
-                session_config: field_values
-                    .get("session_config")
-                    .filter(|value| value.len() <= MAX_TEMPLATE_CONFIG_BYTES)
-                    .map(|value| value.as_bytes().to_vec())
-                    .unwrap_or_default(),
                 ..SessionData::default()
             };
         }
@@ -372,7 +327,7 @@ impl SwssActor {
 
         // Validate and process the session
         if let Err(e) = self.validate_and_process_session(key, &session_data).await {
-            error!("Failed to process session: {}", e);
+            error!("Failed to process session {}: {}", key, e);
         }
     }
 
@@ -383,7 +338,7 @@ impl SwssActor {
     ) {
         if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await
         {
-            error!("Failed to process session: {}", e);
+            error!("Failed to process session {}: {}", key, e);
         }
     }
 
@@ -440,14 +395,9 @@ impl SwssActor {
             Ok(message) => message,
             Err(err) => {
                 template_recipient
-                    .send(IPFixTemplatesMessage::quarantine(
-                        key.to_string(),
-                        (!session_data.session_config.is_empty()
-                            && session_data.session_config.len() <= MAX_TEMPLATE_CONFIG_BYTES)
-                            .then(|| Arc::new(session_data.session_config.clone())),
-                    ))
+                    .send(IPFixTemplatesMessage::delete(key.to_string()))
                     .await
-                    .map_err(|e| format!("Failed to quarantine IPFIX session {}: {}", key, e))?;
+                    .map_err(|e| format!("{err}; failed to delete IPFIX session {key}: {e}"))?;
                 return Err(err);
             }
         };
@@ -569,104 +519,12 @@ impl SessionData {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::message::ipfix::IPFixTemplateOperation;
     use std::collections::HashMap;
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn abort_joins_reader_that_opens_a_descriptor_after_stop() {
-        use std::io::Read;
-        let mut peer = late_open_reader_barrier().await;
-        // EOF proves closure, without relying on a raw FD number not being reused.
-        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
-    }
-
-    pub(crate) async fn late_open_reader_barrier() -> std::os::unix::net::UnixStream {
-        use std::os::fd::AsRawFd;
-        use std::os::unix::net::UnixStream;
-
-        let (event_sender, events) = channel(1);
-        let (_fatal_sender, failures) = channel(1);
-        let (started, ready) = tokio::sync::oneshot::channel();
-        let (peer_sender, peer_receiver) = std::sync::mpsc::channel();
-        let reader_thread = thread::spawn(move || {
-            assert!(!event_sender.is_closed());
-            started.send(()).unwrap();
-            // Gate the late open on the guard closing the receiver, not timing.
-            let deadline = std::time::Instant::now() + Duration::from_secs(2);
-            while !event_sender.is_closed() {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "reader was not stopped"
-                );
-                thread::yield_now();
-            }
-            let (peer, writer) = UnixStream::pair().unwrap();
-            assert_eq!(
-                unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETFD, 0) },
-                0
-            );
-            assert_eq!(
-                unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
-                0
-            );
-            peer_sender.send(peer).unwrap();
-            assert!(event_sender
-                .blocking_send(SwssEvent::Delete { key: "late".into() })
-                .is_err());
-            drop(writer);
-        });
-        let reader = SwssReader {
-            events,
-            failures,
-            thread: Some(reader_thread),
-        };
-        let task = tokio::spawn(async move {
-            let _reader = reader;
-            std::future::pending::<()>().await;
-        });
-        tokio::time::timeout(Duration::from_secs(2), ready)
-            .await
-            .unwrap()
-            .unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        let peer = peer_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
-        peer.set_nonblocking(true).unwrap();
-        peer
-    }
-
-    #[test]
-    fn reader_guard_releases_full_event_and_failure_channels() {
-        for block_on_failure in [false, true] {
-            let (event_sender, events) = channel(1);
-            let (fatal_sender, failures) = channel(1);
-            event_sender
-                .try_send(SwssEvent::Delete {
-                    key: "queued".into(),
-                })
-                .unwrap();
-            fatal_sender.try_send("queued".into()).unwrap();
-            let reader_thread = thread::spawn(move || {
-                if block_on_failure {
-                    assert!(fatal_sender.blocking_send("late".into()).is_err());
-                } else {
-                    assert!(event_sender
-                        .blocking_send(SwssEvent::Delete { key: "late".into() })
-                        .is_err());
-                }
-            });
-            drop(SwssReader {
-                events,
-                failures,
-                thread: Some(reader_thread),
-            });
-        }
-    }
 
     #[test]
     fn raw_session_limits_reject_before_copying_metadata_or_oversized_config() {
@@ -704,11 +562,11 @@ pub(crate) mod tests {
         let session = SwssActor::parse_session_data(&fields);
         assert!(session.validate_sizes().is_err());
         assert!(session.object_names.is_empty());
-        assert_eq!(session.session_config, b"bounded config");
+        assert!(session.session_config.is_empty());
     }
 
     #[tokio::test]
-    async fn oversized_session_is_quarantined_without_copying_config() {
+    async fn oversized_session_is_deleted_without_copying_config() {
         let (sender, mut receiver) = channel(1);
         let session = SessionData {
             session_config: vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1],
@@ -720,7 +578,8 @@ pub(crate) mod tests {
                 .is_err()
         );
         let message = receiver.try_recv().unwrap();
-        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+        assert_eq!(message.key, "test");
         assert!(message.templates.is_none());
     }
 
@@ -847,8 +706,8 @@ pub(crate) mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("quarantine message");
-        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        let message = template_receiver.try_recv().expect("delete message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, key);
     }
 
@@ -914,8 +773,8 @@ pub(crate) mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        let message = template_receiver.try_recv().expect("quarantine message");
-        assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+        let message = template_receiver.try_recv().expect("delete message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, key);
     }
 
@@ -936,9 +795,10 @@ pub(crate) mod tests {
                     .await
                     .is_err()
             );
-            let message = template_receiver.try_recv().expect("quarantine message");
-            assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
+            let message = template_receiver.try_recv().expect("delete message");
+            assert_eq!(message.operation, IPFixTemplateOperation::Delete);
             assert_eq!(message.key, "test|PORT");
+            assert!(message.templates.is_none());
             assert!(template_receiver.try_recv().is_err());
         }
 
@@ -1122,14 +982,12 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn runtime_delete_publishes_administrative_restart_without_quarantine() {
+    async fn runtime_delete_then_valid_update_keeps_swss_loop_alive() {
         let table = setup_test_table();
-        let key = "test_administrative_restart";
+        let key = "test_delete_then_update";
         insert_test_session(&table, key, "Ethernet0", "1", "template").await;
         let (template_sender, mut template_receiver) = channel(10);
-        let (restart_sender, mut restart_receiver) = channel(1);
-        let mut actor = create_test_actor(template_sender);
-        actor.set_restart_notifier(restart_sender);
+        let actor = create_test_actor(template_sender);
         let task = tokio::spawn(SwssActor::run(actor));
 
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -1144,24 +1002,49 @@ pub(crate) mod tests {
         .await
         .unwrap();
         cleanup_test_session(&table, key);
-        let request = tokio::time::timeout(Duration::from_secs(2), restart_receiver.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("runtime delete");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+                    assert!(message.templates.is_none());
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
         assert!(
-            matches!(request, RestartRequest::Administrative(ref message) if message.contains(key))
+            !task.is_finished(),
+            "Delete must not terminate the SWSS loop"
         );
-        let result = tokio::time::timeout(Duration::from_secs(2), task)
+
+        insert_test_session(&table, key, "Ethernet4", "2", "updated_template").await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("update after delete");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                    assert_eq!(message.templates.as_deref().unwrap(), b"updated_template");
+                    assert_eq!(message.object_names, Some(vec!["Ethernet4".into()]));
+                    assert_eq!(message.object_ids, Some(vec![2]));
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "SWSS must keep processing after Delete"
+        );
+        task.abort();
+        assert!(tokio::time::timeout(Duration::from_secs(2), task)
             .await
             .unwrap()
-            .unwrap();
-        assert!(matches!(result, Err(SwssError::RestartRequired(_))));
-        while let Ok(message) = template_receiver.try_recv() {
-            assert_ne!(
-                message.key, key,
-                "Delete must not emit a synthetic quarantine"
-            );
-        }
+            .unwrap_err()
+            .is_cancelled());
+        cleanup_test_session(&table, key);
     }
 
     #[tokio::test]

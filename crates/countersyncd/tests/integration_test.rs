@@ -3,12 +3,14 @@ mod end_to_end_tests {
     use serial_test::serial;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::{spawn, sync::mpsc::channel};
+    use tokio::{spawn, sync::mpsc::channel, time::timeout};
 
     use countersyncd::actor::{
         ipfix::IpfixActor,
         stats_reporter::{StatsReporterActor, StatsReporterConfig},
     };
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Mock writer for capturing stats output during testing
     #[derive(Debug)]
@@ -88,7 +90,7 @@ mod end_to_end_tests {
         let _ = env_logger::builder().is_test(true).try_init();
 
         // Create communication channels
-        let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
+        let (ipfix_template_sender, ipfix_template_receiver) = channel(1);
         let (socket_sender, socket_receiver) = channel(10);
         let (saistats_sender, mut saistats_receiver) = channel(100);
         let (reporter_sender, reporter_receiver) = channel(100);
@@ -111,16 +113,7 @@ mod end_to_end_tests {
             StatsReporterActor::new(reporter_receiver, reporter_config, test_writer_clone);
 
         // Spawn actor tasks
-        let _ipfix_handle = tokio::task::spawn_blocking(move || {
-            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt =
-                tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
-            rt.block_on(async move {
-                IpfixActor::run(ipfix)
-                    .await
-                    .expect_err("IPFIX actor should report closed input channels");
-            });
-        });
+        let ipfix_handle = spawn(IpfixActor::run(ipfix));
 
         let stats_handle = spawn(async move {
             StatsReporterActor::run(stats_reporter).await;
@@ -139,6 +132,13 @@ mod end_to_end_tests {
             .send(template_message)
             .await
             .expect("Failed to send template message");
+
+        // Capacity one makes this wait for template receipt; the actor handles it before data.
+        let template_permit = timeout(TEST_TIMEOUT, ipfix_template_sender.reserve())
+            .await
+            .expect("template receipt timed out")
+            .expect("template channel should remain open");
+        drop(template_permit);
 
         println!("Sent IPFIX template to IpfixActor");
 
@@ -160,9 +160,9 @@ mod end_to_end_tests {
             let mut counters = 0usize;
             let mut observation_times = Vec::new();
             while logical_records < 2 {
-                let batch = saistats_receiver
-                    .recv()
+                let batch = timeout(TEST_TIMEOUT, saistats_receiver.recv())
                     .await
+                    .expect("SAI stats receipt timed out")
                     .expect("SAI stats channel closed early");
                 for record in batch.iter() {
                     logical_records += 1;
@@ -173,12 +173,22 @@ mod end_to_end_tests {
             assert_eq!(counters, 4);
             assert_eq!(observation_times, vec![1000, 1000]);
         });
-        stats_collector.await.expect("stats collector should join");
+        timeout(TEST_TIMEOUT, stats_collector)
+            .await
+            .expect("stats collection timed out")
+            .expect("stats collector should join");
 
         drop(socket_sender);
         drop(ipfix_template_sender);
-        _ipfix_handle.await.expect("IPFIX task should join");
-        stats_handle.await.expect("stats reporter should join");
+        timeout(TEST_TIMEOUT, ipfix_handle)
+            .await
+            .expect("IPFIX shutdown timed out")
+            .expect("IPFIX task should join")
+            .expect_err("IPFIX actor should report closed input channels");
+        timeout(TEST_TIMEOUT, stats_handle)
+            .await
+            .expect("stats reporter shutdown timed out")
+            .expect("stats reporter should join");
 
         // Step 3: Check that stats were generated and reported
         let messages = test_writer.get_messages();
@@ -205,7 +215,7 @@ mod end_to_end_tests {
     #[tokio::test]
     async fn test_direct_ipfix_data_injection() {
         // This test focuses on the IPFIX -> SAI stats portion of the pipeline
-        let (ipfix_template_sender, ipfix_template_receiver) = channel(10);
+        let (ipfix_template_sender, ipfix_template_receiver) = channel(1);
         let (socket_sender, socket_receiver) = channel(10);
         let (saistats_sender, mut saistats_receiver) = channel(100);
         let (reporter_sender, reporter_receiver) = channel(100);
@@ -228,16 +238,7 @@ mod end_to_end_tests {
             StatsReporterActor::new(reporter_receiver, reporter_config, test_writer_clone);
 
         // Spawn actors
-        let ipfix_handle = tokio::task::spawn_blocking(move || {
-            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt =
-                tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
-            rt.block_on(async move {
-                IpfixActor::run(ipfix)
-                    .await
-                    .expect_err("IPFIX actor should report closed input channels");
-            });
-        });
+        let ipfix_handle = spawn(IpfixActor::run(ipfix));
 
         let stats_handle = spawn(async move {
             StatsReporterActor::run(stats_reporter).await;
@@ -257,6 +258,13 @@ mod end_to_end_tests {
             .await
             .expect("Failed to send template message");
 
+        // Unknown-template data is dropped, so wait for template receipt before sending it.
+        let template_permit = timeout(TEST_TIMEOUT, ipfix_template_sender.reserve())
+            .await
+            .expect("template receipt timed out")
+            .expect("template channel should remain open");
+        drop(template_permit);
+
         // Step 2: Send IPFIX data
         let data = create_test_ipfix_data();
         socket_sender
@@ -264,9 +272,9 @@ mod end_to_end_tests {
             .await
             .expect("IPFIX data should be sent");
 
-        let batch = saistats_receiver
-            .recv()
+        let batch = timeout(TEST_TIMEOUT, saistats_receiver.recv())
             .await
+            .expect("SAI stats receipt timed out")
             .expect("should receive a SAI stats batch");
         let records: Vec<_> = batch.iter().collect();
         assert_eq!(records.len(), 1);
@@ -275,8 +283,15 @@ mod end_to_end_tests {
 
         drop(socket_sender);
         drop(ipfix_template_sender);
-        ipfix_handle.await.expect("IPFIX task should join");
-        stats_handle.await.expect("stats reporter should join");
+        timeout(TEST_TIMEOUT, ipfix_handle)
+            .await
+            .expect("IPFIX shutdown timed out")
+            .expect("IPFIX task should join")
+            .expect_err("IPFIX actor should report closed input channels");
+        timeout(TEST_TIMEOUT, stats_handle)
+            .await
+            .expect("stats reporter shutdown timed out")
+            .expect("stats reporter should join");
 
         // Step 3: Verify results
         let messages = test_writer.get_messages();

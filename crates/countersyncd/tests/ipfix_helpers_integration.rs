@@ -1,21 +1,23 @@
 mod ipfix_test_helpers;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
-use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time::{timeout, Duration};
 
 use countersyncd::actor::ipfix::IpfixActor;
 use countersyncd::message::{
-    buffer::SocketBufferMessage,
-    ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage},
-    saistats::SAIStatsBatchMessage,
+    buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
+};
+use ipfix_test_helpers::{
+    generate_ipfix_records, generate_ipfix_templates, generate_ipfix_templates_with_counter_widths,
+    generate_object_metadata,
 };
 
 type ReceivedRecord = (u64, Vec<(u32, u32, u64)>);
 
 fn template_message(key: &str, templates: Vec<u8>, counters: usize) -> IPFixTemplatesMessage {
-    let (object_names, object_ids) = ipfix_test_helpers::generate_object_metadata(counters);
+    let (object_names, object_ids) = generate_object_metadata(counters);
     IPFixTemplatesMessage::new(
         key.to_string(),
         Arc::new(templates),
@@ -24,21 +26,26 @@ fn template_message(key: &str, templates: Vec<u8>, counters: usize) -> IPFixTemp
     )
 }
 
+async fn apply_template(sender: &Sender<IPFixTemplatesMessage>, update: IPFixTemplatesMessage) {
+    sender.send(update).await.unwrap();
+    // Capacity 1: reservation waits for the preceding update to leave the queue.
+    // The actor handles that update synchronously before reading more data.
+    drop(sender.reserve().await.unwrap());
+}
+
 async fn receive_records(
-    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
+    receiver: &mut Receiver<SAIStatsBatchMessage>,
     expected_records: usize,
 ) -> Vec<ReceivedRecord> {
     let mut records = Vec::with_capacity(expected_records);
-
     while records.len() < expected_records {
         let batch = timeout(Duration::from_secs(2), receiver.recv())
             .await
             .expect("timed out waiting for SAI stats batch")
             .expect("SAI stats channel closed early");
-        let batch_counter_count = batch.counter_count();
-        let mut iterated_counters = 0usize;
+        let mut counters = 0;
         for record in batch.iter() {
-            iterated_counters += record.stats.len();
+            counters += record.stats.len();
             records.push((
                 record.observation_time,
                 record
@@ -48,444 +55,242 @@ async fn receive_records(
                     .collect(),
             ));
         }
-        assert_eq!(batch_counter_count, iterated_counters);
+        assert_eq!(batch.counter_count(), counters);
     }
-
-    assert_eq!(
-        records.len(),
-        expected_records,
-        "unexpected logical record count"
-    );
+    assert_eq!(records.len(), expected_records);
     records
 }
 
-async fn send_template_barrier(
-    template_sender: &tokio::sync::mpsc::Sender<IPFixTemplatesMessage>,
-    buffer_sender: &tokio::sync::mpsc::Sender<SocketBufferMessage>,
-    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
-    key: &str,
-    template_id: u16,
+async fn assert_data(
+    sender: &Sender<SocketBufferMessage>,
+    receiver: &mut Receiver<SAIStatsBatchMessage>,
+    templates: &[&[u8]],
+    expected: &[(u64, usize)],
 ) {
-    let template = ipfix_test_helpers::generate_ipfix_templates(1, template_id);
-    let record = ipfix_test_helpers::generate_ipfix_records(&template);
-    template_sender
-        .send(template_message(key, template, 1))
+    sender
+        .send(Arc::new(generate_ipfix_records(&templates.concat())))
         .await
-        .expect("barrier template send should succeed");
-    let template_barrier = template_sender
-        .reserve()
-        .await
-        .expect("template barrier reserve should succeed");
-    buffer_sender
-        .send(Arc::new(record))
-        .await
-        .expect("barrier record send should succeed");
-    assert_eq!(receive_records(receiver, 1).await[0].1.len(), 1);
-    drop(template_barrier);
+        .unwrap();
+    let expected: Vec<ReceivedRecord> = expected
+        .iter()
+        .map(|&(time, counters)| {
+            (
+                time,
+                (0..counters)
+                    .map(|index| (index as u32 + 1, index as u32 + 1, time + index as u64))
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(receive_records(receiver, expected.len()).await, expected);
 }
 
 #[tokio::test]
-async fn deactivate_is_reversible_but_delete_reuse_is_fail_closed() {
-    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
+async fn unknown_data_is_dropped_before_install_and_known_data_keeps_flowing() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(2);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(10);
+    let (saistats_sender, mut receiver) = channel(4);
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
-    let record = Arc::new(ipfix_test_helpers::generate_ipfix_records(&template));
-    template_sender
-        .send(template_message("session", template.clone(), 1))
-        .await
-        .unwrap();
-    send_template_barrier(
+    let healthy = generate_ipfix_templates(1, 300);
+    let template = generate_ipfix_templates(2, 301);
+    apply_template(
         &template_sender,
-        &buffer_sender,
-        &mut saistats_receiver,
-        "install_barrier",
-        301,
+        template_message("healthy", healthy.clone(), 1),
     )
     .await;
+    buffer_sender
+        .send(Arc::new(generate_ipfix_records(&template)))
+        .await
+        .unwrap();
+    // A separate known input on the same domain-0 FIFO proves the unknown data
+    // was processed while its template was unavailable, without blocking peers.
+    assert_data(&buffer_sender, &mut receiver, &[&healthy], &[(1, 1)]).await;
 
-    template_sender
-        .send(IPFixTemplatesMessage::deactivate("session".to_string()))
-        .await
-        .unwrap();
-    template_sender
-        .send(template_message("session", template, 1))
-        .await
-        .unwrap();
-    let rejected_barrier = template_sender.reserve().await.unwrap();
-    drop(rejected_barrier);
-    send_template_barrier(
+    apply_template(
         &template_sender,
-        &buffer_sender,
-        &mut saistats_receiver,
-        "reactivate_barrier",
-        302,
+        template_message("new", template.clone(), 2),
     )
     .await;
-    buffer_sender.send(Arc::clone(&record)).await.unwrap();
-    assert_eq!(
-        receive_records(&mut saistats_receiver, 1).await[0].1.len(),
-        1
-    );
-
-    let delete = IPFixTemplatesMessage::delete("session".to_string());
-    assert_eq!(delete.operation, IPFixTemplateOperation::Delete);
-    template_sender.send(delete).await.unwrap();
-    let delete_barrier = template_sender.reserve().await.unwrap();
-    drop(delete_barrier);
-    buffer_sender.send(record).await.unwrap();
-    let barrier_record = ipfix_test_helpers::generate_ipfix_records(
-        &ipfix_test_helpers::generate_ipfix_templates(1, 302),
-    );
-    buffer_sender.send(Arc::new(barrier_record)).await.unwrap();
-    assert_eq!(receive_records(&mut saistats_receiver, 1).await.len(), 1);
-    assert!(
-        timeout(Duration::from_millis(50), saistats_receiver.recv())
-            .await
-            .is_err(),
-        "late data for a deleted template ID must not be emitted"
-    );
-
-    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
-    template_sender
-        .send(template_message("session", template, 1))
-        .await
-        .unwrap();
-    let restart = actor_handle.await.unwrap().unwrap_err();
-    assert!(restart.to_string().starts_with("restart required:"));
-    drop(buffer_sender);
-    drop(template_sender);
-
-    // A fresh actor models the in-place exec and startup table reconciliation.
-    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
-    let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(1);
-    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-    actor.add_recipient(saistats_sender);
-    let actor_handle = tokio::spawn(IpfixActor::run(actor));
-    let template = ipfix_test_helpers::generate_ipfix_templates(1, 300);
-    let record = ipfix_test_helpers::generate_ipfix_records(&template);
-    template_sender
-        .send(template_message("session", template, 1))
-        .await
-        .unwrap();
-    let barrier = template_sender.reserve().await.unwrap();
-    buffer_sender.send(Arc::new(record)).await.unwrap();
-    assert_eq!(receive_records(&mut saistats_receiver, 1).await.len(), 1);
-    drop(barrier);
+    // Installation must not replay the earlier data ahead of this known probe.
+    assert_data(&buffer_sender, &mut receiver, &[&healthy], &[(1, 1)]).await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&template, &healthy],
+        &[(1, 2), (2, 1)],
+    )
+    .await;
 
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
 }
 
 #[tokio::test]
-async fn ipfix_templates_delete_and_readd_schema_change() {
-    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(5);
+async fn removal_is_owner_local_and_same_domain_ids_can_be_reinstalled() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(10);
-
+    let (saistats_sender, mut receiver) = channel(4);
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
-
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    let max_counters = ipfix_test_helpers::max_counters_per_template();
-    // Prepare five templates across three keys with varying counter counts (small → max)
-    let template_defs = vec![
-        ("helper_key_a", 300u16, 2usize),
-        ("helper_key_a", 301u16, 3usize),
-        ("helper_key_b", 302u16, 16usize),
-        ("helper_key_b", 303u16, 128usize),
-        ("helper_key_c", 304u16, max_counters),
-    ];
-    let delete_key = "helper_key_b";
-    let mut all_templates_bytes = Vec::new();
-    let mut templates_by_key: HashMap<&str, Vec<u8>> = HashMap::new();
-    let mut key_order: Vec<&str> = Vec::new();
-
-    for (key, template_id, counters) in &template_defs {
-        if !key_order.contains(key) {
-            key_order.push(*key);
-        }
-
-        let template = ipfix_test_helpers::generate_ipfix_templates(*counters, *template_id);
-        all_templates_bytes.extend_from_slice(&template);
-        templates_by_key
-            .entry(*key)
-            .or_default()
-            .extend_from_slice(&template);
-    }
-
-    for key in key_order {
-        if let Some(bytes) = templates_by_key.get(key) {
-            let max_counters = template_defs
-                .iter()
-                .filter(|(template_key, _, _)| template_key == &key)
-                .map(|(_, _, counters)| *counters)
-                .max()
-                .expect("key has a template");
-            template_sender
-                .send(template_message(key, bytes.clone(), max_counters))
-                .await
-                .expect("template send should succeed");
-        }
-    }
-
-    send_template_barrier(
+    let healthy = generate_ipfix_templates(1, 300);
+    apply_template(
         &template_sender,
-        &buffer_sender,
-        &mut saistats_receiver,
-        "initial_readiness",
-        305,
+        template_message("healthy", healthy.clone(), 1),
     )
     .await;
+    for remove in [
+        IPFixTemplatesMessage::delete,
+        IPFixTemplatesMessage::deactivate,
+    ] {
+        let original = [
+            generate_ipfix_templates(2, 301),
+            generate_ipfix_templates(3, 302),
+        ]
+        .concat();
+        apply_template(
+            &template_sender,
+            template_message("target", original.clone(), 3),
+        )
+        .await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&original, &healthy],
+            &[(1, 2), (2, 3), (3, 1)],
+        )
+        .await;
 
-    // Generate matching records for all templates across all keys
-    let records = ipfix_test_helpers::generate_ipfix_records(&all_templates_bytes);
-    buffer_sender
-        .send(Arc::new(records))
-        .await
-        .expect("record send should succeed");
+        apply_template(&template_sender, remove("target".to_string())).await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&original, &healthy],
+            &[(3, 1)],
+        )
+        .await;
 
-    let expected_counts: Vec<usize> = template_defs.iter().map(|(_, _, c)| *c).collect();
-
-    let received = receive_records(&mut saistats_receiver, expected_counts.len()).await;
-
-    assert_eq!(
-        received.len(),
-        expected_counts.len(),
-        "should receive one logical record per template"
-    );
-
-    for (i, (observation_time, stats)) in received.iter().enumerate() {
-        let expected_count = expected_counts[i];
-        let expected_obs_time = (i as u64) + 1;
-
-        assert_eq!(
-            *observation_time, expected_obs_time,
-            "observation time mismatch for message {}",
-            i
-        );
-        assert_eq!(
-            stats.len(),
-            expected_count,
-            "counter count mismatch for message {}",
-            i
-        );
-
-        let mut got = stats.clone();
-        got.sort_by(|a, b| a.1.cmp(&b.1));
-
-        let mut probe_indices = vec![0];
-        if expected_count > 1 {
-            probe_indices.push(expected_count / 2);
-            probe_indices.push(expected_count - 1);
-        }
-
-        probe_indices.sort_unstable();
-        probe_indices.dedup();
-
-        for idx in probe_indices {
-            let (type_id, stat_id, counter) = got[idx];
-            let expected_idx = (idx + 1) as u32;
-
-            assert_eq!(
-                type_id, expected_idx,
-                "type_id mismatch at stat {} for message {}",
-                idx, i
-            );
-            assert_eq!(
-                stat_id, expected_idx,
-                "stat_id mismatch at stat {} for message {}",
-                idx, i
-            );
-            assert_eq!(
-                counter,
-                expected_obs_time + idx as u64,
-                "counter mismatch at stat {} for message {}",
-                idx,
-                i
-            );
-        }
-    }
-
-    // Deleting one key's templates should cause subsequent data for that key to be dropped
-    template_sender
-        .send(IPFixTemplatesMessage::delete(delete_key.to_string()))
-        .await
-        .expect("template delete should succeed");
-
-    let template_barrier = template_sender.reserve().await.unwrap();
-    drop(template_barrier);
-    // Reuse the already-installed readiness template as a data-channel barrier;
-    // installing any new template in the deleted domain must fail closed.
-    let barrier_record = ipfix_test_helpers::generate_ipfix_records(
-        &ipfix_test_helpers::generate_ipfix_templates(1, 305),
-    );
-    buffer_sender
-        .send(Arc::new(barrier_record))
-        .await
-        .expect("barrier record send should succeed");
-
-    let barrier = receive_records(&mut saistats_receiver, 1).await;
-    assert_eq!(barrier[0].1.len(), 1);
-
-    // A destructive re-add must use both fresh IDs and a fresh domain.
-    let readd_template_defs = vec![(delete_key, 307u16, 4usize), (delete_key, 308u16, 6usize)];
-
-    let mut readd_templates_bytes = Vec::new();
-    for (_, template_id, counters) in &readd_template_defs {
-        let template = ipfix_test_helpers::generate_ipfix_templates(*counters, *template_id);
-        let mut template = template;
-        template[12..16].copy_from_slice(&1u32.to_be_bytes());
-        readd_templates_bytes.extend_from_slice(&template);
-    }
-
-    template_sender
-        .send(template_message(
-            delete_key,
-            readd_templates_bytes.clone(),
-            readd_template_defs
-                .iter()
-                .map(|(_, _, counters)| *counters)
-                .max()
-                .expect("re-added templates are non-empty"),
-        ))
-        .await
-        .expect("template re-add should succeed");
-    let template_barrier = template_sender
-        .reserve()
-        .await
-        .expect("template channel should remain open");
-    drop(template_barrier);
-
-    let readd_records = ipfix_test_helpers::generate_ipfix_records(&readd_templates_bytes);
-    let mut readd_records = readd_records;
-    let mut offset = 0usize;
-    while offset < readd_records.len() {
-        let len =
-            u16::from_be_bytes([readd_records[offset + 2], readd_records[offset + 3]]) as usize;
-        readd_records[offset + 12..offset + 16].copy_from_slice(&1u32.to_be_bytes());
-        offset += len;
-    }
-    buffer_sender
-        .send(Arc::new(readd_records))
-        .await
-        .expect("record send after re-add should succeed");
-
-    let expected_readd_counts: Vec<usize> =
-        readd_template_defs.iter().map(|(_, _, c)| *c).collect();
-    let readd_received = receive_records(&mut saistats_receiver, expected_readd_counts.len()).await;
-
-    assert_eq!(
-        readd_received.len(),
-        expected_readd_counts.len(),
-        "should receive one stats message per re-added template"
-    );
-
-    for (i, (observation_time, stats)) in readd_received.iter().enumerate() {
-        let expected_count = expected_readd_counts[i];
-        let expected_obs_time = (i as u64) + 1;
-
-        assert_eq!(
-            *observation_time, expected_obs_time,
-            "observation time mismatch after re-add for message {}",
-            i
-        );
-        assert_eq!(
-            stats.len(),
-            expected_count,
-            "counter count mismatch after re-add for message {}",
-            i
-        );
-
-        let mut got = stats.clone();
-        got.sort_by(|a, b| a.1.cmp(&b.1));
-
-        let mut probe_indices = vec![0];
-        if expected_count > 1 {
-            probe_indices.push(expected_count / 2);
-            probe_indices.push(expected_count - 1);
-        }
-
-        probe_indices.sort_unstable();
-        probe_indices.dedup();
-
-        for idx in probe_indices {
-            let (type_id, stat_id, counter) = got[idx];
-            let expected_idx = (idx + 1) as u32;
-
-            assert_eq!(
-                type_id, expected_idx,
-                "type_id mismatch at stat {} after re-add for message {}",
-                idx, i
-            );
-            assert_eq!(
-                stat_id, expected_idx,
-                "stat_id mismatch at stat {} after re-add for message {}",
-                idx, i
-            );
-            assert_eq!(
-                counter,
-                expected_obs_time + idx as u64,
-                "counter mismatch at stat {} after re-add for message {}",
-                idx,
-                i
-            );
-        }
+        // Reuse both IDs in domain 0 with changed widths, without replacing the actor.
+        let replacement = [
+            generate_ipfix_templates_with_counter_widths(&[1, 1], 301),
+            generate_ipfix_templates_with_counter_widths(&[4, 4, 4], 302),
+        ]
+        .concat();
+        apply_template(
+            &template_sender,
+            template_message("target", replacement.clone(), 3),
+        )
+        .await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&replacement, &healthy],
+            &[(1, 2), (2, 3), (3, 1)],
+        )
+        .await;
+        apply_template(&template_sender, remove("target".to_string())).await;
+        assert_data(
+            &buffer_sender,
+            &mut receiver,
+            &[&replacement, &healthy],
+            &[(3, 1)],
+        )
+        .await;
     }
 
     drop(buffer_sender);
     drop(template_sender);
-    drop(saistats_receiver);
+    assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
+}
 
-    actor_handle
-        .await
-        .expect("actor task should join")
-        .expect_err("actor should report closed input channels");
+#[tokio::test]
+async fn active_and_pending_templates_handover_independently() {
+    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
+    let (template_sender, template_receiver) = channel(1);
+    let (saistats_sender, mut receiver) = channel(4);
+    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+    actor.add_recipient(saistats_sender);
+    let actor_handle = tokio::spawn(IpfixActor::run(actor));
+
+    let healthy = generate_ipfix_templates(1, 300);
+    let old_a = generate_ipfix_templates(2, 301);
+    let old_b = generate_ipfix_templates(3, 302);
+    // The helper gives each pair the same ordered object/type/stat identities;
+    // different counter counts distinguish A from B despite changed widths.
+    let new_a = generate_ipfix_templates_with_counter_widths(&[1, 1], 303);
+    let new_b = generate_ipfix_templates_with_counter_widths(&[4, 4, 4], 304);
+    apply_template(
+        &template_sender,
+        template_message("healthy", healthy.clone(), 1),
+    )
+    .await;
+    apply_template(
+        &template_sender,
+        template_message("target", [&old_a[..], &old_b[..]].concat(), 3),
+    )
+    .await;
+    apply_template(
+        &template_sender,
+        template_message("target", [&new_a[..], &new_b[..]].concat(), 3),
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&old_a, &old_b, &healthy],
+        &[(1, 2), (2, 3), (3, 1)],
+    )
+    .await;
+    // A's first new-ID record retires only old A; old B is still usable.
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&new_a, &old_a, &old_b, &healthy],
+        &[(1, 2), (3, 3), (4, 1)],
+    )
+    .await;
+    assert_data(
+        &buffer_sender,
+        &mut receiver,
+        &[&new_b, &old_a, &old_b, &new_a, &healthy],
+        &[(1, 3), (4, 2), (5, 1)],
+    )
+    .await;
+
+    drop(buffer_sender);
+    drop(template_sender);
+    assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
 }
 
 #[tokio::test]
 async fn template_defined_counter_widths_reach_sai_stats() {
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(1);
+    let (saistats_sender, mut receiver) = channel(1);
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    let template = ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(
-        &[1, 2, 3, 4, 5, 6, 7, 8],
-        400,
-    );
-    let record = ipfix_test_helpers::generate_ipfix_records(&template);
-    template_sender
-        .send(template_message("mixed-width", template, 8))
-        .await
-        .unwrap();
-    let barrier = template_sender.reserve().await.unwrap();
-    buffer_sender.send(Arc::new(record)).await.unwrap();
-    let records = receive_records(&mut saistats_receiver, 1).await;
-    drop(barrier);
-
-    assert_eq!(records[0].1.len(), 8);
-    assert_eq!(
-        records[0]
-            .1
-            .iter()
-            .map(|(_, _, counter)| *counter)
-            .collect::<Vec<_>>(),
-        vec![1, 2, 3, 4, 5, 6, 7, 8]
-    );
+    let template = generate_ipfix_templates_with_counter_widths(&[1, 2, 3, 4, 5, 6, 7, 8], 400);
+    apply_template(
+        &template_sender,
+        template_message("mixed-width", template.clone(), 8),
+    )
+    .await;
+    assert_data(&buffer_sender, &mut receiver, &[&template], &[(1, 8)]).await;
 
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());
+    assert!(receiver.recv().await.is_none());
 }
 
 fn repeat_single_record(mut message: Vec<u8>, count: usize) -> Vec<u8> {
@@ -505,112 +310,41 @@ fn repeat_single_record(mut message: Vec<u8>, count: usize) -> Vec<u8> {
     message
 }
 
-async fn assert_single_record_batches(
-    receiver: &mut tokio::sync::mpsc::Receiver<SAIStatsBatchMessage>,
-    expected_batches: usize,
-    counters_per_record: usize,
-) {
-    // These fixtures fit one record, but not two, under the soft batch target.
-    // This is not a counter limit for a single oversized record.
-    for index in 0..expected_batches {
-        let batch = timeout(Duration::from_secs(2), receiver.recv())
-            .await
-            .expect("timed out waiting for split SAI stats batch")
-            .expect("SAI stats channel closed early");
-        assert_eq!(batch.record_count(), 1);
-        assert_eq!(batch.counter_count(), counters_per_record);
-        let mut records = batch.iter();
-        let record = records.next().expect("batch should contain one record");
-        assert_eq!(record.observation_time, (index + 1) as u64);
-        assert_eq!(record.stats.len(), counters_per_record);
-        assert!(records.next().is_none());
-    }
-}
-
 #[tokio::test]
 async fn reduced_width_records_are_split_at_batch_boundaries() {
     const COUNTERS: usize = 8_000;
     const RECORDS: usize = 8;
     let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(1);
     let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(8);
+    let (saistats_sender, mut receiver) = channel(8);
     let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
     actor.add_recipient(saistats_sender);
     let actor_handle = tokio::spawn(IpfixActor::run(actor));
 
-    let template =
-        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
-    let records = repeat_single_record(
-        ipfix_test_helpers::generate_ipfix_records(&template),
-        RECORDS,
-    );
-    template_sender
-        .send(template_message("wide", template, COUNTERS))
-        .await
-        .unwrap();
-    let barrier = template_sender.reserve().await.unwrap();
+    let template = generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
+    let records = repeat_single_record(generate_ipfix_records(&template), RECORDS);
+    apply_template(
+        &template_sender,
+        template_message("wide", template, COUNTERS),
+    )
+    .await;
     buffer_sender.send(Arc::new(records)).await.unwrap();
 
-    assert_single_record_batches(&mut saistats_receiver, RECORDS, COUNTERS).await;
-    drop(barrier);
+    // One record, but not two, fits under the soft batching target.
+    for index in 0..RECORDS {
+        let batch = timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("timed out waiting for split SAI stats batch")
+            .expect("SAI stats channel closed early");
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.counter_count(), COUNTERS);
+        let record = batch.iter().next().unwrap();
+        assert_eq!(record.observation_time, (index + 1) as u64);
+        assert_eq!(record.stats.len(), COUNTERS);
+    }
 
     drop(buffer_sender);
     drop(template_sender);
     assert!(actor_handle.await.unwrap().is_err());
-    assert!(
-        saistats_receiver.recv().await.is_none(),
-        "unexpected extra batch"
-    );
-}
-
-#[tokio::test]
-async fn deferred_reduced_width_records_are_split_at_batch_boundaries() {
-    const COUNTERS: usize = 8_000;
-    const RECORDS: usize = 8;
-    let (buffer_sender, buffer_receiver) = channel::<SocketBufferMessage>(2);
-    let (template_sender, template_receiver) = channel(1);
-    let (saistats_sender, mut saistats_receiver) = channel(8);
-    let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-    actor.add_recipient(saistats_sender);
-    let actor_handle = tokio::spawn(IpfixActor::run(actor));
-
-    // A separate domain lets the barrier pass the unknown Set's domain fence.
-    let mut barrier_template = ipfix_test_helpers::generate_ipfix_templates(1, 401);
-    barrier_template[12..16].copy_from_slice(&1u32.to_be_bytes());
-    let mut barrier_record = ipfix_test_helpers::generate_ipfix_records(&barrier_template);
-    barrier_record[12..16].copy_from_slice(&1u32.to_be_bytes());
-    template_sender
-        .send(template_message("data_barrier", barrier_template, 1))
-        .await
-        .unwrap();
-    let barrier = template_sender.reserve().await.unwrap();
-
-    let template =
-        ipfix_test_helpers::generate_ipfix_templates_with_counter_widths(&vec![1; COUNTERS], 400);
-    let records = repeat_single_record(
-        ipfix_test_helpers::generate_ipfix_records(&template),
-        RECORDS,
-    );
-    buffer_sender.send(Arc::new(records)).await.unwrap();
-    buffer_sender.send(Arc::new(barrier_record)).await.unwrap();
-    // FIFO data-channel delivery proves the unknown Set was processed before
-    // this known record, while its template was still unavailable.
-    assert_eq!(
-        receive_records(&mut saistats_receiver, 1).await,
-        vec![(1, vec![(1, 1, 1)])]
-    );
-    drop(barrier);
-    template_sender
-        .send(template_message("wide", template, COUNTERS))
-        .await
-        .unwrap();
-
-    assert_single_record_batches(&mut saistats_receiver, RECORDS, COUNTERS).await;
-    drop(buffer_sender);
-    drop(template_sender);
-    assert!(actor_handle.await.unwrap().is_err());
-    assert!(
-        saistats_receiver.recv().await.is_none(),
-        "unexpected extra batch"
-    );
+    assert!(receiver.recv().await.is_none(), "unexpected extra batch");
 }

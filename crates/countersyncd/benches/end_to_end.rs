@@ -144,8 +144,7 @@ async fn run_end_to_end(
     endpoint: String,
     exports_counter: Arc<AtomicU64>,
 ) -> (Duration, usize, u64) {
-    let (template_tx, template_rx) =
-        mpsc::channel::<IPFixTemplatesMessage>(prepared.template_messages.len() + 4);
+    let (template_tx, template_rx) = mpsc::channel::<IPFixTemplatesMessage>(1);
     let (buffer_tx, buffer_rx) = mpsc::channel::<SocketBufferMessage>(1024);
     let (counter_tx, mut counter_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
     let (otel_tx, mut otel_rx) = mpsc::channel::<SAIStatsBatchMessage>(1024);
@@ -161,34 +160,45 @@ async fn run_end_to_end(
 
     let ipfix_handle = tokio::spawn(IpfixActor::run(ipfix));
 
-    for message in &prepared.template_messages {
-        template_tx
-            .send(message.clone())
-            .await
-            .expect("template send should succeed");
-    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        for message in &prepared.template_messages {
+            template_tx
+                .send(message.clone())
+                .await
+                .expect("template send should succeed");
+        }
 
-    buffer_tx
-        .send(Arc::clone(&prepared.readiness_record))
-        .await
-        .expect("readiness probe send should succeed");
-    let probe_batch = readiness_rx
-        .recv()
-        .await
-        .expect("readiness probe should produce a batch");
-    assert_eq!(probe_batch.record_count(), 1);
-    assert_eq!(probe_batch.counter_count(), 1);
-    for probe in [
-        counter_rx.recv().await.expect("CounterDB probe delivery"),
-        otel_rx.recv().await.expect("OTel probe delivery"),
-        stats_rx
+        // Wait for the last template to be received before sending best-effort data.
+        let template_permit = template_tx
+            .reserve()
+            .await
+            .expect("template channel should remain open");
+        drop(template_permit);
+
+        buffer_tx
+            .send(Arc::clone(&prepared.readiness_record))
+            .await
+            .expect("readiness probe send should succeed");
+        let probe_batch = readiness_rx
             .recv()
             .await
-            .expect("stats reporter probe delivery"),
-    ] {
-        assert_eq!(probe.record_count(), 1);
-        assert_eq!(probe.counter_count(), 1);
-    }
+            .expect("readiness probe should produce a batch");
+        assert_eq!(probe_batch.record_count(), 1);
+        assert_eq!(probe_batch.counter_count(), 1);
+        for probe in [
+            counter_rx.recv().await.expect("CounterDB probe delivery"),
+            otel_rx.recv().await.expect("OTel probe delivery"),
+            stats_rx
+                .recv()
+                .await
+                .expect("stats reporter probe delivery"),
+        ] {
+            assert_eq!(probe.record_count(), 1);
+            assert_eq!(probe.counter_count(), 1);
+        }
+    })
+    .await
+    .expect("pipeline readiness timed out");
 
     let counter_interval = Duration::from_millis(100);
     let counter_cfg = CounterDBConfig {
