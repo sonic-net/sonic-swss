@@ -11,8 +11,14 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "subscriberstatetable.h"
 
 EXTERN_MOCK_FNS
+
+extern std::string gMySwitchType;
+extern std::string gMyHostName;
+extern std::string gMyAsicName;
+extern bool gMultiAsicVoq;
 
 namespace neighorch_test
 {
@@ -28,6 +34,51 @@ namespace neighorch_test
     static const NeighborEntry VLAN2000_NEIGH = NeighborEntry(TEST_IP, VLAN_2000);
     static const NeighborEntry VLAN3000_NEIGH = NeighborEntry(TEST_IP, VLAN_3000);
     static const NeighborEntry VLAN4000_NEIGH = NeighborEntry(TEST_IP, VLAN_4000);
+
+    struct VoqGlobalsGuard
+    {
+        string switch_type = gMySwitchType;
+        string host_name = gMyHostName;
+        string asic_name = gMyAsicName;
+        bool multi_asic_voq = gMultiAsicVoq;
+
+        ~VoqGlobalsGuard()
+        {
+            gMySwitchType = switch_type;
+            gMyHostName = host_name;
+            gMyAsicName = asic_name;
+            gMultiAsicVoq = multi_asic_voq;
+        }
+    };
+
+    struct PortListGuard
+    {
+        string alias;
+        bool port_exists;
+        Port port;
+
+        explicit PortListGuard(const string &alias) : alias(alias)
+        {
+            auto port_it = gPortsOrch->m_portList.find(alias);
+            port_exists = (port_it != gPortsOrch->m_portList.end());
+            if (port_exists)
+            {
+                port = port_it->second;
+            }
+        }
+
+        ~PortListGuard()
+        {
+            if (port_exists)
+            {
+                gPortsOrch->m_portList[alias] = port;
+            }
+            else
+            {
+                gPortsOrch->m_portList.erase(alias);
+            }
+        }
+    };
 
     class NeighOrchTest : public MockOrchTest
     {
@@ -47,6 +98,45 @@ namespace neighorch_test
             gNeighOrch->addExistingData(&neigh_table);
             static_cast<Orch *>(gNeighOrch)->doTask();
             neigh_table.del(key);
+        }
+
+        std::unique_ptr<Consumer> CreateVoqSystemNeighConsumer()
+        {
+            return std::unique_ptr<Consumer>(new Consumer(
+                new swss::SubscriberStateTable(
+                    m_chassis_app_db.get(),
+                    CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME,
+                    swss::TableConsumable::DEFAULT_POP_BATCH_SIZE,
+                    0),
+                gNeighOrch,
+                CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME));
+        }
+
+        void AddVoqSystemNeighTask(Consumer &consumer, const string &alias)
+        {
+            string key = alias + consumer.getConsumerTable()->getTableNameSeparator() + TEST_IP;
+            consumer.addToSync({ key, SET_COMMAND, { { "encap_index", "1" }, { "neigh", MAC1 } } });
+        }
+
+        void SetVoqInbandPortReady()
+        {
+            string inband_alias = "Vlan4094";
+            Port inband_port;
+            inband_port.m_alias = inband_alias;
+            inband_port.m_type = Port::VLAN;
+            gPortsOrch->m_portList[inband_alias] = inband_port;
+            gPortsOrch->m_inbandPortName = inband_alias;
+        }
+
+        void AddRemoteSystemPort(const string &alias)
+        {
+            Port remote_system_port;
+            remote_system_port.m_alias = alias;
+            remote_system_port.m_type = Port::SYSTEM;
+            remote_system_port.m_rif_id = SAI_NULL_OBJECT_ID;
+            remote_system_port.m_system_port_info.alias = alias;
+            remote_system_port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+            gPortsOrch->m_portList[alias] = remote_system_port;
         }
 
         void ApplyInitialConfigs()
@@ -188,6 +278,46 @@ namespace neighorch_test
             RestoreSaiApis();
         }
     };
+
+    TEST_F(NeighOrchTest, SystemNeighFromDifferentAsicOnSameHost)
+    {
+        VoqGlobalsGuard guard;
+        gMySwitchType = "voq";
+        gMyHostName = "Linecard1";
+        gMyAsicName = "Asic0";
+        gMultiAsicVoq = true;
+        SetVoqInbandPortReady();
+
+        auto consumer = CreateVoqSystemNeighConsumer();
+        string remote_asic_alias = gMyHostName + "|Asic1|Ethernet999";
+        PortListGuard port_guard(remote_asic_alias);
+        AddRemoteSystemPort(remote_asic_alias);
+        AddVoqSystemNeighTask(*consumer, remote_asic_alias);
+
+        gNeighOrch->doVoqSystemNeighTask(*consumer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(kfvKey(consumer->m_toSync.begin()->second),
+                  remote_asic_alias + consumer->getConsumerTable()->getTableNameSeparator() + TEST_IP);
+    }
+
+    TEST_F(NeighOrchTest, SystemNeighFromSameAsicOnSameHost)
+    {
+        VoqGlobalsGuard guard;
+        gMySwitchType = "voq";
+        gMyHostName = "Linecard1";
+        gMyAsicName = "Asic0";
+        gMultiAsicVoq = true;
+        SetVoqInbandPortReady();
+
+        auto consumer = CreateVoqSystemNeighConsumer();
+        string local_asic_alias = gMyHostName + "|asic0|Ethernet999";
+        AddVoqSystemNeighTask(*consumer, local_asic_alias);
+
+        gNeighOrch->doVoqSystemNeighTask(*consumer);
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+    }
 
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
