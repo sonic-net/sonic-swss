@@ -68,14 +68,71 @@ int main(int argc, char **argv)
 
             s.addSelectable(&netlink);
             s.addSelectable(sync.getCfgEvpnNvoTable());
+            // Match the configuration tables read by isLinkLocalEnabled().
+            SubscriberStateTable interfaces(&cfgDb, CFG_INTF_TABLE_NAME);
+            SubscriberStateTable lags(&cfgDb, CFG_LAG_INTF_TABLE_NAME);
+            SubscriberStateTable vlans(&cfgDb, CFG_VLAN_INTF_TABLE_NAME);
+            SubscriberStateTable *interfaceTables[] = {&interfaces, &lags, &vlans};
+            for (auto *table : interfaceTables)
+            {
+                s.addSelectable(table);
+            }
+            set<string> pendingInterfaces;
+            auto nextResync = steady_clock::now();
             while (true)
             {
-                Selectable *temps;
-                s.select(&temps);
+                Selectable *temps = nullptr;
+                s.select(&temps, pendingInterfaces.empty() ? -1 : 1000);
                 if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
                     sync.processCfgEvpnNvo();
-                    continue;
+                }
+                for (auto *table : interfaceTables)
+                {
+                    if (temps != table)
+                    {
+                        continue;
+                    }
+                    deque<KeyOpFieldsValuesTuple> entries;
+                    table->pops(entries);
+                    for (const auto &entry : entries)
+                    {
+                        const auto &key = kfvKey(entry);
+                        // Address entries are not interface mode changes.
+                        if (key.find('|') != string::npos)
+                        {
+                            continue;
+                        }
+                        bool enabled = false;
+                        if (kfvOp(entry) == SET_COMMAND)
+                        {
+                            for (const auto &field : kfvFieldsValues(entry))
+                            {
+                                if (fvField(field) == "ipv6_use_link_local_only" && fvValue(field) == "enable")
+                                {
+                                    enabled = true;
+                                }
+                            }
+                        }
+                        if (enabled)
+                        {
+                            pendingInterfaces.insert(key);
+                        }
+                        else
+                        {
+                            pendingInterfaces.erase(key);
+                        }
+                    }
+                }
+                if (!pendingInterfaces.empty() && steady_clock::now() >= nextResync)
+                {
+                    if (sync.resyncLinkLocalNeighbors(pendingInterfaces))
+                    {
+                        pendingInterfaces.clear();
+                    }
+                    // Coalesce notifications and retry failed dumps without
+                    // waiting for another configuration or neighbor event.
+                    nextResync = steady_clock::now() + seconds(1);
                 }
                 /*
                  * If warmstart is in progress, we check the reconcile timer,
