@@ -274,7 +274,7 @@ struct Args {
     /// Max counters to batch before exporting to OTLP
     #[arg(
         long,
-        default_value = "10000",
+        default_value = "50000",
         help = "Max counters to accumulate before forcing an OTLP export"
     )]
     otel_max_counters_per_export: usize,

@@ -23,16 +23,14 @@ use opentelemetry_proto::tonic::{
         KeyValue as ProtoKeyValue,
     },
     metrics::v1::{
-        Gauge as ProtoGauge,
-        Metric,
         ResourceMetrics,
         ScopeMetrics,
     },
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    otel::OtelMetrics,
-    saistats::SAIStatsMessage,
+    otel::{sai_stats_buffer_to_proto_metrics, DisplaySaiStats},
+    saistats::{SAIStats, SAIStatsMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
@@ -55,7 +53,7 @@ impl Default for OtelActorConfig {
     fn default() -> Self {
         Self {
             collector_endpoint: "http://localhost:4317".to_string(),
-            max_counters_per_export: 10_000,
+            max_counters_per_export: 50_000,
             flush_timeout: Duration::from_secs(1),
         }
     }
@@ -89,8 +87,9 @@ pub struct OtelActor {
     resource: ProtoResource,
     instrumentation_scope: InstrumentationScope,
 
-    // Batching
-    buffer: Vec<OtelMetrics>,
+    // Batching — buffers the raw SAI messages; each is converted straight to
+    // its final protobuf form at flush time
+    buffer: Vec<SAIStatsMessage>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
 
@@ -227,15 +226,14 @@ impl OtelActor {
 
         let was_empty = self.buffer.is_empty();
 
-        // Convert to OTel format using message types and buffer
-        let otel_metrics = OtelMetrics::from_sai_stats(&stats);
         let counters_in_message = stats.stats.len();
 
+        // The export path converts the buffered SAI message directly
         if log::log_enabled!(log::Level::Debug) {
-            self.print_otel_metrics(&otel_metrics).await;
+            self.print_stats_report(&stats);
         }
 
-        self.buffer.push(otel_metrics);
+        self.buffer.push(stats);
         self.buffered_counters += counters_in_message;
 
         // Start timeout when buffer transitions from empty to non-empty
@@ -252,41 +250,20 @@ impl OtelActor {
         Ok(())
     }
 
-    async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
+    fn print_stats_report(&mut self, stats: &SAIStats) {
         self.console_reports += 1;
 
         debug!(
-            "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
+            "[OTel Report #{}] Service: countersyncd, Scope: countersyncd v1.0, Counters: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
-            otel_metrics.service_name,
-            otel_metrics.scope_name,
-            otel_metrics.scope_version,
-            otel_metrics.len(),
+            stats.stats.len(),
             self.messages_received,
             self.exports_performed,
             self.export_failures
         );
 
-        if !otel_metrics.is_empty() {
-            debug!("Gauge Metrics:");
-            for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
-                let data_point = &gauge.data_points[0];
-
-                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                debug!("Value: {}", data_point.value);
-                debug!("Unit: {}", gauge.unit);
-                debug!("Time: {}ns", data_point.time_unix_nano);
-                debug!("Description: {}", gauge.description);
-
-                if !data_point.attributes.is_empty() {
-                    debug!("Attributes:");
-                    for attr in &data_point.attributes {
-                        debug!("  - {}={}", attr.key, attr.value);
-                    }
-                }
-
-                debug!("Raw Gauge: {:#?}", gauge);
-            }
+        if !stats.stats.is_empty() {
+            debug!("SAI counters:\n{}", DisplaySaiStats(stats));
         }
     }
 
@@ -314,23 +291,27 @@ impl OtelActor {
         self.client.as_mut()
     }
 
-    async fn send_request(
-        &mut self,
-        request: ExportMetricsServiceRequest,
-    ) -> Result<(), Box<dyn ExportError>> {
+    async fn send_request(&mut self) -> Result<(), Box<dyn ExportError>> {
         for attempt in 1..=MAX_EXPORT_RETRIES {
-            // Ensure we have a client
-            let client = match self.get_client() {
-                Some(c) => c, // Use existing or newly created client
-                _none => { // Failed to create client
-                    self.client = None;
-                    self.backoff(attempt).await; // Wait before retrying
-                    continue;
-                }
+            // Ensure a client can be created before doing request
+            // construction; when get_client() fails the build below is skipped.
+            if self.get_client().is_none() {
+                self.client = None;
+                self.backoff(attempt).await; // Wait before retrying
+                continue;
+            }
+
+            // Client is available, build a fresh request
+            let request = match self.build_export_request() {
+                Some(r) => r,
+                None => return Ok(()),
             };
 
+            // Re-borrow the client for the actual send
+            let client = self.client.as_mut().expect("client ensured above");
+
             // Attempt to send the request
-            match client.export(request.clone()).await {
+            match client.export(request).await {
                 Ok(_) => { // Successful export
                     self.exports_performed += 1;
                     self.consecutive_failures = 0;
@@ -349,38 +330,16 @@ impl OtelActor {
         Err(Box::new(OtelActorExportError("Max export retries exceeded".to_string())))
     }
 
-    // Export buffered metrics to OpenTelemetry collector 
-    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-
-        let mut proto_metrics: Vec<Metric> = Vec::new();
-
-        for otel_metrics in &self.buffer {
-            for gauge in &otel_metrics.gauges {
-                let proto_data_points = gauge.data_points.iter()
-                    .map(|dp| dp.to_proto())
-                    .collect();
-
-                let proto_gauge = ProtoGauge {
-                    data_points: proto_data_points,
-                };
-
-                proto_metrics.push(Metric {
-                    name: gauge.name.clone(),
-                    description: gauge.description.clone(),
-                    metadata: vec![],
-                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
-                    ..Default::default()
-                });
-            }
-        }
+    /// Build an export request from the currently buffered metrics.
+    /// Returns `None` when there is nothing to export (empty metrics).
+    /// The buffer is left intact so it can be rebuilt on retry.
+    fn build_export_request(&self) -> Option<ExportMetricsServiceRequest> {
+        // Merge stats that share the same (type_id, stat_id) across ALL buffered
+        // messages into a single gauge
+        let proto_metrics = sai_stats_buffer_to_proto_metrics(&self.buffer);
 
         if proto_metrics.is_empty() {
-            self.buffer.clear();
-            self.buffered_counters = 0;
-            return Ok(());
+            return None;
         }
 
         let resource_metrics = ResourceMetrics {
@@ -393,12 +352,20 @@ impl OtelActor {
             schema_url: String::new(),
         };
 
-        let request = ExportMetricsServiceRequest {
+        Some(ExportMetricsServiceRequest {
             resource_metrics: vec![resource_metrics],
-        };
+        })
+    }
 
-        // Send the export request
-        let result = self.send_request(request).await;
+    // Export buffered metrics to OpenTelemetry collector 
+    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        // The request is built lazily inside send_request from the intact
+        // buffer (rebuilt per retry)
+        let result = self.send_request().await;
 
         if let Err(e) = &result {
             self.export_failures += 1;
