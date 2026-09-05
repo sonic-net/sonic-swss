@@ -165,7 +165,6 @@ impl SAIStatsBatch {
         self.stats.reserve(counters);
     }
 
-    #[allow(dead_code)]
     pub fn record_count(&self) -> usize {
         self.records.len()
     }

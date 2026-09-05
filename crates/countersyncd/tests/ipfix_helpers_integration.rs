@@ -236,23 +236,14 @@ async fn ipfix_templates_delete_and_readd_schema_change() {
         }
     }
 
-    let readiness_template = ipfix_test_helpers::generate_ipfix_templates(1, 305);
-    let readiness_record = ipfix_test_helpers::generate_ipfix_records(&readiness_template);
-    template_sender
-        .send(template_message("initial_readiness", readiness_template, 1))
-        .await
-        .expect("readiness template send should succeed");
-    let template_barrier = template_sender
-        .reserve()
-        .await
-        .expect("readiness template barrier should succeed");
-    buffer_sender
-        .send(Arc::new(readiness_record))
-        .await
-        .expect("readiness record send should succeed");
-    let readiness = receive_records(&mut saistats_receiver, 1).await;
-    assert_eq!(readiness[0].1.len(), 1);
-    drop(template_barrier);
+    send_template_barrier(
+        &template_sender,
+        &buffer_sender,
+        &mut saistats_receiver,
+        "initial_readiness",
+        305,
+    )
+    .await;
 
     // Generate matching records for all templates across all keys
     let records = ipfix_test_helpers::generate_ipfix_records(&all_templates_bytes);

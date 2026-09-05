@@ -324,24 +324,6 @@ impl SwssActor {
         }
     }
 
-    #[cfg(test)]
-    async fn process_session_delete(template_recipient: &Sender<IPFixTemplatesMessage>, key: &str) {
-        info!("Session deleted: {}", key);
-
-        let delete_message = IPFixTemplatesMessage::delete(key.to_string());
-
-        match template_recipient.send(delete_message).await {
-            Ok(_) => {
-                info!("Successfully sent session deletion message for: {}", key);
-            }
-            Err(e) => {
-                error!("Failed to send session deletion message for {}: {}", key, e);
-            }
-        }
-
-        debug!("Session cleanup for {} completed", key);
-    }
-
     /// Validates session data and processes enabled IPFIX sessions
     ///
     /// # Arguments
@@ -367,19 +349,15 @@ impl SwssActor {
         session_data: &SessionData,
     ) -> Result<(), String> {
         // A disabled or repurposed row deactivates any previously installed IPFIX session.
-        if session_data.stream_status != "enabled" {
-            debug!("Deactivating disabled session: {}", key);
-            return template_recipient
-                .send(IPFixTemplatesMessage::deactivate(key.to_string()))
-                .await
-                .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
-        }
-
-        if session_data.session_type != "ipfix" {
-            debug!(
-                "Deactivating non-IPFIX session: {} (type: {})",
-                key, session_data.session_type
-            );
+        if session_data.stream_status != "enabled" || session_data.session_type != "ipfix" {
+            if session_data.stream_status != "enabled" {
+                debug!("Deactivating disabled session: {}", key);
+            } else {
+                debug!(
+                    "Deactivating non-IPFIX session: {} (type: {})",
+                    key, session_data.session_type
+                );
+            }
             return template_recipient
                 .send(IPFixTemplatesMessage::deactivate(key.to_string()))
                 .await
@@ -429,7 +407,7 @@ impl SwssActor {
             .map(str::trim)
             .map(str::to_string)
             .collect();
-        if object_names.is_empty() || object_names.iter().any(String::is_empty) {
+        if object_names.iter().any(String::is_empty) {
             return Err("object_names must contain non-empty names".to_string());
         }
 
@@ -466,15 +444,6 @@ impl SwssActor {
             Some(object_names),
             Some(object_ids),
         ))
-    }
-
-    /// Handles session deletion events
-    ///
-    /// # Arguments
-    /// * `key` - Session key that was deleted
-    #[cfg(test)]
-    async fn handle_session_delete(&mut self, key: &str) {
-        Self::process_session_delete(&self.template_recipient, key).await;
     }
 }
 
@@ -588,27 +557,6 @@ mod tests {
         let message = template_receiver.try_recv().expect("quarantine message");
         assert_eq!(message.operation, IPFixTemplateOperation::Quarantine);
         assert_eq!(message.key, key);
-    }
-
-    #[tokio::test]
-    async fn test_session_deletion() {
-        let (template_sender, mut template_receiver) = channel(1);
-        let mut actor = create_test_actor(template_sender);
-
-        let key = "test_session|PORT";
-
-        // Process session deletion
-        actor.handle_session_delete(key).await;
-
-        // Verify the deletion message was sent
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a deletion message");
-        assert_eq!(received_message.key, "test_session|PORT");
-        assert_eq!(received_message.operation, IPFixTemplateOperation::Delete);
-        assert!(received_message.templates.is_none());
-        assert!(received_message.object_names.is_none());
-        assert!(received_message.object_ids.is_none());
     }
 
     #[tokio::test]

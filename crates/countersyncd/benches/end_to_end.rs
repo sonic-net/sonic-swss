@@ -236,7 +236,7 @@ async fn run_end_to_end(
         .cloned()
         .map(|tmpl| {
             let tx = buffer_tx.clone();
-            let base_record = tmpl.base_record.clone();
+            let base_record = Arc::clone(&tmpl.payload_pool[0]);
             tokio::spawn(async move {
                 for _ in 0..tmpl.records {
                     if tx.send(Arc::clone(&base_record)).await.is_err() {

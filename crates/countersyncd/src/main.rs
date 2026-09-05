@@ -158,12 +158,7 @@ fn classify_ipfix_join(
     result: Result<Result<(), IpfixError>, tokio::task::JoinError>,
 ) -> SupervisorExit {
     match result {
-        Ok(Ok(())) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: "exited unexpectedly".to_string(),
-            restart: None,
-        },
+        Ok(Ok(())) => classify_join(name, Ok(())),
         Ok(Err(e)) => {
             let restart = is_restart_required(&e).then(|| RestartRequest::Failure(e.to_string()));
             SupervisorExit {
@@ -173,12 +168,7 @@ fn classify_ipfix_join(
                 restart,
             }
         }
-        Err(e) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: describe_join_error(e),
-            restart: None,
-        },
+        Err(e) => classify_join(name, Err(e)),
     }
 }
 
@@ -187,12 +177,7 @@ fn classify_swss_join(
     result: Result<Result<(), SwssError>, tokio::task::JoinError>,
 ) -> SupervisorExit {
     match result {
-        Ok(Ok(())) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: "exited unexpectedly".to_string(),
-            restart: None,
-        },
+        Ok(Ok(())) => classify_join(name, Ok(())),
         Ok(Err(SwssError::RestartRequired(message))) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
@@ -205,12 +190,7 @@ fn classify_swss_join(
             message,
             restart: None,
         },
-        Err(e) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: describe_join_error(e),
-            restart: None,
-        },
+        Err(e) => classify_join(name, Err(e)),
     }
 }
 

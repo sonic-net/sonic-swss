@@ -28,7 +28,6 @@ pub struct DatasetSpec {
 #[allow(dead_code)]
 pub struct PreparedTemplate {
     pub spec: TemplateSpec,
-    pub base_record: Arc<Vec<u8>>,
     pub payload_pool: Arc<[SocketBufferMessage]>,
     pub records: usize,
 }
@@ -77,7 +76,6 @@ impl PreparedDataset {
 
             templates.push(PreparedTemplate {
                 spec: tmpl.clone(),
-                base_record: Arc::clone(&payload_pool[0]),
                 payload_pool: payload_pool.into(),
                 records: records_per_template[idx],
             });

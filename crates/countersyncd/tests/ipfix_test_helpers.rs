@@ -44,8 +44,6 @@ pub fn generate_object_metadata(counters_count: usize) -> (Vec<String>, Vec<u16>
 }
 
 pub fn generate_ipfix_templates(counters_count: usize, template_id: u16) -> Vec<u8> {
-    assert!(template_id >= 256, "template_id must be >= 256");
-
     // If caller passes 0, use the maximum counters that fit in one IPFIX message.
     let counters_count = validated_counters_count(counters_count);
     generate_ipfix_templates_with_counter_widths(&vec![8; counters_count], template_id)
