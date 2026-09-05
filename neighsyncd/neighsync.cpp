@@ -1,7 +1,14 @@
 #include <string>
+#include <cerrno>
+#include <cstring>
+#include <net/if.h>
 #include <netinet/in.h>
+#include <netlink/attr.h>
+#include <netlink/handlers.h>
+#include <netlink/msg.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include "logger.h"
@@ -16,6 +23,7 @@
 #include "warm_restart.h"
 #include <algorithm>
 #include <linux/neighbour.h>
+#include <memory>
 
 using namespace std;
 using namespace swss;
@@ -26,6 +34,104 @@ using namespace swss;
 
 static constexpr int VALID_NEIGH_STATES =
     NUD_PERMANENT | NUD_NOARP | NUD_REACHABLE | NUD_PROBE | NUD_STALE | NUD_DELAY;
+static constexpr int LINK_LOCAL_DUMP_INACTIVITY_TIMEOUT_MS = 1000;
+
+namespace
+{
+
+struct NlSocketDeleter
+{
+    void operator()(struct nl_sock *socket) const
+    {
+        if (socket)
+        {
+            nl_close(socket);
+            nl_socket_free(socket);
+        }
+    }
+};
+
+struct LinkLocalDumpContext
+{
+    NeighSync *sync;
+    int ifindex;
+    uint32_t sequence;
+    bool complete = false;
+    bool interrupted = false;
+    bool kernelError = false;
+    int error = 0;
+};
+
+int processLinkLocalDumpMessage(struct nl_msg *message, void *arg)
+{
+    auto *context = static_cast<LinkLocalDumpContext *>(arg);
+    auto *header = nlmsg_hdr(message);
+    if (header->nlmsg_seq != context->sequence)
+    {
+        return NL_SKIP;
+    }
+
+    if (header->nlmsg_flags & NLM_F_DUMP_INTR)
+    {
+        context->interrupted = true;
+    }
+
+    if (header->nlmsg_type != RTM_NEWNEIGH)
+    {
+        return NL_SKIP;
+    }
+
+    struct rtnl_neigh *rawNeighbor = nullptr;
+    int error = rtnl_neigh_parse(header, &rawNeighbor);
+    if (error < 0)
+    {
+        context->error = error;
+        return NL_STOP;
+    }
+
+    unique_ptr<rtnl_neigh, decltype(&rtnl_neigh_put)> neighbor(rawNeighbor, rtnl_neigh_put);
+    if (rtnl_neigh_get_ifindex(neighbor.get()) != context->ifindex)
+    {
+        return NL_SKIP;
+    }
+
+    auto *address = rtnl_neigh_get_dst(neighbor.get());
+    if (rtnl_neigh_get_family(neighbor.get()) != AF_INET6 || !address ||
+        !IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(address)))
+    {
+        return NL_SKIP;
+    }
+
+    context->sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neighbor.get()));
+    return NL_OK;
+}
+
+int finishLinkLocalDump(struct nl_msg *message, void *arg)
+{
+    auto *context = static_cast<LinkLocalDumpContext *>(arg);
+    auto *header = nlmsg_hdr(message);
+    if (header->nlmsg_seq != context->sequence)
+    {
+        return NL_SKIP;
+    }
+
+    if (header->nlmsg_flags & NLM_F_DUMP_INTR)
+    {
+        context->interrupted = true;
+    }
+    context->complete = true;
+    return NL_STOP;
+}
+
+int handleLinkLocalDumpError(struct sockaddr_nl *, struct nlmsgerr *error, void *arg)
+{
+    auto *context = static_cast<LinkLocalDumpContext *>(arg);
+    context->kernelError = true;
+    context->error = error->error;
+    return NL_STOP;
+}
+
+}
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb, DBConnector *appDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
@@ -86,6 +192,138 @@ NeighSync::~NeighSync()
         nl_close(m_nl_sock);
         nl_socket_free(m_nl_sock);
     }
+}
+
+// Use a separate dump socket so live notifications remain queued on the main
+// socket and are processed after the snapshot through the same onMsg path.
+bool NeighSync::resyncLinkLocalNeighbors(const string &interface)
+{
+    const unsigned int ifindex = if_nametoindex(interface.c_str());
+    if (ifindex == 0)
+    {
+        SWSS_LOG_ERROR("Unable to resolve interface '%s' for link-local neighbor replay: %s",
+                       interface.c_str(), strerror(errno));
+        return false;
+    }
+
+    unique_ptr<nl_sock, NlSocketDeleter> socket(nl_socket_alloc());
+    if (!socket)
+    {
+        SWSS_LOG_ERROR("Unable to allocate link-local neighbor dump socket for '%s'",
+                       interface.c_str());
+        return false;
+    }
+    int error = nl_connect(socket.get(), NETLINK_ROUTE);
+    if (error < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect link-local neighbor dump socket for '%s': %s",
+                       interface.c_str(), nl_geterror(error));
+        return false;
+    }
+
+    unique_ptr<nl_msg, decltype(&nlmsg_free)> request(nlmsg_alloc(), nlmsg_free);
+    if (!request)
+    {
+        SWSS_LOG_ERROR("Unable to allocate link-local neighbor dump request for '%s'",
+                       interface.c_str());
+        return false;
+    }
+
+    auto *header = nlmsg_put(request.get(), NL_AUTO_PORT, NL_AUTO_SEQ, RTM_GETNEIGH,
+                             sizeof(struct ndmsg), NLM_F_REQUEST | NLM_F_DUMP);
+    if (!header)
+    {
+        SWSS_LOG_ERROR("Unable to initialize link-local neighbor dump request for '%s'",
+                       interface.c_str());
+        return false;
+    }
+
+    auto *neighborMessage = static_cast<struct ndmsg *>(NLMSG_DATA(header));
+    memset(neighborMessage, 0, sizeof(*neighborMessage));
+    neighborMessage->ndm_family = AF_INET6;
+    if (nla_put_u32(request.get(), NDA_IFINDEX, ifindex) < 0)
+    {
+        SWSS_LOG_ERROR("Unable to add ifindex %u to link-local neighbor dump request for '%s'",
+                       ifindex, interface.c_str());
+        return false;
+    }
+
+    error = nl_send_auto(socket.get(), request.get());
+    if (error < 0)
+    {
+        SWSS_LOG_ERROR("Unable to send link-local neighbor dump request for '%s' (ifindex %u): %s",
+                       interface.c_str(), ifindex, nl_geterror(error));
+        return false;
+    }
+
+    LinkLocalDumpContext context{this, static_cast<int>(ifindex), header->nlmsg_seq};
+    unique_ptr<nl_cb, decltype(&nl_cb_put)> callbacks(nl_cb_alloc(NL_CB_DEFAULT), nl_cb_put);
+    if (!callbacks)
+    {
+        SWSS_LOG_ERROR("Unable to allocate link-local neighbor dump callbacks for '%s' (ifindex %u)",
+                       interface.c_str(), ifindex);
+        return false;
+    }
+
+    error = nl_cb_set(callbacks.get(), NL_CB_VALID, NL_CB_CUSTOM,
+                      processLinkLocalDumpMessage, &context);
+    if (error >= 0)
+    {
+        error = nl_cb_set(callbacks.get(), NL_CB_FINISH, NL_CB_CUSTOM,
+                          finishLinkLocalDump, &context);
+    }
+    if (error >= 0)
+    {
+        error = nl_cb_err(callbacks.get(), NL_CB_CUSTOM, handleLinkLocalDumpError, &context);
+    }
+    if (error < 0)
+    {
+        SWSS_LOG_ERROR("Unable to configure link-local neighbor dump callbacks for '%s' "
+                       "(ifindex %u): %s", interface.c_str(), ifindex, nl_geterror(error));
+        return false;
+    }
+
+    while (!context.complete && context.error == 0)
+    {
+        struct pollfd descriptor = {nl_socket_get_fd(socket.get()), POLLIN, 0};
+        int ready = poll(&descriptor, 1, LINK_LOCAL_DUMP_INACTIVITY_TIMEOUT_MS);
+        if (ready == 0)
+        {
+            SWSS_LOG_ERROR("Timed out receiving link-local neighbor dump for '%s' (ifindex %u)",
+                           interface.c_str(), ifindex);
+            return false;
+        }
+        if (ready < 0)
+        {
+            SWSS_LOG_ERROR("Unable to poll link-local neighbor dump socket for '%s' "
+                           "(ifindex %u): %s", interface.c_str(), ifindex, strerror(errno));
+            return false;
+        }
+
+        error = nl_recvmsgs(socket.get(), callbacks.get());
+        if (error < 0)
+        {
+            SWSS_LOG_ERROR("Unable to receive link-local neighbor dump for '%s' "
+                           "(ifindex %u): %s", interface.c_str(), ifindex, nl_geterror(error));
+            return false;
+        }
+    }
+
+    if (context.error < 0)
+    {
+        const char *description = context.kernelError ? strerror(-context.error) : nl_geterror(context.error);
+        SWSS_LOG_ERROR("Link-local neighbor dump failed for '%s' (ifindex %u): %s",
+                       interface.c_str(), ifindex, description);
+        return false;
+    }
+    if (!context.complete || context.interrupted)
+    {
+        SWSS_LOG_ERROR("Link-local neighbor dump was interrupted for '%s' (ifindex %u)",
+                       interface.c_str(), ifindex);
+        return false;
+    }
+
+    return true;
 }
 
 /*
