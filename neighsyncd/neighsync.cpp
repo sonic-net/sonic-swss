@@ -16,6 +16,7 @@
 #include "warm_restart.h"
 #include <algorithm>
 #include <linux/neighbour.h>
+#include <memory>
 
 using namespace std;
 using namespace swss;
@@ -81,6 +82,54 @@ NeighSync::~NeighSync()
         nl_close(m_nl_sock);
         nl_socket_free(m_nl_sock);
     }
+}
+
+// Use a separate dump socket so live notifications remain queued on the main
+// socket and are processed after the snapshot through the same onMsg path.
+bool NeighSync::resyncLinkLocalNeighbors(const set<string> &interfaces)
+{
+    unique_ptr<nl_sock, decltype(&nl_socket_free)> socket(nl_socket_alloc(), nl_socket_free);
+    if (!socket)
+    {
+        SWSS_LOG_ERROR("Unable to allocate link-local neighbor dump socket");
+        return false;
+    }
+    int error = nl_connect(socket.get(), NETLINK_ROUTE);
+    if (error < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect link-local neighbor dump socket: %s", nl_geterror(error));
+        return false;
+    }
+
+    nl_cache *rawCache = nullptr;
+    error = rtnl_neigh_alloc_cache(socket.get(), &rawCache);
+    unique_ptr<nl_cache, decltype(&nl_cache_free)> cache(rawCache, nl_cache_free);
+    if (error < 0)
+    {
+        SWSS_LOG_ERROR("Unable to dump link-local neighbors: %s", nl_geterror(error));
+        return false;
+    }
+
+    for (nl_object *object = nl_cache_get_first(cache.get()); object;
+         object = nl_cache_get_next(object))
+    {
+        auto *neighbor = reinterpret_cast<rtnl_neigh *>(object);
+        auto *address = rtnl_neigh_get_dst(neighbor);
+        if (rtnl_neigh_get_family(neighbor) != AF_INET6 || !address ||
+            !IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(address)))
+        {
+            continue;
+        }
+        const auto interface = LinkCache::getInstance().ifindexToName(rtnl_neigh_get_ifindex(neighbor));
+        if (interfaces.count(interface) == 0)
+        {
+            continue;
+        }
+        // Recheck current configuration and retain normal NUD/MAC filtering
+        // and warm-restart handling for each neighbor.
+        onMsg(RTM_NEWNEIGH, object);
+    }
+    return true;
 }
 
 /*
