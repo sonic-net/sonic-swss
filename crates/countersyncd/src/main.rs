@@ -186,27 +186,6 @@ fn parse_positive_capacity(value: &str) -> Result<usize, String> {
     Ok(capacity)
 }
 
-fn otel_failure_exit(message: String) -> SupervisorExit {
-    SupervisorExit {
-        actor_name: "OpenTelemetry",
-        exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
-        message,
-    }
-}
-
-fn reconcile_otel_failure(
-    exit: &mut SupervisorExit,
-    receiver: &mut tokio::sync::mpsc::Receiver<String>,
-) {
-    // A root failure may arrive after recv was polled Pending but before a
-    // dependent actor's join completed in the same select poll.
-    if exit.exit_code != EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED {
-        if let Ok(message) = receiver.try_recv() {
-            *exit = otel_failure_exit(message);
-        }
-    }
-}
-
 const MAX_BATCH_CHANNEL_CAPACITY: usize = 64;
 
 fn clamp_batch_capacity(option: &str, capacity: usize) -> usize {
@@ -518,7 +497,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Configure OpenTelemetry export with settings from command line arguments
-    let (otel_failure_sender, mut otel_failure_receiver) = channel(1);
     let otel_actor = if args.enable_otel {
         let otel_config = OtelActorConfig {
             collector_endpoint: args.otel_endpoint.clone(),
@@ -529,10 +507,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add OTEL to ipfix recipients only when enabled
         ipfix.add_recipient(otel_sender.clone());
         match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
-            Ok(mut actor) => {
-                actor.set_failure_notifier(otel_failure_sender);
-                Some(actor)
-            }
+            Ok(actor) => Some(actor),
             Err(e) => {
                 error!("Failed to initialize OtelActor: {}", e);
                 return Err(e.into());
@@ -542,7 +517,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Drop the receiver if OTEL export is disabled
         drop(otel_receiver);
         drop(otel_shutdown_sender);
-        drop(otel_failure_sender);
         None
     };
 
@@ -613,14 +587,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // All actors are treated as critical. If any actor exits, abort the rest and terminate.
-    let mut first_exit = tokio::select! {
-        biased;
-        Some(message) = otel_failure_receiver.recv() => {
-            otel_failure_exit(message)
-        }
-        res = &mut swss_handle => {
-            classify_swss_join("SWSS", res)
-        }
+    let first_exit = tokio::select! {
         res = &mut data_netlink_handle => {
             classify_join("Data netlink", res)
         }
@@ -629,6 +596,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         res = &mut ipfix_handle => {
             classify_ipfix_join("IPFIX", res)
+        }
+        res = &mut swss_handle => {
+            classify_swss_join("SWSS", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
             classify_join("Stats reporter", res)
@@ -640,8 +610,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             classify_otel_join("OpenTelemetry", res)
         }
     };
-
-    reconcile_otel_failure(&mut first_exit, &mut otel_failure_receiver);
 
     error!(
         "Critical actor '{}' triggered daemon shutdown: {}",
@@ -672,51 +640,6 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, clap::Error> {
         Args::try_parse_from(args)
-    }
-
-    #[tokio::test]
-    async fn otel_failure_has_priority_over_ready_dependent_exit() {
-        let (sender, mut receiver) = channel(1);
-        sender.try_send("retry exhaustion".into()).unwrap();
-        let exit = tokio::select! {
-            biased;
-            Some(message) = receiver.recv() => otel_failure_exit(message),
-            exit = std::future::ready(classify_join("IPFIX", Ok(()))) => exit,
-        };
-        assert_eq!(exit.exit_code, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        assert_eq!(exit.actor_name, "OpenTelemetry");
-    }
-
-    #[tokio::test]
-    async fn otel_failure_between_select_polls_overrides_dependent_exit() {
-        let (sender, mut receiver) = channel(1);
-        let dependency = std::future::poll_fn(move |_| {
-            sender.try_send("retry exhaustion".into()).unwrap();
-            std::task::Poll::Ready(classify_join("IPFIX", Ok(())))
-        });
-        let mut exit = tokio::select! {
-            biased;
-            _ = receiver.recv() => panic!("the empty receiver must be polled first"),
-            exit = dependency => exit,
-        };
-        assert_eq!(exit.exit_code, EXIT_FAILURE);
-        reconcile_otel_failure(&mut exit, &mut receiver);
-        assert_eq!(exit.exit_code, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        assert_eq!(exit.actor_name, "OpenTelemetry");
-    }
-
-    #[test]
-    fn otel_reconciliation_preserves_unnotified_exit_and_selected_root_failure() {
-        let (sender, mut receiver) = channel(1);
-        let mut exit = classify_join("IPFIX", Ok(()));
-        reconcile_otel_failure(&mut exit, &mut receiver);
-        assert_eq!(exit.exit_code, EXIT_FAILURE);
-        assert_eq!(exit.actor_name, "IPFIX");
-        sender.try_send("retry exhaustion".into()).unwrap();
-        exit = otel_failure_exit("selected root failure".into());
-        reconcile_otel_failure(&mut exit, &mut receiver);
-        assert_eq!(exit.exit_code, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        assert_eq!(exit.message, "selected root failure");
     }
 
     #[test]

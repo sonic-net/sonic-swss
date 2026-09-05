@@ -17,10 +17,7 @@ use std::{
 };
 use tokio::{
     select,
-    sync::{
-        mpsc::{Receiver, Sender},
-        oneshot,
-    },
+    sync::{mpsc::Receiver, oneshot},
     time::{sleep_until, Instant as TokioInstant, Sleep},
 };
 use tonic::transport::{Channel, Endpoint};
@@ -72,7 +69,6 @@ pub struct OtelActor {
     stats_receiver: Receiver<SAIStatsBatchMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
-    failure_notifier: Option<Sender<String>>,
     client: Option<MetricsServiceClient<Channel>>,
 
     // Pre-allocated reusable structures
@@ -136,7 +132,6 @@ impl OtelActor {
             stats_receiver,
             config,
             shutdown_notifier: Some(shutdown_notifier),
-            failure_notifier: None,
             client,
             resource,
             instrumentation_scope,
@@ -150,10 +145,6 @@ impl OtelActor {
             consecutive_failures: 0,
             should_shutdown: false,
         })
-    }
-
-    pub fn set_failure_notifier(&mut self, notifier: Sender<String>) {
-        self.failure_notifier = Some(notifier);
     }
 
     /// Main run loop
@@ -205,11 +196,6 @@ impl OtelActor {
             if let Err(e) = self.flush_buffer().await {
                 run_error = Some(e);
             }
-        }
-        // Publish the root cause before shutdown can drop the stats receiver and
-        // cause dependent actors to exit, even before this task's join is ready.
-        if let (Some(error), Some(notifier)) = (&run_error, &self.failure_notifier) {
-            let _ = notifier.try_send(format!("export failed after retries: {error:?}"));
         }
         self.shutdown().await;
         match run_error {
@@ -464,38 +450,6 @@ mod tests {
     use crate::message::saistats::{SAIStat, SAIStatsBatch};
     use std::sync::Arc;
     use tokio::sync::mpsc;
-
-    #[tokio::test(start_paused = true)]
-    async fn retry_exhaustion_is_published_before_receiver_drop_and_join() {
-        let (stats_sender, stats_receiver) = mpsc::channel(1);
-        let (shutdown_sender, _shutdown_receiver) = oneshot::channel();
-        let (failure_sender, mut failure_receiver) = mpsc::channel(1);
-        let mut actor = OtelActor::new(
-            stats_receiver,
-            OtelActorConfig {
-                collector_endpoint: "not a valid URI".into(),
-                max_counters_per_export: 1,
-                ..OtelActorConfig::default()
-            },
-            shutdown_sender,
-        )
-        .await
-        .unwrap();
-        actor.set_failure_notifier(failure_sender);
-        let mut batch = SAIStatsBatch::with_capacity(1, 1);
-        batch.push_record(10, [SAIStat::new("Ethernet0", 1, 2, 3)]);
-        stats_sender.send(Arc::new(batch)).await.unwrap();
-        let task = tokio::spawn(actor.run());
-        let failure = tokio::time::timeout(Duration::from_secs(400), failure_receiver.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(failure.contains("Max export retries exceeded"));
-        assert!(!stats_sender.is_closed());
-        assert!(!task.is_finished());
-        stats_sender.closed().await;
-        assert!(task.await.unwrap().is_err());
-    }
 
     #[tokio::test]
     async fn handles_batch_records_in_order_and_counts_records() {
