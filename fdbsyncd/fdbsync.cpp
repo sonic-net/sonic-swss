@@ -18,8 +18,11 @@
 #include "macaddress.h"
 #include "exec.h"
 #include "fdbsync.h"
+#include "interface.h"
 #include "warm_restart.h"
 #include "errno.h"
+
+#include <cctype>
 
 using namespace std;
 using namespace swss;
@@ -28,6 +31,75 @@ using namespace swss;
 #ifndef RTPROT_HW
 #define RTPROT_HW 193  /* Protocol ID for hardware learned routes */
 #endif
+
+namespace
+{
+
+bool parseVlanName(const string &name, unsigned int &vlan)
+{
+    if (name.size() <= 4 || name.compare(0, 4, "Vlan") != 0)
+    {
+        return false;
+    }
+
+    vlan = 0;
+    for (size_t index = 4; index < name.size(); ++index)
+    {
+        unsigned char character = static_cast<unsigned char>(name[index]);
+        if (!isdigit(character))
+        {
+            return false;
+        }
+
+        vlan = vlan * 10 + static_cast<unsigned int>(character - '0');
+        if (vlan > 4094)
+        {
+            return false;
+        }
+    }
+
+    return vlan != 0;
+}
+
+bool isValidFdbData(const string &vlanName, const string &macAddress, const string &portName)
+{
+    uint8_t bytes[6];
+    unsigned int vlan;
+    return (
+        parseVlanName(vlanName, vlan) &&
+        MacAddress::parseMacString(macAddress, bytes) &&
+        isInterfaceNameValid(portName)
+    );
+}
+
+bool isValidFdbType(short type)
+{
+    return type == FDB_TYPE_STATIC || type == FDB_TYPE_DYNAMIC;
+}
+
+}
+
+bool FdbSync::parseFdbStateKey(const string &key, string &vlanName, string &macAddress)
+{
+    auto delimiter = key.find(':');
+    if (delimiter == string::npos)
+    {
+        return false;
+    }
+
+    string candidateVlan = key.substr(0, delimiter);
+    string candidateMac = key.substr(delimiter + 1);
+    uint8_t bytes[6];
+    unsigned int vlan;
+    if (!parseVlanName(candidateVlan, vlan) || !MacAddress::parseMacString(candidateMac, bytes))
+    {
+        return false;
+    }
+
+    vlanName = "Vlan" + to_string(vlan);
+    macAddress = MacAddress(bytes).to_string();
+    return true;
+}
 
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
@@ -164,127 +236,97 @@ void FdbSync::updateAllLocalMac()
 
 void FdbSync::processStateFdb()
 {
-    struct m_fdb_info info;
     std::deque<KeyOpFieldsValuesTuple> entries;
-
     m_fdbStateTable.pops(entries);
-
-    int count =0 ;
-    for (auto entry: entries)
+    for (const auto &entry : entries)
     {
-        count++;
-        std::string key = kfvKey(entry);
-        std::string op = kfvOp(entry);
-
-        std::size_t delimiter = key.find_first_of(":");
-        auto vlan_name = key.substr(0, delimiter);
-        auto mac_address = key.substr(delimiter+1);
-
-        info.vid = vlan_name;
-        info.mac = mac_address;
-
-        if(op == "SET")
-        {
-            info.op_type = FDB_OPER_ADD ;
-        }
-        else
-        {
-            info.op_type = FDB_OPER_DEL ;
-        }
-
-        SWSS_LOG_INFO("FDBSYNCD STATE FDB updates key=%s, operation=%s\n", key.c_str(), op.c_str());
-
-        for (auto i : kfvFieldsValues(entry))
-        {
-            SWSS_LOG_INFO(" FDBSYNCD STATE FDB updates : "
-            "FvFiels %s, FvValues: %s \n", fvField(i).c_str(), fvValue(i).c_str());
-
-            if(fvField(i) == "port")
-            {
-                info.port_name = fvValue(i);
-            }
-
-            if(fvField(i) == "type")
-            {
-                if(fvValue(i) == "dynamic")
-                {
-                    info.type = FDB_TYPE_DYNAMIC;
-                }
-                else if (fvValue(i) == "static")
-                {
-                    info.type = FDB_TYPE_STATIC;
-                }
-            }
-        }
-
-        if (op != "SET" && macCheckSrcDB(&info) == false)
-        {
-            continue;
-        }
-        updateLocalMac(&info);
+        processStateFdbEntry(entry, false);
     }
 }
 
 void FdbSync::processStateMclagRemoteFdb()
 {
-    struct m_fdb_info info;
     std::deque<KeyOpFieldsValuesTuple> entries;
-
     m_mclagRemoteFdbStateTable.pops(entries);
-
-    int count =0 ;
-    for (auto entry: entries)
+    for (const auto &entry : entries)
     {
-        count++;
-        std::string key = kfvKey(entry);
-        std::string op = kfvOp(entry);
+        processStateFdbEntry(entry, true);
+    }
+}
 
-        std::size_t delimiter = key.find_first_of(":");
-        auto vlan_name = key.substr(0, delimiter);
-        auto mac_address = key.substr(delimiter+1);
+void FdbSync::processStateFdbEntry(
+    const KeyOpFieldsValuesTuple &entry,
+    bool remote
+)
+{
+    struct m_fdb_info info = {};
+    string op = kfvOp(entry);
+    if (!parseFdbStateKey(kfvKey(entry), info.vid, info.mac))
+    {
+        SWSS_LOG_ERROR("Invalid FDB key, skipping entry");
+        return;
+    }
 
-        info.vid = vlan_name;
-        info.mac = mac_address;
+    if (op == SET_COMMAND)
+    {
+        info.op_type = FDB_OPER_ADD;
+    }
+    else if (op == DEL_COMMAND)
+    {
+        info.op_type = FDB_OPER_DEL;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Invalid FDB operation, skipping entry");
+        return;
+    }
 
-        if(op == "SET")
+    for (const auto &field : kfvFieldsValues(entry))
+    {
+        if (fvField(field) == "port")
         {
-            info.op_type = FDB_OPER_ADD ;
+            info.port_name = fvValue(field);
         }
-        else
+        else if (fvField(field) == "type")
         {
-            info.op_type = FDB_OPER_DEL ;
-        }
-
-        SWSS_LOG_INFO("FDBSYNCD STATE FDB updates key=%s, operation=%s\n", key.c_str(), op.c_str());
-
-        for (auto i : kfvFieldsValues(entry))
-        {
-            SWSS_LOG_INFO(" FDBSYNCD STATE FDB updates : "
-            "FvFiels %s, FvValues: %s \n", fvField(i).c_str(), fvValue(i).c_str());
-
-            if(fvField(i) == "port")
+            if (fvValue(field) == "dynamic")
             {
-                info.port_name = fvValue(i);
+                info.type = FDB_TYPE_DYNAMIC;
             }
-
-            if(fvField(i) == "type")
+            else if (fvValue(field) == "static")
             {
-                if(fvValue(i) == "dynamic")
-                {
-                    info.type = FDB_TYPE_DYNAMIC;
-                }
-                else if (fvValue(i) == "static")
-                {
-                    info.type = FDB_TYPE_STATIC;
-                }
+                info.type = FDB_TYPE_STATIC;
             }
         }
+    }
 
-        if (op != "SET" && macCheckSrcDB(&info) == false)
-        {
-            continue;
-        }
+    if (
+        info.op_type == FDB_OPER_ADD &&
+        (
+            !isValidFdbData(info.vid, info.mac, info.port_name) ||
+            !isValidFdbType(info.type)
+        )
+    )
+    {
+        SWSS_LOG_ERROR("Invalid FDB fields, skipping entry");
+        return;
+    }
+
+    bool exists = remote ?
+        macCheckMclagRemoteSrcDB(&info) :
+        macCheckSrcDB(&info);
+    if (info.op_type == FDB_OPER_DEL && !exists)
+    {
+        return;
+    }
+
+    if (remote)
+    {
         updateMclagRemoteMac(&info);
+    }
+    else
+    {
+        updateLocalMac(&info);
     }
 }
 
@@ -316,6 +358,12 @@ bool FdbSync::macCheckSrcDB(struct m_fdb_info *info)
     }
 
     return false;
+}
+
+bool FdbSync::macCheckMclagRemoteSrcDB(struct m_fdb_info *info)
+{
+    string key = info->vid + ":" + info->mac;
+    return m_mclag_remote_fdb_mac.find(key) != m_mclag_remote_fdb_mac.end();
 }
 
 void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
@@ -385,6 +433,18 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     string key = info->vid + ":" + info->mac;
     short fdb_type;    /*dynamic or static*/
 
+    if (
+        info->op_type == FDB_OPER_ADD &&
+        (
+            !isValidFdbData(info->vid, info->mac, info->port_name) ||
+            !isValidFdbType(info->type)
+        )
+    )
+    {
+        SWSS_LOG_ERROR("Invalid local FDB data, skipping update");
+        return;
+    }
+
     if (info->op_type == FDB_OPER_ADD)
     {
         macUpdateCache(info);
@@ -403,6 +463,15 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     if (!m_isEvpnNvoExist)
     {
         SWSS_LOG_INFO("Ignore kernel update EVPN NVO is not configured MAC %s", key.c_str());
+        return;
+    }
+
+    if (
+        !isValidFdbData(info->vid, info->mac, port_name) ||
+        !isValidFdbType(fdb_type)
+    )
+    {
+        SWSS_LOG_ERROR("Invalid local FDB data, skipping command");
         return;
     }
 
@@ -450,18 +519,16 @@ void FdbSync::addLocalMac(string key, string op)
     char *type;
     string port_name = "";
     string mac = "";
+    string vlan_name = "";
     string vlan = "";
-    size_t str_loc = string::npos;
     std::string proto_string = "";
 
-    str_loc = key.find(":");
-    if (str_loc == string::npos)
+    if (!parseFdbStateKey(key, vlan_name, mac))
     {
-        SWSS_LOG_ERROR("Local MAC issue with Key:%s", key.c_str());
+        SWSS_LOG_ERROR("Invalid local FDB key, skipping update");
         return;
     }
-    vlan = key.substr(4,  str_loc-4);
-    mac = key.substr(str_loc+1,  std::string::npos);
+    vlan = vlan_name.substr(4);
 
     SWSS_LOG_INFO("Local route Vlan:%s MAC:%s Key:%s Op:%s", vlan.c_str(), mac.c_str(), key.c_str(), op.c_str());
 
@@ -471,6 +538,15 @@ void FdbSync::addLocalMac(string key, string op)
         if (port_name.empty())
         {
             SWSS_LOG_INFO("Port name not present MAC route Key:%s", key.c_str());
+            return;
+        }
+
+        if (
+            !isValidFdbData(vlan_name, mac, port_name) ||
+            !isValidFdbType(m_fdb_mac[key].type)
+        )
+        {
+            SWSS_LOG_ERROR("Invalid local FDB data, skipping command");
             return;
         }
 
@@ -510,6 +586,18 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     short fdb_type;    /*dynamic or static*/
     std::string proto_string = "";
 
+    if (
+        info->op_type == FDB_OPER_ADD &&
+        (
+            !isValidFdbData(info->vid, info->mac, info->port_name) ||
+            !isValidFdbType(info->type)
+        )
+    )
+    {
+        SWSS_LOG_ERROR("Invalid remote FDB data, skipping update");
+        return;
+    }
+
     if (info->op_type == FDB_OPER_ADD)
     {
         macUpdateMclagRemoteCache(info);
@@ -523,6 +611,15 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
         port_name = m_mclag_remote_fdb_mac[key].port_name;
         fdb_type = m_mclag_remote_fdb_mac[key].type;
         m_mclag_remote_fdb_mac.erase(key);
+    }
+
+    if (
+        !isValidFdbData(info->vid, info->mac, port_name) ||
+        !isValidFdbType(fdb_type)
+    )
+    {
+        SWSS_LOG_ERROR("Invalid remote FDB data, skipping command");
+        return;
     }
 
     if (fdb_type == FDB_TYPE_DYNAMIC)

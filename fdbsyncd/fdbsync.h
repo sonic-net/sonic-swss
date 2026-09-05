@@ -91,6 +91,15 @@ public:
 private:
     bool m_isFdbProtoSupported = false;
     bool checkFdbProtoSupport();
+    static bool parseFdbStateKey(
+        const std::string &key,
+        std::string &vlanName,
+        std::string &macAddress
+    );
+    void processStateFdbEntry(
+        const KeyOpFieldsValuesTuple &entry,
+        bool remote
+    );
 
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
@@ -114,6 +123,7 @@ private:
     void macUpdateCache(struct m_fdb_info *info);
 
     bool macCheckSrcDB(struct m_fdb_info *info);
+    bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
 
