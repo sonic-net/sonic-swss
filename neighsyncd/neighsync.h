@@ -6,6 +6,7 @@
 #include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include <set>
 
 // The timeout value (in seconds) for neighsyncd reconcilation logic
 #define DEFAULT_NEIGHSYNC_WARMSTART_TIMER 5
@@ -30,6 +31,8 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     bool isNeighRestoreDone();
+
+    bool resyncLinkLocalNeighbors(const std::set<std::string> &interfaces);
 
     /* Get interface name based on interface index */
     bool getIfName(int if_index, char *if_name, size_t name_len);
