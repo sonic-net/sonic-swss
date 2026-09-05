@@ -9,6 +9,7 @@
 #include "linkcache.h"
 #include "fpminterface.h"
 #include "warmRestartHelper.h"
+#include "fpmsyncd/routesendcoalescer.h"
 #include <string.h>
 #include <bits/stdc++.h>
 #include <linux/version.h>
@@ -269,6 +270,12 @@ public:
 private:
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
+    /* STATE_DB handle for route-send telemetry (owned; only used when ZMQ enabled) */
+    shared_ptr<DBConnector> m_stateDb;
+    /* Coalescing map + dedicated send thread for the ZMQ route path (#28369).
+     * Non-null only when ZMQ is enabled; the steady-state route/label-route write
+     * path funnels through it so ingest never blocks on ZMQ. */
+    shared_ptr<RouteSendCoalescer> m_routeCoalescer;
     /* regular route table */
     shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
@@ -413,6 +420,14 @@ private:
     {
         return m_zmqClient != nullptr;
     }
+
+    /* Map a ZMQ route table reference to the coalescer TableId. Returns false if
+     * the table is not one of the two ZMQ-backed route tables. */
+    bool zmqTableId(const ProducerStateTable & table, RouteSendCoalescer::TableId & id) const;
+
+    /* True when the steady-state write should funnel through the coalescing send
+     * thread (ZMQ enabled, coalescer constructed, and not mid warm-restart). */
+    bool coalescerActive() const;
 
 };
 struct NextHopField {
