@@ -7,6 +7,7 @@ pub enum IPFixTemplateOperation {
     Update,
     Deactivate,
     Delete,
+    Reconcile,
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,8 @@ pub struct IPFixTemplatesMessage {
     pub object_names: Option<Vec<String>>,
     pub object_ids: Option<Vec<u16>>,
     pub operation: IPFixTemplateOperation,
+    /// Complete owner snapshot after Redis notification loss; never nested.
+    pub reconciliation: Option<Vec<IPFixTemplatesMessage>>,
 }
 
 impl IPFixTemplatesMessage {
@@ -31,6 +34,7 @@ impl IPFixTemplatesMessage {
             object_names,
             object_ids,
             operation: IPFixTemplateOperation::Update,
+            reconciliation: None,
         }
     }
 
@@ -41,6 +45,7 @@ impl IPFixTemplatesMessage {
             object_names: None,
             object_ids: None,
             operation: IPFixTemplateOperation::Delete,
+            reconciliation: None,
         }
     }
 
@@ -51,6 +56,18 @@ impl IPFixTemplatesMessage {
             object_names: None,
             object_ids: None,
             operation: IPFixTemplateOperation::Deactivate,
+            reconciliation: None,
+        }
+    }
+
+    pub fn reconcile(snapshots: Vec<Self>) -> Self {
+        Self {
+            key: String::new(),
+            templates: None,
+            object_names: None,
+            object_ids: None,
+            operation: IPFixTemplateOperation::Reconcile,
+            reconciliation: Some(snapshots),
         }
     }
 }

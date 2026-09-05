@@ -1,4 +1,4 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::ipfix::{IPFixTemplateOperation, IPFixTemplatesMessage};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
@@ -62,6 +62,8 @@ enum SwssEvent {
     Delete {
         key: String,
     },
+    // Complete current owner rows; children must be Update or Delete, never Reconcile.
+    Reconcile(Vec<SwssEvent>),
 }
 
 impl SwssActor {
@@ -175,18 +177,7 @@ impl SwssActor {
                     let Some(event) = event else {
                         break;
                     };
-                    let processing = async {
-                        match event {
-                            SwssEvent::Update { key, session_data } => {
-                                Self::process_session_update(&template_recipient, &key, &session_data).await;
-                            }
-                            SwssEvent::Delete { key } => {
-                                if let Err(e) = template_recipient.send(IPFixTemplatesMessage::delete(key)).await {
-                                    error!("Failed to delete IPFIX session: {e}");
-                                }
-                            }
-                        }
-                    };
+                    let processing = Self::process_event(&template_recipient, event);
                     tokio::select! {
                         biased;
                         failure = fatal_receiver.recv() => {
@@ -308,8 +299,7 @@ impl SwssActor {
                                 }
                             }
                         }
-                        Self::reset_reconciled_owners(&mut events);
-                        Ok(events)
+                        Ok(vec![SwssEvent::Reconcile(events)])
                     }
                     Err(e) => Err(format!("Error popping items from session table: {}", e)),
                 },
@@ -324,24 +314,6 @@ impl SwssActor {
             },
             Err(e) => Err(format!("Error reading from session table: {}", e)),
         }
-    }
-
-    fn reset_reconciled_owners(events: &mut Vec<SwssEvent>) {
-        // Lost notifications may hide Delete/recreate or pending-ID release even
-        // when every final row is valid. Reset all observed/current owners first.
-        let snapshots = std::mem::take(events);
-        let mut removed = HashSet::new();
-        for event in &snapshots {
-            let (SwssEvent::Update { key, .. } | SwssEvent::Delete { key }) = event;
-            if removed.insert(key.as_str()) {
-                events.push(SwssEvent::Delete { key: key.clone() });
-            }
-        }
-        events.extend(
-            snapshots
-                .into_iter()
-                .filter(|event| matches!(event, SwssEvent::Update { .. })),
-        );
     }
 
     fn is_wrongtype_row(message: &str) -> bool {
@@ -436,14 +408,42 @@ impl SwssActor {
         }
     }
 
-    async fn process_session_update(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await
-        {
-            error!("Failed to process session {}: {}", key, e);
+    async fn process_event(template_recipient: &Sender<IPFixTemplatesMessage>, event: SwssEvent) {
+        let message = match event {
+            SwssEvent::Update { key, session_data } => {
+                if let Err(e) =
+                    Self::validate_and_send_session(template_recipient, &key, &session_data).await
+                {
+                    error!("Failed to process session {}: {}", key, e);
+                }
+                return;
+            }
+            SwssEvent::Delete { key } => IPFixTemplatesMessage::delete(key),
+            SwssEvent::Reconcile(rows) => IPFixTemplatesMessage::reconcile(
+                rows.into_iter()
+                    .map(|row| match row {
+                        SwssEvent::Update { key, session_data } => {
+                            match Self::validated_session(&key, &session_data) {
+                                Ok(message)
+                                    if message.operation == IPFixTemplateOperation::Update =>
+                                {
+                                    message
+                                }
+                                Ok(_) => IPFixTemplatesMessage::delete(key),
+                                Err(e) => {
+                                    error!("Failed to reconcile session {}: {}", key, e);
+                                    IPFixTemplatesMessage::delete(key)
+                                }
+                            }
+                        }
+                        SwssEvent::Delete { key } => IPFixTemplatesMessage::delete(key),
+                        SwssEvent::Reconcile(_) => unreachable!("nested SWSS reconciliation"),
+                    })
+                    .collect(),
+            ),
+        };
+        if let Err(e) = template_recipient.send(message).await {
+            error!("Failed to forward IPFIX session event: {e}");
         }
     }
 
@@ -474,29 +474,7 @@ impl SwssActor {
         if key.len() > MAX_OBJECT_METADATA_BYTES {
             return Err("Session key exceeds metadata byte limit".into());
         }
-        let size_error = session_data.validate_sizes().err();
-        // A disabled or repurposed row deactivates any previously installed IPFIX session.
-        if size_error.is_none()
-            && (session_data.stream_status != "enabled" || session_data.session_type != "ipfix")
-        {
-            if session_data.stream_status != "enabled" {
-                debug!("Deactivating disabled session: {}", key);
-            } else {
-                debug!(
-                    "Deactivating non-IPFIX session: {} (type: {})",
-                    key, session_data.session_type
-                );
-            }
-            return template_recipient
-                .send(IPFixTemplatesMessage::deactivate(key.to_string()))
-                .await
-                .map_err(|e| format!("Failed to deactivate IPFIX session {}: {}", key, e));
-        }
-
-        let message = match size_error.map_or_else(
-            || Self::validated_update(key, session_data),
-            |error| Err(error.to_string()),
-        ) {
+        let message = match Self::validated_session(key, session_data) {
             Ok(message) => message,
             Err(err) => {
                 template_recipient
@@ -514,6 +492,29 @@ impl SwssActor {
 
         info!("Successfully sent IPFix templates for session: {}", key);
         Ok(())
+    }
+
+    fn validated_session(
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<IPFixTemplatesMessage, String> {
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
+        }
+        session_data.validate_sizes()?;
+        // A disabled or repurposed row deactivates any previously installed IPFIX session.
+        if session_data.stream_status != "enabled" || session_data.session_type != "ipfix" {
+            if session_data.stream_status != "enabled" {
+                debug!("Deactivating disabled session: {}", key);
+            } else {
+                debug!(
+                    "Deactivating non-IPFIX session: {} (type: {})",
+                    key, session_data.session_type
+                );
+            }
+            return Ok(IPFixTemplatesMessage::deactivate(key.to_string()));
+        }
+        Self::validated_update(key, session_data)
     }
 
     fn validated_update(
@@ -631,6 +632,25 @@ mod tests {
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
 
+    async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
+        for event in events {
+            SwssActor::process_event(sender, event).await;
+            // Capacity one: the actor handles each envelope synchronously before
+            // it can process our next data probe.
+            drop(sender.reserve().await.unwrap());
+        }
+    }
+
+    fn reconciliation_rows(events: &mut [SwssEvent]) -> &mut Vec<SwssEvent> {
+        let [SwssEvent::Reconcile(rows)] = events else {
+            panic!("expected one reconciliation envelope: {events:?}");
+        };
+        assert!(rows
+            .iter()
+            .all(|row| !matches!(row, SwssEvent::Reconcile(_))));
+        rows
+    }
+
     #[test]
     fn wrongtype_classification_excludes_transport_and_other_redis_errors() {
         let command = "RedisReply catches system_error: command: *2\\r\\n$7\\r\\nHGETALL\\r\\n$5\\r\\ntable\\r\\n";
@@ -693,16 +713,22 @@ mod tests {
             }
             db.set(&format!("{name}|bad"), &CxxString::from("not a hash"))
                 .unwrap();
-            loop {
-                let message = receiver
-                    .recv()
-                    .await
-                    .expect("WRONGTYPE must not stop the actor");
-                if message.key == "bad" {
-                    assert_eq!(message.operation, IPFixTemplateOperation::Delete);
-                    break;
-                }
-            }
+            let message = receiver
+                .recv()
+                .await
+                .expect("WRONGTYPE must not stop the actor");
+            assert_eq!(message.operation, IPFixTemplateOperation::Reconcile);
+            let rows = message.reconciliation.unwrap();
+            assert_eq!(rows.len(), 2);
+            assert!(rows
+                .iter()
+                .any(|row| row.key == "bad" && row.operation == IPFixTemplateOperation::Delete));
+            assert!(
+                rows.iter()
+                    .any(|row| row.key == "healthy"
+                        && row.operation == IPFixTemplateOperation::Update)
+            );
+            assert!(receiver.try_recv().is_err());
             table
                 .hset("healthy", "session_config", &CxxString::from("updated"))
                 .unwrap();
@@ -774,12 +800,14 @@ mod tests {
             .hset("after", "session_config", &CxxString::from("updated"))
             .unwrap();
         thread::sleep(Duration::from_millis(20));
-        let events = SwssActor::blocking_collect_events(
+        let mut events = SwssActor::blocking_collect_events(
             &mut subscriber,
             &mut known_keys,
             Duration::from_secs(1),
         )
         .unwrap();
+        let events = reconciliation_rows(&mut events);
+        assert_eq!(events.len(), 5);
         for key in ["before", "after"] {
             assert!(events.iter().any(|event| matches!(event,
                 SwssEvent::Update { key: k, session_data } if k == key && session_data.session_config == b"updated")), "{events:?}");
@@ -803,25 +831,6 @@ mod tests {
     #[tokio::test]
     async fn reconciliation_releases_owners_before_id_reuse_without_another_write() {
         use crate::actor::ipfix::IpfixActor;
-
-        async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
-            for event in events {
-                match event {
-                    SwssEvent::Update { key, session_data } => {
-                        SwssActor::process_session_update(sender, &key, &session_data).await;
-                    }
-                    SwssEvent::Delete { key } => {
-                        sender
-                            .send(IPFixTemplatesMessage::delete(key))
-                            .await
-                            .unwrap();
-                    }
-                }
-                // Capacity one: the actor handles each template synchronously
-                // after receiving it, before it can process our next data probe.
-                drop(sender.reserve().await.unwrap());
-            }
-        }
 
         // Domain 0, template 300: observationTimeNanoseconds and one 64-bit
         // enterprise counter (object label 1, SAI type/stat 1).
@@ -929,28 +938,18 @@ mod tests {
                 .unwrap();
                 let key = |event: &SwssEvent| match event {
                     SwssEvent::Update { key, .. } | SwssEvent::Delete { key } => key.clone(),
+                    SwssEvent::Reconcile(_) => unreachable!(),
                 };
-                let first_update = events
-                    .iter()
-                    .position(|event| matches!(event, SwssEvent::Update { .. }))
-                    .unwrap();
-                assert!(events[..first_update]
-                    .iter()
-                    .all(|event| matches!(event, SwssEvent::Delete { .. })));
-                assert!(events[first_update..]
-                    .iter()
-                    .all(|event| matches!(event, SwssEvent::Update { .. })));
+                let rows = reconciliation_rows(&mut events);
+                assert_eq!(rows.len(), 3);
                 for owner in ["a", "b", "bad"] {
-                    assert!(events[..first_update]
-                        .iter()
-                        .any(|event| key(event) == owner));
+                    assert!(rows.iter().any(|event| key(event) == owner));
                 }
                 assert!(subscriber.pops().unwrap().is_empty());
 
                 // Also force the adverse order, independently of HashSet's seed,
                 // so restoration does not depend on the snapshot iteration order.
-                events.sort_by_key(|event| key(event) != "b");
-                SwssActor::reset_reconciled_owners(&mut events);
+                rows.sort_by_key(|event| key(event) != "b");
                 forward(events, &templates).await;
                 // No Redis write or admission retry: B must already own ID 300.
                 records.send(Arc::clone(&data)).await.unwrap();
@@ -980,9 +979,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn reconciliation_plan_resets_every_owner_before_admission() {
-        let mut events = vec![
+    #[tokio::test]
+    async fn reconciliation_forwards_validated_rows_in_one_envelope() {
+        let rows = vec![
             SwssEvent::Update {
                 key: "b".into(),
                 session_data: SessionData {
@@ -998,30 +997,60 @@ mod tests {
                 },
             },
             SwssEvent::Update {
-                key: "a".into(),
+                key: "disabled".into(),
+                session_data: SessionData::default(),
+            },
+            SwssEvent::Update {
+                key: "nonipfix".into(),
                 session_data: SessionData {
                     stream_status: "enabled".into(),
-                    session_type: "ipfix".into(),
-                    object_names: "Ethernet0".into(),
-                    object_ids: "1".into(),
-                    session_config: vec![
-                        0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20, 1, 144, 0,
-                        2, 1, 69, 0, 8, 128, 1, 0, 8, 0, 1, 0, 1,
-                    ],
+                    session_type: "netflow".into(),
                     ..SessionData::default()
                 },
             },
+            SwssEvent::Update {
+                key: "invalid".into(),
+                session_data: SessionData {
+                    stream_status: "enabled".into(),
+                    session_type: "ipfix".into(),
+                    session_config: vec![1],
+                    object_names: "Ethernet0".into(),
+                    object_ids: "invalid".into(),
+                    ..SessionData::default()
+                },
+            },
+            SwssEvent::Update {
+                key: "oversized".into(),
+                session_data: SessionData {
+                    validation_error: Some("Session metadata exceeds byte limit"),
+                    ..SessionData::default()
+                },
+            },
+            SwssEvent::Delete {
+                key: "absent".into(),
+            },
         ];
-        SwssActor::reset_reconciled_owners(&mut events);
-        assert!(
-            matches!(events.first(), Some(SwssEvent::Delete { .. })),
-            "lost history requires removals even when all final hashes are valid"
-        );
-        assert_eq!(events.len(), 4);
-        assert!(matches!(&events[0], SwssEvent::Delete { key } if key == "b"));
-        assert!(matches!(&events[1], SwssEvent::Delete { key } if key == "a"));
-        assert!(matches!(&events[2], SwssEvent::Update { key, .. } if key == "b"));
-        assert!(matches!(&events[3], SwssEvent::Update { key, .. } if key == "a"));
+        let (sender, mut receiver) = channel(1);
+        SwssActor::process_event(&sender, SwssEvent::Reconcile(rows)).await;
+        let message = receiver.try_recv().unwrap();
+        assert_eq!(message.operation, IPFixTemplateOperation::Reconcile);
+        let rows = message.reconciliation.unwrap();
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[0].key, "b");
+        assert_eq!(rows[0].operation, IPFixTemplateOperation::Update);
+        assert_eq!(rows[0].object_names, Some(vec!["Ethernet4".into()]));
+        assert_eq!(rows[0].object_ids, Some(vec![1]));
+        for (row, key) in
+            rows[1..]
+                .iter()
+                .zip(["disabled", "nonipfix", "invalid", "oversized", "absent"])
+        {
+            assert_eq!(row.key, key);
+            assert_eq!(row.operation, IPFixTemplateOperation::Delete);
+            assert!(row.templates.is_none());
+        }
+        assert!(rows.iter().all(|row| row.reconciliation.is_none()));
+        assert!(receiver.try_recv().is_err());
     }
 
     async fn exercise_lost_notification_history(mode: &str) {
@@ -1044,21 +1073,13 @@ mod tests {
                 ("session_config", CxxString::from(template(id))),
             ]
         }
-        async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
-            for event in events {
-                match event {
-                    SwssEvent::Update { key, session_data } => {
-                        SwssActor::process_session_update(sender, &key, &session_data).await;
-                    }
-                    SwssEvent::Delete { key } => {
-                        sender
-                            .send(IPFixTemplatesMessage::delete(key))
-                            .await
-                            .unwrap();
-                    }
-                }
-                drop(sender.reserve().await.unwrap());
-            }
+        fn record(id: u16) -> Arc<Vec<u8>> {
+            let mut bytes = vec![
+                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0,
+                0, 7, 0, 0, 0, 0, 0, 0, 0, 42,
+            ];
+            bytes[16..18].copy_from_slice(&id.to_be_bytes());
+            Arc::new(bytes)
         }
         async fn probe(
             sender: &Sender<crate::message::buffer::SocketBufferMessage>,
@@ -1068,12 +1089,7 @@ mod tests {
             id: u16,
             expected_name: &str,
         ) {
-            let mut bytes = vec![
-                0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 44, 0, 20, 0, 0, 0, 0, 0, 0,
-                0, 7, 0, 0, 0, 0, 0, 0, 0, 42,
-            ];
-            bytes[16..18].copy_from_slice(&id.to_be_bytes());
-            sender.send(Arc::new(bytes)).await.unwrap();
+            sender.send(record(id)).await.unwrap();
             let batch = receiver.recv().await.expect("expected decoded output");
             assert_eq!(batch.record_count(), 1);
             let record = batch.iter().next().unwrap();
@@ -1103,7 +1119,39 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_secs(3), async {
             forward(initial, &templates).await;
             probe(&records, &mut stats_rx, 300, "Ethernet0").await;
-            if mode == "recreate" {
+            let incumbent = mode.starts_with("incumbent");
+            if incumbent {
+                if mode.starts_with("incumbent-pending") {
+                    table.set("a", fields("Ethernet0", 400)).unwrap();
+                    let pending = SwssActor::blocking_collect_events(
+                        &mut subscriber,
+                        &mut known,
+                        Duration::from_secs(1),
+                    )
+                    .unwrap();
+                    assert!(matches!(pending.as_slice(),
+                        [SwssEvent::Update { key, .. }] if key == "a"));
+                    forward(pending, &templates).await;
+                    // Leave Redis at pending400 without data that would promote it.
+                    probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                }
+                table.set("b", fields("Ethernet4", 300)).unwrap();
+                let rejected = SwssActor::blocking_collect_events(
+                    &mut subscriber,
+                    &mut known,
+                    Duration::from_secs(1),
+                )
+                .unwrap();
+                assert!(
+                    matches!(rejected.as_slice(), [SwssEvent::Update { key, .. }] if key == "b")
+                );
+                forward(rejected, &templates).await;
+                probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                assert!(
+                    table.get("b").unwrap().is_some(),
+                    "rejected row remains in Redis"
+                );
+            } else if mode == "recreate" {
                 table.del("a").unwrap();
                 assert_eq!(
                     subscriber.read_data(Duration::from_secs(1), false).unwrap(),
@@ -1128,10 +1176,12 @@ mod tests {
                 );
                 table.set("b", fields("Ethernet4", 400)).unwrap();
             }
-            assert_eq!(
-                subscriber.read_data(Duration::from_secs(1), false).unwrap(),
-                swss_common::SelectResult::Data
-            );
+            if !incumbent {
+                assert_eq!(
+                    subscriber.read_data(Duration::from_secs(1), false).unwrap(),
+                    swss_common::SelectResult::Data
+                );
+            }
             db.set(&format!("{name}|bad"), &CxxString::from("wrong type"))
                 .unwrap();
             let mut events = SwssActor::blocking_collect_events(
@@ -1141,13 +1191,57 @@ mod tests {
             )
             .unwrap();
             assert!(subscriber.pops().unwrap().is_empty());
-            // Force B before A among valid updates; the current snapshot must
-            // converge once, independent of HashSet order and without another write.
-            events.sort_by_key(|event| match event {
+            // Force the owner order independently of HashSet's seed. Recovery
+            // must converge in one envelope without another Redis write.
+            let first = if mode.ends_with("a-first") { "a" } else { "b" };
+            let rows = reconciliation_rows(&mut events);
+            if incumbent {
+                assert_eq!(rows.len(), 4);
+                for owner in ["a", "b", "peer"] {
+                    assert!(rows.iter().any(|row| matches!(row,
+                        SwssEvent::Update { key, .. } if key == owner)));
+                }
+                assert!(rows.iter().any(|row| matches!(row,
+                    SwssEvent::Delete { key } if key == "bad")));
+                if mode.starts_with("incumbent-pending") {
+                    assert!(rows.iter().any(|row| matches!(row,
+                        SwssEvent::Update { key, session_data }
+                            if key == "a" && session_data.session_config == template(400))));
+                }
+            }
+            rows.sort_by_key(|event| match event {
                 SwssEvent::Delete { .. } => 0,
-                SwssEvent::Update { key, .. } if key == "b" => 1,
+                SwssEvent::Update { key, .. } if key == first => 1,
                 _ => 2,
             });
+            if incumbent {
+                let (sender, mut receiver) = channel(1);
+                SwssActor::process_event(&sender, events.pop().unwrap()).await;
+                let snapshot = receiver.try_recv().unwrap();
+                assert_eq!(snapshot.operation, IPFixTemplateOperation::Reconcile);
+                // Replaying the same snapshot must not promote unchanged pending
+                // state or release active300 to the rejected B300 row.
+                for _ in 0..2 {
+                    templates.send(snapshot.clone()).await.unwrap();
+                    drop(templates.reserve().await.unwrap());
+                    probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+                    probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                }
+                assert!(SwssActor::blocking_collect_events(
+                    &mut subscriber,
+                    &mut known,
+                    Duration::ZERO
+                )
+                .unwrap()
+                .is_empty());
+                // No Redis writes or retries. Removing only A directly on the
+                // actor channel must leave ID 300 unknown, not installed for B.
+                forward(vec![SwssEvent::Delete { key: "a".into() }], &templates).await;
+                records.send(record(300)).await.unwrap();
+                probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                assert!(stats_rx.try_recv().is_err());
+                return;
+            }
             forward(events, &templates).await;
             let id = if mode == "recreate" { 300 } else { 400 };
             probe(&records, &mut stats_rx, id, "Ethernet4").await;
@@ -1185,6 +1279,14 @@ mod tests {
     #[tokio::test]
     async fn lost_pending_supersession_releases_id_before_admission() {
         exercise_lost_notification_history("supersede").await;
+    }
+
+    #[tokio::test]
+    async fn wrongtype_reconciliation_preserves_incumbent_over_rejected_row_in_both_orders() {
+        exercise_lost_notification_history("incumbent-a-first").await;
+        exercise_lost_notification_history("incumbent-b-first").await;
+        exercise_lost_notification_history("incumbent-pending-a-first").await;
+        exercise_lost_notification_history("incumbent-pending-b-first").await;
     }
 
     #[test]

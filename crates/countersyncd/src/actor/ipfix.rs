@@ -239,6 +239,13 @@ impl IpfixActor {
     }
 
     fn handle_template(&mut self, update: IPFixTemplatesMessage) -> Result<(), IpfixError> {
+        if update.operation == IPFixTemplateOperation::Reconcile {
+            return self.reconcile_templates(
+                update
+                    .reconciliation
+                    .ok_or("missing reconciliation snapshot")?,
+            );
+        }
         if matches!(
             update.operation,
             IPFixTemplateOperation::Delete | IPFixTemplateOperation::Deactivate
@@ -301,6 +308,130 @@ impl IpfixActor {
             );
         }
         self.sessions.insert(owner, session);
+        Ok(())
+    }
+
+    fn reconcile_templates(
+        &mut self,
+        snapshots: Vec<IPFixTemplatesMessage>,
+    ) -> Result<(), IpfixError> {
+        let mut owners = HashSet::new();
+        let mut candidates = HashMap::new();
+        // Validate the envelope before touching live state. Missing, disabled or
+        // malformed owners are removals; valid but conflicting owners may retain
+        // their previous complete active/pending state.
+        for update in snapshots {
+            if update.operation == IPFixTemplateOperation::Reconcile
+                || update.reconciliation.is_some()
+            {
+                return Err("nested reconciliation snapshot".into());
+            }
+            if !owners.insert(update.key.clone()) {
+                return Err(format!("duplicate reconciliation owner {:?}", update.key).into());
+            }
+            if update.operation != IPFixTemplateOperation::Update {
+                continue;
+            }
+            match Self::compile_generation(&update) {
+                Ok(generation) => {
+                    candidates.insert(Arc::<str>::from(update.key), generation);
+                }
+                Err(err) => error!(
+                    "Removing invalid reconciled HFT session {}: {err}",
+                    update.key
+                ),
+            }
+        }
+        // An unchanged pending row carries no new cutover signal. Preserve its
+        // active decoder as well; otherwise recovery would release an in-use ID.
+        let preserve_pending = candidates
+            .iter()
+            .filter_map(|(owner, generation)| {
+                self.sessions
+                    .get(owner.as_ref())
+                    .and_then(|session| session.pending.as_ref())
+                    .filter(|pending| *pending == generation)
+                    .map(|_| Arc::clone(owner))
+            })
+            .collect::<HashSet<_>>();
+        let mut claims: HashMap<TemplateKey, Vec<Arc<str>>> = HashMap::new();
+        for (owner, generation) in &candidates {
+            for key in generation.templates.keys() {
+                claims.entry(*key).or_default().push(Arc::clone(owner));
+            }
+        }
+        let mut rejected = HashSet::new();
+        let mut work = Vec::new();
+        for (key, claimants) in &claims {
+            let incumbent = self
+                .installed
+                .get(key)
+                .map(|template| &template.owner)
+                .filter(|owner| {
+                    preserve_pending.contains(*owner)
+                        || candidates
+                            .get(owner.as_ref())
+                            .is_some_and(|generation| generation.templates.contains_key(key))
+                });
+            for owner in claimants {
+                let conflict = match incumbent {
+                    Some(incumbent) => owner != incumbent,
+                    None => claimants.len() > 1,
+                };
+                if conflict && rejected.insert(Arc::clone(owner)) {
+                    error!("Rejecting reconciled HFT session {owner}: collision at {key:?}, incumbent {incumbent:?}, claimants {claimants:?}");
+                    work.push(Arc::clone(owner));
+                }
+            }
+        }
+        // Rejection preserves the entire previous snapshot, including keys the
+        // rejected candidate omitted. Propagate those reservations monotonically;
+        // never manufacture a winner by removing a rejected owner's claims.
+        while let Some(owner) = work.pop() {
+            let Some(previous) = self.sessions.get(owner.as_ref()) else {
+                continue;
+            };
+            for generation in std::iter::once(&previous.active).chain(previous.pending.iter()) {
+                for key in generation.templates.keys() {
+                    for claimant in claims.get(key).into_iter().flatten() {
+                        if claimant != &owner && rejected.insert(Arc::clone(claimant)) {
+                            error!("Rejecting reconciled HFT session {claimant}: collision at {key:?} with retained owner {owner}");
+                            work.push(Arc::clone(claimant));
+                        }
+                    }
+                }
+            }
+        }
+        let mut sessions = HashMap::new();
+        let mut installed = HashMap::new();
+        for (owner, generation) in candidates {
+            let session = if rejected.contains(&owner) || preserve_pending.contains(&owner) {
+                let Some(previous) = self.sessions.get(owner.as_ref()) else {
+                    continue;
+                };
+                previous.clone()
+            } else {
+                SessionTemplates {
+                    active: generation,
+                    pending: None,
+                }
+            };
+            for generation in std::iter::once(&session.active).chain(session.pending.iter()) {
+                for (key, template) in &generation.templates {
+                    if installed
+                        .get(key)
+                        .is_some_and(|existing: &Arc<CompiledTemplate>| existing.owner != owner)
+                    {
+                        return Err(format!("conflicting reconciliation result at {key:?}").into());
+                    }
+                    installed.insert(*key, Arc::clone(template));
+                }
+            }
+            sessions.insert(owner, session);
+        }
+        // No await: data sees either registry, never a reset/reinstall gap.
+        self.sessions = sessions;
+        self.installed = installed;
         Ok(())
     }
 
@@ -1061,6 +1192,268 @@ mod tests {
                 .unwrap();
             assert_eq!(keys(&actor), expected);
             assert!(actor.sessions["s"].pending.is_none());
+        }
+    }
+
+    #[test]
+    fn reconciliation_ownership_is_order_independent_and_snapshot_atomic() {
+        type Spec = (&'static str, Vec<(u32, u16, u32)>);
+        let cases: Vec<(Vec<Spec>, Vec<Spec>, Vec<Spec>)> = vec![
+            (
+                vec![("A", vec![(0, 300, 1)])],
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(0, 300, 2)])],
+                vec![("A", vec![(0, 300, 1)])],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)])],
+                vec![("A", vec![(0, 300, 2)]), ("B", vec![(0, 300, 3)])],
+                vec![("A", vec![(0, 300, 2)])],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)])],
+                vec![("B", vec![(0, 300, 2)])],
+                vec![("B", vec![(0, 300, 2)])],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)])],
+                vec![("B", vec![(0, 300, 2)]), ("C", vec![(0, 300, 3)])],
+                vec![],
+            ),
+            (
+                vec![],
+                vec![
+                    ("A", vec![(0, 300, 1), (0, 400, 1)]),
+                    ("B", vec![(0, 400, 2), (0, 500, 2)]),
+                ],
+                vec![],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(0, 400, 2)])],
+                vec![
+                    ("A", vec![(0, 400, 1)]),
+                    ("B", vec![(0, 400, 2)]),
+                    ("C", vec![(0, 300, 3)]),
+                ],
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(0, 400, 2)])],
+            ),
+            (
+                vec![
+                    ("A", vec![(0, 300, 1)]),
+                    ("B", vec![(0, 400, 2)]),
+                    ("C", vec![(0, 500, 3)]),
+                ],
+                vec![
+                    ("A", vec![(0, 400, 1)]),
+                    ("B", vec![(0, 500, 2)]),
+                    ("C", vec![(0, 500, 3)]),
+                    ("D", vec![(0, 300, 4)]),
+                ],
+                vec![
+                    ("A", vec![(0, 300, 1)]),
+                    ("B", vec![(0, 400, 2)]),
+                    ("C", vec![(0, 500, 3)]),
+                ],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(0, 400, 2)])],
+                vec![("A", vec![(0, 400, 1)]), ("B", vec![(0, 300, 2)])],
+                vec![("A", vec![(0, 400, 1)]), ("B", vec![(0, 300, 2)])],
+            ),
+            (
+                vec![("A", vec![(0, 300, 1)])],
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(1, 300, 2)])],
+                vec![("A", vec![(0, 300, 1)]), ("B", vec![(1, 300, 2)])],
+            ),
+            (
+                vec![("X", vec![(0, 700, 4)])],
+                vec![
+                    ("X", vec![(0, 700, 4)]),
+                    ("A", vec![(0, 600, 1), (0, 700, 1)]),
+                    ("B", vec![(0, 600, 2)]),
+                ],
+                vec![("X", vec![(0, 700, 4)])],
+            ),
+        ];
+        for (initial, candidates, expected) in cases {
+            for reverse in [false, true] {
+                for rotation in 0..candidates.len().max(1) {
+                    let mut actor = actor();
+                    for (owner, templates) in &initial {
+                        actor.handle_template(snapshot(owner, templates)).unwrap();
+                    }
+                    let mut updates = candidates
+                        .iter()
+                        .map(|(owner, templates)| snapshot(owner, templates))
+                        .collect::<Vec<_>>();
+                    if !updates.is_empty() {
+                        updates.rotate_left(rotation);
+                    }
+                    if reverse {
+                        updates.reverse();
+                    }
+                    let input = IPFixTemplatesMessage::reconcile(updates);
+                    actor.handle_template(input.clone()).unwrap();
+                    let expected_map = expected
+                        .iter()
+                        .flat_map(|(owner, templates)| {
+                            templates.iter().map(move |&(domain, id, stat)| {
+                                ((domain, id), (owner.to_string(), stat))
+                            })
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    let actual = actor
+                        .installed
+                        .iter()
+                        .map(|(key, t)| {
+                            (
+                                (key.observation_domain_id, key.template_id),
+                                (t.owner.to_string(), u32::from(t.counters[0].stat_id)),
+                            )
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    assert_eq!(
+                        actual, expected_map,
+                        "candidates={candidates:?}, reverse={reverse},rotation={rotation}"
+                    );
+                    let before = actor.sessions.clone();
+                    actor.handle_template(input).unwrap();
+                    assert_eq!(actor.sessions, before, "recovery must be idempotent");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unchanged_pending_reconciliation_preserves_incumbent_until_real_cutover() {
+        for reverse in [false, true] {
+            for cancel in [false, true] {
+                let mut actor = actor();
+                let active = snapshot("A", &[(0, 300, 1)]);
+                let pending = snapshot("A", &[(0, 400, 2)]);
+                actor.handle_template(active.clone()).unwrap();
+                actor.handle_template(pending.clone()).unwrap();
+                assert!(actor
+                    .handle_template(snapshot("B", &[(0, 300, 3)]))
+                    .is_err());
+                let previous = actor.sessions["A"].clone();
+                let mut rows = vec![pending, snapshot("B", &[(0, 300, 3)])];
+                if reverse {
+                    rows.reverse();
+                }
+                for _ in 0..2 {
+                    actor
+                        .handle_template(IPFixTemplatesMessage::reconcile(rows.clone()))
+                        .unwrap();
+                    assert_eq!(actor.sessions["A"], previous);
+                    assert!(!actor.sessions.contains_key("B"));
+                    let batch = actor
+                        .handle_record(&data_message(0, &[(300, vec![(1, vec![10])])]))
+                        .unwrap();
+                    assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 1);
+                }
+                if cancel {
+                    actor.handle_template(active).unwrap();
+                    assert_eq!(keys(&actor), vec![(0, 300)]);
+                    assert!(actor.sessions["A"].pending.is_none());
+                } else {
+                    actor
+                        .handle_record(&data_message(0, &[(400, vec![(2, vec![20])])]))
+                        .unwrap();
+                    assert_eq!(keys(&actor), vec![(0, 400)]);
+                    assert!(actor.sessions["A"].pending.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_reconciliation_retains_pending_keys_and_complete_metadata() {
+        for reverse in [false, true] {
+            let mut actor = actor();
+            actor
+                .handle_template(snapshot("A", &[(0, 300, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("A", &[(0, 400, 2)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("X", &[(0, 700, 3)]))
+                .unwrap();
+            let previous = actor.sessions["A"].clone();
+            let mut updates = vec![
+                snapshot("A", &[(0, 300, 4), (0, 500, 4), (0, 700, 4)]),
+                snapshot("X", &[(0, 700, 3)]),
+                snapshot("B", &[(0, 400, 5)]),
+            ];
+            if reverse {
+                updates.reverse();
+            }
+            actor
+                .handle_template(IPFixTemplatesMessage::reconcile(updates))
+                .unwrap();
+            assert_eq!(actor.sessions["A"], previous);
+            assert!(!actor.sessions.contains_key("B"));
+            assert_eq!(keys(&actor), vec![(0, 300), (0, 400), (0, 700)]);
+            assert_eq!(
+                actor.installed[&TemplateKey {
+                    observation_domain_id: 0,
+                    template_id: 300
+                }]
+                    .counters[0]
+                    .stat_id,
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn authoritative_reconciliation_releases_removed_or_invalid_owners() {
+        for removal in 0..4 {
+            let mut actor = actor();
+            actor
+                .handle_template(snapshot("A", &[(0, 300, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("A", &[(0, 400, 2)]))
+                .unwrap();
+            let mut rows = vec![snapshot("B", &[(0, 300, 3), (0, 400, 3)])];
+            match removal {
+                0 => {}
+                1 => rows.push(IPFixTemplatesMessage::delete("A".into())),
+                2 => rows.push(IPFixTemplatesMessage::deactivate("A".into())),
+                _ => {
+                    let mut invalid = snapshot("A", &[(0, 300, 1)]);
+                    invalid.templates = Some(Arc::new(vec![1, 2, 3]));
+                    rows.push(invalid);
+                }
+            }
+            actor
+                .handle_template(IPFixTemplatesMessage::reconcile(rows))
+                .unwrap();
+            assert!(!actor.sessions.contains_key("A"));
+            assert!(actor
+                .installed
+                .values()
+                .all(|template| template.owner.as_ref() == "B"));
+        }
+    }
+
+    #[test]
+    fn malformed_reconciliation_envelope_never_partially_commits() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("A", &[(0, 300, 1)]))
+            .unwrap();
+        let before = actor.sessions.clone();
+        for rows in [
+            vec![snapshot("B", &[(0, 400, 2)]), snapshot("B", &[(0, 500, 3)])],
+            vec![IPFixTemplatesMessage::reconcile(vec![])],
+        ] {
+            assert!(actor
+                .handle_template(IPFixTemplatesMessage::reconcile(rows))
+                .is_err());
+            assert_eq!(actor.sessions, before);
+            assert_eq!(keys(&actor), vec![(0, 300)]);
         }
     }
 
