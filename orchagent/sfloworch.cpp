@@ -26,18 +26,8 @@ bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
     // Check drop monitor limit rate
     if (isEnabled())
     {
-        if (getLimitRate() == limit_rate)
-        {
-            return true;
-        }
-
-        // Rate changed: disable first, then re-initialize below
-        if (!disableDropMonitor())
-        {
-            SWSS_LOG_ERROR("Failed to disable drop monitor for reconfiguration.");
-            return false;
-        }
-        // fall through to initializeDropMonitor
+        // Reapply policer when the last successful rate is unchanged.
+        return updatePolicerRate(limit_rate);
     }
 
     if (!initializeDropMonitor(limit_rate))
@@ -515,6 +505,37 @@ bool SflowDropMonitor::createPolicer(int32_t limit_rate)
     }
 
     m_policer = policer;
+    return true;
+}
+
+bool SflowDropMonitor::updatePolicerRate(int32_t limit_rate)
+{
+    if (m_policer == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Cannot update drop monitor rate: policer is missing.");
+        return false;
+    }
+
+    sai_attribute_t attrs[2] = {};
+    // Preserve the existing mapping of drop_monitor_limit to CBS and CIR.
+    attrs[0].id = SAI_POLICER_ATTR_CBS;
+    attrs[0].value.u64 = static_cast<sai_uint64_t>(limit_rate);
+    attrs[1].id = SAI_POLICER_ATTR_CIR;
+    attrs[1].value.u64 = static_cast<sai_uint64_t>(limit_rate);
+
+    for (const auto &attr : attrs)
+    {
+        const auto status = sai_policer_api->set_policer_attribute(m_policer, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            // Earlier attributes may already be applied; do not roll back or retry.
+            SWSS_LOG_ERROR("Failed to update drop monitor policer attribute %u to %d, rv:%d",
+                           static_cast<unsigned int>(attr.id), limit_rate, status);
+            return false;
+        }
+    }
+
+    m_limitRate = limit_rate;
     return true;
 }
 

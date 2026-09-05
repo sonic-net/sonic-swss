@@ -54,7 +54,7 @@ public:
 
 private:
     bool            m_enable;
-    int32_t         m_limitRate; // packet per second
+    int32_t         m_limitRate; // Last fully applied rate in packets per second
 
     sai_object_id_t m_tamReport;
     sai_object_id_t m_tamEventAction;
@@ -85,6 +85,7 @@ private:
     bool removeTam();
 
     bool createPolicer(int32_t rate);
+    bool updatePolicerRate(int32_t limit_rate);
     bool removePolicer();
 
     bool createHostifTrapGroup();

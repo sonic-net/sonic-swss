@@ -1943,9 +1943,9 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     // Check enum value of SAI_TAM_EVENT_ATTR_TYPE
     const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_TAM_EVENT,
                                                       SAI_TAM_EVENT_ATTR_TYPE);
-    if (meta == nullptr)
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
     {
-        SWSS_LOG_WARN("Could not get metadata for SAI_TAM_EVENT_ATTR_TYPE");
+        SWSS_LOG_WARN("Could not get enum metadata for SAI_TAM_EVENT_ATTR_TYPE");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
         set_switch_capability(fvVector);
         return;
@@ -1990,9 +1990,9 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     // Check enum value of SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE
     meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                                                       SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE);
-    if (meta == nullptr)
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
     {
-        SWSS_LOG_WARN("Could not get metadata for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE");
+        SWSS_LOG_WARN("Could not get enum metadata for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
         set_switch_capability(fvVector);
         return;

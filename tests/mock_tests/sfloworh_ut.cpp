@@ -692,6 +692,95 @@ namespace sflow_test
         }
     }
 
+    void expectPolicerRate(sai_object_id_t policer, uint64_t cir, uint64_t cbs)
+    {
+        sai_attribute_t attrs[2] = {};
+        attrs[0].id = SAI_POLICER_ATTR_CIR;
+        attrs[1].id = SAI_POLICER_ATTR_CBS;
+        ASSERT_EQ(sai_policer_api->get_policer_attribute(policer, 2, attrs), SAI_STATUS_SUCCESS);
+        EXPECT_EQ(attrs[0].value.u64, cir);
+        EXPECT_EQ(attrs[1].value.u64, cbs);
+    }
+
+    /* Test: rate change updates CIR/CBS on the same policer without recreating it. */
+    TEST_F(SflowOrchTest, SflowDropMonitorRateUpdateInPlace)
+    {
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        auto &monitor = mock_orch.get().m_sflowDropMonitor;
+        ASSERT_TRUE(monitor.isEnabled());
+        const auto policer = monitor.m_policer;
+        const auto tam = monitor.m_tam;
+        expectPolicerRate(policer, 100, 100);
+
+        setDropMonitorLimit(mock_orch, "200");
+        EXPECT_TRUE(monitor.isEnabled());
+        EXPECT_EQ(monitor.getLimitRate(), 200);
+        EXPECT_EQ(monitor.m_policer, policer);
+        EXPECT_EQ(monitor.m_tam, tam);
+        expectPolicerRate(policer, 200, 200);
+
+        setDropMonitorLimit(mock_orch, "0");
+        EXPECT_FALSE(monitor.isEnabled());
+    }
+
+    /* Test: a set_policer_attribute failure reports failure and leaves cached state and MOD intact. */
+    TEST_F(SflowOrchTest, SflowDropMonitorPolicerSetFailure)
+    {
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        auto &monitor = mock_orch.get().m_sflowDropMonitor;
+        ASSERT_TRUE(monitor.isEnabled());
+        const auto policer = monitor.m_policer;
+        const auto original_set = policer_api_override.api().set_policer_attribute;
+        policer_api_override.api().set_policer_attribute =
+            [](sai_object_id_t, const sai_attribute_t *) -> sai_status_t { return SAI_STATUS_FAILURE; };
+
+        EXPECT_FALSE(monitor.enableDropMonitor(200));
+        EXPECT_TRUE(monitor.isEnabled());
+        EXPECT_EQ(monitor.getLimitRate(), 100);
+        EXPECT_EQ(monitor.m_policer, policer);
+        expectPolicerRate(policer, 100, 100);
+
+        // Once SAI accepts the update again, the next request applies both attributes.
+        policer_api_override.api().set_policer_attribute = original_set;
+        setDropMonitorLimit(mock_orch, "200");
+        EXPECT_EQ(monitor.getLimitRate(), 200);
+        expectPolicerRate(policer, 200, 200);
+        setDropMonitorLimit(mock_orch, "0");
+    }
+
+    /* Test: CIR failure after CBS success keeps the cached rate; a different limit repairs both. */
+    TEST_F(SflowOrchTest, SflowDropMonitorCirSetFailure)
+    {
+        ScopedSaiApiOverride<sai_policer_api_t> policer_api_override(sai_policer_api);
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        auto &monitor = mock_orch.get().m_sflowDropMonitor;
+        ASSERT_TRUE(monitor.isEnabled());
+        const auto policer = monitor.m_policer;
+        static sai_set_policer_attribute_fn original_set;
+        original_set = policer_api_override.api().set_policer_attribute;
+        policer_api_override.api().set_policer_attribute =
+            [](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+                return attr->id == SAI_POLICER_ATTR_CIR ? SAI_STATUS_FAILURE : original_set(oid, attr);
+            };
+
+        EXPECT_FALSE(monitor.enableDropMonitor(200));
+        EXPECT_TRUE(monitor.isEnabled());
+        EXPECT_EQ(monitor.getLimitRate(), 100);
+        EXPECT_EQ(monitor.m_policer, policer);
+        // CBS was applied before CIR failed; no rollback is attempted.
+        expectPolicerRate(policer, 100, 200);
+
+        policer_api_override.api().set_policer_attribute = original_set;
+        setDropMonitorLimit(mock_orch, "300");
+        EXPECT_EQ(monitor.getLimitRate(), 300);
+        expectPolicerRate(policer, 300, 300);
+        setDropMonitorLimit(mock_orch, "0");
+    }
+
     /* Test: getDropMonitorCpuQueue fallback when config file not found */
     TEST_F(SflowOrchTest, SflowDropMonitorCpuQueueFileNotFound)
     {
