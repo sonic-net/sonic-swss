@@ -1,16 +1,9 @@
 #include <unistd.h>
 #include <vector>
-#include <sstream>
-#include <fstream>
-#include <iostream>
-#include <mutex>
-#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
-#include "exec.h"
 #include "schema.h"
-#include "producerstatetable.h"
-#include "aclmgr.h"
+#include "qosmgr.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
 
@@ -22,31 +15,34 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("aclmgrd");
+    Logger::linkToDbNative("qosmgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting aclmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting qosmgrd ---");
 
     try
     {
-        /* CONFIG_DB tables that aclmgrd subscribes to */
-        vector<string> cfg_acl_tables = {
-            CFG_ACL_TABLE_TABLE_NAME,
-            CFG_ACL_RULE_TABLE_NAME,
-            CFG_ACL_TABLE_TYPE_TABLE_NAME,
-            CFG_POLICER_TABLE_NAME,
+        /* CONFIG_DB tables that qosmgrd subscribes to */
+        vector<string> cfg_qos_tables = {
+            CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+            CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
+            CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
+            CFG_TC_TO_DSCP_MAP_TABLE_NAME,
+            CFG_SCHEDULER_TABLE_NAME,
+            CFG_WRED_PROFILE_TABLE_NAME,
+            CFG_QUEUE_TABLE_NAME,
+            CFG_PORT_QOS_MAP_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("aclmgrd", "swss");
-        WarmStart::checkWarmStart("aclmgrd", "swss");
+        WarmStart::initialize("qosmgrd", "swss");
+        WarmStart::checkWarmStart("qosmgrd", "swss");
 
-        AclMgr aclmgr(&cfgDb, &appDb, &stateDb, cfg_acl_tables);
+        QosMgr qosmgr(&cfgDb, &stateDb, cfg_qos_tables);
 
-        std::vector<Orch *> cfgOrchList = {&aclmgr};
+        std::vector<Orch *> cfgOrchList = {&qosmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -68,7 +64,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                aclmgr.doTask();
+                qosmgr.doTask();
                 continue;
             }
 

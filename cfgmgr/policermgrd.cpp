@@ -23,6 +23,7 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_policer_tables = {
             CFG_POLICER_TABLE_NAME,
+            CFG_PORT_STORM_CONTROL_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);

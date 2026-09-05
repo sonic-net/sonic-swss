@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd aclmgrd mirrormgrd policermgrd nvgretunnelmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd aclmgrd mirrormgrd policermgrd nvgretunnelmgrd qosmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -107,17 +107,17 @@ stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAG
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 stpmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-aclmgrd_SOURCES = aclmgrd.cpp aclmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+aclmgrd_SOURCES = aclmgrd.cpp aclmgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 aclmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 aclmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 aclmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-mirrormgrd_SOURCES = mirrormgrd.cpp mirrormgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+mirrormgrd_SOURCES = mirrormgrd.cpp mirrormgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 mirrormgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 mirrormgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 mirrormgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-policermgrd_SOURCES = policermgrd.cpp policermgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+policermgrd_SOURCES = policermgrd.cpp policermgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 policermgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 policermgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 policermgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
@@ -126,6 +126,10 @@ nvgretunnelmgrd_SOURCES = nvgretunnelmgrd.cpp nvgretunnelmgr.cpp $(COMMON_ORCH_S
 nvgretunnelmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 nvgretunnelmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 nvgretunnelmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+qosmgrd_SOURCES = qosmgrd.cpp qosmgr.cpp kernutil.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+qosmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+qosmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+qosmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 if GCOV_ENABLED
 vlanmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
