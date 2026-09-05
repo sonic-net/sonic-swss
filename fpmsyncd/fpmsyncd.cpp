@@ -12,6 +12,7 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 
 #include <netlink/route/route.h>
 
@@ -88,6 +89,9 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    MacSync macsync(&pipeline, &stateDb, &cfgDb);
+    sync.setMacSync(&macsync);
+
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
@@ -141,8 +145,14 @@ int main(int argc, char **argv)
             fpm.accept();
             cout << "Connected!" << endl;
 
+            macsync.onFpmConnected(fpm);
+
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            s.addSelectable(macsync.getStateFdbTable());
+            s.addSelectable(macsync.getCfgFdbSyncTable());
+            s.addSelectable(macsync.getAppPortTable());
+
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -190,6 +200,24 @@ int main(int argc, char **argv)
 
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
                 s.select(&temps, gSelectTimeout);
+
+                if (temps == (Selectable *)macsync.getStateFdbTable())
+                {
+                    macsync.processStateFdb();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getCfgFdbSyncTable())
+                {
+                    macsync.processCfgFdbSync();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getAppPortTable())
+                {
+                    macsync.processAppPort();
+                    continue;
+                }
 
                 /*
                  * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
@@ -269,6 +297,7 @@ int main(int argc, char **argv)
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
+            macsync.onFpmDisconnected();
             cout << "Connection lost, reconnecting..." << endl;
         }
     }

@@ -8,6 +8,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
@@ -78,19 +79,34 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
+    SubscriberStateTable *getCfgFdbSyncTable()
+    {
+        return &m_cfgFdbSyncTable;
+    }
+
     void processStateFdb();
 
     void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
 
+    void processCfgFdbSync();
+
+    /* True when fpmsyncd owns MAC synchronization over the FPM channel. */
+    bool isFpmMacSync() const
+    {
+        return m_fpmMacSync;
+    }
+
     bool m_reconcileDone = false;
 
     bool m_isEvpnNvoExist = false;
 
 private:
-    bool m_isFdbProtoSupported = false;
-    bool checkFdbProtoSupport();
+    void readCfgFdbSyncMode();
+    void setMacSyncMode(const std::string& mode);
+
+    bool m_fpmMacSync = false;
 
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
@@ -99,6 +115,8 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    SubscriberStateTable m_cfgFdbSyncTable;
+    Table m_cfgFdbSyncTableRead;
 
     struct m_local_fdb_info
     {
@@ -119,11 +137,11 @@ private:
 
     void updateAllLocalMac();
 
-    void macRefreshStateDB(int vlan, std::string kmac, uint8_t protocol);
+    void macRefreshStateDB(int vlan, std::string kmac);
 
     void updateMclagRemoteMac(struct m_fdb_info *info);
 
-    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, uint8_t protocol);
+    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
 
     void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
@@ -137,7 +155,6 @@ private:
         std::string type;
         unsigned int vni;
         std::string ifname;
-        uint8_t protocol;
 
         // Nexthop destination value - interpretation depends on nhtype:
         // - nhtype == VTEP: contains remote VTEP IP address
@@ -161,7 +178,7 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type, uint8_t protocol);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);

@@ -169,7 +169,21 @@ typedef enum {
   RTM_FPM_ADD_EVPN_ES_BACKUP_NHG,
   /* Notify FPM about a delete of a backup NHG */
   RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
-  RTM_FPM_LAST = RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
+  /*
+   * End of a MAC replay generation. nlmsg_seq carries the generation.
+   *
+   * Generation 0 is never handed out by a replay and means the sender no
+   * longer owns local MACs, which happens when mac_sync_mode leaves fpm.
+   * The receiver releases ownership and treats every MAC it was given as
+   * stale, since nothing will refresh them again.
+   *
+   * Pinned to an explicit value: this enum and the zebra copy in
+   * zebra/kernel_netlink.h have drifted (zebra lacks the two
+   * ES_BACKUP_NHG values), so a positional value would not match on
+   * the wire. 147 and 148 stay reserved for the ES_BACKUP_NHG pair.
+   */
+  RTM_FPM_MAC_REPLAY_END = 149,
+  RTM_FPM_LAST = RTM_FPM_MAC_REPLAY_END,
   RTM_FPM_MAX = RTM_FPM_LAST
 } rtm_fpm_msg_types_et;
 
