@@ -14,7 +14,7 @@ pub enum IPFixTemplateOperation {
 }
 
 #[derive(Debug, Clone)]
-pub struct IPFixOwnerUpdate {
+pub struct IPFixTemplatesMessage {
     pub key: String,
     pub templates: Option<IPFixTemplates>,
     pub object_names: Option<Vec<String>>,
@@ -22,7 +22,7 @@ pub struct IPFixOwnerUpdate {
     pub operation: IPFixTemplateOperation,
 }
 
-impl IPFixOwnerUpdate {
+impl IPFixTemplatesMessage {
     pub fn new(
         key: String,
         templates: IPFixTemplates,
@@ -57,24 +57,4 @@ impl IPFixOwnerUpdate {
             operation: IPFixTemplateOperation::Deactivate,
         }
     }
-}
-
-/// A single owner change or a complete owner snapshot after notification loss.
-/// Reconciliation requires a snapshot and cannot contain another envelope.
-///
-/// ```compile_fail
-/// use countersyncd::message::ipfix::IPFixTemplatesMessage;
-/// let message = IPFixTemplatesMessage::Reconcile(None);
-/// ```
-///
-/// ```compile_fail
-/// use countersyncd::message::ipfix::IPFixTemplatesMessage;
-/// let message = IPFixTemplatesMessage::Reconcile(vec![
-///     IPFixTemplatesMessage::Reconcile(vec![]),
-/// ]);
-/// ```
-#[derive(Debug, Clone)]
-pub enum IPFixTemplatesMessage {
-    Owner(IPFixOwnerUpdate),
-    Reconcile(Vec<IPFixOwnerUpdate>),
 }
