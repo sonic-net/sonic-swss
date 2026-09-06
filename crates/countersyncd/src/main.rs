@@ -292,9 +292,9 @@ struct Args {
     /// Channel capacity for otel communication
     #[arg(
         long,
-        default_value = "32",
+        default_value = "1024",
         value_parser = parse_positive_capacity,
-        help = "Set the SAI stats batch channel capacity for otel; values above 64 are accepted and clamped to 64"
+        help = "Set the SAI stats batch channel capacity for otel; must be positive, with no upper clamp"
     )]
     otel_capacity: usize,
 
@@ -315,6 +315,15 @@ struct Args {
     otel_flush_timeout_ms: u64,
 }
 
+impl Args {
+    fn normalize_capacities(&mut self) {
+        self.stats_reporter_capacity =
+            clamp_batch_capacity("--stats-reporter-capacity", self.stats_reporter_capacity);
+        self.counter_db_capacity =
+            clamp_batch_capacity("--counter-db-capacity", self.counter_db_capacity);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
@@ -322,11 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
-    args.stats_reporter_capacity =
-        clamp_batch_capacity("--stats-reporter-capacity", args.stats_reporter_capacity);
-    args.counter_db_capacity =
-        clamp_batch_capacity("--counter-db-capacity", args.counter_db_capacity);
-    args.otel_capacity = clamp_batch_capacity("--otel-capacity", args.otel_capacity);
+    args.normalize_capacities();
 
     if let Some(value) = args.socket_readiness_timeout_ms {
         warn!(
@@ -612,14 +617,17 @@ mod tests {
 
     #[test]
     fn test_defaults() {
-        let args = parse(&["countersyncd"]).unwrap();
+        let mut args = parse(&["countersyncd"]).unwrap();
+        assert_eq!(args.otel_capacity, 1024);
+        args.normalize_capacities();
         assert_eq!(args.socket_readiness_timeout_ms, None);
         assert_eq!(args.netlink_rcvbuf, 4194304);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
         assert_eq!(args.stats_reporter_capacity, 32);
         assert_eq!(args.counter_db_capacity, 32);
-        assert_eq!(args.otel_capacity, 32);
+        assert_eq!(args.data_netlink_capacity, 1024);
+        assert_eq!(args.otel_capacity, 1024);
         assert!(!args.enable_stats);
         assert!(!args.enable_counter_db);
         assert!(!args.enable_otel);
@@ -669,6 +677,35 @@ mod tests {
         assert_eq!(clamp_batch_capacity("--test", 64), 64);
         assert_eq!(clamp_batch_capacity("--test", 65), 64);
         assert_eq!(clamp_batch_capacity("--test", 1024), 64);
+    }
+
+    #[test]
+    fn test_otel_capacity_is_not_clamped() {
+        for capacity in ["1", "64", "65", "1024", "2048"] {
+            let mut args = parse(&[
+                "countersyncd",
+                "--otel-capacity",
+                capacity,
+                "--stats-reporter-capacity",
+                "1024",
+                "--counter-db-capacity",
+                "1024",
+            ])
+            .unwrap();
+            let expected = capacity.parse::<usize>().unwrap();
+            assert_eq!(args.otel_capacity, expected);
+            args.normalize_capacities();
+            assert_eq!(args.otel_capacity, expected);
+            let (sender, _receiver) = channel::<()>(args.otel_capacity);
+            assert_eq!(sender.max_capacity(), expected);
+            assert_eq!(args.stats_reporter_capacity, 64);
+            assert_eq!(args.counter_db_capacity, 64);
+        }
+    }
+
+    #[test]
+    fn test_otel_capacity_zero_rejected() {
+        assert!(parse(&["countersyncd", "--otel-capacity", "0"]).is_err());
     }
 
     #[test]
