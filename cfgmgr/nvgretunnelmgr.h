@@ -21,8 +21,9 @@
 #define STATE_NVGRE_TUNNEL_MAP_TABLE_NAME "NVGRE_TUNNEL_MAP_TABLE"
 #endif
 
-/* NVGRE_TUNNEL field */
+/* NVGRE_TUNNEL fields */
 #define NVGRE_FIELD_SRC_IP              "src_ip"
+#define NVGRE_FIELD_DST_IP              "dst_ip"
 
 /* NVGRE_TUNNEL_MAP fields (composite key <tunnel>|<map>) */
 #define NVGRE_MAP_FIELD_VSID            "vsid"
@@ -67,6 +68,7 @@ private:
     Table m_cfgMapTable;   // CONFIG_DB NVGRE_TUNNEL_MAP (for tunnel-delete deferral)
 
     std::map<std::string, std::string> m_tunnelSrcIp;   // tunnel_name -> src_ip
+    std::map<std::string, std::string> m_tunnelDstIp;   // tunnel_name -> dst_ip (remote VTEP; empty = any)
     std::map<std::string, NvgreMapState> m_mapDev;      // composite key "tunnel|map" -> state
 
     void doTask(Consumer &consumer);
@@ -74,7 +76,8 @@ private:
     void doNvgreTunnelMapTask(Consumer &consumer);
 
     bool programMap(const std::string &key, const std::string &vsid,
-                    const std::string &vlanId, const std::string &srcIp);
+                    const std::string &vlanId, const std::string &srcIp,
+                    const std::string &dstIp);
     void removeMap(const std::string &key);
 
     bool interfaceExists(const std::string &dev);

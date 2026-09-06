@@ -155,7 +155,7 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            string src_ip;
+            string src_ip, dst_ip;
             vector<string> unknown_fields;
 
             for (auto i : kfvFieldsValues(t))
@@ -164,11 +164,14 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
                 string value = fvValue(i);
                 if (field == NVGRE_FIELD_SRC_IP)
                     src_ip = value;
+                else if (field == NVGRE_FIELD_DST_IP)
+                    dst_ip = value;
                 else
                     unknown_fields.push_back(field);
             }
 
-            SWSS_LOG_NOTICE("NVGRE_TUNNEL SET: %s src_ip=%s", tunnel_name.c_str(), src_ip.c_str());
+            SWSS_LOG_NOTICE("NVGRE_TUNNEL SET: %s src_ip=%s dst_ip=%s",
+                            tunnel_name.c_str(), src_ip.c_str(), dst_ip.c_str());
 
             bool ok = true;
             string reason;
@@ -196,11 +199,16 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
                 {
                     IpAddress ip(src_ip);
                     (void)ip;
+                    if (!dst_ip.empty())
+                    {
+                        IpAddress dip(dst_ip);
+                        (void)dip;
+                    }
                 }
                 catch (...)
                 {
                     ok = false;
-                    reason = "invalid src_ip";
+                    reason = "invalid src_ip/dst_ip";
                 }
             }
 
@@ -210,13 +218,16 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
             }
             else
             {
-                /* If src_ip changed, re-program any already-created maps so their
-                 * gretap `local` tracks the new VTEP source IP. programMap() does
-                 * delete-before-add, so this is idempotent. */
+                /* If src_ip or dst_ip changed, re-program any already-created maps
+                 * so their gretap `local`/`remote` track the new VTEP addresses.
+                 * programMap() does delete-before-add, so this is idempotent. */
                 bool changed = (m_tunnelSrcIp.find(tunnel_name) == m_tunnelSrcIp.end()) ||
-                               (m_tunnelSrcIp[tunnel_name] != src_ip);
+                               (m_tunnelSrcIp[tunnel_name] != src_ip) ||
+                               (m_tunnelDstIp.find(tunnel_name) == m_tunnelDstIp.end()) ||
+                               (m_tunnelDstIp[tunnel_name] != dst_ip);
 
                 m_tunnelSrcIp[tunnel_name] = src_ip;
+                m_tunnelDstIp[tunnel_name] = dst_ip;
 
                 if (changed)
                 {
@@ -224,7 +235,7 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
                     for (auto &entry : m_mapDev)
                     {
                         if (entry.first.compare(0, prefix.size(), prefix) == 0)
-                            programMap(entry.first, entry.second.vsid, entry.second.vlanId, src_ip);
+                            programMap(entry.first, entry.second.vsid, entry.second.vlanId, src_ip, dst_ip);
                     }
                 }
             }
@@ -250,6 +261,7 @@ void NvgreTunnelMgr::doNvgreTunnelTask(Consumer &consumer)
             }
 
             m_tunnelSrcIp.erase(tunnel_name);
+            m_tunnelDstIp.erase(tunnel_name);
             m_stateNvgreTunnelTable.del(tunnel_name);
 
             it = consumer.m_toSync.erase(it);
@@ -378,7 +390,9 @@ void NvgreTunnelMgr::doNvgreTunnelMapTask(Consumer &consumer)
                 continue;
             }
 
-            bool programmed = programMap(key, vsid, vlan_id, srcIt->second);
+            auto dstIt = m_tunnelDstIp.find(tunnel);
+            string dstIp = (dstIt != m_tunnelDstIp.end()) ? dstIt->second : "";
+            bool programmed = programMap(key, vsid, vlan_id, srcIt->second, dstIp);
 
             vector<FieldValueTuple> fvs;
             fvs.emplace_back("status", programmed ? "active" : "inactive");
@@ -403,7 +417,8 @@ void NvgreTunnelMgr::doNvgreTunnelMapTask(Consumer &consumer)
 }
 
 bool NvgreTunnelMgr::programMap(const string &key, const string &vsid,
-                                const string &vlanId, const string &srcIp)
+                                const string &vlanId, const string &srcIp,
+                                const string &dstIp)
 {
     SWSS_LOG_ENTER();
 
@@ -411,7 +426,10 @@ bool NvgreTunnelMgr::programMap(const string &key, const string &vsid,
     string mapName = key.substr(key.find('|') + 1);
     string dev = mapDeviceName(tunnel, mapName);
 
-    /* IPv4 -> gretap, IPv6 -> ip6gretap (Fix 4). */
+    /* IPv4 -> gretap, IPv6 -> ip6gretap (Fix 4).
+     * `remote` is the peer VTEP IP used for encap. Default to `any` (decap-only
+     * P2MP termination) when dst_ip is not configured; a specific dst_ip makes
+     * the return encap path work for a fixed peer. */
     string linkType, remote, ttlOpt;
     try
     {
@@ -419,13 +437,13 @@ bool NvgreTunnelMgr::programMap(const string &key, const string &vsid,
         if (ip.isV4())
         {
             linkType = "gretap";
-            remote = "0.0.0.0";
+            remote = dstIp.empty() ? "0.0.0.0" : dstIp;
             ttlOpt = "ttl";
         }
         else
         {
             linkType = "ip6gretap";
-            remote = "::";
+            remote = dstIp.empty() ? "::" : dstIp;
             ttlOpt = "hoplimit";
         }
     }
