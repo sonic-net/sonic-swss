@@ -66,7 +66,31 @@ enum ObservationTime {
         seconds_offset: usize,
         nanos_offset: usize,
     },
-    ProcessingTime,
+    Missing,
+}
+
+impl ObservationTime {
+    fn extract(&self, record: &[u8]) -> Option<u64> {
+        match *self {
+            Self::RawNanoseconds { offset } => Some(NetworkEndian::read_u64(
+                &record[offset..offset + usize::from(OBSERVATION_TIME_LEN)],
+            )),
+            Self::Split {
+                seconds_offset,
+                nanos_offset,
+            } => {
+                let seconds = NetworkEndian::read_u32(
+                    &record
+                        [seconds_offset..seconds_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                );
+                let nanos = NetworkEndian::read_u32(
+                    &record[nanos_offset..nanos_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                );
+                Some(u64::from(seconds) * NANOS_PER_SECOND + u64::from(nanos))
+            }
+            Self::Missing => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,12 +176,19 @@ impl From<String> for IpfixError {
 /// Valid nonempty data on a new pending key promotes the entire snapshot and
 /// retires all old-only keys. Shared unchanged keys do not trigger promotion.
 /// A newer snapshot supersedes pending state; resending active cancels it.
+/// Missing times use the last explicit time in the same message, then the last
+/// explicit time processed by this actor, then system UTC. History is shared
+/// across owners/domains and survives template changes, without an expiry;
+/// it is not a numeric maximum and system UTC never seeds it. A lost timestamp
+/// message can therefore leave continuations using stale history until the next
+/// explicit time arrives (or the actor is recreated).
 pub struct IpfixActor {
     saistats_recipients: Vec<Sender<SAIStatsBatchMessage>>,
     template_recipient: Receiver<IPFixTemplatesMessage>,
     record_recipient: Receiver<SocketBufferMessage>,
     sessions: HashMap<Arc<str>, SessionTemplates>,
     installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    last_observation_time: Option<u64>,
     dropped_sets: u64,
     next_drop_warning: Instant,
 }
@@ -173,6 +204,7 @@ impl IpfixActor {
             record_recipient,
             sessions: HashMap::new(),
             installed: HashMap::new(),
+            last_observation_time: None,
             dropped_sets: 0,
             next_drop_warning: Instant::now(),
         }
@@ -468,24 +500,43 @@ impl IpfixActor {
 
     fn process_data_message(
         &mut self,
-        message: ValidatedDataMessage<'_>,
+        mut message: ValidatedDataMessage<'_>,
         batch: &mut SAIStatsBatch,
     ) {
         let dropped_before = self.dropped_sets;
-        for set in message.sets {
-            if let Some((template, layout)) = set.decoder {
+        let mut message_time = None;
+        // Resolve cutovers in wire order before looking ahead for a fallback.
+        // Keep earlier live descriptors even if a later Set retires them.
+        for set in &mut message.sets {
+            if let Some((template, layout)) = &set.decoder {
                 // A preceding Set in this input may have retired this descriptor.
                 if self
                     .installed
                     .get(&set.key)
-                    .is_some_and(|installed| Arc::ptr_eq(installed, &template))
+                    .is_some_and(|installed| Arc::ptr_eq(installed, template))
                 {
-                    self.promote_pending_for(&template);
-                    self.decode_set(&template, set.bytes, layout, batch);
+                    self.promote_pending_for(template);
+                    let end = SET_HEADER_LEN + layout.record_bytes;
+                    if let Some(time) = template
+                        .observation_time
+                        .extract(&set.bytes[end - template.record_len..end])
+                    {
+                        message_time = Some(time);
+                    }
                     continue;
                 }
             }
+            set.decoder = None;
             self.dropped_sets = self.dropped_sets.saturating_add(1);
+        }
+        let fallback_time = message_time.or(self.last_observation_time);
+        for set in message.sets {
+            if let Some((template, layout)) = set.decoder {
+                self.decode_set(&template, set.bytes, layout, fallback_time, batch);
+            }
+        }
+        if message_time.is_some() {
+            self.last_observation_time = message_time;
         }
         let now = Instant::now();
         if self.dropped_sets != dropped_before && now >= self.next_drop_warning {
@@ -502,34 +553,22 @@ impl IpfixActor {
         template: &CompiledTemplate,
         set: &[u8],
         layout: DataSetLayout,
+        fallback_time: Option<u64>,
         batch: &mut SAIStatsBatch,
     ) {
         let payload = &set[SET_HEADER_LEN..];
         batch.reserve(layout.record_count, layout.counter_count);
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
-            let observation_time = match template.observation_time {
-                ObservationTime::RawNanoseconds { offset } => NetworkEndian::read_u64(
-                    &record[offset..offset + usize::from(OBSERVATION_TIME_LEN)],
-                ),
-                ObservationTime::Split {
-                    seconds_offset,
-                    nanos_offset,
-                } => {
-                    let seconds = NetworkEndian::read_u32(
-                        &record[seconds_offset
-                            ..seconds_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
-                    );
-                    let nanos = NetworkEndian::read_u32(
-                        &record
-                            [nanos_offset..nanos_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
-                    );
-                    u64::from(seconds) * NANOS_PER_SECOND + u64::from(nanos)
-                }
-                ObservationTime::ProcessingTime => SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .expect("System time should be after Unix epoch")
-                    .as_nanos() as u64,
-            };
+            let observation_time = template
+                .observation_time
+                .extract(record)
+                .or(fallback_time)
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .expect("System time should be after Unix epoch")
+                        .as_nanos() as u64
+                });
             batch.push_record(
                 observation_time,
                 template.counters.iter().map(|counter| SAIStat {
@@ -1015,7 +1054,7 @@ fn compile_template_set(
                 nanos_offset,
             }
         } else {
-            ObservationTime::ProcessingTime
+            ObservationTime::Missing
         };
         let key = TemplateKey {
             observation_domain_id: domain,
@@ -1091,6 +1130,252 @@ mod tests {
             .as_nanos() as u64
     }
 
+    fn timestamp_actor() -> IpfixActor {
+        let mut actor = actor();
+        let mut update = hardware_template(256, &[(325, 8, None), (1, 8, Some(1))]);
+        let continuation = hardware_template(257, &[(1, 8, Some(1))]);
+        Arc::make_mut(update.templates.as_mut().unwrap())
+            .extend_from_slice(continuation.templates.as_ref().unwrap());
+        actor.handle_template(update).unwrap();
+        actor
+    }
+
+    fn append_hardware_set(message: &mut Vec<u8>, next: &[u8]) {
+        message.extend_from_slice(&next[IPFIX_HEADER_LEN..]);
+        let len = u16::try_from(message.len()).unwrap();
+        message[2..4].copy_from_slice(&len.to_be_bytes());
+    }
+
+    #[test]
+    fn timestamp_history_follows_processing_order_across_buffers() {
+        for separate_buffers in [false, true] {
+            let mut actor = timestamp_actor();
+            for time in [100u64, 42, 0] {
+                let mut record = time.to_be_bytes().to_vec();
+                record.extend_from_slice(&7u64.to_be_bytes());
+                let mut input = hardware_data(256, &[&record]);
+                let continuation = hardware_data(257, &[&8u64.to_be_bytes()]);
+                let batch = if separate_buffers {
+                    let batch = actor.handle_record(&input).unwrap();
+                    assert_eq!(batch.iter().next().unwrap().observation_time, time);
+                    actor.handle_record(&continuation).unwrap()
+                } else {
+                    input.extend_from_slice(&continuation);
+                    actor.handle_record(&input).unwrap()
+                };
+                assert!(batch.iter().all(|r| r.observation_time == time));
+                assert_eq!(actor.last_observation_time, Some(time));
+            }
+        }
+    }
+
+    #[test]
+    fn message_local_time_overrides_history_but_explicit_records_keep_their_own() {
+        let mut actor = timestamp_actor();
+        actor
+            .handle_record(&data_message(0, &[(256, vec![(999, vec![1])])]))
+            .unwrap();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        let mut input = continuation.clone();
+        append_hardware_set(
+            &mut input,
+            &data_message(0, &[(256, vec![(100, vec![2]), (42, vec![3])])]),
+        );
+        append_hardware_set(&mut input, &continuation);
+        append_hardware_set(&mut input, &data_message(0, &[(256, vec![(0, vec![4])])]));
+        append_hardware_set(&mut input, &continuation);
+        input.extend_from_slice(&continuation);
+        let batch = actor.handle_record(&input).unwrap();
+        assert_eq!(
+            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>(),
+            vec![0, 100, 42, 0, 0, 0, 0]
+        );
+        assert_eq!(actor.last_observation_time, Some(0));
+    }
+
+    #[test]
+    fn startup_fallback_never_seeds_history_or_looks_into_a_later_message() {
+        let mut actor = timestamp_actor();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        for _ in 0..2 {
+            let before = utc_nanos();
+            let batch = actor.handle_record(&continuation).unwrap();
+            assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+            assert_eq!(actor.last_observation_time, None);
+        }
+        let mut input = continuation;
+        input.extend_from_slice(&data_message(0, &[(256, vec![(42, vec![1])])]));
+        let before = utc_nanos();
+        let batch = actor.handle_record(&input).unwrap();
+        assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+        assert_eq!(batch.iter().nth(1).unwrap().observation_time, 42);
+        assert_eq!(actor.last_observation_time, Some(42));
+    }
+
+    #[test]
+    fn partial_split_time_uses_message_or_history_fallback() {
+        for ie in [322, 325] {
+            let mut actor = timestamp_actor();
+            let mut update = hardware_template(258, &[(ie, 4, None), (1, 8, Some(1))]);
+            update.key = "partial".into();
+            actor.handle_template(update).unwrap();
+            let record = [0xff; 12];
+            let partial = hardware_data(258, &[&record]);
+            let before = utc_nanos();
+            let batch = actor.handle_record(&partial).unwrap();
+            assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+            assert_eq!(actor.last_observation_time, None);
+            let mut input = partial.clone();
+            append_hardware_set(&mut input, &data_message(0, &[(256, vec![(42, vec![1])])]));
+            assert!(actor
+                .handle_record(&input)
+                .unwrap()
+                .iter()
+                .all(|r| r.observation_time == 42));
+            let batch = actor.handle_record(&partial).unwrap();
+            assert_eq!(batch.iter().next().unwrap().observation_time, 42);
+            assert_eq!(actor.last_observation_time, Some(42));
+        }
+    }
+
+    #[test]
+    fn timestamp_inference_excludes_descriptors_retired_by_earlier_sets() {
+        for same_message in [false, true] {
+            for old_first in [false, true] {
+                let mut actor = timestamp_actor();
+                actor
+                    .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
+                    .unwrap();
+                actor
+                    .handle_template(hardware_template(258, &[(1, 8, Some(1))]))
+                    .unwrap();
+                let old = data_message(0, &[(256, vec![(99, vec![2])])]);
+                let new = hardware_data(258, &[&3u64.to_be_bytes()]);
+                let mut input = if old_first { old.clone() } else { new.clone() };
+                let next = if old_first { &new } else { &old };
+                if same_message {
+                    append_hardware_set(&mut input, next);
+                } else {
+                    input.extend_from_slice(next);
+                }
+                let batch = actor.handle_record(&input).unwrap();
+                let expected = if old_first { 99 } else { 42 };
+                assert_eq!(batch.record_count(), if old_first { 2 } else { 1 });
+                assert!(batch.iter().all(|r| r.observation_time == expected));
+                assert_eq!(actor.last_observation_time, Some(expected));
+                assert_eq!(keys(&actor), vec![(0, 258)]);
+                assert!(actor.handle_record(&old).unwrap().is_empty());
+                assert_eq!(actor.last_observation_time, Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_history_is_actor_wide_but_instances_are_isolated() {
+        let mut first = timestamp_actor();
+        let mut second = timestamp_actor();
+        first
+            .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
+            .unwrap();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        let before = utc_nanos();
+        let batch = second.handle_record(&continuation).unwrap();
+        assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+        assert_eq!(second.last_observation_time, None);
+        second
+            .handle_record(&data_message(0, &[(256, vec![(99, vec![1])])]))
+            .unwrap();
+        assert_eq!(first.last_observation_time, Some(42));
+
+        first
+            .handle_template(IPFixOwnerUpdate::delete("hardware".into()))
+            .unwrap();
+        let mut update = hardware_template(257, &[(1, 8, Some(1))]);
+        update.key = "other".into();
+        Arc::make_mut(update.templates.as_mut().unwrap())[12..16]
+            .copy_from_slice(&1u32.to_be_bytes());
+        first.handle_template(update).unwrap();
+        let mut continuation = continuation;
+        continuation[12..16].copy_from_slice(&1u32.to_be_bytes());
+        let batch = first.handle_record(&continuation).unwrap();
+        assert_eq!(batch.iter().next().unwrap().observation_time, 42);
+    }
+
+    #[test]
+    fn invalid_unknown_and_padding_only_inputs_never_update_time() {
+        for seed in [None, Some(42)] {
+            let mut actor = timestamp_actor();
+            if let Some(time) = seed {
+                actor
+                    .handle_record(&data_message(0, &[(256, vec![(time, vec![1])])]))
+                    .unwrap();
+            }
+            assert_eq!(actor.last_observation_time, seed);
+            let good = data_message(0, &[(256, vec![(99, vec![1])])]);
+            let padding_only = hardware_data(256, &[&[0; 8]]);
+            let mut bad_later_message = good.clone();
+            bad_later_message.extend_from_slice(&padding_only);
+            let mut bad_later_set = good.clone();
+            append_hardware_set(&mut bad_later_set, &padding_only);
+            let mut bad_trailer = good;
+            bad_trailer.extend_from_slice(&[1, 2, 3]);
+            for input in [bad_later_message, bad_later_set, bad_trailer, padding_only] {
+                assert!(actor.handle_record(&input).is_err());
+                assert_eq!(actor.last_observation_time, seed);
+            }
+            let unknown = data_message(0, &[(999, vec![(123, vec![1])])]);
+            assert!(actor.handle_record(&unknown).unwrap().is_empty());
+            assert_eq!(actor.last_observation_time, seed);
+            let mut continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+            append_hardware_set(&mut continuation, &unknown);
+            let before = utc_nanos();
+            let batch = actor.handle_record(&continuation).unwrap();
+            let time = batch.iter().next().unwrap().observation_time;
+            match seed {
+                Some(expected) => assert_eq!(time, expected),
+                None => assert!((before..=utc_nanos()).contains(&time)),
+            }
+            assert_eq!(actor.last_observation_time, seed);
+        }
+    }
+
+    #[tokio::test]
+    async fn slow_sink_preflush_keeps_inherited_time_without_future_message_leakage() {
+        let mut actor = timestamp_actor();
+        actor
+            .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
+            .unwrap();
+        let (tx, mut rx) = channel(1);
+        tx.send(Arc::new(SAIStatsBatch::default())).await.unwrap();
+        actor.add_recipient(tx);
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(
+            7,
+            (0..TARGET_COUNTERS_PER_BATCH).map(|_| SAIStat::new("x", 1, 1, 1)),
+        );
+        let mut input = hardware_data(257, &[&7u64.to_be_bytes()]);
+        input.extend_from_slice(&data_message(0, &[(256, vec![(99, vec![1])])]));
+        {
+            let processing = actor.process_record_input(&input, &mut batch);
+            tokio::pin!(processing);
+            tokio::select! {
+                _ = &mut processing => panic!("preflush must wait for the full sink"),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+            }
+            assert!(rx.recv().await.unwrap().is_empty());
+            processing.await;
+        }
+        assert_eq!(
+            rx.recv().await.unwrap().counter_count(),
+            TARGET_COUNTERS_PER_BATCH
+        );
+        assert_eq!(
+            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>(),
+            vec![42, 99]
+        );
+        assert_eq!(actor.last_observation_time, Some(99));
+    }
+
     #[test]
     fn sn5640_split_timestamp_and_placeholder_layout_decodes_both_templates() {
         // Minimized from the SN5640 capture: standard322/4 +325/4,
@@ -1143,7 +1428,7 @@ mod tests {
             template_id: 257,
         }];
         assert_eq!(two.record_len, 24);
-        assert_eq!(two.observation_time, ObservationTime::ProcessingTime);
+        assert_eq!(two.observation_time, ObservationTime::Missing);
         let mut record = Vec::new();
         record.extend_from_slice(&1_788_655_919u32.to_be_bytes());
         record.extend_from_slice(&123_456_789u32.to_be_bytes());
@@ -1156,14 +1441,12 @@ mod tests {
         continuation.extend_from_slice(&0x8765_4321u32.to_be_bytes());
         let mut data = hardware_data(256, &[&record, &next_record]);
         data.extend_from_slice(&hardware_data(257, &[&continuation]));
-        let before = utc_nanos();
         let output = actor.handle_record(&data).unwrap();
-        let after = utc_nanos();
         let records = output.iter().collect::<Vec<_>>();
         assert_eq!(output.counter_count(), 5); // No unknown_0 placeholder metrics.
         assert_eq!(records[0].observation_time, 1_788_655_919_123_456_789);
         assert_eq!(records[1].observation_time, 1_788_655_919_123_456_790);
-        assert!((before..=after).contains(&records[2].observation_time));
+        assert_eq!(records[2].observation_time, 1_788_655_919_123_456_790);
         assert_eq!(records[0].stats[0].counter, 0xfedc_ba98_7654_3210);
         assert_eq!(records[0].stats[0].object_name.as_ref(), "Ethernet325");
         assert_eq!(
@@ -1220,18 +1503,12 @@ mod tests {
         }
         let mut actor = actor();
         actor.handle_template(snapshot.unwrap()).unwrap();
-        let before = utc_nanos();
         let batch = actor.handle_record(&input).unwrap();
-        let after = utc_nanos();
         assert_eq!(batch.counter_count(), 3488);
         assert_eq!(batch.record_count(), 2);
         for (index, record) in batch.iter().enumerate() {
             assert_eq!(record.stats.len(), if index == 0 { 1888 } else { 1600 });
-            if index == 0 {
-                assert_eq!(record.observation_time, 100_000_000_200);
-            } else {
-                assert!((before..=after).contains(&record.observation_time));
-            }
+            assert_eq!(record.observation_time, 100_000_000_200);
             for (counter_index, stat) in record.stats.iter().enumerate() {
                 let object = (counter_index / 4 + 1) as u64;
                 let expected_stat = [1, 34, 42, 41][counter_index % 4];
@@ -1967,6 +2244,7 @@ mod tests {
         let padding_only = data_message(0, &[(400, vec![(0, vec![])])]);
         for input in [bad_trailer, bad_later_set, bad_later_message, padding_only] {
             assert!(actor.handle_record(&input).is_err());
+            assert_eq!(actor.last_observation_time, None);
             assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
             assert!(actor.sessions["s"].pending.is_some());
         }
@@ -2655,6 +2933,7 @@ mod tests {
         let mut batch = SAIStatsBatch::default();
         actor.process_record_input(&input, &mut batch).await;
         assert!(batch.is_empty());
+        assert_eq!(actor.last_observation_time, None);
         assert!(rx.try_recv().is_err());
         assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
     }
