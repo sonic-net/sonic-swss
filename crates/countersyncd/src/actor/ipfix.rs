@@ -36,7 +36,8 @@ const SPLIT_OBSERVATION_TIME_LEN: u16 = 4;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 12;
 const DROP_WARNING_INTERVAL: Duration = Duration::from_secs(5);
-const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 4096;
+// Accommodate one Set per queue at 2048 ports * 8 queues, with 2x headroom.
+const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 32 * 1024;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
 const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
 // A batching target, not a limit on a template or logical record.
@@ -1510,6 +1511,112 @@ mod tests {
             assert_eq!((last.type_id, last.stat_id), (21, 60));
             assert_eq!(last.counter, ((index + 1) * COUNTERS_PER_TEMPLATE) as u64);
         }
+    }
+
+    #[tokio::test]
+    async fn future_queue_scale_with_one_set_per_queue_is_not_rejected() {
+        const OBJECTS: usize = 2048 * 8;
+        const STATS: usize = 60;
+        let mut templates = Vec::with_capacity(OBJECTS * 512);
+        let mut input = Vec::with_capacity(OBJECTS * 508);
+        let mut fields = Vec::with_capacity(STATS + 2);
+        let mut record = Vec::with_capacity(488);
+        for index in 0..OBJECTS {
+            let id = u16::try_from(index + 256).unwrap();
+            fields.clear();
+            fields.extend([(322, 4, None), (325, 4, None)]);
+            record.clear();
+            record.extend_from_slice(&100u32.to_be_bytes());
+            record.extend_from_slice(&(index as u32).to_be_bytes());
+            for stat in 1..=STATS {
+                fields.push(((index + 1) as u16, 8, Some(0x0015_0000 | stat as u32)));
+                record.extend_from_slice(&((index * STATS + stat) as u64).to_be_bytes());
+            }
+            let template = hardware_template(id, &fields);
+            templates.extend_from_slice(template.templates.as_ref().unwrap());
+            input.extend_from_slice(&hardware_data(id, &[&record]));
+        }
+        assert_eq!(templates.len(), 8_388_608);
+        assert_eq!(input.len(), 8_323_072);
+        let mut actor = actor();
+        actor
+            .handle_template(IPFixTemplatesMessage::new(
+                "queue-scale".into(),
+                Arc::new(templates),
+                Some(
+                    (0..OBJECTS)
+                        .map(|index| format!("Ethernet{}|{}", index / 8, index % 8))
+                        .collect(),
+                ),
+                Some((1..=OBJECTS).map(|id| id as u16).collect()),
+            ))
+            .unwrap();
+        assert_eq!(actor.installed.len(), OBJECTS);
+        let (tx, mut rx) = channel(1);
+        actor.add_recipient(tx);
+        let producer = async {
+            let mut batch = SAIStatsBatch::default();
+            actor.process_record_input(&input, &mut batch).await;
+            actor.send_batch(batch).await;
+            drop(actor);
+        };
+        let consumer = async {
+            let mut records = 0usize;
+            let mut counters = 0usize;
+            while let Some(batch) = rx.recv().await {
+                assert!(batch.counter_count() <= TARGET_COUNTERS_PER_BATCH);
+                for record in batch.iter() {
+                    assert_eq!(record.observation_time, 100_000_000_000 + records as u64);
+                    assert_eq!(record.stats.len(), STATS);
+                    for (index, stat) in record.stats.iter().enumerate() {
+                        assert_eq!(
+                            stat.object_name.as_ref(),
+                            format!("Ethernet{}|{}", records / 8, records % 8)
+                        );
+                        assert_eq!((stat.type_id, stat.stat_id), (21, index as u32 + 1));
+                        assert_eq!(stat.counter, (counters + index + 1) as u64);
+                    }
+                    records += 1;
+                    counters += STATS;
+                }
+            }
+            assert_eq!(records, OBJECTS);
+            assert_eq!(counters, 983_040);
+        };
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(producer, consumer);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn set_count_limit_accepts_boundary_and_rejects_next_set_atomically() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("boundary", &[(0, 300, 1)]))
+            .unwrap();
+        let mut input = Vec::new();
+        // Stay within each IPFIX message's independent 16-bit length bound.
+        let per_message = (u16::MAX as usize - IPFIX_HEADER_LEN) / 20;
+        let mut remaining = MAX_DATA_SETS_PER_RECORD_INPUT;
+        while remaining > 0 {
+            let count = remaining.min(per_message);
+            let sets = vec![(300, vec![(1, vec![10])]); count];
+            input.extend_from_slice(&data_message(0, &sets));
+            remaining -= count;
+        }
+        let output = actor.handle_record(&input).unwrap();
+        assert_eq!(output.record_count(), MAX_DATA_SETS_PER_RECORD_INPUT);
+        assert_eq!(output.counter_count(), MAX_DATA_SETS_PER_RECORD_INPUT);
+        let prior_time = actor.last_observation_time;
+        input.extend_from_slice(&data_message(0, &[(300, vec![(2, vec![20])])]));
+        assert!(actor
+            .handle_record(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("data Sets"));
+        assert_eq!(actor.last_observation_time, prior_time);
     }
 
     #[test]
