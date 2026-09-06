@@ -26,6 +26,11 @@ tokio = { version = "1.37", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 
+# Local columnar storage (Pterosaur PR7)
+arrow-array = "=55.2.0"
+arrow-schema = "=55.2.0"
+parquet = { version = "=55.2.0", default-features = false, features = ["arrow", "zstd"] }
+
 # Using genetlink and netlink-packet-generic for netlink support
 genetlink = "0.2"
 netlink-packet-core = "0.7"
