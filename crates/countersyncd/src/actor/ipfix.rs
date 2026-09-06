@@ -191,6 +191,8 @@ pub struct IpfixActor {
     last_observation_time: Option<u64>,
     dropped_sets: u64,
     next_drop_warning: Instant,
+    next_invalid_warning: Instant,
+    suppressed_invalid_warnings: u64,
 }
 
 impl IpfixActor {
@@ -207,6 +209,8 @@ impl IpfixActor {
             last_observation_time: None,
             dropped_sets: 0,
             next_drop_warning: Instant::now(),
+            next_invalid_warning: Instant::now(),
+            suppressed_invalid_warnings: 0,
         }
     }
 
@@ -583,11 +587,25 @@ impl IpfixActor {
         }
     }
 
+    fn record_invalid_input_warning(&mut self) -> Option<u64> {
+        let now = Instant::now();
+        if now < self.next_invalid_warning {
+            self.suppressed_invalid_warnings = self.suppressed_invalid_warnings.saturating_add(1);
+            return None;
+        }
+        self.next_invalid_warning = now + DROP_WARNING_INTERVAL;
+        Some(std::mem::take(&mut self.suppressed_invalid_warnings))
+    }
+
     async fn process_record_input(&mut self, records: &[u8], batch: &mut SAIStatsBatch) {
         let input = match self.validate_record_input(records) {
             Ok(input) => input,
             Err(err) => {
-                warn!("Dropping invalid HFT IPFIX message: {err}");
+                if let Some(suppressed) = self.record_invalid_input_warning() {
+                    warn!(
+                        "Dropping invalid HFT IPFIX message: {err}; {suppressed} prior invalid-input warning(s) suppressed"
+                    );
+                }
                 return;
             }
         };
@@ -2248,6 +2266,89 @@ mod tests {
             assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
             assert!(actor.sessions["s"].pending.is_some());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_input_warning_budget_reports_exact_suppressed_count() {
+        let mut actor = actor();
+        assert_eq!(actor.record_invalid_input_warning(), Some(0));
+        let deadline = actor.next_invalid_warning;
+        for _ in 0..1_000 {
+            assert_eq!(actor.record_invalid_input_warning(), None);
+        }
+        assert_eq!(actor.suppressed_invalid_warnings, 1_000);
+        assert_eq!(actor.next_invalid_warning, deadline);
+        tokio::time::advance(DROP_WARNING_INTERVAL - Duration::from_millis(1)).await;
+        assert_eq!(actor.record_invalid_input_warning(), None);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(actor.record_invalid_input_warning(), Some(1_001));
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+        assert_eq!(actor.record_invalid_input_warning(), None);
+        tokio::time::advance(3 * DROP_WARNING_INTERVAL).await;
+        assert_eq!(actor.record_invalid_input_warning(), Some(1));
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_input_flood_does_not_change_decoding_or_other_warning_budget() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 301, 2)]))
+            .unwrap();
+        let mut batch = SAIStatsBatch::default();
+        let mut invalid_version = data_message(0, &[(300, vec![(1, vec![1])])]);
+        invalid_version[0..2].copy_from_slice(&9u16.to_be_bytes());
+        let mut invalid_tail = data_message(0, &[(301, vec![(2, vec![2])])]);
+        invalid_tail.extend_from_slice(&[1, 2, 3]);
+        let layout_error = data_message(0, &[(300, vec![(3, vec![])])]);
+        let bad_inputs = [vec![], invalid_version, invalid_tail, layout_error];
+        let unknown_deadline = actor.next_drop_warning;
+        for input in bad_inputs.iter().cycle().take(1_000) {
+            actor.process_record_input(input, &mut batch).await;
+        }
+        assert!(batch.is_empty());
+        assert_eq!(actor.suppressed_invalid_warnings, 999);
+        assert_eq!(actor.next_drop_warning, unknown_deadline);
+        assert_eq!(actor.dropped_sets, 0);
+        assert_eq!(actor.last_observation_time, None);
+        assert!(actor.sessions["s"].pending.is_some());
+        let invalid_deadline = actor.next_invalid_warning;
+
+        // Unknown-template warnings remain independent; valid data and template
+        // cutover are not delayed by exhausted invalid-input logging budget.
+        let good = data_message(0, &[(400, vec![(4, vec![4])]), (301, vec![(5, vec![50])])]);
+        actor.process_record_input(&good, &mut batch).await;
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 5);
+        assert_eq!(batch.iter().next().unwrap().stats[0].counter, 50);
+        assert!(actor.sessions["s"].pending.is_none());
+        assert_eq!(actor.dropped_sets, 1);
+        assert!(actor.next_drop_warning > unknown_deadline);
+        assert_eq!(actor.next_invalid_warning, invalid_deadline);
+        assert_eq!(actor.suppressed_invalid_warnings, 999);
+
+        tokio::time::advance(DROP_WARNING_INTERVAL).await;
+        actor.process_record_input(&[], &mut batch).await;
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+        assert!(actor.next_invalid_warning > invalid_deadline);
+        assert_eq!(batch.record_count(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_warning_state_is_actor_local_and_saturating() {
+        let mut first = actor();
+        let mut second = actor();
+        assert_eq!(first.record_invalid_input_warning(), Some(0));
+        first.suppressed_invalid_warnings = u64::MAX;
+        assert_eq!(first.record_invalid_input_warning(), None);
+        assert_eq!(first.suppressed_invalid_warnings, u64::MAX);
+        assert_eq!(second.record_invalid_input_warning(), Some(0));
+        tokio::time::advance(DROP_WARNING_INTERVAL).await;
+        assert_eq!(first.record_invalid_input_warning(), Some(u64::MAX));
+        assert_eq!(first.suppressed_invalid_warnings, 0);
     }
 
     #[tokio::test(start_paused = true)]
