@@ -748,10 +748,12 @@ mod tests {
             "unknown",
             "session_config",
         ] {
-            let fields = HashMap::from([(
-                field.into(),
-                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES + 1]),
-            )]);
+            let limit = if field == "session_config" {
+                MAX_TEMPLATE_CONFIG_BYTES
+            } else {
+                MAX_OBJECT_METADATA_BYTES
+            };
+            let fields = HashMap::from([(field.into(), CxxString::from(vec![b','; limit + 1]))]);
             let session = SwssActor::parse_session_data(&fields);
             assert!(session.validate_sizes().is_err(), "{field}");
             assert!(session.object_names.is_empty());
@@ -793,6 +795,38 @@ mod tests {
         assert_eq!(message.operation, IPFixTemplateOperation::Delete);
         assert_eq!(message.key, "test");
         assert!(message.templates.is_none());
+    }
+
+    #[test]
+    fn future_queue_scale_metadata_passes_raw_and_token_validation() {
+        let names = (0..2048)
+            .flat_map(|port| (0..8).map(move |queue| format!("Ethernet{port}|{queue}")))
+            .collect::<Vec<_>>();
+        let names_csv = names.join(",");
+        let ids_csv = (1..=16_384)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(names_csv.len() + ids_csv.len(), 324_076);
+        // Metadata validation is independent of template decoding, which has
+        // full 983,040-counter coverage in the IPFIX tests.
+        let fields = HashMap::from([
+            ("stream_status".into(), CxxString::from("enabled")),
+            ("session_type".into(), CxxString::from("ipfix")),
+            ("object_names".into(), CxxString::from(names_csv)),
+            ("object_ids".into(), CxxString::from(ids_csv)),
+            (
+                "session_config".into(),
+                CxxString::from("template validated by IPFIX actor"),
+            ),
+        ]);
+        let session = SwssActor::parse_session_data(&fields);
+        let message = SwssActor::validated_update("scale|QUEUE", &session).unwrap();
+        assert_eq!(message.object_names.unwrap(), names);
+        let ids = message.object_ids.unwrap();
+        assert_eq!(ids.len(), 16_384);
+        assert_eq!(ids[0], 1);
+        assert_eq!(ids[16_383], 16_384);
     }
 
     #[test]

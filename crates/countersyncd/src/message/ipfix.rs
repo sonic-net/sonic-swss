@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 pub type IPFixTemplates = Arc<Vec<u8>>;
 
-pub(crate) const MAX_TEMPLATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
+// 2048 ports * 8 queues * 60 enterprise specs * 8 bytes = 7.5 MiB,
+// excluding headers and hardware placeholder slots. Allow headroom for both.
+pub(crate) const MAX_TEMPLATE_CONFIG_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
+// Object labels use the nonzero 15-bit IE ID space, not one ID per counter.
 pub(crate) const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

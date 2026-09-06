@@ -1395,6 +1395,184 @@ mod tests {
     }
 
     #[test]
+    fn scale_2048_ports_eight_queues_sixty_stats_compiles_and_decodes() {
+        const OBJECTS: usize = 2048 * 8;
+        const OBJECTS_PER_TEMPLATE: usize = 128;
+        const STATS: usize = 60;
+        const COUNTERS_PER_TEMPLATE: usize = OBJECTS_PER_TEMPLATE * STATS;
+        const TEMPLATES: usize = OBJECTS / OBJECTS_PER_TEMPLATE;
+        const MESSAGE_BYTES: usize = 61_472;
+        const RECORD_BYTES: usize = 61_448;
+
+        // Build one wire message at a time, not a million-element field-spec vector.
+        let mut snapshot = Vec::with_capacity(TEMPLATES * MESSAGE_BYTES);
+        let mut fields = Vec::with_capacity(COUNTERS_PER_TEMPLATE + 2);
+        for index in 0..TEMPLATES {
+            fields.clear();
+            fields.extend([(322, 4, None), (325, 4, None)]);
+            for object in index * OBJECTS_PER_TEMPLATE + 1..=(index + 1) * OBJECTS_PER_TEMPLATE {
+                for stat in 1..=STATS {
+                    fields.push((
+                        u16::try_from(object).unwrap(),
+                        8,
+                        Some(0x0015_0000 | u32::try_from(stat).unwrap()),
+                    ));
+                }
+            }
+            let update = hardware_template(256 + u16::try_from(index).unwrap(), &fields);
+            let bytes = update.templates.as_ref().unwrap();
+            assert_eq!(bytes.len(), MESSAGE_BYTES);
+            assert_eq!(
+                usize::from(NetworkEndian::read_u16(&bytes[2..4])),
+                bytes.len()
+            );
+            assert_eq!(NetworkEndian::read_u16(&bytes[22..24]), 7682);
+            snapshot.extend_from_slice(bytes);
+        }
+        drop(fields);
+        assert_eq!(snapshot.len(), 7_868_416);
+        assert!(snapshot.len() > 4 * 1024 * 1024);
+        // Four hardware placeholder slots per counter still fit the config budget.
+        assert_eq!(5 * snapshot.len(), 39_342_080);
+        assert!(5 * snapshot.len() <= MAX_TEMPLATE_CONFIG_BYTES);
+        let update = IPFixTemplatesMessage::new(
+            "scale".into(),
+            Arc::new(snapshot),
+            Some(
+                (0..OBJECTS)
+                    .map(|i| format!("Ethernet{}|{}", i / 8, i % 8))
+                    .collect(),
+            ),
+            Some((1..=OBJECTS).map(|id| u16::try_from(id).unwrap()).collect()),
+        );
+        let mut actor = actor();
+        // Exercise admission, whole-candidate compilation and installation once.
+        actor.handle_template(update).unwrap();
+        assert_eq!(actor.installed.len(), TEMPLATES);
+        assert_eq!(actor.sessions["scale"].active.templates.len(), TEMPLATES);
+        assert_eq!(
+            actor
+                .installed
+                .values()
+                .map(|t| t.counters.len())
+                .sum::<usize>(),
+            983_040
+        );
+        for index in 0..TEMPLATES {
+            let template = &actor.installed[&TemplateKey {
+                observation_domain_id: 0,
+                template_id: 256 + u16::try_from(index).unwrap(),
+            }];
+            assert_eq!(template.record_len, RECORD_BYTES);
+            assert_eq!(template.counters.len(), COUNTERS_PER_TEMPLATE);
+            assert_eq!(
+                template.observation_time,
+                ObservationTime::Split {
+                    seconds_offset: 0,
+                    nanos_offset: 4,
+                }
+            );
+            for counter_index in [0, COUNTERS_PER_TEMPLATE - 1] {
+                let counter = &template.counters[counter_index];
+                let object = index * OBJECTS_PER_TEMPLATE + counter_index / STATS;
+                assert_eq!(
+                    counter.object_name.as_ref(),
+                    format!("Ethernet{}|{}", object / 8, object % 8)
+                );
+                assert_eq!(
+                    (counter.type_id, counter.stat_id),
+                    (21, (counter_index % STATS + 1) as u32)
+                );
+                assert_eq!(counter.offset, 8 + counter_index * 8);
+                assert_eq!(counter.len, 8);
+            }
+        }
+
+        // Decode only the boundary templates; do not allocate a million samples.
+        for (index, last_name) in [(0, "Ethernet15|7"), (TEMPLATES - 1, "Ethernet2047|7")] {
+            let mut record = Vec::with_capacity(RECORD_BYTES);
+            record.extend_from_slice(&1_788_655_919u32.to_be_bytes());
+            record.extend_from_slice(&123_456_789u32.to_be_bytes());
+            for counter in 0..COUNTERS_PER_TEMPLATE {
+                let value = (index * COUNTERS_PER_TEMPLATE + counter + 1) as u64;
+                record.extend_from_slice(&value.to_be_bytes());
+            }
+            assert_eq!(record.len(), RECORD_BYTES);
+            let data = hardware_data(256 + u16::try_from(index).unwrap(), &[&record]);
+            assert_eq!(data.len(), 61_468);
+            let batch = actor.handle_record(&data).unwrap();
+            assert_eq!(batch.record_count(), 1);
+            assert_eq!(batch.counter_count(), COUNTERS_PER_TEMPLATE);
+            let decoded = batch.iter().next().unwrap();
+            assert_eq!(decoded.observation_time, 1_788_655_919_123_456_789);
+            let last = decoded.stats.last().unwrap();
+            assert_eq!(last.object_name.as_ref(), last_name);
+            assert_eq!((last.type_id, last.stat_id), (21, 60));
+            assert_eq!(last.counter, ((index + 1) * COUNTERS_PER_TEMPLATE) as u64);
+        }
+    }
+
+    #[test]
+    fn scale_placeholder_layout_decodes_and_projects_above_32_mib() {
+        const COUNTERS: usize = 1536;
+        const PADDED_TEMPLATES: usize = 640;
+        let mut fields = Vec::with_capacity(COUNTERS * 5 + 2);
+        let mut record = Vec::with_capacity(61_448);
+        fields.extend([(322, 4, None), (325, 4, None)]);
+        record.extend_from_slice(&100u32.to_be_bytes());
+        record.extend_from_slice(&200u32.to_be_bytes());
+        for counter in 0..COUNTERS {
+            // Interleave nonzero placeholder payload before every real counter.
+            fields.extend([(0, 8, Some(0)); 4]);
+            record.extend_from_slice(&[0xfe; 32]);
+            fields.push((
+                (counter / 60 + 1) as u16,
+                8,
+                Some(0x0015_0000 | (counter % 60 + 1) as u32),
+            ));
+            record.extend_from_slice(&(counter as u64 + 1).to_be_bytes());
+        }
+        let update = hardware_template(256, &fields);
+        let message_bytes = update.templates.as_ref().unwrap().len();
+        assert_eq!(message_bytes, 61_472);
+        assert_eq!(PADDED_TEMPLATES * COUNTERS, 2048 * 8 * 60);
+        // Size projection only: parse one representative padded template, not 5M fields.
+        let projected_bytes = PADDED_TEMPLATES * message_bytes;
+        assert_eq!(projected_bytes, 39_342_080);
+        assert!(projected_bytes > 32 * 1024 * 1024);
+        assert!(projected_bytes <= MAX_TEMPLATE_CONFIG_BYTES);
+
+        let mut actor = actor();
+        actor.handle_template(update).unwrap();
+        assert_eq!(actor.installed.len(), 1);
+        let template = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 256,
+        }];
+        assert_eq!(template.record_len, 61_448);
+        assert_eq!(template.counters.len(), COUNTERS);
+        for (index, counter) in template.counters.iter().enumerate() {
+            assert_eq!(counter.offset, 40 + index * 40);
+        }
+        assert_eq!(record.len(), template.record_len);
+        let batch = actor
+            .handle_record(&hardware_data(256, &[&record]))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.counter_count(), COUNTERS);
+        let decoded = batch.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 100_000_000_200);
+        for (index, stat) in decoded.stats.iter().enumerate() {
+            assert_eq!(
+                stat.object_name.as_ref(),
+                format!("Ethernet{}", index / 60 + 1)
+            );
+            assert_eq!((stat.type_id, stat.stat_id), (21, (index % 60 + 1) as u32));
+            assert_eq!(stat.counter, index as u64 + 1);
+        }
+    }
+
+    #[test]
     fn timestamp_priority_offsets_and_incomplete_fallback_match_legacy() {
         for fields in [
             vec![(322, 4, None), (325, 4, None)],
