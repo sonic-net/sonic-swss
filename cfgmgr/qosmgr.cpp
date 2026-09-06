@@ -11,6 +11,28 @@ using namespace swss;
 
 #define TC_CMD "/sbin/tc"
 
+static bool execTc(const string &cmd, string &result, const char *operation)
+{
+    /* swss::exec captures command output, but tc writes most diagnostics to
+     * stderr. Merge stderr so a failed realization is actionable in syslog. */
+    int rc = swss::exec(cmd + " 2>&1", result);
+    if (rc != 0)
+    {
+        SWSS_LOG_ERROR("tc command failed (%s), rc=%d: %s; output: %s",
+                       operation, rc, cmd.c_str(), result.c_str());
+        return false;
+    }
+    return true;
+}
+
+static void execTcQuiet(const string &cmd)
+{
+    /* Best-effort tc: run and discard output, ignoring failure (used for
+     * delete-before-add cleanup where "nothing to delete" is expected). */
+    string ignored;
+    swss::exec(cmd + " 2>&1", ignored);
+}
+
 /* ------------------------------------------------------------------------ *
  * Small parse/validation helpers
  * ------------------------------------------------------------------------ */
@@ -413,7 +435,7 @@ void QosMgr::doSchedulerTask(Consumer &consumer)
                     string iface = kernutil::resolveInterface(port);
                     string res;
                     string cmd = string(TC_CMD) + " qdisc del dev " + iface + " root";
-                    swss::exec(cmd, res);
+                    execTc(cmd, res, "delete scheduler qdisc");
                 }
             }
 
@@ -592,9 +614,9 @@ void QosMgr::ensureClsact(const string &iface)
     /* Attach the clsact qdisc (ingress + egress hooks). Idempotent; tc returns
      * EEXIST if already present, which we ignore. */
     ostringstream cmd;
-    cmd << TC_CMD << " qdisc add dev " << iface << " clsact";
+    cmd << TC_CMD << " qdisc replace dev " << iface << " clsact";
     string ignored;
-    swss::exec(cmd.str(), ignored);
+    execTc(cmd.str(), ignored, "ensure clsact");
 }
 
 void QosMgr::reapplyMapBindings(const string &field, const string &name)
@@ -655,13 +677,25 @@ bool QosMgr::applyMapsToPort(const string &port,
                     continue;
                 long long dscp = 0;
                 parseInt(kv.first, dscp);
+                long long prio = 100 + dscp;
+
+                /* `filter replace` without a handle fails with EEXIST when a
+                 * stale filter already occupies this prio, so remove any
+                 * existing filter at this prio first (best effort). */
+                ostringstream del;
+                del << TC_CMD << " filter del dev " << piface << " ingress prio " << prio;
+                execTcQuiet(del.str());
+
+                /* `flower ip_tos` is silently dropped on this kernel (yields a
+                 * match-all filter), so match the DSCP bits with the u32
+                 * classifier instead. TOS byte = dscp << 2; mask 0xfc ignores
+                 * the two ECN bits. */
                 ostringstream cmd;
-                cmd << TC_CMD << " filter replace dev " << piface << " ingress prio "
-                    << (100 + dscp)
-                    << " flower ip_tos " << tos << "/0xfc"
-                    << " action skbedit priority " << kv.second;
+                cmd << TC_CMD << " filter add dev " << piface << " ingress protocol ip prio "
+                    << prio << " u32 match ip tos 0x" << hex << (dscp << 2)
+                    << " 0xfc action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-                swss::exec(cmd.str(), res);
+                execTc(cmd.str(), res, "install DSCP classifier");
             }
         }
     }
@@ -689,7 +723,7 @@ bool QosMgr::applyMapsToPort(const string &port,
                     << " flower vlan_prio " << kv.first
                     << " action skbedit priority " << kv.second;
                 SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-                swss::exec(cmd.str(), res);
+                execTc(cmd.str(), res, "install DOT1P classifier");
             }
         }
     }
@@ -710,7 +744,7 @@ bool QosMgr::applyMapsToPort(const string &port,
                 << " flower match meta priority " << kv.first
                 << " " << kernutil::peditSetDscpToTc(kv.second);
             SWSS_LOG_NOTICE("Executing: %s", cmd.str().c_str());
-            swss::exec(cmd.str(), res);
+            execTc(cmd.str(), res, "install TC-to-DSCP classifier");
         }
     }
 
@@ -802,16 +836,23 @@ void QosMgr::buildQueueTree(const string &port, string &reason)
 
     /* `htb` qdisc itself takes no `rate` — the port cap lives on the root class
      * 1:1, and the per-queue classes hang off it as children. */
+    /* `qdisc replace` on an existing htb root (with classes) fails with
+     * "Change operation not supported", so delete-then-add for a clean,
+     * idempotent root on every rebuild. */
+    ostringstream rootdel;
+    rootdel << TC_CMD << " qdisc del dev " << iface << " root";
+    execTcQuiet(rootdel.str());
+
     ostringstream root;
-    root << TC_CMD << " qdisc replace dev " << iface << " root handle 1: htb default 1";
+    root << TC_CMD << " qdisc add dev " << iface << " root handle 1: htb default 1";
     SWSS_LOG_NOTICE("Executing: %s", root.str().c_str());
-    swss::exec(root.str(), res);
+    execTc(root.str(), res, "add root qdisc");
 
     ostringstream rc;
     rc << TC_CMD << " class replace dev " << iface << " parent 1: classid 1:1 htb rate "
        << rootMbit << "mbit ceil " << rootMbit << "mbit";
     SWSS_LOG_NOTICE("Executing: %s", rc.str().c_str());
-    swss::exec(rc.str(), res);
+    execTc(rc.str(), res, "replace root class");
 
     /* One class per queue (classid 1:(q+1), child of root 1:1). Queue 0 maps to
      * the root class itself. STRICT uses htb prio (weight = priority, higher
@@ -835,7 +876,11 @@ void QosMgr::buildQueueTree(const string &port, string &reason)
             if (w > 7)
                 w = 7;
             int prio = 7 - (int)w; // lower htb prio = higher priority
-            cls << " prio " << prio << " rate 1gbit ceil 1gbit";
+            /* Strict priority: give each class only a minimal guaranteed rate
+             * so htb `prio` (borrowing order) decides the split under
+             * congestion. A large rate (e.g. 1gbit) leaves the class "always
+             * within rate", which defeats the priority ordering. */
+            cls << " prio " << prio << " rate 1mbit ceil 1gbit";
         }
         else
         {
@@ -845,7 +890,7 @@ void QosMgr::buildQueueTree(const string &port, string &reason)
             cls << " prio 7 rate " << w << "mbit ceil 1gbit";
         }
         SWSS_LOG_NOTICE("Executing: %s", cls.str().c_str());
-        swss::exec(cls.str(), res);
+        execTc(cls.str(), res, "replace queue class");
 
         /* WRED leaf under the queue class. Prefer green (single-color)
          * thresholds; fall back to red. */
@@ -893,7 +938,7 @@ void QosMgr::buildQueueTree(const string &port, string &reason)
                 if (ecn != "ecn_none")
                     red << " ecn";
                 SWSS_LOG_NOTICE("Executing: %s", red.str().c_str());
-                swss::exec(red.str(), res);
+                execTc(red.str(), res, "replace WRED qdisc");
             }
         }
     }
@@ -911,7 +956,7 @@ void QosMgr::buildQueueTree(const string &port, string &reason)
              << tc << " basic match \"meta(priority eq " << tc << ")\" classid 1:"
              << (q + 1);
         SWSS_LOG_NOTICE("Executing: %s", filt.str().c_str());
-        swss::exec(filt.str(), res);
+        execTc(filt.str(), res, "replace TC-to-queue filter");
     }
 }
 
@@ -1010,9 +1055,9 @@ void QosMgr::doPortQosMapTask(Consumer &consumer)
             string iface = kernutil::resolveInterface(key);
             string res;
             string cmd = string(TC_CMD) + " qdisc del dev " + iface + " root";
-            swss::exec(cmd, res);
+            execTc(cmd, res, "delete port root qdisc");
             cmd = string(TC_CMD) + " filter del dev " + iface + " ingress";
-            swss::exec(cmd, res);
+            execTc(cmd, res, "delete port ingress filters");
 
             m_portQosMap.erase(key);
             m_statePortQosMapTable.del(key);
@@ -1141,7 +1186,7 @@ void QosMgr::doQueueTask(Consumer &consumer)
                 ostringstream cmd;
                 cmd << TC_CMD << " qdisc del dev " << iface
                     << " parent 1:" << (qnum + 1);
-                swss::exec(cmd.str(), res);
+                execTc(cmd.str(), res, "delete queue qdisc");
             }
 
             m_queueMap.erase(key);
