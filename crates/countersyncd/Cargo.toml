@@ -15,6 +15,11 @@ benchmark = []
 # Async runtime
 tokio = { workspace = true }
 
+# Local columnar storage
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+parquet = { workspace = true }
+
 # Configuration and serialization
 serde = { workspace = true }
 serde_yaml = { workspace = true }
@@ -69,6 +74,7 @@ reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
 swss-common = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 # Test utilities  
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
@@ -81,6 +87,10 @@ which = "7.0.3"
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+
+[[bench]]
+name = "local_storage_perf"
+harness = false
 
 [[bench]]
 name = "end_to_end"

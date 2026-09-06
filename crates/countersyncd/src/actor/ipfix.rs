@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fmt::{Display, Formatter},
-    sync::Arc,
+    sync::{mpsc, Arc},
     time::{Duration, SystemTime},
 };
 
@@ -20,6 +20,7 @@ use super::super::message::{
         IPFixTemplateOperation, IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE,
         MAX_OBJECT_METADATA_BYTES, MAX_TEMPLATE_CONFIG_BYTES,
     },
+    local_storage::{LocalStorageMessage, LocalStorageStatus},
     saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
@@ -179,6 +180,7 @@ impl From<String> for IpfixError {
 /// explicit time arrives (or the actor is recreated).
 pub struct IpfixActor {
     saistats_recipients: Vec<Sender<SAIStatsBatchMessage>>,
+    local_storage_recipient: Option<(mpsc::SyncSender<LocalStorageMessage>, LocalStorageStatus)>,
     template_recipient: Receiver<IPFixTemplatesMessage>,
     record_recipient: Receiver<SocketBufferMessage>,
     sessions: HashMap<Arc<str>, SessionTemplates>,
@@ -197,6 +199,7 @@ impl IpfixActor {
     ) -> Self {
         Self {
             saistats_recipients: Vec::new(),
+            local_storage_recipient: None,
             template_recipient,
             record_recipient,
             sessions: HashMap::new(),
@@ -211,6 +214,14 @@ impl IpfixActor {
 
     pub fn add_recipient(&mut self, recipient: Sender<SAIStatsBatchMessage>) {
         self.saistats_recipients.push(recipient);
+    }
+
+    pub fn set_local_storage_recipient(
+        &mut self,
+        sender: mpsc::SyncSender<LocalStorageMessage>,
+        status: LocalStorageStatus,
+    ) {
+        self.local_storage_recipient = Some((sender, status));
     }
 
     fn compile_generation(
@@ -583,7 +594,9 @@ impl IpfixActor {
     }
 
     async fn send_batch(&self, batch: SAIStatsBatch) {
-        if batch.is_empty() || self.saistats_recipients.is_empty() {
+        if batch.is_empty()
+            || (self.saistats_recipients.is_empty() && self.local_storage_recipient.is_none())
+        {
             return;
         }
         if batch.counter_count() <= TARGET_COUNTERS_PER_BATCH || batch.record_count() == 1 {
@@ -597,6 +610,19 @@ impl IpfixActor {
 
     async fn send_chunk(&self, batch: SAIStatsBatch) {
         let batch = Arc::new(batch);
+        if let Some((sender, status)) = &self.local_storage_recipient {
+            if !status.failed() && !status.shutdown_requested() {
+                match sender.try_send(Arc::clone(&batch)) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full(_)) => status.record_input_drop(),
+                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                        status.record_input_drop();
+                        status.mark_failed();
+                        warn!("Local HFT storage stopped; disabling its best-effort tap");
+                    }
+                }
+            }
+        }
         let mut blocked = Vec::new();
         for recipient in &self.saistats_recipients {
             match recipient.try_reserve() {
@@ -956,6 +982,82 @@ fn compile_template_set(
 mod tests {
     use super::*;
     use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn local_storage_full_or_disconnected_never_blocks_healthy_sink() {
+        for disconnected in [false, true] {
+            let mut actor = actor();
+            let (local_sender, local_receiver) = mpsc::sync_channel(1);
+            local_sender
+                .send(Arc::new(SAIStatsBatch::default()))
+                .unwrap();
+            let local_receiver = if disconnected {
+                drop(local_receiver);
+                None
+            } else {
+                Some(local_receiver)
+            };
+            let status = LocalStorageStatus::default();
+            actor.set_local_storage_recipient(local_sender, status.clone());
+            let (healthy_sender, mut healthy_receiver) = channel(1);
+            actor.add_recipient(healthy_sender);
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(42, [SAIStat::new("Ethernet0", 1, 2, u64::MAX)]);
+            tokio::time::timeout(Duration::from_millis(100), actor.send_batch(batch))
+                .await
+                .unwrap();
+            let received = healthy_receiver.try_recv().unwrap();
+            assert_eq!(received.iter().next().unwrap().stats[0].counter, u64::MAX);
+            assert_eq!(status.take_input_drops(), 1);
+            assert_eq!(status.failed(), disconnected);
+            drop(local_receiver);
+        }
+    }
+
+    #[tokio::test]
+    async fn local_storage_shares_flat_batch_and_works_without_other_sinks() {
+        for healthy_sink in [false, true] {
+            let mut actor = actor();
+            let (local_sender, local_receiver) = mpsc::sync_channel(1);
+            actor.set_local_storage_recipient(local_sender, LocalStorageStatus::default());
+            let (healthy_sender, mut healthy_receiver) = channel(1);
+            if healthy_sink {
+                actor.add_recipient(healthy_sender);
+            }
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 10)]);
+            batch.push_record(2, [SAIStat::new("Ethernet4", 1, 2, 20)]);
+            actor.send_batch(batch).await;
+            let local = local_receiver.try_recv().unwrap();
+            assert_eq!(local.record_count(), 2);
+            if healthy_sink {
+                assert!(Arc::ptr_eq(&local, &healthy_receiver.try_recv().unwrap()));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_or_stopping_storage_does_not_change_healthy_delivery() {
+        for failed in [false, true] {
+            let mut actor = actor();
+            let (local_sender, local_receiver) = mpsc::sync_channel(1);
+            let status = LocalStorageStatus::default();
+            if failed {
+                status.mark_failed();
+            } else {
+                status.request_shutdown();
+            }
+            actor.set_local_storage_recipient(local_sender, status.clone());
+            let (sender, mut receiver) = channel(1);
+            actor.add_recipient(sender);
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(1, [SAIStat::new("Ethernet0", 1, 2, 10)]);
+            actor.send_batch(batch).await;
+            assert_eq!(receiver.try_recv().unwrap().counter_count(), 1);
+            assert!(local_receiver.try_recv().is_err());
+            assert_eq!(status.take_input_drops(), 0);
+        }
+    }
 
     // Field specifiers preserve the E bit independently of the IE number.
     fn hardware_template(id: u16, fields: &[(u16, u16, Option<u32>)]) -> IPFixTemplatesMessage {
