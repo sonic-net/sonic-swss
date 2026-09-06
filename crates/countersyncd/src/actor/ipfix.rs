@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fmt::{Display, Formatter},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -29,9 +29,12 @@ const IPFIX_HEADER_LEN: usize = 16;
 const SET_HEADER_LEN: usize = 4;
 const TEMPLATE_SET_ID: u16 = 2;
 const MIN_DATA_SET_ID: u16 = 256;
+const OBSERVATION_TIME_SECONDS: u16 = 322;
 const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 const OBSERVATION_TIME_LEN: u16 = 8;
-const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 16;
+const SPLIT_OBSERVATION_TIME_LEN: u16 = 4;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 12;
 const DROP_WARNING_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 4096;
 const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
@@ -55,10 +58,22 @@ struct CompiledCounter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum ObservationTime {
+    RawNanoseconds {
+        offset: usize,
+    },
+    Split {
+        seconds_offset: usize,
+        nanos_offset: usize,
+    },
+    ProcessingTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CompiledTemplate {
     key: TemplateKey,
     owner: Arc<str>,
-    observation_time_offset: usize,
+    observation_time: ObservationTime,
     counters: Arc<[CompiledCounter]>,
     record_len: usize,
 }
@@ -492,8 +507,29 @@ impl IpfixActor {
         let payload = &set[SET_HEADER_LEN..];
         batch.reserve(layout.record_count, layout.counter_count);
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
-            let time_offset = template.observation_time_offset;
-            let observation_time = NetworkEndian::read_u64(&record[time_offset..time_offset + 8]);
+            let observation_time = match template.observation_time {
+                ObservationTime::RawNanoseconds { offset } => NetworkEndian::read_u64(
+                    &record[offset..offset + usize::from(OBSERVATION_TIME_LEN)],
+                ),
+                ObservationTime::Split {
+                    seconds_offset,
+                    nanos_offset,
+                } => {
+                    let seconds = NetworkEndian::read_u32(
+                        &record[seconds_offset
+                            ..seconds_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                    );
+                    let nanos = NetworkEndian::read_u32(
+                        &record
+                            [nanos_offset..nanos_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                    );
+                    u64::from(seconds) * NANOS_PER_SECOND + u64::from(nanos)
+                }
+                ObservationTime::ProcessingTime => SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("System time should be after Unix epoch")
+                    .as_nanos() as u64,
+            };
             batch.push_record(
                 observation_time,
                 template.counters.iter().map(|counter| SAIStat {
@@ -884,11 +920,13 @@ fn compile_template_set(
             .into());
         }
         // Validate field storage before reserving from an untrusted count.
-        if field_count < 2 || 4 + (field_count - 1) * 8 > set.len() - offset {
+        if field_count > (set.len() - offset) / 4 {
             return Err(format!("template {template_id} has a truncated field list").into());
         }
-        let mut counters = Vec::with_capacity(field_count.saturating_sub(1));
-        let mut observation_time_offset = None;
+        let mut counters = Vec::with_capacity(field_count);
+        let mut raw_nanos_offset = None;
+        let mut seconds_offset = None;
+        let mut nanos_offset = None;
         let mut field_keys = HashSet::with_capacity(field_count);
         let mut record_len = 0usize;
         for _ in 0..field_count {
@@ -900,6 +938,10 @@ fn compile_template_set(
             offset += 4;
             let enterprise = raw_id & 0x8000 != 0;
             let field_id = raw_id & 0x7fff;
+            let field_offset = record_len;
+            record_len = record_len
+                .checked_add(usize::from(field_len))
+                .ok_or("template record length overflow")?;
             if enterprise {
                 if !(1..=8).contains(&field_len) {
                     return Err(format!("template {template_id} counter field {field_id} has unsupported length {field_len}; expected 1..=8 bytes").into());
@@ -912,6 +954,10 @@ fn compile_template_set(
                 }
                 let enterprise_number = NetworkEndian::read_u32(&set[offset..offset + 4]);
                 offset += 4;
+                // Hardware placeholders occupy record bytes but are not counters.
+                if field_id == 0 && enterprise_number == 0 {
+                    continue;
+                }
                 if enterprise_number == 0 {
                     return Err(format!(
                         "template {template_id} uses reserved enterprise number zero"
@@ -922,43 +968,55 @@ fn compile_template_set(
                     format!("template {template_id} references unmapped object ID {field_id}")
                 })?;
                 let (type_id, stat_id) = decode_sai_ids(enterprise_number);
-                if !field_keys.insert((field_id, Some(enterprise_number))) {
+                if !field_keys.insert((field_id, enterprise_number)) {
                     return Err(format!(
                         "template {template_id} contains a duplicate counter field"
                     )
                     .into());
                 }
                 counters.push(CompiledCounter {
-                    offset: record_len,
+                    offset: field_offset,
                     len: u8::try_from(field_len).expect("counter length is at most 8"),
                     object_name: Arc::clone(object_name),
                     type_id,
                     stat_id,
                 });
-            } else if field_id == OBSERVATION_TIME_NANOSECONDS {
-                if field_len != OBSERVATION_TIME_LEN {
-                    return Err(format!("template {template_id} observation time has length {field_len}; expected {OBSERVATION_TIME_LEN}").into());
-                }
-                if !field_keys.insert((field_id, None)) {
+            } else if matches!(
+                field_id,
+                OBSERVATION_TIME_SECONDS | OBSERVATION_TIME_NANOSECONDS
+            ) {
+                let time_offset = match (field_id, field_len) {
+                    (OBSERVATION_TIME_NANOSECONDS, OBSERVATION_TIME_LEN) => &mut raw_nanos_offset,
+                    (OBSERVATION_TIME_SECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut seconds_offset,
+                    (OBSERVATION_TIME_NANOSECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut nanos_offset,
+                    _ => return Err(format!("template {template_id} observation time IE {field_id} has unsupported length {field_len}").into()),
+                };
+                if time_offset.replace(field_offset).is_some() {
                     return Err(format!(
                         "template {template_id} contains duplicate observation time fields"
                     )
                     .into());
                 }
-                observation_time_offset = Some(record_len);
             } else {
                 return Err(format!(
                     "template {template_id} contains unsupported standard IE {field_id}"
                 )
                 .into());
             }
-            record_len = record_len
-                .checked_add(usize::from(field_len))
-                .ok_or("template record length overflow")?;
         }
-        if observation_time_offset.is_none() || counters.is_empty() {
-            return Err(format!("template {template_id} requires exactly one observation time and at least one counter").into());
+        if counters.is_empty() {
+            return Err(format!("template {template_id} requires at least one counter").into());
         }
+        let observation_time = if let Some(offset) = raw_nanos_offset {
+            ObservationTime::RawNanoseconds { offset }
+        } else if let (Some(seconds_offset), Some(nanos_offset)) = (seconds_offset, nanos_offset) {
+            ObservationTime::Split {
+                seconds_offset,
+                nanos_offset,
+            }
+        } else {
+            ObservationTime::ProcessingTime
+        };
         let key = TemplateKey {
             observation_domain_id: domain,
             template_id,
@@ -966,7 +1024,7 @@ fn compile_template_set(
         let template = Arc::new(CompiledTemplate {
             key,
             owner: Arc::clone(owner),
-            observation_time_offset: observation_time_offset.expect("validated above"),
+            observation_time,
             counters: counters.into(),
             record_len,
         });
@@ -983,6 +1041,370 @@ fn compile_template_set(
 mod tests {
     use super::*;
     use tokio::sync::mpsc::channel;
+
+    // Field specifiers preserve the E bit independently of the IE number.
+    fn hardware_template(id: u16, fields: &[(u16, u16, Option<u32>)]) -> IPFixOwnerUpdate {
+        let mut bytes = vec![0; IPFIX_HEADER_LEN + SET_HEADER_LEN];
+        bytes[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes[16..18].copy_from_slice(&TEMPLATE_SET_ID.to_be_bytes());
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&u16::try_from(fields.len()).unwrap().to_be_bytes());
+        let mut objects = std::collections::BTreeSet::new();
+        for &(ie, len, pen) in fields {
+            bytes.extend_from_slice(&(ie | if pen.is_some() { 0x8000 } else { 0 }).to_be_bytes());
+            bytes.extend_from_slice(&len.to_be_bytes());
+            if let Some(pen) = pen {
+                bytes.extend_from_slice(&pen.to_be_bytes());
+                if pen != 0 {
+                    objects.insert(ie);
+                }
+            }
+        }
+        let len = u16::try_from(bytes.len()).unwrap();
+        bytes[2..4].copy_from_slice(&len.to_be_bytes());
+        bytes[18..20].copy_from_slice(&(len - 16).to_be_bytes());
+        IPFixOwnerUpdate::new(
+            "hardware".into(),
+            Arc::new(bytes),
+            Some(objects.iter().map(|id| format!("Ethernet{id}")).collect()),
+            Some(objects.into_iter().collect()),
+        )
+    }
+
+    fn hardware_data(id: u16, records: &[&[u8]]) -> Vec<u8> {
+        let mut bytes = vec![0; IPFIX_HEADER_LEN + SET_HEADER_LEN];
+        bytes[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes[16..18].copy_from_slice(&id.to_be_bytes());
+        for record in records {
+            bytes.extend_from_slice(record);
+        }
+        let len = u16::try_from(bytes.len()).unwrap();
+        bytes[2..4].copy_from_slice(&len.to_be_bytes());
+        bytes[18..20].copy_from_slice(&(len - 16).to_be_bytes());
+        bytes
+    }
+
+    fn utc_nanos() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+    }
+
+    #[test]
+    fn sn5640_split_timestamp_and_placeholder_layout_decodes_both_templates() {
+        // Minimized from the SN5640 capture: standard322/4 +325/4,
+        // enterprise325 is a counter, repeated zero-PEN slots, continuation
+        // without timestamp. Placeholder payload is deliberately nonzero.
+        let mut first = hardware_template(
+            256,
+            &[
+                (322, 4, None),
+                (325, 4, None),
+                (325, 8, Some(0x0015_0001)),
+                (0, 8, Some(0)),
+                (0, 4, Some(0)),
+                (0, 8, Some(0)),
+                (326, 4, Some(0x0015_0029)),
+            ],
+        );
+        let second = hardware_template(
+            257,
+            &[
+                (0, 8, Some(0)),
+                (0, 4, Some(0)),
+                (0, 8, Some(0)),
+                (325, 4, Some(0x0015_0029)),
+            ],
+        );
+        Arc::make_mut(first.templates.as_mut().unwrap())
+            .extend_from_slice(second.templates.as_ref().unwrap());
+        let mut actor = actor();
+        actor.handle_template(first).unwrap();
+        assert_eq!(actor.installed.len(), 2);
+        let one = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 256,
+        }];
+        assert_eq!(one.record_len, 40);
+        assert_eq!(
+            one.counters.iter().map(|c| c.offset).collect::<Vec<_>>(),
+            vec![8, 36]
+        );
+        assert_eq!(
+            one.observation_time,
+            ObservationTime::Split {
+                seconds_offset: 0,
+                nanos_offset: 4
+            }
+        );
+        let two = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 257,
+        }];
+        assert_eq!(two.record_len, 24);
+        assert_eq!(two.observation_time, ObservationTime::ProcessingTime);
+        let mut record = Vec::new();
+        record.extend_from_slice(&1_788_655_919u32.to_be_bytes());
+        record.extend_from_slice(&123_456_789u32.to_be_bytes());
+        record.extend_from_slice(&0xfedc_ba98_7654_3210u64.to_be_bytes());
+        record.extend_from_slice(&[0xaa; 20]);
+        record.extend_from_slice(&0xf123_4567u32.to_be_bytes());
+        let mut next_record = record.clone();
+        next_record[4..8].copy_from_slice(&123_456_790u32.to_be_bytes());
+        let mut continuation = vec![0xbb; 20];
+        continuation.extend_from_slice(&0x8765_4321u32.to_be_bytes());
+        let mut data = hardware_data(256, &[&record, &next_record]);
+        data.extend_from_slice(&hardware_data(257, &[&continuation]));
+        let before = utc_nanos();
+        let output = actor.handle_record(&data).unwrap();
+        let after = utc_nanos();
+        let records = output.iter().collect::<Vec<_>>();
+        assert_eq!(output.counter_count(), 5); // No unknown_0 placeholder metrics.
+        assert_eq!(records[0].observation_time, 1_788_655_919_123_456_789);
+        assert_eq!(records[1].observation_time, 1_788_655_919_123_456_790);
+        assert!((before..=after).contains(&records[2].observation_time));
+        assert_eq!(records[0].stats[0].counter, 0xfedc_ba98_7654_3210);
+        assert_eq!(records[0].stats[0].object_name.as_ref(), "Ethernet325");
+        assert_eq!(
+            (records[0].stats[0].type_id, records[0].stats[0].stat_id),
+            (21, 1)
+        );
+        assert_eq!(records[0].stats[1].counter, 0xf123_4567);
+        assert_eq!(records[2].stats[0].counter, 0x8765_4321);
+    }
+
+    #[test]
+    fn sn5640_capture_sized_concatenated_templates_decode_all_real_counters() {
+        // Same field counts, widths, placeholder counts and message sizes as
+        // the captured SN5640 Queue snapshot; object IDs are normalized here.
+        let mut snapshot = None;
+        let mut input = Vec::new();
+        for (id, objects, placeholder8, placeholder4, wire_len, record_len) in [
+            (256, 472u16, 4704, 1568, 65312, 57128),
+            (257, 400u16, 3864, 1288, 54040, 47264),
+        ] {
+            let mut fields = Vec::new();
+            let mut record = Vec::new();
+            if id == 256 {
+                fields.extend([(322, 4, None), (325, 4, None)]);
+                record.extend_from_slice(&100u32.to_be_bytes());
+                record.extend_from_slice(&200u32.to_be_bytes());
+            }
+            for object in 1..=objects {
+                for (stat, width) in [(1u32, 8u16), (34, 8), (42, 8), (41, 4)] {
+                    fields.push((object, width, Some(0x0015_0000 | stat)));
+                    let value = u64::from(object) * 100 + u64::from(stat);
+                    record.extend_from_slice(&value.to_be_bytes()[8 - usize::from(width)..]);
+                }
+            }
+            for _ in 0..placeholder8 {
+                fields.push((0, 8, Some(0)));
+                record.extend_from_slice(&[0xfe; 8]);
+            }
+            for _ in 0..placeholder4 {
+                fields.push((0, 4, Some(0)));
+                record.extend_from_slice(&[0xfd; 4]);
+            }
+            let update = hardware_template(id, &fields);
+            assert_eq!(update.templates.as_ref().unwrap().len(), wire_len);
+            assert_eq!(record.len(), record_len);
+            if let Some(previous) = &mut snapshot {
+                let previous: &mut IPFixOwnerUpdate = previous;
+                Arc::make_mut(previous.templates.as_mut().unwrap())
+                    .extend_from_slice(update.templates.as_ref().unwrap());
+            } else {
+                snapshot = Some(update);
+            }
+            input.extend_from_slice(&hardware_data(id, &[&record]));
+        }
+        let mut actor = actor();
+        actor.handle_template(snapshot.unwrap()).unwrap();
+        let before = utc_nanos();
+        let batch = actor.handle_record(&input).unwrap();
+        let after = utc_nanos();
+        assert_eq!(batch.counter_count(), 3488);
+        assert_eq!(batch.record_count(), 2);
+        for (index, record) in batch.iter().enumerate() {
+            assert_eq!(record.stats.len(), if index == 0 { 1888 } else { 1600 });
+            if index == 0 {
+                assert_eq!(record.observation_time, 100_000_000_200);
+            } else {
+                assert!((before..=after).contains(&record.observation_time));
+            }
+            for (counter_index, stat) in record.stats.iter().enumerate() {
+                let object = (counter_index / 4 + 1) as u64;
+                let expected_stat = [1, 34, 42, 41][counter_index % 4];
+                assert_eq!((stat.type_id, stat.stat_id), (21, expected_stat));
+                assert_eq!(stat.counter, object * 100 + u64::from(expected_stat));
+                assert_eq!(stat.object_name.as_ref(), format!("Ethernet{object}"));
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_priority_offsets_and_incomplete_fallback_match_legacy() {
+        for fields in [
+            vec![(322, 4, None), (325, 4, None)],
+            vec![(325, 4, None), (322, 4, None)],
+            vec![(322, 4, None), (325, 4, None), (325, 8, None)],
+            vec![(325, 8, None), (325, 4, None), (322, 4, None)],
+            vec![(322, 4, None)],
+            vec![(325, 4, None)],
+            vec![],
+        ] {
+            let mut specs = vec![(322, 3, Some(0x0001_0001))];
+            specs.extend(fields.iter().copied());
+            specs.push((325, 6, Some(0x0001_0002)));
+            let mut record = vec![0xff; 3];
+            for &(ie, len, _) in &fields {
+                match (ie, len) {
+                    (322, 4) => record.extend_from_slice(&u32::MAX.to_be_bytes()),
+                    (325, 4) => record.extend_from_slice(&u32::MAX.to_be_bytes()),
+                    (325, 8) => record.extend_from_slice(&42u64.to_be_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+            record.extend_from_slice(&[0xff; 6]);
+            let mut actor = actor();
+            actor
+                .handle_template(hardware_template(300, &specs))
+                .unwrap();
+            let before = utc_nanos();
+            let batch = actor
+                .handle_record(&hardware_data(300, &[&record]))
+                .unwrap();
+            let after = utc_nanos();
+            let output = batch.iter().next().unwrap();
+            if fields.iter().any(|&(id, len, _)| id == 325 && len == 8) {
+                assert_eq!(output.observation_time, 42);
+            } else if fields.len() == 2 {
+                assert_eq!(
+                    output.observation_time,
+                    u64::from(u32::MAX) * 1_000_000_000 + u64::from(u32::MAX)
+                );
+            } else {
+                assert!((before..=after).contains(&output.observation_time));
+            }
+            assert_eq!(output.stats[0].counter, 0xff_ffff);
+            assert_eq!(output.stats[1].counter, 0xffff_ffff_ffff);
+        }
+    }
+
+    #[test]
+    fn hardware_layout_keeps_strict_malformed_field_validation() {
+        let counter = (1, 8, Some(0x0001_0001));
+        for fields in [
+            vec![(322, 8, None), counter],
+            vec![(325, 3, None), counter],
+            vec![(322, 4, None), (322, 4, None), counter],
+            vec![(325, 4, None), (325, 4, None), counter],
+            vec![(325, 8, None), (325, 8, None), counter],
+            vec![(0, 0, Some(0)), counter],
+            vec![(0, 9, Some(0)), counter],
+            vec![(0, u16::MAX, Some(0)), counter],
+            vec![(1, 8, Some(0)), counter],
+            vec![counter, counter],
+            vec![(0, 8, Some(0))],
+            vec![(322, 4, None), (325, 4, None)],
+            vec![],
+        ] {
+            let mut update = hardware_template(300, &fields);
+            // Exercise template validation rather than empty-metadata rejection.
+            update.object_names = Some(vec!["Ethernet1".into()]);
+            update.object_ids = Some(vec![1]);
+            assert!(
+                IpfixActor::compile_generation(&update).is_err(),
+                "{fields:?}"
+            );
+        }
+        let valid = hardware_template(
+            300,
+            &[(322, 4, None), (325, 4, None), (0, 8, Some(0)), counter],
+        );
+        let bytes = valid.templates.as_ref().unwrap();
+        for end in 20..bytes.len() {
+            let mut truncated = valid.clone();
+            let mut data = bytes[..end].to_vec();
+            data[2..4].copy_from_slice(&(end as u16).to_be_bytes());
+            data[18..20].copy_from_slice(&((end - 16) as u16).to_be_bytes());
+            truncated.templates = Some(Arc::new(data));
+            assert!(
+                IpfixActor::compile_generation(&truncated).is_err(),
+                "end={end}"
+            );
+        }
+    }
+
+    #[test]
+    fn continuation_without_time_accepts_one_counter_and_repeated_placeholders() {
+        for width in 1u16..=8 {
+            let specs = [
+                (0, width, Some(0)),
+                (1, width, Some(0x0001_0001)),
+                (0, width, Some(0)),
+            ];
+            let update = hardware_template(300, &specs);
+            let mut actor = actor();
+            actor.handle_template(update).unwrap();
+            let bytes = vec![0xff; 3 * usize::from(width)];
+            let output = actor.handle_record(&hardware_data(300, &[&bytes])).unwrap();
+            assert_eq!(output.counter_count(), 1);
+            assert_eq!(
+                output.iter().next().unwrap().stats[0].counter,
+                u64::MAX >> (64 - width * 8)
+            );
+            actor
+                .handle_template(IPFixOwnerUpdate::delete("hardware".into()))
+                .unwrap();
+            actor
+                .handle_template(hardware_template(300, &[(1, width, Some(0x0001_0001))]))
+                .unwrap();
+            let batch = actor
+                .handle_record(&hardware_data(300, &[&vec![0xff; usize::from(width)]]))
+                .unwrap();
+            assert_eq!(batch.counter_count(), 1);
+        }
+    }
+
+    #[test]
+    fn hardware_timestamp_change_respects_snapshot_validation_and_cutover() {
+        let mut actor = actor();
+        let old = hardware_template(300, &[(325, 8, None), (1, 8, Some(0x0001_0001))]);
+        let candidate = hardware_template(
+            301,
+            &[
+                (322, 4, None),
+                (325, 4, None),
+                (0, 4, Some(0)),
+                (1, 8, Some(0x0001_0001)),
+            ],
+        );
+        actor.handle_template(old.clone()).unwrap();
+        // Width/layout changes on an in-use ID remain conflicts, not silent reinterpretation.
+        let mut collision = candidate.clone();
+        Arc::make_mut(collision.templates.as_mut().unwrap())[20..22]
+            .copy_from_slice(&300u16.to_be_bytes());
+        assert!(actor.handle_template(collision).is_err());
+        actor.handle_template(candidate).unwrap();
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&2u32.to_be_bytes());
+        bytes.extend_from_slice(&3u32.to_be_bytes());
+        bytes.extend_from_slice(&[0xff; 4]);
+        bytes.extend_from_slice(&100u64.to_be_bytes());
+        let good = hardware_data(301, &[&bytes]);
+        let mut malformed = good.clone();
+        malformed.extend_from_slice(&[1, 2, 3]);
+        assert!(actor.handle_record(&malformed).is_err());
+        assert!(actor.sessions["hardware"].pending.is_some());
+        let output = actor.handle_record(&good).unwrap();
+        assert_eq!(
+            output.iter().next().unwrap().observation_time,
+            2_000_000_003
+        );
+        assert!(actor.sessions["hardware"].pending.is_none());
+        assert_eq!(keys(&actor), vec![(0, 301)]);
+    }
 
     fn template_message(
         owner: &str,
@@ -2012,7 +2434,10 @@ mod tests {
         let template = generation.templates.values().next().unwrap();
         assert_eq!(template.counters[0].offset, 0);
         assert_eq!(template.counters[1].offset, 3);
-        assert_eq!(template.observation_time_offset, 9);
+        assert_eq!(
+            template.observation_time,
+            ObservationTime::RawNanoseconds { offset: 9 }
+        );
         assert_eq!(template.record_len, 17);
         assert_eq!(template.counters[0].object_name.as_ref(), "Ethernet2");
         assert_eq!(
