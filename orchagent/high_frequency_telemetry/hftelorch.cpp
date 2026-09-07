@@ -69,9 +69,30 @@ HFTelOrch::HFTelOrch(
       m_sai_hostif_table_entry_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_transport_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_collector_obj(SAI_NULL_OBJECT_ID),
-      m_sai_tam_obj(SAI_NULL_OBJECT_ID)
+      m_sai_tam_obj(SAI_NULL_OBJECT_ID),
+      m_tel_type_mode(DEFAULT_TEL_TYPE_MODE)
 {
     SWSS_LOG_ENTER();
+
+    bool single_supported = false;
+    bool mixed_supported = false;
+    querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported);
+
+    if (single_supported && !mixed_supported)
+    {
+        m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+    }
+    else if (mixed_supported && !single_supported)
+    {
+        m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+    }
+    // Both advertised (or neither, which isSupportedHFTel filters out earlier):
+    // keep DEFAULT_TEL_TYPE_MODE.
+
+    SWSS_LOG_NOTICE("HFTel: selected TAM tel_type mode %s",
+                    m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+                        ? "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE"
+                        : "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
 
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
@@ -268,6 +289,89 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
         }
     }
 
+    bool single_supported = false;
+    bool mixed_supported = false;
+    if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported))
+    {
+        // The SAI capability query for SAI_TAM_TEL_TYPE_ATTR_MODE is optional;
+        // older or simpler SAI implementations (e.g. saivs) return
+        // SAI_STATUS_NOT_SUPPORTED. The SAI spec declares SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
+        // as the default value, so fall back to that and let HFT proceed.
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query unavailable; assuming SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
+        single_supported = true;
+    }
+
+    if (!single_supported && !mixed_supported)
+    {
+        SWSS_LOG_NOTICE("HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled");
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("HFTel: TAM tel_type modes advertised: SINGLE_TYPE=%s MIXED_TYPE=%s",
+                    single_supported ? "yes" : "no",
+                    mixed_supported ? "yes" : "no");
+
+    return true;
+}
+
+bool HFTelOrch::querySupportedTelTypeModes(
+    sai_object_id_t switch_id,
+    bool &single_supported,
+    bool &mixed_supported)
+{
+    SWSS_LOG_ENTER();
+
+    single_supported = false;
+    mixed_supported = false;
+
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+        SAI_TAM_TEL_TYPE_ATTR_MODE);
+    if (!meta || (!meta->isenum && !meta->isenumlist))
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE is not an enum attribute");
+        return false;
+    }
+
+    std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(valuesList.size());
+    values.list = valuesList.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(
+        switch_id,
+        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+        SAI_TAM_TEL_TYPE_ATTR_MODE,
+        &values);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        valuesList.resize(values.count);
+        values.list = valuesList.data();
+        status = sai_query_attribute_enum_values_capability(
+            switch_id,
+            SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+            SAI_TAM_TEL_TYPE_ATTR_MODE,
+            &values);
+    }
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query failed (status=%d)", status);
+        return false;
+    }
+
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability[%u] = %d", i, values.list[i]);
+        if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
+        {
+            single_supported = true;
+        }
+        else if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
+        {
+            mixed_supported = true;
+        }
+    }
+
     return true;
 }
 
@@ -454,7 +558,8 @@ shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
                 profile_name,
                 m_sai_tam_obj,
                 m_sai_tam_collector_obj,
-                m_counter_name_cache));
+                m_counter_name_cache,
+                m_tel_type_mode));
     }
 
     return m_name_profile_mapping.at(profile_name);
@@ -522,49 +627,74 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
     for (auto &profile : m_name_profile_mapping)
     {
-        auto type = profile.second->getObjectType(tam_tel_type_obj);
-        if (type == SAI_OBJECT_TYPE_NULL)
+        // In MIXED mode getObjectType returns the singleton SAI_OBJECT_TYPE_NULL
+        // for the matching profile, which collides with the not-found marker.
+        // Disambiguate via the guard before treating the profile as a miss.
+        if (!profile.second->getTAMTelTypeGuard(tam_tel_type_obj))
         {
             continue;
         }
+
+        auto type = profile.second->getObjectType(tam_tel_type_obj);
 
         // TODO: A potential optimization
         // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
         profile.second->notifyConfigReady(type);
 
-        // Update state db
-        vector<FieldValueTuple> values;
+        // In SINGLE mode SAI fires this callback once per object type, so we
+        // write the matching per-group STATE_DB entry. In MIXED mode the
+        // callback fires once per profile with the single tel_type oid, so
+        // we replicate the same combined IPFIX template into every per-group
+        // entry the profile owns. CounterSyncd reads per-group session_config
+        // unchanged.
+        vector<sai_object_type_t> session_types;
+        if (profile.second->isMixedTypeMode())
+        {
+            session_types = profile.second->getObjectTypes();
+        }
+        else
+        {
+            session_types.push_back(type);
+        }
+
         auto state = profile.second->getTelemetryTypeState(type);
+        string stream_status;
         if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
         {
-            values.emplace_back("stream_status", "enabled");
+            stream_status = "enabled";
         }
         else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
-            values.emplace_back("stream_status", "disabled");
+            stream_status = "disabled";
         }
         else
         {
             SWSS_LOG_THROW("Unexpected state %d for high frequency telemetry", state);
         }
 
-
-        values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
+        auto templates = profile.second->getTemplates(type);
         auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
                                                         { return boost::lexical_cast<std::string>(n); });
-        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
 
+        for (auto session_type : session_types)
+        {
+            vector<FieldValueTuple> values;
+            values.emplace_back("stream_status", stream_status);
+            values.emplace_back("object_names",
+                                boost::algorithm::join(profile.second->getObjectNames(session_type), ","));
+            values.emplace_back("object_ids",
+                                boost::algorithm::join(profile.second->getObjectLabels(session_type) | to_string, ","));
+            values.emplace_back("session_type", "ipfix");
+            values.emplace_back("session_config", string(templates.begin(), templates.end()));
 
-        values.emplace_back("session_type", "ipfix");
+            m_state_telemetry_session.set(
+                profile.first + "|" + HFTelUtils::sai_type_to_group_name(session_type),
+                values);
 
-        auto templates = profile.second->getTemplates(type);
-        values.emplace_back("session_config", string(templates.begin(), templates.end()));
-
-        m_state_telemetry_session.set(profile.first + "|" + HFTelUtils::sai_type_to_group_name(type), values);
-
-        SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is ready",
-                        HFTelUtils::sai_type_to_group_name(type).c_str(),
-                        profile.first.c_str());
+            SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is ready",
+                            HFTelUtils::sai_type_to_group_name(session_type).c_str(),
+                            profile.first.c_str());
+        }
 
         return;
     }

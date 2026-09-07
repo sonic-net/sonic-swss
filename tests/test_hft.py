@@ -140,8 +140,14 @@ class TestHFT(object):
                 entries[key] = dict(fvs)
         return entries
 
-    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)], watermark_count=0):
-        """Verify HFT objects are created correctly in ASIC_STATE DB."""
+    def verify_asic_db_objects(self, asic_db, groups=[(1, 1)], watermark_count=0,
+                               expected_mode="SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE"):
+        """Verify HFT objects are created correctly in ASIC_STATE DB.
+
+        MIXED mode (default) collapses every configured object type into a
+        single shared sai_tam_tel_type and sai_tam_report per profile;
+        SINGLE mode allocates one of each per configured group.
+        """
 
         # If no groups, we expect minimal or no HFT objects
         if not groups:
@@ -152,6 +158,9 @@ class TestHFT(object):
                 "configured"
             # Other objects might still exist as base infrastructure
             return
+
+        expected_type_count = 1 if expected_mode == \
+            "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE" else len(groups)
 
         # Verify TAM transport
         assert len(asic_db["tam_transport"]) == 1, "Expected one tam transport"
@@ -180,8 +189,9 @@ class TestHFT(object):
             "Expected tam collector to reference hostif user defined trap"
 
         # Verify TAM telemetry type
-        assert len(asic_db["tam_tel_type"]) == len(groups), \
-            f"Expected {len(groups)} tam telemetry types"
+        assert len(asic_db["tam_tel_type"]) == expected_type_count, \
+            f"Expected {expected_type_count} tam telemetry types " \
+            f"(mode={expected_mode}, groups={len(groups)})"
 
         for tam_tel_type in asic_db["tam_tel_type"].values():
             assert tam_tel_type[
@@ -203,8 +213,8 @@ class TestHFT(object):
                 "Expected tam telemetry to have at least one enable " \
                 "capability set to true"
             assert tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_MODE"] == \
-                "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE", \
-                "Expected tam telemetry to be mode single type"
+                expected_mode, \
+                f"Expected tam telemetry mode to be {expected_mode}"
 
             # Fix: Use only the object ID
             report_oid = tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_REPORT_ID"]
@@ -212,8 +222,9 @@ class TestHFT(object):
                 "Expected tam telemetry to reference tam report"
 
         # Verify TAM report
-        assert len(asic_db["tam_report"]) == len(groups), \
-            f"Expected {len(groups)} tam reports"
+        assert len(asic_db["tam_report"]) == expected_type_count, \
+            f"Expected {expected_type_count} tam reports " \
+            f"(mode={expected_mode}, groups={len(groups)})"
 
         for tam_report in asic_db["tam_report"].values():
             assert tam_report["SAI_TAM_REPORT_ATTR_TYPE"] == \
@@ -295,10 +306,11 @@ class TestHFT(object):
 
         tam_type_list_count = tam_telemetry[
             "SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST"].split(":")[0]
-        assert tam_type_list_count == str(len(groups)), \
-            f"Expected tam telemetry tam type list count to be {len(groups)}"
+        assert tam_type_list_count == str(expected_type_count), \
+            f"Expected tam telemetry tam type list count to be " \
+            f"{expected_type_count} (mode={expected_mode}, groups={len(groups)})"
 
-        if len(groups) == 1:
+        if expected_type_count == 1:
             # Fix: Extract the telemetry type object ID and check directly
             tam_type_oid = ":".join(tam_telemetry[
                 "SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST"].split(":")[1:3])
@@ -706,6 +718,168 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         assert len(asic_db["tam_telemetry"]) == 0, \
             "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
+
+
+    def test_hft_per_group_session_config_populated(self, dvs, testlog):
+        """STATE_DB session_config must be non-empty for every per-group
+        HIGH_FREQUENCY_TELEMETRY_SESSION entry.
+
+        Regression test for the per-group SESSION-writing path used by both
+        SINGLE and MIXED modes. In SINGLE mode each tel_type emits its own
+        IPFIX template; in MIXED mode the single tel_type's combined template
+        is replicated across per-group entries. Either way, every entry must
+        carry session_config so CounterSyncd can register the template.
+        """
+        profile_name = "test"
+        port_group = "PORT"
+        buffer_pool_group = "BUFFER_POOL"
+
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        state_tbl = swsscommon.Table(state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE")
+
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=port_group,
+            object_names="Ethernet0",
+            object_counters="IF_IN_OCTETS",
+        )
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=buffer_pool_group,
+            object_names="egress_lossless_pool",
+            object_counters="CURR_OCCUPANCY_BYTES",
+        )
+        try:
+            time.sleep(5)
+
+            for group_name in (port_group, buffer_pool_group):
+                key = f"{profile_name}|{group_name}"
+                status, fvs = state_tbl.get(key)
+                assert status, f"Expected STATE_DB entry for {key}"
+                entry = dict(fvs)
+                assert entry.get("session_type") == "ipfix", (
+                    f"Expected session_type=ipfix for {key}, got {entry.get('session_type')}"
+                )
+                assert entry.get("session_config", ""), (
+                    f"Expected non-empty session_config for {key}; entry={entry}"
+                )
+                assert entry.get("object_names", ""), (
+                    f"Expected non-empty object_names for {key}; entry={entry}"
+                )
+                assert entry.get("object_ids", ""), (
+                    f"Expected non-empty object_ids for {key}; entry={entry}"
+                )
+        finally:
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
+            self.delete_hft_profile(dvs, name=profile_name)
+
+    def test_hft_mixed_mode_single_tel_type(self, dvs, testlog):
+        """MIXED-mode end-to-end DVS test.
+
+        Verifies that on a SAI advertising SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+        the orchagent produces a single shared sai_tam_tel_type and
+        sai_tam_report per profile (covering every configured object type),
+        and that the per-group HIGH_FREQUENCY_TELEMETRY_SESSION entries
+        carry the same combined IPFIX template buffer.
+
+        Requires saivs's MIXED-mode capability advertisement, which lands in
+        nvidia-sonic/sonic-sairedis#81. Until that PR merges this test will
+        fail in CI because saivs returns SAI_STATUS_NOT_SUPPORTED for the
+        SAI_TAM_TEL_TYPE_ATTR_MODE enum-capability query and the orchagent
+        falls back to SINGLE_TYPE.
+        """
+        profile_name = "test_mixed"
+        port_group = "PORT"
+        queue_group = "QUEUE"
+
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=port_group,
+            object_names="Ethernet0",
+            object_counters="IF_IN_OCTETS",
+        )
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=queue_group,
+            object_names="Ethernet0|7",
+            object_counters="BYTES",
+        )
+        try:
+            time.sleep(5)
+            asic_db = self.get_asic_db_objects(dvs)
+
+            # Exactly one sai_tam_tel_type with MODE=MIXED_TYPE and all three
+            # SWITCH_ENABLE_*_STATS set true.
+            assert len(asic_db["tam_tel_type"]) == 1, (
+                f"Expected exactly one tam_tel_type in MIXED mode, found "
+                f"{len(asic_db['tam_tel_type'])}: {list(asic_db['tam_tel_type'].keys())}"
+            )
+            tel_type_oid = next(iter(asic_db["tam_tel_type"].keys()))
+            tel_type = asic_db["tam_tel_type"][tel_type_oid]
+            assert tel_type.get("SAI_TAM_TEL_TYPE_ATTR_MODE") == \
+                "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE", (
+                    f"Expected MODE=MIXED_TYPE, got "
+                    f"{tel_type.get('SAI_TAM_TEL_TYPE_ATTR_MODE')}"
+                )
+            for attr in (
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS",
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS",
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS",
+            ):
+                assert tel_type.get(attr) == "true", (
+                    f"Expected {attr}=true on MIXED tel_type, got "
+                    f"{tel_type.get(attr)}"
+                )
+
+            # Exactly one sai_tam_report shared across the profile.
+            assert len(asic_db["tam_report"]) == 1, (
+                f"Expected exactly one tam_report in MIXED mode, found "
+                f"{len(asic_db['tam_report'])}"
+            )
+
+            # Every counter subscription references the single shared tel_type.
+            assert len(asic_db["tam_counter_subscription"]) >= 2, (
+                "Expected at least one subscription per group (PORT, QUEUE)"
+            )
+            for sub_oid, sub in asic_db["tam_counter_subscription"].items():
+                assert sub["SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE"] == \
+                    tel_type_oid, (
+                        f"Subscription {sub_oid} references "
+                        f"{sub['SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE']}, "
+                        f"expected the shared MIXED tel_type {tel_type_oid}"
+                    )
+
+            # Per-group SESSION rows must carry identical session_config bytes
+            # (the orchagent replicates the combined IPFIX template buffer).
+            state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+            state_tbl = swsscommon.Table(
+                state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE"
+            )
+            configs = {}
+            for grp in (port_group, queue_group):
+                key = f"{profile_name}|{grp}"
+                status, fvs = state_tbl.get(key)
+                assert status, f"Expected STATE_DB entry for {key}"
+                configs[grp] = dict(fvs).get("session_config", "")
+                assert configs[grp], (
+                    f"Expected non-empty session_config for {key}"
+                )
+            assert configs[port_group] == configs[queue_group], (
+                "Expected identical session_config bytes across per-group "
+                "SESSION entries in MIXED mode (orchagent replicates the "
+                "combined IPFIX template)"
+            )
+        finally:
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
+            self.delete_hft_group(dvs, profile_name=profile_name, group_name=queue_group)
+            self.delete_hft_profile(dvs, name=profile_name)
 
 
 # Add Dummy always-pass test at end as workaroud

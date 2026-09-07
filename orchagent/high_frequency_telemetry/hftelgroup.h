@@ -14,7 +14,11 @@ public:
     HFTelGroup() = delete;
     HFTelGroup(const std::string& group_name);
     ~HFTelGroup() = default;
-    void updateObjects(const std::set<std::string> &object_names);
+    // Assigns labels to objects starting from `start_label`. SINGLE_TYPE callers
+    // omit the argument so labels reset to 1 per group (legacy behavior).
+    // MIXED_TYPE callers pass the profile-owned next-label so labels stay unique
+    // across groups within a profile.
+    void updateObjects(const std::set<std::string> &object_names, sai_uint16_t start_label = 1);
     void updateStatsIDs(std::set<sai_stat_id_t> &&stats_ids);
     bool isSameObjects(const std::set<std::string> &object_names) const;
     bool isObjectInGroup(const std::string &object_name) const;
