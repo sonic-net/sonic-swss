@@ -64,6 +64,7 @@ VRFOrch *gVrfOrch;
 RouteOrch *gRouteOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
+CoppOrch *gCoppOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
