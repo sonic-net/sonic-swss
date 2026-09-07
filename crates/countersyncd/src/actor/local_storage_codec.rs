@@ -1,7 +1,7 @@
-//! Standard Arrow IPC v4: one row per block, three non-null List<UInt64> fields.
+//! Standard Arrow IPC v5: one row per block, two non-null List<UInt64> fields.
 //! T = timestamps_ns[0].len(), C = schema metadata `series` JSON array length.
-//! values[0][c*T+t] is the raw value for ordered series c at timestamp t; record_seq
-//! has T entries too. Names occur only in `series`, including duplicate tuples.
+//! values[0][c*T+t] is the raw value for ordered series c at timestamp t.
+//! Names occur only in `series`, including duplicate tuples.
 //! All integers are exact, timestamps are nanoseconds, and there is no app delta.
 use super::{BATCH_TARGET_BYTES, FORMAT_VERSION, MAX_RECORD_BYTES, MAX_ROWS};
 use crate::{
@@ -62,7 +62,6 @@ pub(super) fn list(array: UInt64Array) -> ArrayRef {
 #[allow(dead_code)] // The daemon writes; library clients also read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedSample {
-    pub record_seq: u64,
     pub stat_index: u32,
     pub object_name: Arc<str>,
     pub type_name: Arc<str>,
@@ -122,7 +121,7 @@ impl Layout {
         }
         let row_bytes = stats
             .len()
-            .checked_add(2)
+            .checked_add(1)
             .and_then(|n| n.checked_mul(8))
             .filter(|&n| n <= MAX_RECORD_BYTES)
             .ok_or("record exceeds 128 MiB raw limit")?;
@@ -166,7 +165,7 @@ impl Layout {
         serde_json::to_writer(&mut size, &series).map_err(|e| e.to_string())?;
         let mut json = Vec::with_capacity(size.0);
         serde_json::to_writer(&mut json, &series).map_err(|e| e.to_string())?;
-        let fields = ["timestamps_ns", "record_seq", "values"].map(|name| {
+        let fields = ["timestamps_ns", "values"].map(|name| {
             Field::new(
                 name,
                 DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
@@ -194,18 +193,20 @@ impl Layout {
 }
 
 fn validate_schema(schema: &Schema) -> Result<Vec<Series>, String> {
-    if schema.metadata().get("format_version").map(String::as_str) != Some(FORMAT_VERSION)
-        || schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
+    let version = schema.metadata().get("format_version").map(String::as_str);
+    if version != Some(FORMAT_VERSION) {
+        return Err(format!(
+            "unsupported Arrow storage format version {}; expected {FORMAT_VERSION}",
+            version.unwrap_or("<missing>")
+        ));
+    }
+    if schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
         || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
-        || schema.fields().len() != 3
+        || schema.fields().len() != 2
     {
         return Err("invalid Arrow storage schema/version".into());
     }
-    for (field, name) in schema
-        .fields()
-        .iter()
-        .zip(["timestamps_ns", "record_seq", "values"])
-    {
+    for (field, name) in schema.fields().iter().zip(["timestamps_ns", "values"]) {
         if field.name() != name
             || field.is_nullable()
             || !field.metadata().is_empty()
@@ -213,7 +214,7 @@ fn validate_schema(schema: &Schema) -> Result<Vec<Series>, String> {
                 if child.data_type() == &DataType::UInt64 && !child.is_nullable()
                     && child.metadata().is_empty())
         {
-            return Err("expected three non-null List<UInt64> fields".into());
+            return Err("expected two non-null List<UInt64> fields".into());
         }
     }
     let json = schema
@@ -252,15 +253,11 @@ fn validate_schema(schema: &Schema) -> Result<Vec<Series>, String> {
     serde_json::from_str(json).map_err(|e| e.to_string())
 }
 
-fn validate_batch<'a>(
-    batch: &'a RecordBatch,
-    counters: usize,
-    previous: &mut Option<u64>,
-) -> Result<[&'a UInt64Array; 3], String> {
-    if batch.num_rows() != 1 || batch.num_columns() != 3 {
+fn validate_batch(batch: &RecordBatch, counters: usize) -> Result<[&UInt64Array; 2], String> {
+    if batch.num_rows() != 1 || batch.num_columns() != 2 {
         return Err("invalid batch dimensions or null values".into());
     }
-    let mut arrays = Vec::with_capacity(3);
+    let mut arrays = Vec::with_capacity(2);
     for column in batch.columns() {
         let list = column
             .as_any()
@@ -282,25 +279,16 @@ fn validate_batch<'a>(
     let rows = arrays[0].len();
     if rows == 0
         || rows > MAX_ROWS
-        || arrays[1].len() != rows
-        || rows.checked_mul(counters) != Some(arrays[2].len())
+        || rows.checked_mul(counters) != Some(arrays[1].len())
         || counters
-            .checked_add(2)
+            .checked_add(1)
             .and_then(|n| n.checked_mul(rows))
             .and_then(|n| n.checked_mul(8))
             .is_none_or(|n| n > MAX_RECORD_BYTES)
     {
         return Err("invalid matrix dimensions or raw byte limit".into());
     }
-    let mut last = *previous;
-    for &value in arrays[1].values() {
-        if last.is_some_and(|n| n.checked_add(1) != Some(value)) {
-            return Err("non-contiguous record sequence".into());
-        }
-        last = Some(value);
-    }
-    *previous = last;
-    Ok([arrays[0], arrays[1], arrays[2]])
+    Ok([arrays[0], arrays[1]])
 }
 
 pub(super) struct Counted<R> {
@@ -372,14 +360,14 @@ fn complete_message(
         let buffers = batch
             .buffers()
             .ok_or_else(|| ArrowError::IpcError("missing matrix buffers".into()))?;
-        if batch.length() != 1 || nodes.len() != 6 || buffers.len() != 12 {
+        if batch.length() != 1 || nodes.len() != 4 || buffers.len() != 8 {
             return Err(ArrowError::IpcError("invalid IPC batch dimensions".into()));
         }
         let rows = usize::try_from(nodes.get(1).length()).unwrap_or(usize::MAX);
         if rows == 0
             || rows > MAX_ROWS
             || counters
-                .checked_add(2)
+                .checked_add(1)
                 .and_then(|n| n.checked_mul(rows))
                 .and_then(|n| n.checked_mul(8))
                 .is_none_or(|n| n > MAX_RECORD_BYTES)
@@ -387,8 +375,8 @@ fn complete_message(
                 n.null_count() != 0
                     || usize::try_from(n.length()).ok()
                         != Some(match i {
-                            0 | 2 | 4 => 1,
-                            1 | 3 => rows,
+                            0 | 2 => 1,
+                            1 => rows,
                             _ => counters * rows,
                         })
             })
@@ -427,7 +415,7 @@ fn complete_message(
             };
             expanded = expanded
                 .checked_add(raw)
-                .filter(|&n| n <= MAX_RECORD_BYTES as u64 + 24)
+                .filter(|&n| n <= MAX_RECORD_BYTES as u64 + 16)
                 .ok_or_else(|| {
                     ArrowError::IpcError("IPC expanded buffers exceed raw limit".into())
                 })?;
@@ -473,7 +461,7 @@ fn scan_readers(
     mut probe: impl Read + Seek,
     input: impl Read,
     len: u64,
-    mut visit: impl FnMut(&[Series], [&UInt64Array; 3]) -> Result<(), String>,
+    mut visit: impl FnMut(&[Series], [&UInt64Array; 2]) -> Result<(), String>,
 ) -> Result<u64, String> {
     let complete = match complete_message(&mut probe, len, 0, true, 0) {
         Ok(complete) => complete,
@@ -490,7 +478,6 @@ fn scan_readers(
     let mut reader = StreamReader::try_new(input, None).map_err(|e| e.to_string())?;
     let names = validate_schema(&reader.schema())?;
     let mut boundary = reader.get_ref().position;
-    let mut previous = None;
     loop {
         match complete_message(&mut probe, len, boundary, false, names.len()) {
             Ok(true) => (),
@@ -505,7 +492,7 @@ fn scan_readers(
         }
         match reader.next() {
             Some(Ok(batch)) => {
-                let arrays = match validate_batch(&batch, names.len(), &mut previous) {
+                let arrays = match validate_batch(&batch, names.len()) {
                     Ok(arrays) => arrays,
                     Err(_) => break,
                 };
@@ -543,13 +530,12 @@ pub fn read_shard(
             ) in names.iter().enumerate()
             {
                 visit(DecodedSample {
-                    record_seq: columns[1].value(row),
                     stat_index: i as u32,
                     object_name: Arc::clone(object_name),
                     type_name: Arc::clone(type_name),
                     stat_name: Arc::clone(stat_name),
                     observation_time: columns[0].value(row),
-                    value: columns[2].value(i * rows + row),
+                    value: columns[1].value(i * rows + row),
                 })?;
             }
         }
@@ -593,12 +579,11 @@ mod tests {
         let layout = Layout::new(&[]).unwrap();
         let mut writer = StreamWriter::try_new(Vec::new(), &layout.schema).unwrap();
         let mut boundaries = Vec::new();
-        for seq in 0..2u64 {
+        for _ in 0..2 {
             let batch = RecordBatch::try_new(
                 Arc::clone(&layout.schema),
                 vec![
                     list(UInt64Array::from(vec![u64::MAX])),
-                    list(UInt64Array::from(vec![seq])),
                     list(UInt64Array::from(Vec::<u64>::new())),
                 ],
             )
@@ -686,6 +671,46 @@ mod tests {
     }
 
     #[test]
+    fn v4_three_field_stream_is_explicitly_unsupported_and_unchanged() {
+        let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
+        let mut metadata = layout.schema.metadata().clone();
+        metadata.insert("format_version".into(), "sonic-hft-arrow-v4".into());
+        let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
+        fields.insert(
+            1,
+            Arc::new(Field::new(
+                "record_seq",
+                fields[0].data_type().clone(),
+                false,
+            )),
+        );
+        let schema = Schema::new_with_metadata(fields, metadata);
+        let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
+        writer
+            .write(
+                &RecordBatch::try_new(
+                    Arc::new(schema),
+                    vec![
+                        list(vec![42].into()),
+                        list(vec![0].into()),
+                        list(vec![u64::MAX].into()),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        writer.finish().unwrap();
+        let bytes = writer.into_inner().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("v4.arrow");
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(read_shard(&path, |_| panic!("v4 must not emit samples")), Err(
+            "unsupported Arrow storage format version sonic-hft-arrow-v4; expected sonic-hft-arrow-v5".into()
+        ));
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
     fn rejects_old_versions_extra_fields_and_invalid_series() {
         let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
         for (key, value) in [
@@ -736,27 +761,19 @@ mod tests {
     }
 
     #[test]
-    fn matrix_validation_checks_dimensions_offsets_nulls_and_sequence() {
+    fn matrix_validation_checks_dimensions_offsets_and_nulls() {
         let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
-        for (times, sequences, values) in [
-            (vec![], vec![], vec![]),
-            (vec![1, 2], vec![0], vec![3, 4]),
-            (vec![1, 2], vec![0, 1], vec![3]),
-            (vec![1, 2], vec![0, 2], vec![3, 4]),
-            (vec![1, 2], vec![u64::MAX, 0], vec![3, 4]),
+        for (times, values) in [
+            (vec![], vec![]),
+            (vec![1, 2], vec![3]),
+            (vec![1], vec![3, 4]),
         ] {
             let batch = RecordBatch::try_new(
                 Arc::clone(&layout.schema),
-                vec![
-                    list(times.into()),
-                    list(sequences.into()),
-                    list(values.into()),
-                ],
+                vec![list(times.into()), list(values.into())],
             )
             .unwrap();
-            let mut previous = None;
-            assert!(validate_batch(&batch, 1, &mut previous).is_err());
-            assert_eq!(previous, None);
+            assert!(validate_batch(&batch, 1).is_err());
         }
         let offsets = Int32Array::from(vec![1, 2]);
         let data = list(vec![1, 2].into())
@@ -767,14 +784,10 @@ mod tests {
             .unwrap();
         let batch = RecordBatch::try_new(
             Arc::clone(&layout.schema),
-            vec![
-                Arc::new(ListArray::from(data)),
-                list(vec![0].into()),
-                list(vec![3].into()),
-            ],
+            vec![Arc::new(ListArray::from(data)), list(vec![3].into())],
         )
         .unwrap();
-        assert!(validate_batch(&batch, 1, &mut None).is_err());
+        assert!(validate_batch(&batch, 1).is_err());
         use arrow_array::types::UInt64Type;
         for column in [
             ListArray::from_iter_primitive::<UInt64Type, _, _>([None::<Vec<Option<u64>>>]),
@@ -782,16 +795,15 @@ mod tests {
         ] {
             let batch = RecordBatch::try_from_iter(vec![
                 ("timestamps_ns", Arc::new(column) as ArrayRef),
-                ("record_seq", list(vec![0].into())),
                 ("values", list(vec![3].into())),
             ])
             .unwrap();
-            assert!(validate_batch(&batch, 1, &mut None).is_err());
+            assert!(validate_batch(&batch, 1).is_err());
         }
     }
 
     #[test]
-    fn standard_matrix_has_twelve_buffers_and_rejects_oversized_expansion() {
+    fn standard_matrix_has_eight_buffers_and_rejects_oversized_expansion() {
         use arrow_ipc::{writer::IpcWriteOptions, CompressionType};
         for width in [0, 500, 8000] {
             let stats = vec![SAIStat::new("a", 1, 0, 0); width];
@@ -806,7 +818,6 @@ mod tests {
                 Arc::clone(&layout.schema),
                 vec![
                     list(vec![u64::MAX, 0].into()),
-                    list(vec![0, 1].into()),
                     list((0..width * 2).map(|i| i as u64).collect::<Vec<_>>().into()),
                 ],
             )
@@ -818,8 +829,8 @@ mod tests {
             let message = arrow_ipc::root_as_message(&bytes[start + 8..start + 8 + size]).unwrap();
             let header = message.header_as_record_batch().unwrap();
             assert_eq!(header.length(), 1);
-            assert_eq!(header.nodes().unwrap().len(), 6);
-            assert_eq!(header.buffers().unwrap().len(), 12);
+            assert_eq!(header.nodes().unwrap().len(), 4);
+            assert_eq!(header.buffers().unwrap().len(), 8);
             let timestamp_buffer =
                 start + 8 + size + header.buffers().unwrap().get(3).offset() as usize;
             assert!(complete_message(

@@ -1,9 +1,13 @@
 > **Historical v3 evidence only.** This report describes `sonic-hft-arrow-v3`,
-> not the current v4 matrix format. Its measurements, test counts, and writer-side
-> recovery descriptions are preserved below as historical data, not current
-> performance or behavior claims. v4 leaves abandoned files untouched and assigns
-> tail handling to readers. See the [current storage contract](hft-local-storage.md)
-> and [v4 matrix performance report](hft-local-storage-matrix-performance.md).
+> not the current `sonic-hft-arrow-v5` two-list matrix format with generic
+> backpressure. All measured numbers below remain unchanged; no benchmarks were
+> rerun. Old columns, sequences, nonblocking tap/drop diagnostics, RSS, throughput,
+> compression, test counts, and writer-side recovery descriptions are historical,
+> not v5 performance or behavior claims. v5 leaves abandoned files and historical
+> sidecars untouched, assigns tail handling to readers, and requires old readers
+> for old formats without automatic migration. See the
+> [current storage contract](hft-local-storage.md) and
+> [historical v4 matrix report](hft-local-storage-matrix-performance.md).
 
 # HFT Local Storage: Arrow IPC Performance
 
