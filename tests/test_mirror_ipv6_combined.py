@@ -103,7 +103,7 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("policy_desc", "mirror_test"),
                                           ("type", type),
-                                          ("ports", ",".join(interfaces))])
+                                          ("ports@", ",".join(interfaces))])
         tbl.set(table, fvs)
         time.sleep(1)
 
