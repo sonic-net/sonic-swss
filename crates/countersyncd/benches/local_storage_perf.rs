@@ -8,10 +8,12 @@
 //! UDP packets or standalone batches inside timing without replaying a pool. All modes
 //! time enqueue/send through reducer/writer join and final publish fsync.
 //! Default segments add finalization cost, not uninterrupted streaming throughput.
-//! Standard Arrow IPC v4 shards retain raw UInt64 lists; defaults rotate at
+//! Standard Arrow IPC v5 shards retain exactly two raw UInt64 lists,
+//! timestamps_ns and series-major values; defaults rotate at
 //! 100 MB of compressed IPC bytes or 1800 s maximum age, after complete batches.
 //! Each physical IPC row is one matrix block; reported rows remain logical source
-//! records for v3 comparison, with ipc_block_rows reported separately.
+//! records, with ipc_block_rows reported separately. Generator sequences are
+//! internal, derived on readback from the exact timestamp base and step.
 //! Pacing uses wall time, independently of
 //! --step-ns source time. Default pacing is 1M metrics/s; 0 measures overload.
 //!
@@ -60,7 +62,8 @@
 //! Retained trials share the quota/watchdog budget. Finalized allocated bytes
 //! include the storage root, not physical write amplification. Ratios divide
 //! actual persisted value bytes or canonical record payload (values*8+records*8)
-//! by all Arrow file bytes plus root loss.json bytes, with no codec-ratio claim.
+//! by all Arrow file bytes, with no codec-ratio claim. Fresh v5 trials must not
+//! produce loss.json. Bounded storage queues backpressure rather than discard.
 //! No compression numerator includes dropped input.
 //!
 //! CLI examples (append to `cargo bench -p countersyncd --bench local_storage_perf --`):
@@ -68,6 +71,8 @@
 //!   --repeats 1 --rate 0 --audit-values --require-lossless
 //! - Four-pattern throughput: --root <disk> --mode udp --streaming --records 60000
 //!   --counters 8000 --repeats 1 --rate 0
+//! - Full queue: --root <disk> --mode standalone --full-queue --records 32
+//!   --counters 8 --repeats 1 --rate 0 --require-lossless
 //! Lossless sample storage describes surviving samples, not zero packet/storage
 //! loss: check all_input_persisted separately or require --require-lossless.
 
@@ -121,7 +126,7 @@ const QUOTA: u64 = 2_400_000_000;
 const INPUT_BUDGET: usize = 120_000_000;
 const ID: u16 = 300;
 const STORAGE_QUEUE_BATCHES: usize = 32;
-const FORMAT_VERSION: &str = "sonic-hft-arrow-v4";
+const FORMAT_VERSION: &str = "sonic-hft-arrow-v5";
 const GENERATOR_VERSION: &str = "interval-bytes-v1";
 const BPS_ASSUMPTION: u64 = 200_000_000_000;
 const ENVELOPE_NS: u64 = 100_000_000;
@@ -172,6 +177,10 @@ struct Args {
     /// One continuous trial; generate UDP packets or standalone batches inside timing.
     #[arg(long)]
     streaming: bool,
+    /// Standalone full-queue benchmark: one-record batches, capacity one, delayed
+    /// worker start until a send encounters the full queue; no input is discarded.
+    #[arg(long)]
+    full_queue: bool,
     /// Hash every decoded value in the timed audit (persisted values always checked).
     #[arg(long)]
     audit_values: bool,
@@ -533,8 +542,7 @@ async fn udp(
     pattern: Pattern,
     offset: usize,
     count: usize,
-    storage: mpsc::SyncSender<SAIStatsBatchMessage>,
-    status: LocalStorageStatus,
+    storage: channel::Sender<SAIStatsBatchMessage>,
     counts: Arc<Counts>,
 ) -> Result<(Instant, Audit)> {
     let template = helpers::generate_ipfix_templates(args.counters, ID);
@@ -563,7 +571,7 @@ async fn udp(
     let (input_tx, input_rx) = channel::channel(256);
     let (audit_tx, mut audit_rx) = channel::channel::<SAIStatsBatchMessage>(64);
     let mut actor = IpfixActor::new(template_rx, input_rx);
-    actor.set_local_storage_recipient(storage, status);
+    actor.add_recipient(storage);
     actor.add_recipient(audit_tx);
     let actor = tokio::spawn(async move {
         IpfixActor::run(actor).await;
@@ -773,8 +781,6 @@ struct Verification {
     records: u64,
     ipc_block_rows: u64,
     errors: u64,
-    input_drops: u64,
-    shard_drops: u64,
     arrow_file_bytes: u64,
     loss_file_bytes: u64,
 }
@@ -793,22 +799,16 @@ fn verify(
         .collect();
     // Always scan all raw arrays; the optional API pass never collects samples.
     let mut raw_records = vec![false; audit.seen.len()];
-    let mut last_raw_record: Option<(u64, usize)> = None;
+    let mut last_raw_record: Option<usize> = None;
     let mut last_sequence = vec![None; args.counters];
-    let mut last_record: Option<(u64, u32, usize)> = None;
+    let mut last_record: Option<(usize, u32)> = None;
     let mut api_samples = 0;
     let mut api_records = 0;
     let loss_path = root.join("loss.json");
     if loss_path.exists() {
         result.loss_file_bytes = fs::metadata(&loss_path)?.len();
-        let loss: serde_json::Value = serde_json::from_reader(File::open(loss_path)?)?;
-        result.input_drops = loss["dropped_input_messages"]
-            .as_u64()
-            .ok_or("bad loss metadata")?;
-        result.shard_drops = loss["dropped_shards"].as_u64().ok_or("bad loss metadata")?;
-        if loss["format_version"].as_str() != Some(FORMAT_VERSION) || result.shard_drops != 0 {
-            result.errors += 1;
-        }
+        // These are private, fresh trial roots, not an existing data migration.
+        result.errors += 1;
     }
     let mut paths = fs::read_dir(root.join("shards"))?
         .map(|entry| entry.map(|entry| entry.path()))
@@ -827,18 +827,14 @@ fn verify(
         // Proof of self-contained IPC: no application decoder or sidecar schema.
         let reader = StreamReader::try_new(file, None)?;
         let schema = reader.schema();
-        if schema.fields().len() != 3
+        if schema.fields().len() != 2
             || schema.metadata().get("format_version").map(String::as_str) != Some(FORMAT_VERSION)
             || schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
             || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
         {
             return Err("unexpected independent Arrow schema".into());
         }
-        for (field, name) in schema
-            .fields()
-            .iter()
-            .zip(["timestamps_ns", "record_seq", "values"])
-        {
+        for (field, name) in schema.fields().iter().zip(["timestamps_ns", "values"]) {
             if field.name() != name
                 || field.is_nullable()
                 || !field.metadata().is_empty()
@@ -846,7 +842,7 @@ fn verify(
                     if child.data_type() == &DataType::UInt64 && !child.is_nullable()
                         && child.name() == "item" && child.metadata().is_empty())
             {
-                return Err("expected three non-null raw List<UInt64> fields".into());
+                return Err("expected two non-null raw List<UInt64> fields".into());
             }
         }
         let series_json = schema
@@ -870,10 +866,9 @@ fn verify(
                 return Err("incorrect independent Arrow ordered series names/metadata".into());
             }
         }
-        let mut previous_in_file = None;
         for batch in reader {
             let batch = batch?;
-            if batch.num_rows() != 1 || batch.num_columns() != 3 {
+            if batch.num_rows() != 1 || batch.num_columns() != 2 {
                 return Err("expected one physical IPC row per matrix block".into());
             }
             let columns = batch
@@ -905,11 +900,10 @@ fn verify(
             let rows = columns[0].len();
             if rows == 0
                 || rows > audit.seen.len()
-                || columns[1].len() != rows
-                || rows.checked_mul(args.counters) != Some(columns[2].len())
+                || rows.checked_mul(args.counters) != Some(columns[1].len())
                 || args
                     .counters
-                    .checked_add(2)
+                    .checked_add(1)
                     .and_then(|n| n.checked_mul(rows))
                     .and_then(|n| n.checked_mul(8))
                     .is_none_or(|bytes| bytes > 128 * 1024 * 1024)
@@ -920,7 +914,6 @@ fn verify(
             for row in 0..rows {
                 result.records += 1;
                 let timestamp = columns[0].value(row);
-                let record_seq = columns[1].value(row);
                 let sequence = (timestamp / args.step_ns)
                     .checked_sub(1)
                     .and_then(|sequence| usize::try_from(sequence).ok());
@@ -932,21 +925,15 @@ fn verify(
                 if timestamp != (sequence as u64 + 1) * args.step_ns
                     || !audit.seen[sequence - offset]
                     || std::mem::replace(&mut raw_records[sequence - offset], true)
-                    || record_seq != result.records - 1
-                    || record_seq > (sequence - offset) as u64
-                    || last_raw_record.is_some_and(|(last, generated)| {
-                        record_seq <= last || sequence <= generated
-                    })
-                    || previous_in_file.is_some_and(|last| record_seq != last + 1)
+                    || last_raw_record.is_some_and(|last| sequence <= last)
                 {
                     result.errors += 1;
                 }
-                last_raw_record = Some((record_seq, sequence));
-                previous_in_file = Some(record_seq);
+                last_raw_record = Some(sequence);
                 for index in 0..args.counters {
                     // Count actual non-null samples per row, not records*counters.
                     result.persisted += 1;
-                    if columns[2].value(index * rows + row)
+                    if columns[1].value(index * rows + row)
                         != pattern.value(sequence, index, args.step_ns)
                     {
                         result.errors += 1;
@@ -980,29 +967,25 @@ fn verify(
                 || sample.stat_name.as_ref() != names[index].1
                 || sample.value != pattern.value(sequence, index, args.step_ns)
                 || last_sequence[index].is_some_and(|last| sequence <= last)
-                || sample.record_seq > (sequence - offset) as u64
             {
                 result.errors += 1;
             }
-            if let Some((seq, stat, generated)) = last_record {
-                if (sample.record_seq, sample.stat_index) <= (seq, stat)
-                    || (sample.record_seq == seq && sequence != generated)
-                    || (sample.record_seq > seq && sequence <= generated)
-                    || (sample.record_seq == seq && sample.stat_index != stat + 1)
-                    || (sample.record_seq > seq
-                        && (index != 0 || stat as usize + 1 != args.counters))
+            if let Some((seq, stat)) = last_record {
+                if (sequence, sample.stat_index) <= (seq, stat)
+                    || (sequence == seq && sample.stat_index != stat + 1)
+                    || (sequence > seq && (index != 0 || stat as usize + 1 != args.counters))
                 {
                     result.errors += 1;
                 }
             }
-            if last_record.is_none_or(|(seq, _, _)| seq != sample.record_seq) {
+            if last_record.is_none_or(|(seq, _)| seq != sequence) {
                 api_records += 1;
-                if index != 0 || sample.record_seq != api_records - 1 {
+                if index != 0 {
                     result.errors += 1;
                 }
             }
             last_sequence[index] = Some(sequence);
-            last_record = Some((sample.record_seq, sample.stat_index, sequence));
+            last_record = Some((sequence, sample.stat_index));
             Ok(())
         })
         .map_err(io::Error::other)?;
@@ -1012,7 +995,7 @@ fn verify(
         || (args.reader_api_check
             && (api_samples != result.persisted
                 || api_records != result.records
-                || last_record.is_some_and(|(_, stat, _)| stat as usize + 1 != args.counters)))
+                || last_record.is_some_and(|(_, stat)| stat as usize + 1 != args.counters)))
     {
         result.errors += 1;
     }
@@ -1023,6 +1006,9 @@ fn verify(
 }
 
 fn run(args: Args) -> Result<()> {
+    if args.full_queue && (!matches!(args.mode, Mode::Standalone) || args.records < 2) {
+        return Err("--full-queue requires --mode standalone and at least two records".into());
+    }
     if args.records == 0
         || args.counters == 0
         || args.counters > (65507 - 28) / 8
@@ -1103,6 +1089,7 @@ fn run(args: Args) -> Result<()> {
                 let (mut seconds, mut peak, mut current, mut segments) = (0.0, 0, 0, 0);
                 let mut finalized_allocated_bytes = 0;
                 let mut failed = false;
+                let mut full_queue_events = 0u64;
                 let mut readback_errors = Vec::new();
                 let mut udp_totals = Audit::default();
                 let trial_initial_rss = rss_bytes()?;
@@ -1118,7 +1105,12 @@ fn run(args: Args) -> Result<()> {
                         .prefix("segment-")
                         .tempdir_in(trial.path())?;
                     let status = LocalStorageStatus::default();
-                    let (tx, rx) = mpsc::sync_channel(STORAGE_QUEUE_BATCHES);
+                    let queue_batches = if args.full_queue {
+                        1
+                    } else {
+                        STORAGE_QUEUE_BATCHES
+                    };
+                    let (tx, rx) = channel::channel(queue_batches);
                     let retained_bytes = allocated(monitored_root, &mut HashSet::new())?
                         .saturating_sub(allocated(segment.path(), &mut HashSet::new())?);
                     let storage = LocalStorageActor::new(
@@ -1139,7 +1131,11 @@ fn run(args: Args) -> Result<()> {
                     let mut batches = Vec::new();
                     let (names, _) = helpers::generate_object_metadata(args.counters);
                     let names: Vec<Arc<str>> = names.into_iter().map(Arc::from).collect();
-                    let batch_records = (8192 / args.counters).max(1);
+                    let batch_records = if args.full_queue {
+                        1
+                    } else {
+                        (8192 / args.counters).max(1)
+                    };
                     let generate_batch = |begin: usize| {
                         let end = (begin + batch_records).min(offset + count);
                         let mut batch = SAIStatsBatch::with_capacity(
@@ -1172,17 +1168,18 @@ fn run(args: Args) -> Result<()> {
                         .writing_rss_peak
                         .store(writing_baseline, Ordering::Relaxed);
                     guard.writing.store(true, Ordering::Release);
-                    let worker = thread::spawn(move || storage.run());
+                    let (start_worker, worker_ready) = mpsc::channel();
+                    let worker = thread::spawn(move || {
+                        if worker_ready.recv().is_ok() {
+                            storage.run();
+                        }
+                    });
+                    let mut start_worker = Some(start_worker);
+                    if !args.full_queue {
+                        start_worker.take().unwrap().send(())?;
+                    }
                     let (start, mut audit) = if matches!(mode, Mode::Udp) {
-                        runtime.block_on(udp(
-                            &args,
-                            pattern,
-                            offset,
-                            count,
-                            tx,
-                            status.clone(),
-                            counts.clone(),
-                        ))?
+                        runtime.block_on(udp(&args, pattern, offset, count, tx, counts.clone()))?
                     } else {
                         let start = Instant::now();
                         let mut prebuilt = batches.into_iter();
@@ -1195,12 +1192,35 @@ fn run(args: Args) -> Result<()> {
                                 prebuilt.next().ok_or("missing prebuilt batch")?
                             };
                             let records = batch.record_count();
-                            if tx.send(batch).is_err() {
+                            let batch = if start_worker.is_some() {
+                                match tx.try_send(batch) {
+                                    Ok(()) => {
+                                        counts.sent.fetch_add(records as u64, Ordering::Relaxed);
+                                        continue;
+                                    }
+                                    Err(channel::error::TrySendError::Full(batch)) => {
+                                        full_queue_events += 1;
+                                        start_worker.take().unwrap().send(())?;
+                                        batch
+                                    }
+                                    Err(channel::error::TrySendError::Closed(_)) => {
+                                        failed = true;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                batch
+                            };
+                            if tx.blocking_send(batch).is_err() {
+                                failed = true;
                                 break;
                             }
                             counts.sent.fetch_add(records as u64, Ordering::Relaxed);
                         }
                         drop(tx);
+                        if let Some(start_worker) = start_worker.take() {
+                            start_worker.send(())?;
+                        }
                         let sent = counts.sent.load(Ordering::Relaxed);
                         counts.received.store(sent, Ordering::Relaxed);
                         counts
@@ -1264,8 +1284,6 @@ fn run(args: Args) -> Result<()> {
                     totals.records += verified.records;
                     totals.ipc_block_rows += verified.ipc_block_rows;
                     totals.errors += verified.errors + audit.errors;
-                    totals.input_drops += verified.input_drops + status.take_input_drops();
-                    totals.shard_drops += verified.shard_drops;
                     totals.arrow_file_bytes += verified.arrow_file_bytes;
                     totals.loss_file_bytes += verified.loss_file_bytes;
                     udp_totals.packets += audit.packets;
@@ -1295,18 +1313,15 @@ fn run(args: Args) -> Result<()> {
                     drop(guard);
                 }
                 let expected = (args.records * args.counters) as u64;
-                if readback_errors.is_empty()
-                    && (totals.persisted > decoded
-                        || (totals.input_drops == 0 && !failed && totals.persisted != decoded))
+                if (readback_errors.is_empty() && totals.persisted > decoded)
+                    || (args.full_queue && full_queue_events == 0)
                 {
                     totals.errors += 1;
                 }
                 let lossless = expected == sent
                     && sent == received
                     && received == decoded
-                    && decoded == totals.persisted
-                    && totals.input_drops == 0
-                    && totals.shard_drops == 0;
+                    && decoded == totals.persisted;
                 let correct = !failed && totals.errors == 0;
                 let is_udp = matches!(mode, Mode::Udp);
                 let sent_packets = sent / args.counters as u64;
@@ -1388,7 +1403,6 @@ fn run(args: Args) -> Result<()> {
                     "decode_loss_fraction":(received > 0).then_some(received.saturating_sub(decoded) as f64 / received as f64),
                     "storage_loss_fraction":(persisted_known && decoded > 0).then_some(decoded.saturating_sub(totals.persisted) as f64 / decoded as f64),
                     "total_loss_fraction":persisted_known.then_some(expected.saturating_sub(totals.persisted) as f64 / expected as f64),
-                    "input_dropped_batches":totals.input_drops, "dropped_shards":totals.shard_drops,
                     "rows":persisted_known.then_some(totals.records),
                     "rows_basis":"logical source records (timestamps), not physical IPC matrix block rows",
                     "ipc_block_rows":persisted_known.then_some(totals.ipc_block_rows),
@@ -1400,13 +1414,16 @@ fn run(args: Args) -> Result<()> {
                     "storage_logical_file_bytes":persisted_known.then_some(storage_file_bytes),
                     "persisted_value_bytes":persisted_known.then_some(persisted_value_bytes),
                     "persisted_timestamp_bytes":persisted_known.then_some(persisted_timestamp_bytes),
+                    "persisted_record_seq_bytes":0,
                     "canonical_record_payload_bytes":persisted_known.then_some(canonical_record_payload_bytes),
                     "persisted_values_to_storage_ratio":(persisted_known && storage_file_bytes > 0).then_some(persisted_value_bytes as f64 / storage_file_bytes as f64),
                     "canonical_record_payload_to_storage_ratio":(persisted_known && storage_file_bytes > 0).then_some(canonical_record_payload_bytes as f64 / storage_file_bytes as f64),
-                    "compression_basis":"persisted values*8 + persisted records*8 timestamp bytes / (Arrow IPC logical bytes + root loss.json logical bytes); excludes record_seq from canonical payload; no codec ratio",
+                    "compression_basis":"persisted values*8 + persisted records*8 timestamp bytes / (Arrow IPC logical bytes + root loss.json logical bytes, expected absent); no stored record_seq; no codec ratio",
                     "readback":if args.reader_api_check { "independent standard Arrow StreamReader full raw arrays plus streamed read_shard" } else { "independent standard Arrow StreamReader full raw arrays (every metric)" },
                     "measurement_warning":if seconds < 2.0 { Some("short trial; increase --records (use --streaming for continuous generation)") } else { None },
-                    "runtime_workers":2, "storage_queue_batches":STORAGE_QUEUE_BATCHES, "udp_audit_queue_batches":64,
+                    "runtime_workers":2, "storage_queue_batches":if args.full_queue { 1 } else { STORAGE_QUEUE_BATCHES }, "udp_audit_queue_batches":64,
+                    "storage_queue_policy":"bounded backpressure", "full_queue":args.full_queue,
+                    "full_queue_events":full_queue_events,
                     "storage_writers":1, "udp_completion":"sender_done_then_kernel_would_block",
                     "storage_failed":failed, "disk_allocated_peak_sampled":peak,
                     "rss_process_initial_bytes":process_initial_rss,

@@ -1,15 +1,18 @@
 # Local Storage Performance
 
-> **HISTORICAL / OBSOLETE: v1 lossy range-summary report, not current v4 raw storage.**
+> **HISTORICAL / OBSOLETE: v1 lossy range-summary report, not current v5 raw storage.**
 > The measurements, validation counts, formats, and reproduction commands below
 > describe the retired 10 ms reducer/Parquet implementation. They are retained as
-> historical evidence, not results for the current `sonic-hft-arrow-v4` Arrow IPC
-> raw-gauge writer. Do not use these summary rates or compression sizes to claim
+> historical evidence, not results for the current `sonic-hft-arrow-v5` two-list
+> Arrow IPC writer with generic backpressure. Old columns, drop accounting, RSS,
+> throughput, compression, and test counts do not describe or validate v5.
+> All measured numbers below remain unchanged; no benchmarks were rerun.
+> Do not use these summary rates or compression sizes to claim
 > lossless raw-capture performance or interrupt recovery. The 50 million raw
 > metrics/s goal has not been achieved. See [current storage documentation](hft-local-storage.md)
-> for the v4 schema, reader API, durability conditions, and limitations, and
+> for the v5 schema, reader API, durability conditions, and limitations, and
 > [matrix measurements](hft-local-storage-matrix-performance.md) for the subsequent
-> raw-storage benchmarks (before the 100 MB / 30-minute rotation change).
+> historical v3/v4 raw-storage benchmarks (before the 100 MB / 30-minute rotation change).
 
 Measured 2026-09-06 on the local-storage port based on IPFIX PR4860 commit
 `2e9ede3e40ea85a326e37e33d60d1940a8956b56`. Source storage is Pterosaur PR7 commit

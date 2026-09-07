@@ -1,7 +1,7 @@
-//! Bounded best-effort capture of exact raw observations in Arrow IPC streams.
+//! Bounded capture of exact raw observations in Arrow IPC streams.
 use crate::message::{
-    local_storage::{LocalStorageMessage, LocalStorageStatus},
-    saistats::SAIStatsRef,
+    local_storage::LocalStorageStatus,
+    saistats::{SAIStatsBatchMessage, SAIStatsRef},
 };
 use arrow_array::{RecordBatch, UInt64Array};
 use arrow_ipc::{
@@ -18,18 +18,18 @@ use std::{
         io::AsRawFd,
     },
     path::{Path, PathBuf},
-    sync::{mpsc, Arc},
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tokio::{sync::mpsc::Receiver, time::MissedTickBehavior};
 
 #[path = "local_storage_codec.rs"]
 mod codec;
 #[allow(unused_imports)]
 pub use codec::{read_shard, series_names, DecodedSample};
 
-const FORMAT_VERSION: &str = "sonic-hft-arrow-v4";
+const FORMAT_VERSION: &str = "sonic-hft-arrow-v5";
 const LOCK_FILE: &str = ".writer.lock";
-const LOSS_FILE: &str = "loss.json";
 const BATCH_TARGET_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROWS: usize = 4096;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
@@ -121,12 +121,8 @@ struct Store {
     // concatenation, excluding Arrow's bounded IPC/compression working buffers.
     matrix: Vec<u64>,
     active: Option<ActiveStream>,
-    next_record_seq: u64,
     file_sequence: u64,
     batch_started: Option<Instant>,
-    last_diagnostic: Instant,
-    dropped_input_messages: u64,
-    reported_drops: u64,
     // Includes all files and directory blocks, including active staging data.
     used_bytes: u64,
     directory_blocks: u64,
@@ -136,16 +132,6 @@ struct Store {
 impl Store {
     fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
         let used_bytes = directory_bytes(&config.root).map_err(|e| e.to_string())?;
-        let loss_path = config.root.join(LOSS_FILE);
-        let dropped = match fs::read(&loss_path) {
-            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
-                .map_err(|e| e.to_string())?
-                .get("dropped_input_messages")
-                .and_then(|v| v.as_u64())
-                .ok_or("invalid loss.json")?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
-            Err(e) => return Err(e.to_string()),
-        };
         let directory_blocks = directory_overhead(&config.root)?;
         Ok(Self {
             config,
@@ -153,12 +139,8 @@ impl Store {
             columns: Vec::new(),
             matrix: Vec::new(),
             active: None,
-            next_record_seq: 0,
             file_sequence: 0,
             batch_started: None,
-            last_diagnostic: Instant::now(),
-            dropped_input_messages: dropped,
-            reported_drops: dropped,
             used_bytes,
             directory_blocks,
             _storage_lock: lock,
@@ -285,11 +267,7 @@ impl Store {
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
         self.tick()?;
-        if self.next_record_seq == u64::MAX {
-            self.finish_stream()?;
-            return Err("local storage record sequence exhausted".into());
-        }
-        if record.stats.len().saturating_add(2).saturating_mul(8) > MAX_RECORD_BYTES {
+        if record.stats.len().saturating_add(1).saturating_mul(8) > MAX_RECORD_BYTES {
             self.finish_stream()?;
             return Err("record exceeds 128 MiB raw limit; previous records flushed".into());
         }
@@ -299,7 +277,7 @@ impl Store {
             self.columns.clear();
             self.matrix = Vec::new();
             let layout = codec::Layout::new(record.stats)?;
-            self.columns = (0..record.stats.len() + 2)
+            self.columns = (0..record.stats.len() + 1)
                 .map(|_| Vec::with_capacity(layout.batch_rows))
                 .collect();
             self.matrix = Vec::with_capacity(record.stats.len() * layout.batch_rows);
@@ -310,11 +288,9 @@ impl Store {
         }
         self.batch_started.get_or_insert_with(Instant::now);
         self.columns[0].push(record.observation_time);
-        self.columns[1].push(self.next_record_seq);
-        for (column, stat) in self.columns[2..].iter_mut().zip(record.stats) {
+        for (column, stat) in self.columns[1..].iter_mut().zip(record.stats) {
             column.push(stat.counter);
         }
-        self.next_record_seq += 1;
         let layout = self.layout.as_ref().unwrap();
         if self.columns[0].len() >= layout.batch_rows {
             self.flush_batch()?;
@@ -335,13 +311,12 @@ impl Store {
         );
         let schema = Arc::clone(&layout.schema);
         self.reserve(reserve)?;
-        for column in &mut self.columns[2..] {
+        for column in &mut self.columns[1..] {
             self.matrix.extend_from_slice(column);
             column.clear();
         }
         let arrays = [
             UInt64Array::from(std::mem::take(&mut self.columns[0])),
-            UInt64Array::from(std::mem::take(&mut self.columns[1])),
             UInt64Array::from(std::mem::take(&mut self.matrix)),
         ];
         let batch = RecordBatch::try_new(
@@ -382,9 +357,9 @@ impl Store {
         drop(batch);
         let rows = self.layout.as_ref().unwrap().batch_rows;
         // Reclaim the original Vec allocations after Arrow releases its references.
-        let matrix_capacity = (self.columns.len() - 2) * rows;
+        let matrix_capacity = (self.columns.len() - 1) * rows;
         for (i, array) in arrays.into_iter().enumerate() {
-            let c = if i < 2 {
+            let c = if i == 0 {
                 &mut self.columns[i]
             } else {
                 &mut self.matrix
@@ -394,11 +369,12 @@ impl Store {
                 .1
                 .into_inner()
                 .into_vec::<u64>()
-                .unwrap_or_else(|_| Vec::with_capacity(if i < 2 { rows } else { matrix_capacity }));
+                .unwrap_or_else(|_| {
+                    Vec::with_capacity(if i == 0 { rows } else { matrix_capacity })
+                });
             c.clear();
         }
         self.batch_started = None;
-        self.write_loss()?;
         // Include schema/framing, but always persist a batch before size rotation.
         if self
             .active
@@ -465,49 +441,19 @@ impl Store {
         {
             self.flush_batch()?;
         }
-        if self.last_diagnostic.elapsed() >= FLUSH_INTERVAL {
-            self.write_loss()?;
-        }
-        Ok(())
-    }
-
-    fn write_loss(&mut self) -> Result<(), String> {
-        self.last_diagnostic = Instant::now();
-        if self.dropped_input_messages == self.reported_drops {
-            return Ok(());
-        }
-        self.reserve(64 * 1024)?;
-        let path = self.config.root.join(".loss.json.partial");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)
-            .map_err(|e| e.to_string())?;
-        // Input drops count channel messages, not records or metrics. Do not
-        // report invented zero metric losses for a dropped multi-record message.
-        writeln!(file, "{{\"format_version\":\"{FORMAT_VERSION}\",\"dropped_input_messages\":{},\"dropped_shards\":0}}", self.dropped_input_messages)
-            .map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        fs::rename(&path, self.config.root.join(LOSS_FILE)).map_err(|e| e.to_string())?;
-        sync_directory(&self.config.root).map_err(|e| e.to_string())?;
-        self.reported_drops = self.dropped_input_messages;
-        self.used_bytes = directory_bytes(&self.config.root).map_err(|e| e.to_string())?;
-        self.directory_blocks = directory_overhead(&self.config.root)?;
         Ok(())
     }
 }
 
 pub struct LocalStorageActor {
-    receiver: mpsc::Receiver<LocalStorageMessage>,
+    receiver: Receiver<SAIStatsBatchMessage>,
     status: LocalStorageStatus,
     store: Store,
 }
 
 impl LocalStorageActor {
     pub fn new(
-        receiver: mpsc::Receiver<LocalStorageMessage>,
+        receiver: Receiver<SAIStatsBatchMessage>,
         config: LocalStorageConfig,
         status: LocalStorageStatus,
     ) -> Result<Self, String> {
@@ -521,47 +467,38 @@ impl LocalStorageActor {
     }
 
     /// One isolated blocking storage loop: no secondary queue or whole-shard drops.
-    /// Sender disconnect drains accepted messages; shutdown requests stop promptly.
+    /// Run on a dedicated blocking worker, never on a shared async runtime thread.
+    /// Shutdown closes the receiver before draining all accepted messages.
     pub fn run(mut self) {
-        let result = (|| {
-            while !self.status.shutdown_requested() && !self.status.failed() {
-                self.store.dropped_input_messages = self
-                    .store
-                    .dropped_input_messages
-                    .saturating_add(self.status.take_input_drops());
-                self.store.tick()?;
-                let mut wait = FLUSH_INTERVAL;
-                if let Some(start) = self.store.batch_started {
-                    wait = wait.min(FLUSH_INTERVAL.saturating_sub(start.elapsed()));
-                }
-                if let Some(active) = &self.store.active {
-                    wait = wait.min(
-                        self.store
-                            .config
-                            .shard_interval
-                            .saturating_sub(active.started.elapsed()),
-                    );
-                }
-                match self.receiver.recv_timeout(wait) {
-                    Ok(message) => {
-                        for record in message.iter() {
-                            if self.status.shutdown_requested() {
-                                break;
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|e| e.to_string())
+            .and_then(|runtime| {
+                runtime.block_on(async {
+                    let mut tick = tokio::time::interval(FLUSH_INTERVAL);
+                    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    while !self.status.failed() {
+                        if self.status.shutdown_requested() {
+                            self.receiver.close();
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = tick.tick() => {
+                                self.store.tick()?;
+                                self.store.flush_batch()?;
                             }
-                            self.store.add_record(record)?;
+                            message = self.receiver.recv() => {
+                                let Some(message) = message else { break; };
+                                for record in message.iter() {
+                                    self.store.add_record(record)?;
+                                }
+                            }
                         }
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => (),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-            }
-            self.store.dropped_input_messages = self
-                .store
-                .dropped_input_messages
-                .saturating_add(self.status.take_input_drops());
-            self.store.finish_stream()?;
-            self.store.write_loss()
-        })();
+                    self.store.finish_stream()
+                })
+            });
         if let Err(reason) = result {
             // Do not retry a failed IPC write or modify its durable prefix.
             // Readers consume complete batches directly from abandoned partials.
@@ -717,8 +654,10 @@ mod tests {
     use std::{
         io::Cursor,
         process::{Command, Stdio},
+        sync::mpsc,
         thread,
     };
+    use tokio::sync::mpsc::channel;
     use wait_timeout::ChildExt;
 
     fn config(root: &Path) -> LocalStorageConfig {
@@ -775,12 +714,10 @@ mod tests {
     fn expected(batch: &SAIStatsBatch) -> Vec<DecodedSample> {
         batch
             .iter()
-            .enumerate()
-            .flat_map(|(seq, record)| {
+            .flat_map(|record| {
                 record.stats.iter().enumerate().map(move |(i, stat)| {
                     let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
                     DecodedSample {
-                        record_seq: seq as u64,
                         stat_index: i as u32,
                         object_name: Arc::clone(&stat.object_name),
                         type_name: type_name.into(),
@@ -832,8 +769,24 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(decoded(&files[0]), expected(&batch));
         let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+        assert_eq!(
+            reader.schema().metadata()["format_version"],
+            "sonic-hft-arrow-v5"
+        );
+        assert_eq!(reader.schema().fields().len(), 2);
         assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
-        assert_eq!(reader.schema().field(1).name(), "record_seq");
+        assert_eq!(reader.schema().field(1).name(), "values");
+        for field in reader.schema().fields() {
+            assert!(!field.is_nullable());
+            assert_eq!(
+                field.data_type(),
+                &arrow_schema::DataType::List(Arc::new(arrow_schema::Field::new(
+                    "item",
+                    arrow_schema::DataType::UInt64,
+                    false
+                )))
+            );
+        }
         let batches: Vec<_> = reader.map(Result::unwrap).collect();
         assert_eq!(
             batches.iter().map(|b| child(b, 0).len()).sum::<usize>(),
@@ -867,32 +820,21 @@ mod tests {
             files.iter().flat_map(|p| decoded(p)).collect::<Vec<_>>(),
             expected(&batch)
         );
-        let rows: Vec<(u64, u64)> = files
+        let rows: Vec<u64> = files
             .iter()
             .flat_map(|p| {
                 StreamReader::try_new(File::open(p).unwrap(), None)
                     .unwrap()
                     .flat_map(|b| {
                         let b = b.unwrap();
-                        let times = child(&b, 0);
-                        let seq = child(&b, 1);
-                        times
-                            .values()
-                            .iter()
-                            .copied()
-                            .zip(seq.values().iter().copied())
-                            .collect::<Vec<_>>()
+                        child(&b, 0).values().to_vec()
                     })
                     .collect::<Vec<_>>()
             })
             .collect();
         assert_eq!(
             rows,
-            batch
-                .iter()
-                .enumerate()
-                .map(|(i, r)| (r.observation_time, i as u64))
-                .collect::<Vec<_>>()
+            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>()
         );
         assert_eq!(
             read_shard(&files[1], |_| Err("visitor stopped".into())),
@@ -919,7 +861,7 @@ mod tests {
             let layout = store.layout.as_ref().unwrap();
             assert_eq!(
                 layout.batch_rows,
-                (BATCH_TARGET_BYTES / ((width + 2) * 8)).min(MAX_ROWS)
+                (BATCH_TARGET_BYTES / ((width + 1) * 8)).min(MAX_ROWS)
             );
             assert_eq!(layout.batch_rows, expected_rows);
             assert!(layout.batch_rows * layout.row_bytes <= BATCH_TARGET_BYTES);
@@ -963,7 +905,6 @@ mod tests {
                 Arc::clone(&layout.schema),
                 vec![
                     codec::list(UInt64Array::from(vec![u64::MAX - i])),
-                    codec::list(UInt64Array::from(vec![i])),
                     codec::list(UInt64Array::from(vec![[u64::MAX, 0, 1 << 63][i as usize]])),
                 ],
             )
@@ -972,7 +913,6 @@ mod tests {
             boundaries.push((writer.get_ref().len(), i + 1));
             let (ty, stat) = series_names(1, 2);
             expected.push(DecodedSample {
-                record_seq: i,
                 stat_index: 0,
                 object_name: "a".into(),
                 type_name: ty.into(),
@@ -1073,6 +1013,8 @@ mod tests {
             (".staging/torn.arrow.partial", &bytes[..3]),
             (".staging/old.partial", &b"old-v3"[..]),
             ("shards/old.arrow", &b"old-v3"[..]),
+            ("loss.json", &b"obsolete diagnostics, not parsed"[..]),
+            (".loss.json.partial", &b"obsolete partial diagnostics"[..]),
         ];
         for (path, data) in files {
             fs::write(temp.path().join(path), data).unwrap();
@@ -1159,10 +1101,9 @@ mod tests {
     }
 
     #[test]
-    fn oversized_schema_and_sequence_exhaustion_flush_previous_valid_rows() {
+    fn oversized_schema_flushes_previous_valid_rows() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = store(temp.path());
-        store.next_record_seq = i64::MAX as u64;
         for value in [u64::MAX, 0, 1 << 63] {
             store
                 .add_record(SAIStatsRef {
@@ -1181,25 +1122,20 @@ mod tests {
         assert_eq!(
             decoded(file)
                 .iter()
-                .map(|s| s.record_seq)
+                .map(|s| (s.observation_time, s.value))
                 .collect::<Vec<_>>(),
-            vec![i64::MAX as u64, 1 << 63, (1 << 63) + 1]
+            vec![(u64::MAX, u64::MAX), (0, 0), (1 << 63, 1 << 63)]
         );
-        store.next_record_seq = u64::MAX;
-        assert!(store
-            .add_record(SAIStatsRef {
-                observation_time: 0,
-                stats: &[]
-            })
-            .is_err());
         assert!(store.batch_started.is_none());
     }
 
     #[test]
-    fn actor_drains_input_reports_drops_and_restart_accumulates_diagnostics() {
+    fn actor_drains_disconnected_input_and_preserves_obsolete_sidecars() {
         let temp = tempfile::tempdir().unwrap();
-        for i in 1..=2 {
-            let (sender, receiver) = mpsc::sync_channel(2);
+        let loss = temp.path().join("loss.json");
+        fs::write(&loss, b"obsolete diagnostics").unwrap();
+        for _ in 0..2 {
+            let (sender, receiver) = channel(32);
             let status = LocalStorageStatus::default();
             let actor =
                 LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
@@ -1207,16 +1143,12 @@ mod tests {
             for time in [1, 2, 2, 1] {
                 batch.push_record(time, [stat("Ethernet0", u64::MAX)]);
             }
-            sender.send(Arc::new(batch)).unwrap();
-            status.record_input_drop();
+            sender.blocking_send(Arc::new(batch)).unwrap();
             drop(sender);
             actor.run();
             assert!(!status.failed());
-            assert_eq!(status.take_input_drops(), 0);
-            let loss: serde_json::Value =
-                serde_json::from_slice(&fs::read(temp.path().join(LOSS_FILE)).unwrap()).unwrap();
-            assert_eq!(loss["dropped_input_messages"], i);
-            assert_eq!(loss["dropped_shards"], 0);
+            assert_eq!(fs::read(&loss).unwrap(), b"obsolete diagnostics");
+            assert!(!temp.path().join(".loss.json.partial").exists());
         }
         assert_eq!(
             paths(temp.path(), "shards")
@@ -1228,14 +1160,77 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_closes_full_queue_wakes_producer_and_drains_every_accepted_batch() {
+        for shutdown_before_run in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let (sender, receiver) = channel(32);
+            let status = LocalStorageStatus::default();
+            let actor =
+                LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+            let mut batch = SAIStatsBatch::default();
+            for time in [u64::MAX, 42, 42, 0] {
+                batch.push_record(time, [stat("a", time)]);
+            }
+            let expected = expected(&batch);
+            let batch = Arc::new(batch);
+            for _ in 0..32 {
+                sender.blocking_send(Arc::clone(&batch)).unwrap();
+            }
+            let (progress_tx, progress_rx) = mpsc::channel();
+            let (producer_tx, producer_rx) = mpsc::channel();
+            let producer = thread::spawn(move || {
+                let mut accepted = 32;
+                while sender.blocking_send(Arc::clone(&batch)).is_ok() {
+                    accepted += 1;
+                    if accepted == 33 {
+                        progress_tx.send(()).unwrap();
+                    }
+                }
+                producer_tx.send(accepted).unwrap();
+            });
+            assert!(producer_rx.recv_timeout(Duration::from_millis(20)).is_err());
+            if shutdown_before_run {
+                status.request_shutdown();
+            }
+            let (done_tx, done_rx) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                actor.run();
+                done_tx.send(()).unwrap();
+            });
+            if !shutdown_before_run {
+                progress_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                status.request_shutdown();
+            }
+            let accepted = producer_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            producer.join().unwrap();
+            worker.join().unwrap();
+            assert!(!status.failed());
+            if shutdown_before_run {
+                assert_eq!(accepted, 32);
+            }
+            let samples: Vec<_> = paths(temp.path(), "shards")
+                .iter()
+                .flat_map(|p| decoded(p))
+                .collect();
+            assert_eq!(samples.len(), accepted * expected.len());
+            for records in samples.chunks_exact(expected.len()) {
+                assert_eq!(records, expected);
+            }
+            assert!(paths(temp.path(), ".staging").is_empty());
+            assert!(!temp.path().join("loss.json").exists());
+        }
+    }
+
+    #[test]
     fn idle_wall_flush_then_shutdown_with_sender_still_connected() {
         let temp = tempfile::tempdir().unwrap();
-        let (sender, receiver) = mpsc::sync_channel(2);
+        let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         let actor = LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
         let mut batch = SAIStatsBatch::default();
         batch.push_record(0, [stat("a", 42)]);
-        sender.send(Arc::new(batch)).unwrap();
+        sender.blocking_send(Arc::new(batch)).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
             actor.run();
@@ -1262,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    fn size_rotation_waits_for_complete_batch_and_keeps_sequence() {
+    fn size_rotation_waits_for_complete_batch_and_preserves_records() {
         for schema_exceeds_target in [true, false] {
             let temp = tempfile::tempdir().unwrap();
             let mut store = store(temp.path());
@@ -1292,7 +1287,7 @@ mod tests {
                 assert!(fs::metadata(&files[seq]).unwrap().len() > schema_bytes + 8);
                 let samples = decoded(&files[seq]);
                 assert_eq!(samples.len(), 1);
-                assert_eq!(samples[0].record_seq, seq as u64);
+                assert_eq!(samples[0].observation_time, 0);
                 assert_eq!(samples[0].value, u64::MAX);
             }
             store.finish_stream().unwrap();
@@ -1308,7 +1303,7 @@ mod tests {
         let mut store = store(temp.path());
         let stats = vec![stat("a", 0); 8000];
         let records = 2100;
-        assert!(records * (stats.len() + 2) * 8 > 128 * 1024 * 1024);
+        assert!(records * (stats.len() + 1) * 8 > 128 * 1024 * 1024);
         // Reuse one input record; the writer must encode all >128 MiB, not a fake counter.
         for _ in 0..records {
             store
@@ -1342,15 +1337,13 @@ mod tests {
         let mut read_records = 0;
         for batch in reader {
             let batch = batch.unwrap();
-            let sequences = child(&batch, 1);
-            for &seq in sequences.values() {
-                assert_eq!(seq, read_records);
-                read_records += 1;
-            }
-            assert_eq!(child(&batch, 2).len(), stats.len() * sequences.len());
-            assert!(child(&batch, 2).values().iter().all(|&value| value == 0));
+            let timestamps = child(&batch, 0);
+            assert!(timestamps.values().iter().all(|&value| value == 0));
+            read_records += timestamps.len();
+            assert_eq!(child(&batch, 1).len(), stats.len() * timestamps.len());
+            assert!(child(&batch, 1).values().iter().all(|&value| value == 0));
         }
-        assert_eq!(read_records, records as u64);
+        assert_eq!(read_records, records);
     }
 
     #[test]
@@ -1392,7 +1385,13 @@ mod tests {
             .unwrap();
         store.finish_stream().unwrap();
         assert_eq!(paths(temp.path(), "shards").len(), 2);
-        assert_eq!(store.next_record_seq, 5);
+        assert_eq!(
+            paths(temp.path(), "shards")
+                .iter()
+                .map(|p| codec::scan(p).unwrap().records)
+                .sum::<u64>(),
+            5
+        );
     }
 
     #[test]
@@ -1428,11 +1427,13 @@ mod tests {
         assert!(config.validate().is_ok());
         config.max_bytes = BATCH_RESERVE_BYTES;
         assert!(config.validate().is_err());
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         assert!(LocalStorageActor::new(receiver, config, status.clone()).is_err());
         assert!(status.failed());
-        assert!(sender.send(Arc::new(SAIStatsBatch::default())).is_err());
+        assert!(sender
+            .blocking_send(Arc::new(SAIStatsBatch::default()))
+            .is_err());
     }
 
     #[test]
@@ -1470,26 +1471,27 @@ mod tests {
         let path = &paths(temp.path(), "shards")[0];
         let reader = StreamReader::try_new(File::open(path).unwrap(), None).unwrap();
         let schema = reader.schema();
-        assert_eq!(schema.fields().len(), 3);
+        assert_eq!(schema.fields().len(), 2);
         assert_eq!(schema.metadata()["matrix_order"], "series-major");
         let series: serde_json::Value = serde_json::from_str(&schema.metadata()["series"]).unwrap();
         assert_eq!(series.as_array().unwrap().len(), 2);
         assert_eq!(series[0], series[1]);
         assert_eq!(series[0].as_object().unwrap().len(), 3);
         assert_eq!(series[0]["object_name"], "same|\"\n");
+        let mut record_index = 0;
         for (batch, rows) in reader.zip([3, 1, 5]) {
             let batch = batch.unwrap();
             assert_eq!(batch.num_rows(), 1);
             let timestamps = child(&batch, 0);
-            let sequences = child(&batch, 1);
-            let values = child(&batch, 2);
+            let values = child(&batch, 1);
             let t = timestamps.len();
             assert_eq!(t, rows);
             assert_eq!(values.len(), series.as_array().unwrap().len() * t);
             for row in 0..t {
-                assert_eq!(timestamps.value(row), u64::MAX - sequences.value(row));
-                assert_eq!(values.value(row), sequences.value(row));
+                assert_eq!(timestamps.value(row), u64::MAX - record_index);
+                assert_eq!(values.value(row), record_index);
                 assert_eq!(values.value(t + row), timestamps.value(row));
+                record_index += 1;
             }
         }
         assert_eq!(decoded(path), self::expected(&expected));
@@ -1511,7 +1513,6 @@ mod tests {
             Arc::clone(layout),
             vec![
                 codec::list(UInt64Array::from(vec![0])),
-                codec::list(UInt64Array::from(vec![1])),
                 codec::list(UInt64Array::from(vec![0])),
             ],
         )
@@ -1534,17 +1535,31 @@ mod tests {
     #[test]
     fn actor_quota_failure_sets_status_and_disconnects_without_touching_archive() {
         let temp = tempfile::tempdir().unwrap();
-        let (sender, receiver) = mpsc::sync_channel(2);
+        let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         let mut actor =
             LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
         actor.store.config.max_bytes = actor.store.used_bytes + BATCH_RESERVE_BYTES - 1;
         let mut batch = SAIStatsBatch::default();
         batch.push_record(42, [stat("a", 42)]);
-        sender.send(Arc::new(batch)).unwrap();
+        let batch = Arc::new(batch);
+        for _ in 0..32 {
+            sender.blocking_send(Arc::clone(&batch)).unwrap();
+        }
+        let (done_tx, done_rx) = mpsc::channel();
+        let blocked_sender = sender.clone();
+        let producer = thread::spawn(move || {
+            while blocked_sender.blocking_send(Arc::clone(&batch)).is_ok() {}
+            done_tx.send(()).unwrap();
+        });
+        assert!(done_rx.recv_timeout(Duration::from_millis(20)).is_err());
         actor.run();
+        done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        producer.join().unwrap();
         assert!(status.failed());
-        assert!(sender.send(Arc::new(SAIStatsBatch::default())).is_err());
+        assert!(sender
+            .blocking_send(Arc::new(SAIStatsBatch::default()))
+            .is_err());
         assert!(paths(temp.path(), "shards").is_empty());
         assert!(paths(temp.path(), ".staging").is_empty());
     }

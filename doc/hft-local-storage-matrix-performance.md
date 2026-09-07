@@ -1,10 +1,20 @@
 # HFT Local Storage: Matrix Performance
 
-> These measurements used the earlier 128 MiB raw / 5-second rotation policy.
-> The current writer defaults to 100,000,000 encoded bytes / 30 minutes, with
-> unchanged batch limits and synchronization. The results below have not been
-> rerun with that policy; use the explicit benchmark rotation options to reproduce
-> a selected policy. Raw-size rotation is no longer supported.
+> **HISTORICAL v3/v4 evidence only, not current v5 measurements.** These
+> measurements used the earlier 128 MiB raw / 5-second rotation policy and v4's
+> three-list matrix with `record_seq`. Current `sonic-hft-arrow-v5` uses only
+> `timestamps_ns` and `values`, eight IPC buffer slots instead of twelve, and
+> generic 32-batch Tokio-channel backpressure rather than a nonblocking tap.
+> It retains the 16 MiB block target, 4,096-record cap, and synchronization, with
+> raw record bytes now `8 * (C + 1)`. Rotation defaults remain 100,000,000 encoded
+> bytes / 30 minutes; raw-size rotation is no longer supported. All measured
+> numbers and the report body below remain unchanged; no benchmarks were rerun.
+> Old columns/buffers, sequence/drop accounting, hashes, reproduction commands,
+> RSS, throughput, compression ratios, and test counts do not describe or validate
+> v5. References below to "current" code/harness mean the historical measured
+> version, not today's source. Rebuilding today's tree is not a v4 reproduction.
+> v5 rejects v4 streams; use the old reader, with no automatic migration and
+> archived files untouched. See the [current storage contract](hft-local-storage.md).
 
 Measured `sonic-hft-arrow-v4` versus the copied v3 numeric baseline, using the
 same `interval-bytes-v1` generator. **50,000,000 lossless raw metrics/s was not

@@ -316,7 +316,7 @@ struct Args {
     )]
     otel_flush_timeout_ms: u64,
 
-    /// Enable bounded best-effort raw UInt64 Arrow IPC streams (100 ms batch flush)
+    /// Enable bounded raw UInt64 Arrow IPC streams with backpressure (100 ms batch flush)
     #[arg(long, default_value = "false")]
     enable_local_storage: bool,
 
@@ -542,10 +542,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_dedicated_filesystem: !args.local_storage_allow_shared_filesystem,
         };
         // Flat messages hold many records; do not carry over PR7's 1024-sample queue.
-        let (sender, receiver) = std::sync::mpsc::sync_channel(32);
-        ipfix.set_local_storage_recipient(sender, status.clone());
+        let (sender, receiver) = channel(32);
+        ipfix.add_recipient(sender);
         info!(
-            "Local storage requested: path={}, format=sonic-hft-arrow-v4, compression=zstd, max_bytes={}, require_dedicated_filesystem={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture is best-effort",
+            "Local storage requested: path={}, format=sonic-hft-arrow-v5, compression=zstd, max_bytes={}, require_dedicated_filesystem={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture applies backpressure",
             config.root.display(),
             config.max_bytes,
             config.require_dedicated_filesystem,
@@ -623,7 +623,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialization includes filesystem traversal and fsync. It must not delay
     // critical startup or the signal supervisor, even on a stalled mount. Until
-    // ready, the bounded tap drops on full; a setup error marks status failed.
+    // ready, the bounded queue applies backpressure; a setup error closes it.
     let local_storage_handle = local_storage.map(|(receiver, config, status)| {
         tokio::task::spawn_blocking(move || {
             match LocalStorageActor::new(receiver, config, status) {
@@ -636,7 +636,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     });
 
-    // Local storage is best-effort and intentionally outside the critical set.
+    // Local storage is optional and intentionally outside the critical set.
     let first_exit = tokio::select! {
         res = &mut data_netlink_handle => {
             classify_join("Data netlink", res)
@@ -695,6 +695,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.abort();
     }
 
+    if let Some(status) = &local_storage_status {
+        status.request_shutdown();
+    }
     if let Some(mut handle) = local_storage_handle {
         match tokio::time::timeout(Duration::from_secs(10), &mut handle).await {
             Ok(Ok(())) => {
@@ -710,10 +713,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(Err(reason)) => error!("Local storage task failed: {}", reason),
             Err(_) => {
                 error!("Timed out draining local storage; final data may be incomplete");
-                if let Some(status) = local_storage_status {
-                    status.request_shutdown();
-                }
-                let _ = tokio::time::timeout(Duration::from_secs(1), &mut handle).await;
             }
         }
     }
