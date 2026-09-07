@@ -8,7 +8,7 @@ mod utilities;
 use clap::Parser;
 use log::{error, info, warn};
 use opentelemetry::ExportError;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
@@ -316,9 +316,33 @@ struct Args {
     )]
     otel_flush_timeout_ms: u64,
 
-    /// Enable bounded best-effort local Parquet gauge ranges on /mnt/hft
+    /// Enable bounded best-effort raw UInt64 Arrow IPC streams (100 ms batch flush)
     #[arg(long, default_value = "false")]
     enable_local_storage: bool,
+
+    /// Existing local storage directory (dedicated filesystem by default)
+    #[arg(long, default_value = "/mnt/hft")]
+    local_storage_root: PathBuf,
+
+    /// Local storage quota in bytes; must exceed the 64 MiB batch reserve
+    #[arg(
+        long,
+        default_value = "4000000000",
+        value_parser = clap::value_parser!(u64).range(67_108_865..)
+    )]
+    local_storage_max_bytes: u64,
+
+    /// Compressed IPC file byte target; rotate after a complete batch flush
+    #[arg(long, default_value = "100000000", value_parser = clap::value_parser!(u64).range(1..))]
+    local_storage_file_bytes: u64,
+
+    /// Maximum local storage file age in wall-clock seconds
+    #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
+    local_storage_file_seconds: u64,
+
+    /// Allow a shared filesystem for capture; other root safety checks still apply
+    #[arg(long, default_value = "false", requires = "enable_local_storage")]
+    local_storage_allow_shared_filesystem: bool,
 }
 
 impl Args {
@@ -511,16 +535,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (local_storage, local_storage_status) = if args.enable_local_storage {
         let status = LocalStorageStatus::default();
         let config = LocalStorageConfig {
-            root: "/mnt/hft".into(),
-            range_interval: Duration::from_millis(10),
-            shard_interval: Duration::from_secs(5),
-            max_bytes: 4_000_000_000,
-            require_dedicated_filesystem: true,
+            root: args.local_storage_root,
+            shard_interval: Duration::from_secs(args.local_storage_file_seconds),
+            file_target_bytes: args.local_storage_file_bytes,
+            max_bytes: args.local_storage_max_bytes,
+            require_dedicated_filesystem: !args.local_storage_allow_shared_filesystem,
         };
         // Flat messages hold many records; do not carry over PR7's 1024-sample queue.
         let (sender, receiver) = std::sync::mpsc::sync_channel(32);
         ipfix.set_local_storage_recipient(sender, status.clone());
-        info!("Local storage requested: path=/mnt/hft, max_bytes=4000000000, range_interval_ms=10, shard_interval_secs=5, queue_batches=32");
+        info!(
+            "Local storage requested: path={}, format=sonic-hft-arrow-v4, compression=zstd, max_bytes={}, require_dedicated_filesystem={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture is best-effort",
+            config.root.display(),
+            config.max_bytes,
+            config.require_dedicated_filesystem,
+            config.file_target_bytes,
+            config.shard_interval.as_secs()
+        );
         (Some((receiver, config, status.clone())), Some(status))
     } else {
         (None, None)
@@ -720,11 +751,91 @@ mod tests {
 
     #[test]
     fn local_storage_is_opt_in() {
-        assert!(
-            parse(&["countersyncd", "--enable-local-storage"])
-                .unwrap()
-                .enable_local_storage
-        );
+        for enabled in [false, true] {
+            let argv = if enabled {
+                vec!["countersyncd", "--enable-local-storage"]
+            } else {
+                vec!["countersyncd"]
+            };
+            let args = parse(&argv).unwrap();
+            assert_eq!(args.enable_local_storage, enabled);
+            assert_eq!(args.local_storage_root, PathBuf::from("/mnt/hft"));
+            assert_eq!(args.local_storage_max_bytes, 4_000_000_000);
+            assert_eq!(args.local_storage_file_bytes, 100_000_000);
+            assert_eq!(args.local_storage_file_seconds, 1800);
+            assert!(!args.local_storage_allow_shared_filesystem);
+        }
+    }
+
+    #[test]
+    fn local_storage_explicit_options() {
+        let args = parse(&[
+            "countersyncd",
+            "--enable-local-storage",
+            "--local-storage-root",
+            "/mnt/dut capture",
+            "--local-storage-max-bytes",
+            "2400000000",
+            "--local-storage-file-bytes",
+            "2000000",
+            "--local-storage-file-seconds",
+            "60",
+            "--local-storage-allow-shared-filesystem",
+        ])
+        .unwrap();
+        assert!(args.enable_local_storage);
+        assert_eq!(args.local_storage_root, PathBuf::from("/mnt/dut capture"));
+        assert_eq!(args.local_storage_max_bytes, 2_400_000_000);
+        assert_eq!(args.local_storage_file_bytes, 2_000_000);
+        assert_eq!(args.local_storage_file_seconds, 60);
+        assert!(args.local_storage_allow_shared_filesystem);
+    }
+
+    #[test]
+    fn local_storage_quota_bounds() {
+        for (quota, valid) in [
+            ("0", false),
+            ("67108864", false),
+            ("67108865", true),
+            ("18446744073709551615", true),
+        ] {
+            assert_eq!(
+                parse(&[
+                    "countersyncd",
+                    "--enable-local-storage",
+                    "--local-storage-max-bytes",
+                    quota,
+                ])
+                .is_ok(),
+                valid,
+                "quota={quota}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_storage_rotation_bounds() {
+        for option in ["--local-storage-file-bytes", "--local-storage-file-seconds"] {
+            for (value, valid) in [
+                ("0", false),
+                ("-1", false),
+                ("invalid", false),
+                ("1", true),
+                ("18446744073709551615", true),
+                ("18446744073709551616", false),
+            ] {
+                let result = parse(&["countersyncd", option, value]);
+                assert_eq!(result.is_ok(), valid, "{option}={value}");
+                if let Ok(args) = result {
+                    assert!(!args.enable_local_storage);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn local_storage_shared_filesystem_requires_enable() {
+        assert!(parse(&["countersyncd", "--local-storage-allow-shared-filesystem",]).is_err());
     }
 
     #[test]
