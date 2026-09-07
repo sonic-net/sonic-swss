@@ -19,6 +19,42 @@
 using namespace std;
 using namespace swss;
 
+namespace {
+
+// Dedicated bridge nft table: drop PVST+ PDUs (dst 01:00:0c:cc:cc:cd) on forward.
+// Table is removed on restore so add path stays idempotent.
+constexpr char pvstNftBridgeTable[] = "sonic_stp_pvst";
+
+void preventPvstPduFlooding()
+{
+    std::string res;
+    const std::string tableName(pvstNftBridgeTable);
+    const std::string cmd =
+          "nft delete table bridge " + tableName + " ; "
+          "nft add table bridge " + tableName + " && "
+          "nft 'add chain bridge " + tableName +
+          " forward { type filter hook forward priority 0; policy accept; }' && "
+          "nft add rule bridge " + tableName + " forward ether daddr 01:00:0c:cc:cc:cd drop";
+
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to install nft rule to prevent PVST PDU flooding - %d", ret );
+    }
+}
+
+void restorePvstPduFlooding()
+{
+    std::string res;
+    const std::string cmd =
+          std::string("nft delete table bridge ") + pvstNftBridgeTable;
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to remove nft rule which prevented PVST PDU flooding - %d", ret );
+    }
+}
+
+} // namespace
+
 StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
@@ -44,8 +80,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-    int ret = system("ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP");
-    SWSS_LOG_DEBUG("ebtables ret %d", ret);
+    restorePvstPduFlooding();
 }
 
 void StpMgr::doTask(Consumer &consumer)
@@ -72,8 +107,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -109,14 +142,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
-                            const std::string cmd = std::string("") +
-                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
-
+                            preventPvstPduFlooding();
                             l2ProtoEnabled = L2_PVSTP;
+                            SWSS_LOG_DEBUG( "Enabling PVST" );
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
@@ -127,6 +155,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                             l2ProtoEnabled = L2_MSTP;
                         }
                         msg.stp_mode = L2_MSTP;
+                        SWSS_LOG_DEBUG( "Enabling MSTP" );
 
                         // Assign all VLANs to zero instance for MSTP
                         fill_n(m_vlanInstMap, MAX_VLANS, 0);
@@ -154,15 +183,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            // Remove ebtables rule based on protocol mode
             if (l2ProtoEnabled == L2_PVSTP)
             {
-                const std::string pvst_cmd =
-                    "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res_pvst;
-                int ret_pvst = swss::exec(pvst_cmd, res_pvst);
-                if (ret_pvst != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+                restorePvstPduFlooding();
             }
             l2ProtoEnabled = L2_NONE;
         }
@@ -689,6 +712,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     {
         STP_VLAN_MEM_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
+        msg.priority  = -1;
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -749,8 +773,6 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
             msg.vlan_id = vlan_id;
             msg.inst_id = m_vlanInstMap[vlan_id];
             msg.mode    = tagging_mode;
-            msg.priority  = -1;
-            msg.path_cost = 0;
 
             strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
 
@@ -1068,8 +1090,9 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
                     vlan_list_str = fvValue(i);
                     vlan_ids = parseVlanList(vlan_list_str);
                 }
-                updateVlanInstanceMap(instance_id, vlan_ids, true);
             }
+
+            updateVlanInstanceMap(instance_id, vlan_ids, true);
 
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
             len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
@@ -1227,7 +1250,8 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     int rc;
 
     len = msgLen + (offsetof(struct STP_IPC_MSG, data));
-    SWSS_LOG_INFO("tx_msg len %d msglen %d", (int)len, msgLen);
+    SWSS_LOG_INFO( "tx_msg len %d msglen %u for proto_mode %d",
+                   (int)len, msgLen, l2ProtoEnabled );
 
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
@@ -1238,6 +1262,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    tx_msg->proto_mode  = l2ProtoEnabled;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
