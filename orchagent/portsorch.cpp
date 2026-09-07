@@ -4486,12 +4486,29 @@ bool PortsOrch::bake()
     SWSS_LOG_NOTICE("portCount = %" PRIuMAX ", m_portCount = %u", portCount, m_portCount);
     if (portCount != keys.size() - 2)
     {
-        // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIuMAX ", got %zu",
-                portCount, keys.size() - 2);
+        /*
+         * A stale PortConfigDone:count==0 can be left over from a cold start
+         * that ran before CONFIG_DB was populated, while the actual port rows
+         * still survive in APPL_DB across the warm restart. In that case the
+         * port table is valid (PortInitDone is set and ports are present);
+         * fall back to the real surviving key count instead of treating it as
+         * an invalid table and destructively wiping it.
+         */
+        if (portCount == 0 && keys.size() > 2)
+        {
+            SWSS_LOG_WARN("PortConfigDone count is 0 but %zu port keys survived; "
+                    "using surviving key count for warm reboot", keys.size() - 2);
+            portCount = keys.size() - 2;
+        }
+        else
+        {
+            // Invalid port table
+            SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIuMAX ", got %zu",
+                    portCount, keys.size() - 2);
 
-        cleanPortTable(keys);
-        return false;
+            cleanPortTable(keys);
+            return false;
+        }
     }
 
     for (const auto& alias: keys)
