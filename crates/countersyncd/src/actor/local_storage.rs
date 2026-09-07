@@ -1,8 +1,17 @@
-//! Bounded, best-effort Parquet range storage, ported from Pterosaur PR7.
+//! Bounded best-effort capture of exact raw observations in Arrow IPC streams.
+use crate::message::{
+    local_storage::{LocalStorageMessage, LocalStorageStatus},
+    saistats::SAIStatsRef,
+};
+use arrow_array::{RecordBatch, UInt64Array};
+use arrow_ipc::{
+    writer::{IpcWriteOptions, StreamWriter},
+    CompressionType,
+};
+use log::{error, info};
 use std::{
-    collections::HashMap,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, BufWriter, Write},
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt},
@@ -10,77 +19,55 @@ use std::{
     },
     path::{Path, PathBuf},
     sync::{mpsc, Arc},
-    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crate::message::{
-    local_storage::{LocalStorageMessage, LocalStorageStatus},
-    saistats::SAIStatsRef,
-};
-use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt32Array, UInt64Array};
-use arrow_schema::{DataType, Field, Schema, SchemaRef};
-use log::{error, info, warn};
-use parquet::{
-    arrow::ArrowWriter,
-    basic::{Compression, Encoding, ZstdLevel},
-    file::properties::{EnabledStatistics, WriterProperties, WriterVersion},
-    format::KeyValue,
-    schema::types::ColumnPath,
-};
+#[path = "local_storage_codec.rs"]
+mod codec;
+#[allow(unused_imports)]
+pub use codec::{read_shard, series_names, DecodedSample};
 
-const FORMAT_VERSION: &str = "sonic-hft-parquet-v1";
-const GAUGE_FILE: &str = "gauge_ranges.parquet";
-const READY_FILE: &str = "_READY";
-const LOSS_FILE: &str = "loss.json";
+const FORMAT_VERSION: &str = "sonic-hft-arrow-v4";
 const LOCK_FILE: &str = ".writer.lock";
-const MAX_ROW_GROUP_ROWS: usize = 100_000;
-const DATA_PAGE_SIZE: usize = 256 * 1024;
-const WRITER_QUEUE_CAPACITY: usize = 1;
-const SHARD_ROTATE_UNCOMPRESSED_BYTES: u64 = 120_000_000;
-const MAX_SHARD_UNCOMPRESSED_BYTES: u64 = 128_000_000;
-const SHARD_RESERVE_BYTES: u64 = 512_000_000;
-const FILESYSTEM_RESERVE_BYTES: u64 = 512_000_000;
-
-pub const RANGE_FLAG_DECREASED: u32 = 1;
-pub const RANGE_FLAG_GAP: u32 = 1 << 1;
-pub const RANGE_FLAG_STORAGE_DROP: u32 = 1 << 2;
-pub const RANGE_FLAG_TIME_REGRESSED: u32 = 1 << 3;
+const LOSS_FILE: &str = "loss.json";
+const BATCH_TARGET_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ROWS: usize = 4096;
+const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
+const BATCH_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
+const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct LocalStorageConfig {
     pub root: PathBuf,
-    pub range_interval: Duration,
+    /// Maximum wall-clock stream age; batch flushes are due after 100 ms.
+    /// Compression and filesystem sync time can extend the durability window.
     pub shard_interval: Duration,
+    /// Logical compressed IPC bytes, checked after each complete batch flush.
+    pub file_target_bytes: u64,
     pub max_bytes: u64,
     pub require_dedicated_filesystem: bool,
 }
 
 impl LocalStorageConfig {
     pub fn validate(&self) -> Result<(), String> {
-        if self.range_interval.is_zero() {
-            return Err("local storage range interval must be greater than zero".to_string());
-        }
         if self.shard_interval.is_zero() {
-            return Err("local storage shard interval must be greater than zero".to_string());
+            return Err("local storage shard interval must be greater than zero".into());
         }
-        if self.max_bytes <= SHARD_RESERVE_BYTES {
+        if self.file_target_bytes == 0 {
+            return Err("local storage file target bytes must be greater than zero".into());
+        }
+        if self.max_bytes <= BATCH_RESERVE_BYTES {
             return Err(format!(
-                "local storage max bytes must exceed the {} byte shard reserve",
-                SHARD_RESERVE_BYTES
+                "local storage max bytes must exceed the {BATCH_RESERVE_BYTES} byte batch reserve"
             ));
-        }
-        if self.shard_interval < self.range_interval {
-            return Err(
-                "local storage shard interval must not be shorter than range interval".to_string(),
-            );
         }
         Ok(())
     }
 
     pub fn validate_root(&self) -> Result<(), String> {
         self.validate()?;
-        let metadata = fs::symlink_metadata(&self.root).map_err(|error| error.to_string())?;
+        let metadata = fs::symlink_metadata(&self.root).map_err(|e| e.to_string())?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(format!(
                 "local storage root {} must be an existing directory, not a symbolic link",
@@ -95,412 +82,427 @@ impl LocalStorageConfig {
         }
         Ok(())
     }
-
-    fn range_interval_ns(&self) -> u64 {
-        self.range_interval.as_nanos().min(u128::from(u64::MAX)) as u64
-    }
-
-    fn shard_interval_ns(&self) -> u64 {
-        self.shard_interval.as_nanos().min(u128::from(u64::MAX)) as u64
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SeriesKey {
-    object_name: Arc<str>,
-    type_id: u32,
-    stat_id: u32,
+// Cap each schema/batch write before it consumes unreserved disk space. The
+// BufWriter sits inside the cap so its buffered bytes are charged immediately.
+struct CappedFile {
+    file: BufWriter<File>,
+    remaining: u64,
+    bytes_written: u64,
 }
 
-#[derive(Debug)]
-struct SeriesState {
-    range: RangeState,
-    expected_interval_ns: Option<u64>,
-}
-
-#[derive(Debug)]
-struct RangeState {
-    window: u64,
-    first_time_unix_nano: u64,
-    last_time_unix_nano: u64,
-    first_value: u64,
-    previous_value: Option<u64>,
-    last_value: u64,
-    min_value: u64,
-    max_value: u64,
-    min_time_unix_nano: u64,
-    max_time_unix_nano: u64,
-    max_change: u64,
-    max_change_time_unix_nano: u64,
-    total_increase: u64,
-    sample_count: u32,
-    change_count: u32,
-    flags: u32,
-}
-
-impl RangeState {
-    fn new(window: u64, time_unix_nano: u64, value: u64, previous_value: Option<u64>) -> Self {
-        let mut state = Self {
-            window,
-            first_time_unix_nano: time_unix_nano,
-            last_time_unix_nano: time_unix_nano,
-            first_value: value,
-            previous_value,
-            last_value: value,
-            min_value: value,
-            max_value: value,
-            min_time_unix_nano: time_unix_nano,
-            max_time_unix_nano: time_unix_nano,
-            max_change: 0,
-            max_change_time_unix_nano: time_unix_nano,
-            total_increase: 0,
-            sample_count: 1,
-            change_count: 0,
-            flags: 0,
-        };
-        if let Some(previous_value) = previous_value {
-            state.record_change(time_unix_nano, previous_value, value);
+impl Write for CappedFile {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() as u64 > self.remaining {
+            return Err(io::Error::other("IPC write exceeds batch reservation"));
         }
-        state
+        let written = self.file.write(bytes)?;
+        self.remaining -= written as u64;
+        self.bytes_written += written as u64;
+        Ok(written)
     }
-
-    fn update(&mut self, time_unix_nano: u64, value: u64) {
-        let previous_value = self.last_value;
-        self.record_change(time_unix_nano, previous_value, value);
-        if value < self.min_value {
-            self.min_value = value;
-            self.min_time_unix_nano = time_unix_nano;
-        }
-        if value > self.max_value {
-            self.max_value = value;
-            self.max_time_unix_nano = time_unix_nano;
-        }
-        self.last_time_unix_nano = time_unix_nano;
-        self.last_value = value;
-        self.sample_count = self.sample_count.saturating_add(1);
-    }
-
-    fn record_change(&mut self, time_unix_nano: u64, previous_value: u64, value: u64) {
-        if value != previous_value {
-            self.change_count = self.change_count.saturating_add(1);
-        }
-        let change = value.abs_diff(previous_value);
-        if change > self.max_change {
-            self.max_change = change;
-            self.max_change_time_unix_nano = time_unix_nano;
-        }
-        if value < previous_value {
-            self.flags |= RANGE_FLAG_DECREASED;
-        } else {
-            self.total_increase = self.total_increase.saturating_add(change);
-        }
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
     }
 }
 
-#[derive(Debug)]
-struct GaugeRangeRow {
-    key: SeriesKey,
-    state: RangeState,
-    window_start_unix_nano: u64,
-    window_end_unix_nano: u64,
+struct ActiveStream {
+    writer: StreamWriter<CappedFile>,
+    path: PathBuf,
+    started: Instant,
 }
 
-#[derive(Debug, Default)]
-struct ShardRows {
-    gauges: Vec<GaugeRangeRow>,
+struct Store {
+    config: LocalStorageConfig,
+    layout: Option<codec::Layout>,
+    columns: Vec<Vec<u64>>,
+    // At most 16 MiB of original columns plus 16 MiB of reusable series-major
+    // concatenation, excluding Arrow's bounded IPC/compression working buffers.
+    matrix: Vec<u64>,
+    active: Option<ActiveStream>,
+    next_record_seq: u64,
+    file_sequence: u64,
+    batch_started: Option<Instant>,
+    last_diagnostic: Instant,
     dropped_input_messages: u64,
-    dropped_shards: u64,
-    estimated_uncompressed_bytes: u64,
+    reported_drops: u64,
+    // Includes all files and directory blocks, including active staging data.
+    used_bytes: u64,
+    directory_blocks: u64,
+    _storage_lock: File,
 }
 
-impl ShardRows {
-    fn push_gauge(&mut self, key: SeriesKey, state: RangeState, interval_ns: u64) {
-        self.estimated_uncompressed_bytes = self
-            .estimated_uncompressed_bytes
-            .saturating_add(176)
-            .saturating_add(key.object_name.len() as u64);
-        let window_start_unix_nano = state.window.saturating_mul(interval_ns);
-        self.gauges.push(GaugeRangeRow {
-            key,
-            state,
-            window_start_unix_nano,
-            window_end_unix_nano: window_start_unix_nano.saturating_add(interval_ns),
-        });
+impl Store {
+    fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
+        let used_bytes = directory_bytes(&config.root).map_err(|e| e.to_string())?;
+        let loss_path = config.root.join(LOSS_FILE);
+        let dropped = match fs::read(&loss_path) {
+            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+                .map_err(|e| e.to_string())?
+                .get("dropped_input_messages")
+                .and_then(|v| v.as_u64())
+                .ok_or("invalid loss.json")?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.to_string()),
+        };
+        let directory_blocks = directory_overhead(&config.root)?;
+        Ok(Self {
+            config,
+            layout: None,
+            columns: Vec::new(),
+            matrix: Vec::new(),
+            active: None,
+            next_record_seq: 0,
+            file_sequence: 0,
+            batch_started: None,
+            last_diagnostic: Instant::now(),
+            dropped_input_messages: dropped,
+            reported_drops: dropped,
+            used_bytes,
+            directory_blocks,
+            _storage_lock: lock,
+        })
     }
 
-    fn is_empty(&self) -> bool {
-        self.gauges.is_empty() && self.dropped_input_messages == 0 && self.dropped_shards == 0
-    }
-}
-
-struct LocalReducer {
-    range_interval_ns: u64,
-    shard_interval_ns: u64,
-    series: HashMap<SeriesKey, usize>,
-    states: Vec<(SeriesKey, SeriesState)>,
-    // Only a positional lookup cache, never the identity or lifetime of a series.
-    layout: Vec<usize>,
-    estimated_state_bytes: u64,
-    shard_start: Option<u64>,
-    rows: ShardRows,
-    storage_drop_pending: bool,
-    writer_drop_warned: bool,
-}
-
-impl LocalReducer {
-    fn new(config: &LocalStorageConfig) -> Self {
-        Self {
-            range_interval_ns: config.range_interval_ns(),
-            shard_interval_ns: config.shard_interval_ns(),
-            series: HashMap::new(),
-            states: Vec::new(),
-            layout: Vec::new(),
-            estimated_state_bytes: 0,
-            shard_start: None,
-            rows: ShardRows::default(),
-            storage_drop_pending: false,
-            writer_drop_warned: false,
+    fn reserve(&mut self, bytes: u64) -> Result<(), String> {
+        // Only directory blocks can change independently of our writes under the
+        // service-owned root. Refresh them without rescanning finalized files.
+        self.refresh_directory_blocks()?;
+        if self.used_bytes.saturating_add(bytes) > self.config.max_bytes {
+            return Err(format!(
+                "local storage quota cannot reserve batch: {} allocated + {bytes} reserve > {}",
+                self.used_bytes, self.config.max_bytes
+            ));
         }
+        if available_bytes(&self.config.root)? < bytes.saturating_add(FILESYSTEM_RESERVE_BYTES) {
+            return Err("local storage filesystem emergency reserve reached".into());
+        }
+        Ok(())
     }
 
-    fn add_gauges(&mut self, stats: SAIStatsRef<'_>) -> Result<(), String> {
-        // Preflight before mutating any state. Each input can create a new identity
-        // or close one existing range; 320 + name bytes covers either operation.
-        let growth = stats.stats.iter().fold(0u64, |bytes, stat| {
-            bytes
-                .saturating_add(320)
-                .saturating_add(stat.object_name.len() as u64)
-        });
-        if self.estimated_bytes().saturating_add(growth) > MAX_SHARD_UNCOMPRESSED_BYTES {
-            return Err("local storage reducer size limit exceeded".to_string());
-        }
-        let time = stats.observation_time;
-        let window = time / self.range_interval_ns;
-        self.shard_start.get_or_insert(time);
-        let same_layout = self.layout.len() == stats.stats.len()
-            && self.layout.iter().zip(stats.stats).all(|(&index, stat)| {
-                let key = &self.states[index].0;
-                key.object_name == stat.object_name
-                    && key.type_id == stat.type_id
-                    && key.stat_id == stat.stat_id
-            });
-        if !same_layout {
-            self.layout.clear();
-            for stat in stats.stats {
-                let key = SeriesKey {
-                    object_name: Arc::clone(&stat.object_name),
-                    type_id: stat.type_id,
-                    stat_id: stat.stat_id,
-                };
-                let index = match self.series.get(&key) {
-                    Some(&index) => index,
-                    None => {
-                        // Include open ranges and identity/cache overhead in the bound.
-                        let next_bytes = self
-                            .estimated_state_bytes
-                            .saturating_add(320)
-                            .saturating_add(key.object_name.len() as u64);
-                        if next_bytes.saturating_add(self.rows.estimated_uncompressed_bytes)
-                            > MAX_SHARD_UNCOMPRESSED_BYTES
-                        {
-                            return Err("local storage reducer state limit exceeded".to_string());
-                        }
-                        self.estimated_state_bytes = next_bytes;
-                        let index = self.states.len();
-                        let mut range = RangeState::new(window, time, stat.counter, None);
-                        // The update pass counts this first observation exactly once.
-                        range.sample_count = 0;
-                        if self.storage_drop_pending {
-                            range.flags |= RANGE_FLAG_STORAGE_DROP;
-                        }
-                        self.states.push((
-                            key.clone(),
-                            SeriesState {
-                                range,
-                                expected_interval_ns: None,
-                            },
-                        ));
-                        self.series.insert(key, index);
-                        index
-                    }
-                };
-                self.layout.push(index);
-            }
-        }
-        for (&index, stat) in self.layout.iter().zip(stats.stats) {
-            let (key, state) = &mut self.states[index];
-            let previous_time = state.range.last_time_unix_nano;
-            if state.range.sample_count == 0 {
-                state.range.sample_count = 1;
+    fn open_stream(&mut self) -> Result<(), String> {
+        self.reserve(BATCH_RESERVE_BYTES)?;
+        let layout = self.layout.as_ref().ok_or("missing layout")?;
+        let options = IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::ZSTD))
+            .map_err(|e| e.to_string())?;
+        let (path, file) = loop {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos();
+            let name = format!(
+                "{now:020}-{:010}-{:020}.arrow",
+                std::process::id(),
+                self.file_sequence
+            );
+            self.file_sequence = self
+                .file_sequence
+                .checked_add(1)
+                .ok_or("file sequence exhausted")?;
+            if self
+                .config
+                .root
+                .join("shards")
+                .join(&name)
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
                 continue;
             }
-            let regressed = time < previous_time;
-            let observed_interval = time.saturating_sub(previous_time);
-            if observed_interval > 0 {
-                state.expected_interval_ns = Some(
-                    state
-                        .expected_interval_ns
-                        .map_or(observed_interval, |expected| {
-                            expected.min(observed_interval)
-                        }),
-                );
+            let path = self
+                .config
+                .root
+                .join(".staging")
+                .join(format!("{name}.partial"));
+            match OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&path)
+            {
+                Ok(file) => break (path, file),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e.to_string()),
             }
-            let gap = state
-                .expected_interval_ns
-                .is_some_and(|expected| observed_interval > expected.saturating_add(expected / 2))
-                || window > state.range.window.saturating_add(1);
-            if regressed {
-                // Preserve both sides of a source-clock discontinuity, without
-                // assigning a backwards sample to the current window or bridging it.
-                state.range.flags |= RANGE_FLAG_TIME_REGRESSED;
-                let mut next = RangeState::new(window, time, stat.counter, None);
-                next.flags |= RANGE_FLAG_TIME_REGRESSED;
-                let previous = std::mem::replace(&mut state.range, next);
-                self.rows
-                    .push_gauge(key.clone(), previous, self.range_interval_ns);
-                state.expected_interval_ns = None;
-            } else if window > state.range.window {
-                let next =
-                    RangeState::new(window, time, stat.counter, Some(state.range.last_value));
-                let previous = std::mem::replace(&mut state.range, next);
-                self.rows
-                    .push_gauge(key.clone(), previous, self.range_interval_ns);
+        };
+        let writer = StreamWriter::try_new_with_options(
+            CappedFile {
+                file: BufWriter::with_capacity(256 * 1024, file),
+                remaining: BATCH_RESERVE_BYTES,
+                bytes_written: 0,
+            },
+            &layout.schema,
+            options,
+        )
+        .map_err(|e| e.to_string())?;
+        self.active = Some(ActiveStream {
+            writer,
+            path,
+            started: Instant::now(),
+        });
+        self.sync_active()?;
+        sync_directory(&self.config.root.join(".staging")).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn sync_active(&mut self) -> Result<(), String> {
+        let active = self.active.as_mut().ok_or("no active stream")?;
+        active.writer.get_mut().flush().map_err(|e| e.to_string())?;
+        active
+            .writer
+            .get_ref()
+            .file
+            .get_ref()
+            .sync_all()
+            .map_err(|e| e.to_string())?;
+        self.used_bytes = self.used_bytes.saturating_add(
+            active
+                .writer
+                .get_ref()
+                .file
+                .get_ref()
+                .metadata()
+                .map_err(|e| e.to_string())?
+                .blocks()
+                * 512,
+        );
+        self.refresh_directory_blocks()?;
+        Ok(())
+    }
+
+    fn refresh_directory_blocks(&mut self) -> Result<(), String> {
+        let overhead = directory_overhead(&self.config.root)?;
+        self.used_bytes = self
+            .used_bytes
+            .saturating_sub(self.directory_blocks)
+            .saturating_add(overhead);
+        self.directory_blocks = overhead;
+        Ok(())
+    }
+
+    fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
+        self.tick()?;
+        if self.next_record_seq == u64::MAX {
+            self.finish_stream()?;
+            return Err("local storage record sequence exhausted".into());
+        }
+        if record.stats.len().saturating_add(2).saturating_mul(8) > MAX_RECORD_BYTES {
+            self.finish_stream()?;
+            return Err("record exceeds 128 MiB raw limit; previous records flushed".into());
+        }
+        if !self.layout.as_ref().is_some_and(|l| l.matches(record)) {
+            self.finish_stream()?;
+            self.layout = None;
+            self.columns.clear();
+            self.matrix = Vec::new();
+            let layout = codec::Layout::new(record.stats)?;
+            self.columns = (0..record.stats.len() + 2)
+                .map(|_| Vec::with_capacity(layout.batch_rows))
+                .collect();
+            self.matrix = Vec::with_capacity(record.stats.len() * layout.batch_rows);
+            self.layout = Some(layout);
+        }
+        if self.active.is_none() {
+            self.open_stream()?;
+        }
+        self.batch_started.get_or_insert_with(Instant::now);
+        self.columns[0].push(record.observation_time);
+        self.columns[1].push(self.next_record_seq);
+        for (column, stat) in self.columns[2..].iter_mut().zip(record.stats) {
+            column.push(stat.counter);
+        }
+        self.next_record_seq += 1;
+        let layout = self.layout.as_ref().unwrap();
+        if self.columns[0].len() >= layout.batch_rows {
+            self.flush_batch()?;
+        }
+        Ok(())
+    }
+
+    fn flush_batch(&mut self) -> Result<(), String> {
+        if self.batch_started.is_none() {
+            return Ok(());
+        }
+        let layout = self.layout.as_ref().ok_or("missing batch layout")?;
+        let raw_bytes = (self.columns[0].len() * layout.row_bytes) as u64;
+        let reserve = BATCH_RESERVE_BYTES.max(
+            raw_bytes
+                .saturating_mul(2)
+                .saturating_add((self.columns.len() as u64) * 256 + 8 * 1024 * 1024),
+        );
+        let schema = Arc::clone(&layout.schema);
+        self.reserve(reserve)?;
+        for column in &mut self.columns[2..] {
+            self.matrix.extend_from_slice(column);
+            column.clear();
+        }
+        let arrays = [
+            UInt64Array::from(std::mem::take(&mut self.columns[0])),
+            UInt64Array::from(std::mem::take(&mut self.columns[1])),
+            UInt64Array::from(std::mem::take(&mut self.matrix)),
+        ];
+        let batch = RecordBatch::try_new(
+            schema,
+            arrays.iter().map(|a| codec::list(a.clone())).collect(),
+        )
+        .map_err(|e| e.to_string())?;
+        let active = self.active.as_mut().ok_or("missing batch stream")?;
+        let before = active
+            .writer
+            .get_ref()
+            .file
+            .get_ref()
+            .metadata()
+            .map_err(|e| e.to_string())?
+            .blocks()
+            * 512;
+        active.writer.get_mut().remaining = reserve;
+        active.writer.write(&batch).map_err(|e| e.to_string())?;
+        active.writer.get_mut().flush().map_err(|e| e.to_string())?;
+        active
+            .writer
+            .get_ref()
+            .file
+            .get_ref()
+            .sync_all()
+            .map_err(|e| e.to_string())?;
+        let after = active
+            .writer
+            .get_ref()
+            .file
+            .get_ref()
+            .metadata()
+            .map_err(|e| e.to_string())?
+            .blocks()
+            * 512;
+        self.used_bytes = self.used_bytes.saturating_add(after.saturating_sub(before));
+        drop(batch);
+        let rows = self.layout.as_ref().unwrap().batch_rows;
+        // Reclaim the original Vec allocations after Arrow releases its references.
+        let matrix_capacity = (self.columns.len() - 2) * rows;
+        for (i, array) in arrays.into_iter().enumerate() {
+            let c = if i < 2 {
+                &mut self.columns[i]
             } else {
-                state.range.update(time, stat.counter);
-            }
-            if gap {
-                state.range.flags |= RANGE_FLAG_GAP;
-            }
-            if self.storage_drop_pending {
-                state.range.flags |= RANGE_FLAG_STORAGE_DROP;
-            }
+                &mut self.matrix
+            };
+            *c = array
+                .into_parts()
+                .1
+                .into_inner()
+                .into_vec::<u64>()
+                .unwrap_or_else(|_| Vec::with_capacity(if i < 2 { rows } else { matrix_capacity }));
+            c.clear();
         }
-        if self.estimated_bytes() > MAX_SHARD_UNCOMPRESSED_BYTES {
-            return Err("local storage reducer size limit exceeded".to_string());
-        }
-        Ok(())
-    }
-
-    fn estimated_bytes(&self) -> u64 {
-        self.estimated_state_bytes
-            .saturating_add(self.rows.estimated_uncompressed_bytes)
-    }
-
-    fn should_rotate(&self, time_unix_nano: u64) -> bool {
-        self.estimated_bytes() >= SHARD_ROTATE_UNCOMPRESSED_BYTES
-            || self
-                .shard_start
-                .is_some_and(|start| time_unix_nano.saturating_sub(start) >= self.shard_interval_ns)
-    }
-
-    fn take_shard(&mut self, next_start_unix_nano: Option<u64>) -> ShardRows {
-        self.shard_start = next_start_unix_nano;
-        // Drop counters are out-of-band: keep attribution conservative forever.
-        std::mem::take(&mut self.rows)
-    }
-
-    fn add_record(
-        &mut self,
-        record: SAIStatsRef<'_>,
-        sender: &mpsc::SyncSender<ShardRows>,
-    ) -> Result<(), String> {
-        let mut remaining = record.stats;
-        while !remaining.is_empty() {
-            let mut bytes = self.estimated_bytes();
-            let count = remaining
-                .iter()
-                .take_while(|stat| {
-                    bytes = bytes
-                        .saturating_add(320)
-                        .saturating_add(stat.object_name.len() as u64);
-                    bytes <= SHARD_ROTATE_UNCOMPRESSED_BYTES
-                })
-                .count();
-            if count == 0 {
-                // Publish valid accumulated data before rejecting even an oversized
-                // identity. A large valid record is handled in bounded slices.
-                let rows = self.finish();
-                queue_shard(sender, rows, self).map_err(|_| "local writer stopped".to_string())?;
-                if 320u64.saturating_add(remaining[0].object_name.len() as u64)
-                    > SHARD_ROTATE_UNCOMPRESSED_BYTES
-                {
-                    return Err("local storage identity exceeds reducer capacity".to_string());
-                }
-                continue;
-            }
-            self.add_gauges(SAIStatsRef {
-                observation_time: record.observation_time,
-                stats: &remaining[..count],
-            })?;
-            remaining = &remaining[count..];
+        self.batch_started = None;
+        self.write_loss()?;
+        // Include schema/framing, but always persist a batch before size rotation.
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|a| a.writer.get_ref().bytes_written >= self.config.file_target_bytes)
+        {
+            self.publish_stream()?;
         }
         Ok(())
     }
 
-    fn rotate(
-        &mut self,
-        time: Option<u64>,
-        last_wall_flush: &mut Instant,
-        interval: Duration,
-        sender: &mpsc::SyncSender<ShardRows>,
-    ) -> Result<(), ()> {
-        let wall_due = last_wall_flush.elapsed() >= interval;
-        if wall_due || time.is_some_and(|time| self.should_rotate(time)) {
-            if wall_due {
-                self.flush_open_ranges();
-                *last_wall_flush = Instant::now();
-            }
-            let rows = self.take_shard(time);
-            queue_shard(sender, rows, self)?;
+    fn finish_stream(&mut self) -> Result<(), String> {
+        self.flush_batch()?;
+        self.publish_stream()
+    }
+
+    fn publish_stream(&mut self) -> Result<(), String> {
+        if let Some(mut active) = self.active.take() {
+            let before = active
+                .writer
+                .get_ref()
+                .file
+                .get_ref()
+                .metadata()
+                .map_err(|e| e.to_string())?
+                .blocks()
+                * 512;
+            active.writer.get_mut().remaining = 8;
+            active.writer.finish().map_err(|e| e.to_string())?;
+            active.writer.get_mut().flush().map_err(|e| e.to_string())?;
+            active
+                .writer
+                .get_ref()
+                .file
+                .get_ref()
+                .sync_all()
+                .map_err(|e| e.to_string())?;
+            publish(&self.config.root, &active.path)?;
+            let after = active
+                .writer
+                .get_ref()
+                .file
+                .get_ref()
+                .metadata()
+                .map_err(|e| e.to_string())?
+                .blocks()
+                * 512;
+            self.used_bytes = self.used_bytes.saturating_add(after.saturating_sub(before));
+            self.refresh_directory_blocks()?;
         }
         Ok(())
     }
 
-    fn flush_open_ranges(&mut self) {
-        for (key, state) in self.states.drain(..) {
-            self.rows
-                .push_gauge(key, state.range, self.range_interval_ns);
+    fn tick(&mut self) -> Result<(), String> {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|a| a.started.elapsed() >= self.config.shard_interval)
+        {
+            self.finish_stream()?;
+        } else if self
+            .batch_started
+            .is_some_and(|t| t.elapsed() >= FLUSH_INTERVAL)
+        {
+            self.flush_batch()?;
         }
-        self.series.clear();
-        self.layout.clear();
-        self.estimated_state_bytes = 0;
+        if self.last_diagnostic.elapsed() >= FLUSH_INTERVAL {
+            self.write_loss()?;
+        }
+        Ok(())
     }
 
-    fn finish(&mut self) -> ShardRows {
-        self.flush_open_ranges();
-        self.take_shard(None)
-    }
-
-    fn mark_input_drop(&mut self, count: u64) {
-        if count == 0 {
-            return;
+    fn write_loss(&mut self) -> Result<(), String> {
+        self.last_diagnostic = Instant::now();
+        if self.dropped_input_messages == self.reported_drops {
+            return Ok(());
         }
-        self.rows.dropped_input_messages = self.rows.dropped_input_messages.saturating_add(count);
-        self.storage_drop_pending = true;
-        self.mark_ranges_dropped();
-    }
-
-    fn mark_shard_drop(&mut self, count: u64) {
-        self.rows.dropped_shards = self.rows.dropped_shards.saturating_add(count);
-        self.storage_drop_pending = true;
-        self.mark_ranges_dropped();
-    }
-
-    fn mark_ranges_dropped(&mut self) {
-        for row in &mut self.rows.gauges {
-            row.state.flags |= RANGE_FLAG_STORAGE_DROP;
-        }
-        for (_, state) in &mut self.states {
-            state.range.flags |= RANGE_FLAG_STORAGE_DROP;
-        }
+        self.reserve(64 * 1024)?;
+        let path = self.config.root.join(".loss.json.partial");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        // Input drops count channel messages, not records or metrics. Do not
+        // report invented zero metric losses for a dropped multi-record message.
+        writeln!(file, "{{\"format_version\":\"{FORMAT_VERSION}\",\"dropped_input_messages\":{},\"dropped_shards\":0}}", self.dropped_input_messages)
+            .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        fs::rename(&path, self.config.root.join(LOSS_FILE)).map_err(|e| e.to_string())?;
+        sync_directory(&self.config.root).map_err(|e| e.to_string())?;
+        self.reported_drops = self.dropped_input_messages;
+        self.used_bytes = directory_bytes(&self.config.root).map_err(|e| e.to_string())?;
+        self.directory_blocks = directory_overhead(&self.config.root)?;
+        Ok(())
     }
 }
 
 pub struct LocalStorageActor {
     receiver: mpsc::Receiver<LocalStorageMessage>,
-    config: LocalStorageConfig,
     status: LocalStorageStatus,
-    storage_lock: File,
+    store: Store,
 }
 
 impl LocalStorageActor {
@@ -509,190 +511,89 @@ impl LocalStorageActor {
         config: LocalStorageConfig,
         status: LocalStorageStatus,
     ) -> Result<Self, String> {
-        let storage_lock = prepare_storage(&config).inspect_err(|_| status.mark_failed())?;
+        let result = prepare_storage(&config).and_then(|lock| Store::new(config, lock));
+        let store = result.inspect_err(|_| status.mark_failed())?;
         Ok(Self {
             receiver,
-            config,
             status,
-            storage_lock,
+            store,
         })
     }
 
-    /// Blocking reducer loop. Closing all senders drains queued batches and flushes.
-    pub fn run(self) {
-        let mut reducer = LocalReducer::new(&self.config);
-        let writer_config = self.config.clone();
-        let writer_status = self.status.clone();
-        let storage_lock = self.storage_lock;
-        let (writer_sender, writer_receiver) = mpsc::sync_channel(WRITER_QUEUE_CAPACITY);
-        let writer = thread::Builder::new()
-            .name("hft-parquet-writer".to_string())
-            .spawn(move || {
-                writer_loop(writer_config, writer_receiver, writer_status, storage_lock)
-            });
-        let writer = match writer {
-            Ok(writer) => writer,
-            Err(reason) => {
-                self.status.mark_failed();
-                error!("Failed to start local HFT writer: {}", reason);
-                return;
-            }
-        };
-        let mut last_wall_flush = Instant::now();
-        'receive: loop {
-            if self.status.failed() || self.status.shutdown_requested() {
-                break;
-            }
-            let wait = Duration::from_millis(250).min(
-                self.config
-                    .shard_interval
-                    .saturating_sub(last_wall_flush.elapsed()),
-            );
-            let message = match self.receiver.recv_timeout(wait) {
-                Ok(message) => message,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    reducer.mark_input_drop(self.status.take_input_drops());
-                    if reducer
-                        .rotate(
-                            None,
-                            &mut last_wall_flush,
-                            self.config.shard_interval,
-                            &writer_sender,
-                        )
-                        .is_err()
-                    {
-                        self.status.mark_failed();
-                        break;
+    /// One isolated blocking storage loop: no secondary queue or whole-shard drops.
+    /// Sender disconnect drains accepted messages; shutdown requests stop promptly.
+    pub fn run(mut self) {
+        let result = (|| {
+            while !self.status.shutdown_requested() && !self.status.failed() {
+                self.store.dropped_input_messages = self
+                    .store
+                    .dropped_input_messages
+                    .saturating_add(self.status.take_input_drops());
+                self.store.tick()?;
+                let mut wait = FLUSH_INTERVAL;
+                if let Some(start) = self.store.batch_started {
+                    wait = wait.min(FLUSH_INTERVAL.saturating_sub(start.elapsed()));
+                }
+                if let Some(active) = &self.store.active {
+                    wait = wait.min(
+                        self.store
+                            .config
+                            .shard_interval
+                            .saturating_sub(active.started.elapsed()),
+                    );
+                }
+                match self.receiver.recv_timeout(wait) {
+                    Ok(message) => {
+                        for record in message.iter() {
+                            if self.status.shutdown_requested() {
+                                break;
+                            }
+                            self.store.add_record(record)?;
+                        }
                     }
-                    continue;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            };
-            reducer.mark_input_drop(self.status.take_input_drops());
-            // Borrow slices directly; never rebuild a per-record SAIStats or Vec.
-            for record in message.iter() {
-                if self.status.failed() || self.status.shutdown_requested() {
-                    break 'receive;
-                }
-                if let Err(reason) = reducer.add_record(record, &writer_sender) {
-                    error!("Disabling local HFT storage: {}", reason);
-                    self.status.mark_failed();
-                    break 'receive;
-                }
-                if reducer
-                    .rotate(
-                        Some(record.observation_time),
-                        &mut last_wall_flush,
-                        self.config.shard_interval,
-                        &writer_sender,
-                    )
-                    .is_err()
-                {
-                    self.status.mark_failed();
-                    break 'receive;
+                    Err(mpsc::RecvTimeoutError::Timeout) => (),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
-        }
-
-        reducer.mark_input_drop(self.status.take_input_drops());
-        if !self.status.failed() {
-            let rows = reducer.finish();
-            // Only this isolated thread waits for the final writer slot. Main bounds
-            // shutdown even if the filesystem or writer cannot make progress.
-            if writer_sender.send(rows).is_err() {
-                self.status.mark_failed();
-                error!("Unable to queue final local HFT shard because the writer stopped");
-            }
-        }
-        drop(writer_sender);
-        if writer.join().is_err() {
+            self.store.dropped_input_messages = self
+                .store
+                .dropped_input_messages
+                .saturating_add(self.status.take_input_drops());
+            self.store.finish_stream()?;
+            self.store.write_loss()
+        })();
+        if let Err(reason) = result {
+            // Do not retry a failed IPC write or modify its durable prefix.
+            // Readers consume complete batches directly from abandoned partials.
             self.status.mark_failed();
-            error!("Local HFT writer thread panicked");
-        }
-    }
-}
-
-fn queue_shard(
-    sender: &mpsc::SyncSender<ShardRows>,
-    rows: ShardRows,
-    reducer: &mut LocalReducer,
-) -> Result<(), ()> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    match sender.try_send(rows) {
-        Ok(()) => Ok(()),
-        Err(mpsc::TrySendError::Full(rows)) => {
-            // Loss sidecars carry cumulative counts. Logging every dropped shard
-            // would flood logs when source timestamps jump faster than the writer.
-            if !reducer.writer_drop_warned {
-                warn!("Local HFT writer queue is full; dropping shards. Further losses are reported in loss.json");
-                reducer.writer_drop_warned = true;
-            }
-            reducer.mark_input_drop(rows.dropped_input_messages);
-            reducer.mark_shard_drop(rows.dropped_shards.saturating_add(1));
-            Ok(())
-        }
-        Err(mpsc::TrySendError::Disconnected(_)) => {
-            error!("Disabling local HFT storage because the writer stopped");
-            Err(())
+            error!("Disabling local HFT storage: {reason}");
         }
     }
 }
 
 fn is_mount_point(path: &Path) -> Result<bool, String> {
-    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
-    let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("local storage root {} has no parent", path.display()))?;
-    let parent_metadata = fs::metadata(parent).map_err(|error| error.to_string())?;
-    Ok(metadata.dev() != parent_metadata.dev())
-}
-
-fn writer_loop(
-    config: LocalStorageConfig,
-    receiver: mpsc::Receiver<ShardRows>,
-    status: LocalStorageStatus,
-    _storage_lock: File,
-) {
-    let mut committed_bytes = match directory_bytes(&config.root) {
-        Ok(bytes) => bytes,
-        Err(reason) => {
-            error!("Local HFT writer could not measure storage: {}", reason);
-            status.mark_failed();
-            return;
-        }
-    };
-    for (sequence, rows) in (0u64..).zip(receiver) {
-        if let Err(reason) = write_shard(&config, sequence, rows, &mut committed_bytes) {
-            error!("Local HFT writer stopped after write failure: {}", reason);
-            status.mark_failed();
-            return;
-        }
-    }
+    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+    let parent = path.parent().ok_or("local storage root has no parent")?;
+    Ok(metadata.dev() != fs::metadata(parent).map_err(|e| e.to_string())?.dev())
 }
 
 fn ensure_directory(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(format!("{} must not be a symbolic link", path.display()))
-        }
-        Ok(metadata) if !metadata.is_dir() => {
-            Err(format!("{} must be a directory", path.display()))
-        }
+        Ok(m) if m.file_type().is_symlink() || !m.is_dir() => Err(format!(
+            "{} must be a directory, not a symbolic link",
+            path.display()
+        )),
         Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(|error| error.to_string())
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|e| e.to_string())
         }
-        Err(error) => Err(error.to_string()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
 fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
     config.validate_root()?;
-    let staging_root = config.root.join(".staging");
-    let shards_root = config.root.join("shards");
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -700,183 +601,97 @@ fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
         .write(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(config.root.join(LOCK_FILE))
-        .map_err(|error| error.to_string())?;
-    let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result != 0 {
+        .map_err(|e| e.to_string())?;
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(format!(
             "local storage root is already in use: {}",
             io::Error::last_os_error()
         ));
     }
-    ensure_directory(&staging_root)?;
-    ensure_directory(&shards_root)?;
-    sync_directory(&config.root).map_err(|error| error.to_string())?;
-    for entry in fs::read_dir(&staging_root).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            fs::remove_dir_all(path).map_err(|error| error.to_string())?;
-        } else {
-            fs::remove_file(path).map_err(|error| error.to_string())?;
+    ensure_directory(&config.root.join(".staging"))?;
+    ensure_directory(&config.root.join("shards"))?;
+    sync_directory(&config.root).map_err(|e| e.to_string())?;
+    // Leave regular files from every writer generation untouched. Readers decide
+    // format support; all abandoned files remain charged against the disk quota.
+    for entry in fs::read_dir(config.root.join("shards")).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            return Err(format!(
+                "unsupported archive entry {}; use a separate empty storage root",
+                entry.path().display()
+            ));
         }
     }
-    sync_directory(&staging_root).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(config.root.join(".staging")).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            return Err(format!(
+                "unknown staging entry {}; left untouched",
+                entry.path().display()
+            ));
+        }
+    }
     Ok(lock)
 }
 
-fn gauge_schema() -> SchemaRef {
-    Arc::new(Schema::new_with_metadata(
-        vec![
-            Field::new("object_name", DataType::Utf8, false),
-            Field::new("sai_type_id", DataType::UInt32, false),
-            Field::new("sai_stat_id", DataType::UInt32, false),
-            Field::new("window_start_unix_nano", DataType::UInt64, false),
-            Field::new("window_end_unix_nano", DataType::UInt64, false),
-            Field::new("first_time_unix_nano", DataType::UInt64, false),
-            Field::new("last_time_unix_nano", DataType::UInt64, false),
-            Field::new("first_value", DataType::UInt64, false),
-            Field::new("previous_value", DataType::UInt64, true),
-            Field::new("last_value", DataType::UInt64, false),
-            Field::new("min_value", DataType::UInt64, false),
-            Field::new("max_value", DataType::UInt64, false),
-            Field::new("min_time_unix_nano", DataType::UInt64, false),
-            Field::new("max_time_unix_nano", DataType::UInt64, false),
-            Field::new("max_change", DataType::UInt64, false),
-            Field::new("max_change_time_unix_nano", DataType::UInt64, false),
-            Field::new("total_increase", DataType::UInt64, false),
-            Field::new("sample_count", DataType::UInt32, false),
-            Field::new("change_count", DataType::UInt32, false),
-            Field::new("flags", DataType::UInt32, false),
-        ],
-        HashMap::from([
-            ("format_version".to_string(), FORMAT_VERSION.to_string()),
-            (
-                "window_semantics".to_string(),
-                "[window_start_unix_nano,window_end_unix_nano)".to_string(),
-            ),
-            (
-                "flags".to_string(),
-                "1=decreased,2=source_gap,4=storage_drop,8=time_regressed".to_string(),
-            ),
-        ]),
-    ))
-}
-
-fn gauge_batch(rows: &[GaugeRangeRow]) -> Result<RecordBatch, String> {
-    let arrays: Vec<ArrayRef> = vec![
-        Arc::new(StringArray::from_iter_values(
-            rows.iter().map(|row| row.key.object_name.as_ref()),
-        )),
-        Arc::new(UInt32Array::from_iter_values(
-            rows.iter().map(|row| row.key.type_id),
-        )),
-        Arc::new(UInt32Array::from_iter_values(
-            rows.iter().map(|row| row.key.stat_id),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.window_start_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.window_end_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.first_time_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.last_time_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.first_value),
-        )),
-        Arc::new(UInt64Array::from(
-            rows.iter()
-                .map(|row| row.state.previous_value)
-                .collect::<Vec<_>>(),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.last_value),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.min_value),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.max_value),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.min_time_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.max_time_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.max_change),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.max_change_time_unix_nano),
-        )),
-        Arc::new(UInt64Array::from_iter_values(
-            rows.iter().map(|row| row.state.total_increase),
-        )),
-        Arc::new(UInt32Array::from_iter_values(
-            rows.iter().map(|row| row.state.sample_count),
-        )),
-        Arc::new(UInt32Array::from_iter_values(
-            rows.iter().map(|row| row.state.change_count),
-        )),
-        Arc::new(UInt32Array::from_iter_values(
-            rows.iter().map(|row| row.state.flags),
-        )),
-    ];
-    RecordBatch::try_new(gauge_schema(), arrays).map_err(|error| error.to_string())
-}
-
-fn writer_properties() -> Result<WriterProperties, String> {
-    let zstd = ZstdLevel::try_new(1).map_err(|error| error.to_string())?;
-    Ok(WriterProperties::builder()
-        .set_writer_version(WriterVersion::PARQUET_1_0)
-        .set_key_value_metadata(Some(vec![KeyValue::new(
-            "sonic_hft_format".to_string(),
-            Some(FORMAT_VERSION.to_string()),
-        )]))
-        .set_compression(Compression::ZSTD(zstd))
-        .set_dictionary_enabled(false)
-        .set_statistics_enabled(EnabledStatistics::Chunk)
-        .set_data_page_size_limit(DATA_PAGE_SIZE)
-        .set_max_row_group_size(MAX_ROW_GROUP_ROWS)
-        .set_column_dictionary_enabled(ColumnPath::from("object_name"), true)
-        .set_column_encoding(
-            ColumnPath::from("window_start_unix_nano"),
-            Encoding::DELTA_BINARY_PACKED,
+fn publish(root: &Path, path: &Path) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".partial"))
+        .ok_or("invalid partial filename")?;
+    let destination = root.join("shards").join(name);
+    // RENAME_NOREPLACE preserves finalized data even if a name unexpectedly collides.
+    let from = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let to =
+        std::ffi::CString::new(destination.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    if unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
         )
-        .set_column_encoding(
-            ColumnPath::from("window_end_unix_nano"),
-            Encoding::DELTA_BINARY_PACKED,
-        )
-        .build())
-}
-
-fn write_parquet(path: &Path, batch: RecordBatch) -> Result<(), String> {
-    let file = File::create(path).map_err(|error| error.to_string())?;
-    let sync_file = file.try_clone().map_err(|error| error.to_string())?;
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(writer_properties()?))
-        .map_err(|error| error.to_string())?;
-    writer.write(&batch).map_err(|error| error.to_string())?;
-    writer.close().map_err(|error| error.to_string())?;
-    sync_file.sync_all().map_err(|error| error.to_string())
+    } != 0
+    {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    sync_directory(&root.join("shards")).map_err(|e| e.to_string())?;
+    sync_directory(&root.join(".staging")).map_err(|e| e.to_string())?;
+    info!("Published local HFT stream {}", destination.display());
+    Ok(())
 }
 
 fn directory_bytes(path: &Path) -> io::Result<u64> {
-    let mut total = 0u64;
+    let mut total = fs::symlink_metadata(path)?.blocks().saturating_mul(512);
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        total = total.saturating_add(if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        let m = fs::symlink_metadata(entry.path())?;
+        total = total.saturating_add(if m.is_dir() && !m.file_type().is_symlink() {
             directory_bytes(&entry.path())?
         } else {
-            metadata.blocks().saturating_mul(512)
+            m.blocks().saturating_mul(512)
         });
     }
     Ok(total)
+}
+
+fn directory_overhead(root: &Path) -> Result<u64, String> {
+    [
+        root.to_path_buf(),
+        root.join(".staging"),
+        root.join("shards"),
+    ]
+    .iter()
+    .try_fold(0u64, |sum, path| {
+        Ok(sum.saturating_add(
+            fs::metadata(path)
+                .map_err(|e| e.to_string())?
+                .blocks()
+                .saturating_mul(512),
+        ))
+    })
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {
@@ -884,804 +699,929 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 }
 
 fn available_bytes(path: &Path) -> Result<u64, String> {
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| format!("path contains a NUL byte: {}", path.display()))?;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    let result = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
-    if result != 0 {
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error().to_string());
     }
     let stats = unsafe { stats.assume_init() };
     Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
 }
 
-fn write_shard(
-    config: &LocalStorageConfig,
-    sequence: u64,
-    rows: ShardRows,
-    committed_bytes: &mut u64,
-) -> Result<(), String> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    if rows.estimated_uncompressed_bytes > MAX_SHARD_UNCOMPRESSED_BYTES {
-        return Err(format!(
-            "local storage shard estimate {} exceeds {} byte limit",
-            rows.estimated_uncompressed_bytes, MAX_SHARD_UNCOMPRESSED_BYTES
-        ));
-    }
-    let staging_root = config.root.join(".staging");
-    let shards_root = config.root.join("shards");
-    if committed_bytes.saturating_add(SHARD_RESERVE_BYTES) > config.max_bytes {
-        return Err(format!(
-            "local storage quota cannot reserve next shard: {} committed + {} reserve > {} bytes",
-            committed_bytes, SHARD_RESERVE_BYTES, config.max_bytes
-        ));
-    }
-    let available = available_bytes(&config.root)?;
-    let required = SHARD_RESERVE_BYTES.saturating_add(FILESYSTEM_RESERVE_BYTES);
-    if available < required {
-        return Err(format!(
-            "local storage filesystem has {} bytes available; {} required",
-            available, required
-        ));
-    }
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_nanos();
-    let name = format!("{now:020}-{:010}-{sequence:06}", std::process::id());
-    let staging = staging_root.join(&name);
-    let destination = shards_root.join(&name);
-    fs::create_dir(&staging).map_err(|error| error.to_string())?;
-    let result = (|| {
-        if !rows.gauges.is_empty() {
-            write_parquet(&staging.join(GAUGE_FILE), gauge_batch(&rows.gauges)?)?;
-        }
-        if rows.dropped_input_messages != 0 || rows.dropped_shards != 0 {
-            let loss = staging.join(LOSS_FILE);
-            fs::write(
-                &loss,
-                format!(
-                    "{{\"dropped_input_messages\":{},\"dropped_shards\":{}}}\n",
-                    rows.dropped_input_messages, rows.dropped_shards
-                ),
-            )
-            .map_err(|error| error.to_string())?;
-            File::open(&loss)
-                .and_then(|file| file.sync_all())
-                .map_err(|error| error.to_string())?;
-        }
-        let ready = staging.join(READY_FILE);
-        fs::write(&ready, FORMAT_VERSION).map_err(|error| error.to_string())?;
-        File::open(&ready)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| error.to_string())?;
-        sync_directory(&staging).map_err(|error| error.to_string())?;
-
-        let staged_bytes = directory_bytes(&staging).map_err(|error| error.to_string())?;
-        let next_bytes = committed_bytes.saturating_add(staged_bytes);
-        if next_bytes > config.max_bytes {
-            return Err(format!(
-                "local storage shard would exceed quota: {} > {} bytes",
-                next_bytes, config.max_bytes
-            ));
-        }
-        fs::rename(&staging, &destination).map_err(|error| error.to_string())?;
-        sync_directory(&shards_root).map_err(|error| error.to_string())?;
-        sync_directory(&staging_root).map_err(|error| error.to_string())?;
-        *committed_bytes = next_bytes;
-        info!("Published local HFT shard {}", destination.display());
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(&staging);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::saistats::{SAIStat, SAIStatsBatch};
-    use arrow_array::Array;
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use arrow_array::{Array, ListArray};
+    use arrow_ipc::reader::StreamReader;
+    use std::{
+        io::Cursor,
+        process::{Command, Stdio},
+        thread,
+    };
+    use wait_timeout::ChildExt;
 
     fn config(root: &Path) -> LocalStorageConfig {
         LocalStorageConfig {
-            root: root.to_path_buf(),
-            range_interval: Duration::from_millis(10),
-            shard_interval: Duration::from_secs(5),
+            root: root.into(),
+            shard_interval: Duration::from_secs(1800),
+            file_target_bytes: 100_000_000,
             max_bytes: 1_000_000_000,
             require_dedicated_filesystem: false,
         }
+    }
+
+    fn store(root: &Path) -> Store {
+        let config = config(root);
+        let lock = prepare_storage(&config).unwrap();
+        Store::new(config, lock).unwrap()
     }
 
     fn stat(name: &str, value: u64) -> SAIStat {
         SAIStat::new(name, 1, 2, value)
     }
 
-    fn add(reducer: &mut LocalReducer, time: u64, stats: &[SAIStat]) {
-        reducer
-            .add_gauges(SAIStatsRef {
-                observation_time: time,
-                stats,
+    fn paths(root: &Path, directory: &str) -> Vec<PathBuf> {
+        let mut paths: Vec<_> = fs::read_dir(root.join(directory))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    fn decoded(path: &Path) -> Vec<DecodedSample> {
+        let mut samples = Vec::new();
+        read_shard(path, |sample| {
+            samples.push(sample);
+            Ok(())
+        })
+        .unwrap();
+        samples
+    }
+
+    fn child(batch: &RecordBatch, column: usize) -> &UInt64Array {
+        batch
+            .column(column)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap()
+            .values()
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap()
+    }
+
+    fn expected(batch: &SAIStatsBatch) -> Vec<DecodedSample> {
+        batch
+            .iter()
+            .enumerate()
+            .flat_map(|(seq, record)| {
+                record.stats.iter().enumerate().map(move |(i, stat)| {
+                    let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
+                    DecodedSample {
+                        record_seq: seq as u64,
+                        stat_index: i as u32,
+                        object_name: Arc::clone(&stat.object_name),
+                        type_name: type_name.into(),
+                        stat_name: stat_name.into(),
+                        observation_time: record.observation_time,
+                        value: stat.counter,
+                    }
+                })
             })
-            .unwrap();
-    }
-
-    fn shards(root: &Path) -> Vec<PathBuf> {
-        fs::read_dir(root.join("shards"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
             .collect()
     }
 
-    fn read_gauges(shard: &Path) -> Vec<RecordBatch> {
-        assert_eq!(
-            fs::read_to_string(shard.join(READY_FILE)).unwrap(),
-            FORMAT_VERSION
-        );
-        ParquetRecordBatchReaderBuilder::try_new(File::open(shard.join(GAUGE_FILE)).unwrap())
-            .unwrap()
-            .build()
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
-    }
-
-    #[test]
-    fn summarizes_monotonic_range_and_decrease() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        for (time, value) in [(1, 10), (101, 15), (201, 12), (10_000_000, 20)] {
-            add(&mut reducer, time, &[stat("Ethernet0", value)]);
+    fn encode(batch: &SAIStatsBatch) -> (tempfile::TempDir, Vec<PathBuf>) {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        for record in batch.iter() {
+            store.add_record(record).unwrap();
         }
-        assert_eq!(reducer.rows.gauges.len(), 1);
-        let row = &reducer.rows.gauges[0].state;
-        assert_eq!(row.first_value, 10);
-        assert_eq!(row.previous_value, None);
-        assert_eq!(row.last_value, 12);
-        assert_eq!(row.min_value, 10);
-        assert_eq!(row.max_value, 15);
-        assert_eq!(row.max_change, 5);
-        assert_eq!(row.max_change_time_unix_nano, 101);
-        assert_eq!(row.total_increase, 5);
-        assert_eq!(row.sample_count, 3);
-        assert_eq!(row.change_count, 2);
-        assert_eq!(row.flags, RANGE_FLAG_DECREASED);
-        let open = &reducer.states[0].1.range;
-        assert_eq!(open.previous_value, Some(12));
-        assert_eq!(open.total_increase, 8);
-        assert_eq!(open.flags, RANGE_FLAG_GAP);
+        store.finish_stream().unwrap();
+        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+        let paths = paths(temp.path(), "shards");
+        (temp, paths)
     }
 
     #[test]
-    fn flat_batches_keep_identity_across_interleaved_and_reordered_layouts() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        let mut first = SAIStatsBatch::default();
-        first.push_record(1, [stat("Ethernet0", 10), stat("Ethernet4", 100)]);
-        // Same length, different object and SAI IDs, at the same observation time.
-        first.push_record(
-            1,
-            [
-                stat("Ethernet8", 1000),
-                SAIStat::new("Ethernet0", 2, 2, 500),
-            ],
+    fn exact_raw_random_gauges_peaks_valleys_and_unsigned_boundaries() {
+        let mut batch = SAIStatsBatch::default();
+        let mut random = 0x1234_5678_9abc_def0u64;
+        let extremes = [0, u64::MAX, 1 << 63, (1 << 63) - 1, (1 << 53) + 1, 1];
+        for i in 0..9000usize {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            let time = [0, u64::MAX, 42, 42, 1, random][i % 6];
+            batch.push_record(
+                time,
+                [
+                    stat("random|\"\n", random),
+                    stat("extremes", extremes[i % 6]),
+                    stat("constant", 42),
+                    stat("sawtooth", i as u64 % 7),
+                    stat("duplicate", 0),
+                    stat("duplicate", u64::MAX),
+                    SAIStat::new("unknown", u32::MAX, u32::MAX, random),
+                ],
+            );
+        }
+        let (_temp, files) = encode(&batch);
+        assert_eq!(files.len(), 1);
+        assert_eq!(decoded(&files[0]), expected(&batch));
+        let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+        assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
+        assert_eq!(reader.schema().field(1).name(), "record_seq");
+        let batches: Vec<_> = reader.map(Result::unwrap).collect();
+        assert_eq!(
+            batches.iter().map(|b| child(b, 0).len()).sum::<usize>(),
+            9000
         );
-        first.push_record(2, [stat("Ethernet4", 110), stat("Ethernet0", 20)]);
-        let mut second = SAIStatsBatch::default();
-        second.push_record(2, [SAIStat::new("Ethernet0", 1, 3, 900)]);
-        second.push_record(3, [stat("Ethernet8", 1010)]);
-        second.push_record(3, [stat("Ethernet0", 25)]);
-        second.push_record(10_000_000, [stat("Ethernet0", 30), stat("Ethernet4", 120)]);
-        for batch in [&first, &second] {
-            for record in batch.iter() {
-                reducer.add_gauges(record).unwrap();
+        for b in batches {
+            assert_eq!(b.num_rows(), 1);
+            for c in b.columns() {
+                assert!(matches!(c.data_type(), arrow_schema::DataType::List(_)));
+                assert_eq!(c.null_count(), 0);
             }
         }
-        let rows = reducer.finish();
-        assert_eq!(rows.gauges.len(), 7);
-        let ethernet0: Vec<_> = rows
-            .gauges
+    }
+
+    #[test]
+    fn layout_changes_stat_order_names_ids_duplicates_and_empty_rows() {
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(u64::MAX, []);
+        batch.push_record(0, []);
+        batch.push_record(2, [stat("a", 1), stat("b", 2)]);
+        batch.push_record(2, [stat("b", 3), stat("a", 4)]);
+        batch.push_record(1, [stat("b", 5), stat("a", 6)]);
+        batch.push_record(1, [stat("a", 0), stat("a", u64::MAX)]);
+        batch.push_record(0, [SAIStat::new("a", 21, 0, 42), stat("a", 2)]);
+        batch.push_record(0, [SAIStat::new("a", 21, 1, 42), stat("a", 2)]);
+        batch.push_record(0, [SAIStat::new("renamed", 21, 1, 42), stat("a", 2)]);
+        batch.push_record(0, []);
+        let (_temp, files) = encode(&batch);
+        assert_eq!(files.len(), 8);
+        assert_eq!(
+            files.iter().flat_map(|p| decoded(p)).collect::<Vec<_>>(),
+            expected(&batch)
+        );
+        let rows: Vec<(u64, u64)> = files
             .iter()
-            .filter(|row| {
-                row.key.object_name.as_ref() == "Ethernet0"
-                    && row.key.type_id == 1
-                    && row.key.stat_id == 2
+            .flat_map(|p| {
+                StreamReader::try_new(File::open(p).unwrap(), None)
+                    .unwrap()
+                    .flat_map(|b| {
+                        let b = b.unwrap();
+                        let times = child(&b, 0);
+                        let seq = child(&b, 1);
+                        times
+                            .values()
+                            .iter()
+                            .copied()
+                            .zip(seq.values().iter().copied())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
-        assert_eq!(ethernet0.len(), 2);
-        assert_eq!(ethernet0[0].state.sample_count, 3);
-        assert_eq!(ethernet0[0].state.first_value, 10);
-        assert_eq!(ethernet0[0].state.last_value, 25);
-        assert_eq!(ethernet0[1].state.previous_value, Some(25));
-        assert_eq!(ethernet0[1].state.total_increase, 5);
-        let ethernet8 = rows
-            .gauges
-            .iter()
-            .find(|row| row.key.object_name.as_ref() == "Ethernet8")
-            .unwrap();
-        assert_eq!(ethernet8.state.sample_count, 2);
-        assert_eq!(ethernet8.state.first_value, 1000);
-        assert_eq!(ethernet8.state.last_value, 1010);
-        for (type_id, stat_id, value) in [(2, 2, 500), (1, 3, 900)] {
-            let row = rows
-                .gauges
-                .iter()
-                .find(|row| row.key.type_id == type_id && row.key.stat_id == stat_id)
-                .unwrap();
-            assert_eq!(row.state.first_value, value);
-            assert_eq!(row.state.sample_count, 1);
-        }
-    }
-
-    #[test]
-    fn backwards_samples_split_flagged_ranges_without_losing_samples() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 100, &[stat("Ethernet0", 10)]);
-        add(&mut reducer, 50, &[stat("Ethernet4", 100)]);
-        add(&mut reducer, 99, &[stat("Ethernet0", 99)]);
-        add(&mut reducer, 100, &[stat("Ethernet0", 99)]);
-        add(&mut reducer, 101, &[stat("Ethernet0", 20)]);
-        let rows = reducer.finish();
-        assert_eq!(rows.gauges.len(), 3);
-        assert_eq!(rows.gauges[0].state.last_value, 10);
-        assert_eq!(rows.gauges[0].state.sample_count, 1);
-        assert_eq!(rows.gauges[0].state.flags, RANGE_FLAG_TIME_REGRESSED);
-        assert_eq!(rows.gauges[1].state.first_value, 99);
-        assert_eq!(rows.gauges[1].state.last_value, 20);
-        assert_eq!(rows.gauges[1].state.sample_count, 3);
-        assert_eq!(rows.gauges[1].state.previous_value, None);
         assert_eq!(
-            rows.gauges[1].state.flags,
-            RANGE_FLAG_TIME_REGRESSED | RANGE_FLAG_DECREASED
+            rows,
+            batch
+                .iter()
+                .enumerate()
+                .map(|(i, r)| (r.observation_time, i as u64))
+                .collect::<Vec<_>>()
         );
-        assert_eq!(rows.gauges[2].state.first_value, 100);
-        assert_eq!(rows.gauges[2].state.flags, 0);
-    }
-
-    #[test]
-    fn equal_timestamps_count_every_value_once_across_layout_changes() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 42, &[stat("Ethernet0", 10)]);
-        add(&mut reducer, 42, &[stat("Ethernet0", 20)]);
-        add(
-            &mut reducer,
-            42,
-            &[stat("Ethernet4", 100), stat("Ethernet0", 15)],
+        assert_eq!(
+            read_shard(&files[1], |_| Err("visitor stopped".into())),
+            Err("visitor stopped".into())
         );
-        add(&mut reducer, 42, &[stat("Ethernet0", 15)]);
-        assert_eq!(reducer.states[0].1.expected_interval_ns, None);
-        add(&mut reducer, 52, &[stat("Ethernet0", 30)]);
-        assert_eq!(reducer.states[0].1.expected_interval_ns, Some(10));
-        let rows = reducer.finish();
-        let range = &rows.gauges[0].state;
-        assert_eq!(range.sample_count, 5);
-        assert_eq!(range.change_count, 3);
-        assert_eq!(range.first_value, 10);
-        assert_eq!(range.last_value, 30);
-        assert_eq!(range.min_value, 10);
-        assert_eq!(range.max_value, 30);
-        assert_eq!(range.total_increase, 25);
-        assert_eq!(range.flags, RANGE_FLAG_DECREASED);
-        assert_eq!(rows.gauges[1].state.sample_count, 1);
     }
 
     #[test]
-    fn backwards_window_starts_without_a_previous_value_bridge() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 20_000_000, &[stat("Ethernet0", 10)]);
-        add(&mut reducer, 1, &[stat("Ethernet0", 100)]);
-        add(&mut reducer, 1, &[stat("Ethernet0", 110)]);
-        let rows = reducer.finish();
-        assert_eq!(rows.gauges.len(), 2);
-        assert_eq!(rows.gauges[0].window_start_unix_nano, 20_000_000);
-        assert_eq!(rows.gauges[1].window_start_unix_nano, 0);
-        assert_eq!(rows.gauges[1].state.previous_value, None);
-        assert_eq!(rows.gauges[1].state.sample_count, 2);
-        assert_eq!(rows.gauges[1].state.total_increase, 10);
-        assert!(rows
-            .gauges
-            .iter()
-            .all(|row| row.state.flags == RANGE_FLAG_TIME_REGRESSED));
-    }
-
-    #[test]
-    fn drops_remain_flagged_after_source_size_and_wall_flushes() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 1, &[stat("Ethernet0", 10)]);
-        add(&mut reducer, 10_000_000, &[stat("Ethernet0", 20)]);
-        // Atomic loss may be observed before processing the affected queued batch.
-        reducer.mark_input_drop(1);
-        let rows = reducer.take_shard(Some(10_000_000));
-        assert_eq!(rows.dropped_input_messages, 1);
-        assert_eq!(rows.gauges[0].state.flags, RANGE_FLAG_STORAGE_DROP);
-        add(&mut reducer, 20_000_000, &[stat("Ethernet0", 30)]);
-        let rows = reducer.finish();
-        assert_eq!(rows.dropped_input_messages, 0);
-        assert!(rows
-            .gauges
-            .iter()
-            .all(|row| row.state.flags & RANGE_FLAG_STORAGE_DROP != 0));
-        add(&mut reducer, 30_000_000, &[stat("Ethernet4", 100)]);
-        let rows = reducer.finish();
-        assert_eq!(rows.gauges[0].state.flags, RANGE_FLAG_STORAGE_DROP);
-    }
-
-    #[test]
-    fn source_rotations_do_not_postpone_wall_flush_of_inactive_series() {
-        let config = config(Path::new(""));
-        let mut reducer = LocalReducer::new(&config);
-        let (sender, receiver) = mpsc::sync_channel(1);
-        // Keep the wall deadline explicitly pending, independent of test runtime.
-        let started = Instant::now() + Duration::from_secs(3600);
-        let mut wall = started;
-        add(&mut reducer, 1, &[stat("inactive", 10), stat("active", 20)]);
-        for time in [5_000_000_001, 10_000_000_001, 15_000_000_001] {
-            add(&mut reducer, time, &[stat("active", 30)]);
-            reducer
-                .rotate(Some(time), &mut wall, config.shard_interval, &sender)
-                .unwrap();
-            assert_eq!(wall, started);
-            assert!(receiver.try_recv().unwrap().gauges.iter().all(|row| row
-                .key
-                .object_name
-                .as_ref()
-                == "active"));
+    fn wide_layout_batch_budget_and_buffer_reuse() {
+        for (width, expected_rows) in [
+            (0, 4096),
+            (500, 4096),
+            (8000, 262),
+            (codec::MAX_COUNTERS, 31),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = store(temp.path());
+            let stats: Vec<_> = (0..width).map(|i| stat("port", i as u64)).collect();
+            let record = SAIStatsRef {
+                observation_time: u64::MAX,
+                stats: &stats,
+            };
+            store.add_record(record).unwrap();
+            let layout = store.layout.as_ref().unwrap();
+            assert_eq!(
+                layout.batch_rows,
+                (BATCH_TARGET_BYTES / ((width + 2) * 8)).min(MAX_ROWS)
+            );
+            assert_eq!(layout.batch_rows, expected_rows);
+            assert!(layout.batch_rows * layout.row_bytes <= BATCH_TARGET_BYTES);
+            let pointers: Vec<_> = store.columns.iter().map(|c| c.as_ptr()).collect();
+            let matrix_pointer = store.matrix.as_ptr();
+            store.flush_batch().unwrap();
+            assert_eq!(
+                pointers,
+                store.columns.iter().map(|c| c.as_ptr()).collect::<Vec<_>>()
+            );
+            assert_eq!(matrix_pointer, store.matrix.as_ptr());
+            assert!(
+                store
+                    .columns
+                    .iter()
+                    .map(|c| c.capacity() * 8)
+                    .sum::<usize>()
+                    <= BATCH_TARGET_BYTES
+            );
+            assert!(store.matrix.capacity() * 8 <= BATCH_TARGET_BYTES);
+            store.add_record(record).unwrap();
+            store.flush_batch().unwrap();
+            assert_eq!(matrix_pointer, store.matrix.as_ptr());
+            assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+            store.finish_stream().unwrap();
+            assert_eq!(decoded(&paths(temp.path(), "shards")[0]).len(), width * 2);
         }
-        wall = Instant::now() - config.shard_interval;
-        reducer
-            .rotate(
-                Some(20_000_000_001),
-                &mut wall,
-                config.shard_interval,
-                &sender,
+    }
+
+    fn small_stream() -> (Vec<u8>, Vec<(usize, u64)>, Vec<DecodedSample>) {
+        let layout = codec::Layout::new(&[stat("a", 0)]).unwrap();
+        let options = IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::ZSTD))
+            .unwrap();
+        let mut writer =
+            StreamWriter::try_new_with_options(Vec::new(), &layout.schema, options).unwrap();
+        let mut boundaries = vec![(writer.get_ref().len(), 0)];
+        let mut expected = Vec::new();
+        for i in 0..3u64 {
+            let batch = RecordBatch::try_new(
+                Arc::clone(&layout.schema),
+                vec![
+                    codec::list(UInt64Array::from(vec![u64::MAX - i])),
+                    codec::list(UInt64Array::from(vec![i])),
+                    codec::list(UInt64Array::from(vec![[u64::MAX, 0, 1 << 63][i as usize]])),
+                ],
             )
             .unwrap();
-        let rows = receiver.try_recv().unwrap();
-        assert_eq!(rows.dropped_shards, 0);
-        assert_eq!(rows.gauges.len(), 2);
-        assert!(rows
-            .gauges
-            .iter()
-            .any(|row| row.key.object_name.as_ref() == "inactive"));
-        assert!(reducer.states.is_empty());
+            writer.write(&batch).unwrap();
+            boundaries.push((writer.get_ref().len(), i + 1));
+            let (ty, stat) = series_names(1, 2);
+            expected.push(DecodedSample {
+                record_seq: i,
+                stat_index: 0,
+                object_name: "a".into(),
+                type_name: ty.into(),
+                stat_name: stat.into(),
+                observation_time: u64::MAX - i,
+                value: [u64::MAX, 0, 1 << 63][i as usize],
+            });
+        }
+        writer.finish().unwrap();
+        (writer.into_inner().unwrap(), boundaries, expected)
     }
 
     #[test]
-    fn record_crossing_capacity_flushes_existing_data_and_continues() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        let (sender, receiver) = mpsc::sync_channel(8);
-        add(&mut reducer, 1, &[stat("existing", 10)]);
-        // Simulate a nearly full shard without allocating 120 MB for this test.
-        reducer.estimated_state_bytes = SHARD_ROTATE_UNCOMPRESSED_BYTES - 1;
-        // The next valid record would cross both the 120 MB target and 128 MB
-        // limit if appended atomically to the simulated current allocation.
-        let name =
-            "x".repeat((MAX_SHARD_UNCOMPRESSED_BYTES - SHARD_ROTATE_UNCOMPRESSED_BYTES) as usize);
-        let stats = [stat(&name, 20), stat("Ethernet4", 30)];
-        reducer
-            .add_record(
-                SAIStatsRef {
-                    observation_time: 2,
-                    stats: &stats,
-                },
-                &sender,
-            )
-            .unwrap();
-        let flushed = receiver.try_recv().unwrap();
-        assert_eq!(flushed.gauges[0].key.object_name.as_ref(), "existing");
-        assert_eq!(flushed.gauges[0].state.sample_count, 1);
-        assert!(flushed.estimated_uncompressed_bytes <= MAX_SHARD_UNCOMPRESSED_BYTES);
-        let rows = reducer.finish();
-        assert_eq!(rows.gauges.len(), 2);
-        assert!(rows.gauges.iter().all(|row| row.state.sample_count == 1));
-    }
-
-    #[test]
-    fn idle_wall_deadline_queues_open_ranges_without_new_source_data() {
-        let config = config(Path::new(""));
-        let mut reducer = LocalReducer::new(&config);
-        let (sender, receiver) = mpsc::sync_channel(1);
-        add(&mut reducer, 1, &[stat("inactive", 10)]);
-
-        let mut wall = Instant::now() + Duration::from_secs(3600);
-        reducer
-            .rotate(None, &mut wall, config.shard_interval, &sender)
-            .unwrap();
-        assert!(matches!(
-            receiver.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
-        assert_eq!(reducer.states.len(), 1);
-
-        // Exercise the receive-timeout path without sleeping or racing a writer.
-        wall = Instant::now() - config.shard_interval;
-        let before_flush = Instant::now();
-        reducer
-            .rotate(None, &mut wall, config.shard_interval, &sender)
-            .unwrap();
-        assert!(wall >= before_flush);
-        let rows = receiver.try_recv().unwrap();
-        assert_eq!(rows.dropped_shards, 0);
-        assert_eq!(rows.gauges.len(), 1);
-        assert_eq!(rows.gauges[0].key.object_name.as_ref(), "inactive");
-        assert_eq!(rows.gauges[0].state.last_value, 10);
-        assert_eq!(rows.gauges[0].state.sample_count, 1);
-        assert!(reducer.states.is_empty());
-        assert!(reducer.rows.is_empty());
-
-        wall = Instant::now() - config.shard_interval;
-        reducer
-            .rotate(None, &mut wall, config.shard_interval, &sender)
-            .unwrap();
-        assert!(matches!(
-            receiver.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
-    }
-
-    #[test]
-    fn setup_failure_marks_status_and_disconnects_the_bounded_queue() {
+    fn read_every_byte_truncation_preserves_exact_complete_batch_prefix() {
+        let (bytes, boundaries, expected) = small_stream();
         let temp = tempfile::tempdir().unwrap();
-        let mut config = config(temp.path());
-        config.root = temp.path().join("missing");
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let status = LocalStorageStatus::default();
-        assert!(LocalStorageActor::new(receiver, config, status.clone()).is_err());
-        assert!(status.failed());
-        assert!(matches!(
-            sender.try_send(Arc::new(SAIStatsBatch::default())),
-            Err(mpsc::TrySendError::Disconnected(_))
-        ));
+        let _lock = prepare_storage(&config(temp.path())).unwrap();
+        let partial = temp.path().join(".staging/truncated.arrow.partial");
+        for cut in 0..=bytes.len() {
+            fs::write(&partial, &bytes[..cut]).unwrap();
+            let count = boundaries
+                .iter()
+                .filter(|(end, _)| *end <= cut)
+                .map(|(_, count)| *count)
+                .last()
+                .unwrap_or(0);
+            let scan = codec::scan(&partial).unwrap();
+            assert_eq!(scan.records, count, "cut={cut}");
+            assert!(scan.boundary <= cut as u64);
+            assert_eq!(decoded(&partial), expected[..count as usize], "cut={cut}");
+            assert_eq!(fs::read(&partial).unwrap(), bytes[..cut]);
+            assert!(paths(temp.path(), "shards").is_empty());
+        }
     }
 
     #[test]
-    fn oversized_record_preflight_is_atomic() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 1, &[stat("existing", 10)]);
-        reducer.estimated_state_bytes = MAX_SHARD_UNCOMPRESSED_BYTES - 1;
-        assert!(reducer
-            .add_gauges(SAIStatsRef {
-                observation_time: 20_000_000,
-                stats: &[stat("existing", 20), stat("new", 30)],
+    fn writer_does_not_modify_abandoned_streams_and_reader_handles_tails() {
+        let (bytes, boundaries, expected) = small_stream();
+        for suffix in [
+            vec![],
+            vec![255, 255, 255, 255, 255, 255, 255, 127],
+            vec![255, 255, 255, 255, 0, 0, 0, 0],
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            drop(prepare_storage(&config(temp.path())).unwrap());
+            let partial = temp.path().join(".staging/recovered.arrow.partial");
+            let end = boundaries.last().unwrap().0;
+            let mut damaged = bytes[..end].to_vec();
+            damaged.extend(suffix);
+            fs::write(&partial, &damaged).unwrap();
+            for _ in 0..2 {
+                let mut writer = store(temp.path());
+                assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
+                writer
+                    .add_record(SAIStatsRef {
+                        observation_time: 0,
+                        stats: &[],
+                    })
+                    .unwrap();
+                assert_ne!(writer.active.as_ref().unwrap().path, partial);
+                writer.finish_stream().unwrap();
+                assert_eq!(decoded(&partial), expected);
+                assert_eq!(fs::read(&partial).unwrap(), damaged);
+                assert_eq!(paths(temp.path(), ".staging"), vec![partial.clone()]);
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_header_and_nullable_schema_without_removing_state() {
+        let temp = tempfile::tempdir().unwrap();
+        drop(prepare_storage(&config(temp.path())).unwrap());
+        let partial = temp.path().join(".staging/bad.arrow.partial");
+        for bytes in [b"not an Arrow stream".to_vec(), {
+            let schema = arrow_schema::Schema::new(vec![arrow_schema::Field::new(
+                "timestamp_ns",
+                arrow_schema::DataType::UInt64,
+                true,
+            )]);
+            let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
+            writer.finish().unwrap();
+            writer.into_inner().unwrap()
+        }] {
+            fs::write(&partial, &bytes).unwrap();
+            assert!(read_shard(&partial, |_| Ok(())).is_err());
+            drop(prepare_storage(&config(temp.path())).unwrap());
+            assert_eq!(fs::read(&partial).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn startup_preserves_empty_unknown_and_old_files_and_charges_quota() {
+        let (bytes, _, _) = small_stream();
+        let temp = tempfile::tempdir().unwrap();
+        drop(prepare_storage(&config(temp.path())).unwrap());
+        let files = [
+            (".staging/empty.arrow.partial", &b""[..]),
+            (".staging/torn.arrow.partial", &bytes[..3]),
+            (".staging/old.partial", &b"old-v3"[..]),
+            ("shards/old.arrow", &b"old-v3"[..]),
+        ];
+        for (path, data) in files {
+            fs::write(temp.path().join(path), data).unwrap();
+        }
+        let mut writer = store(temp.path());
+        assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
+        writer.config.max_bytes = writer.used_bytes + BATCH_RESERVE_BYTES - 1;
+        assert!(writer
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: &[]
             })
             .is_err());
-        assert_eq!(reducer.states.len(), 1);
-        assert_eq!(reducer.states[0].1.range.last_value, 10);
-        assert!(reducer.rows.is_empty());
+        for (path, data) in files {
+            assert_eq!(fs::read(temp.path().join(path)).unwrap(), data);
+        }
     }
 
     #[test]
-    fn actor_drains_flat_batches_and_preserves_u64_in_published_parquet() {
+    fn lock_unknown_staging_legacy_archives_and_symlinks_are_preserved() {
         let temp = tempfile::tempdir().unwrap();
-        let (sender, receiver) = mpsc::sync_channel(8);
-        let status = LocalStorageStatus::default();
-        let actor = LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
-        let mut batch = SAIStatsBatch::default();
-        batch.push_record(1, [stat("Ethernet0", (1u64 << 63) + 1)]);
-        batch.push_record(2, [stat("Ethernet4", (1u64 << 53) + 1)]);
-        batch.push_record(3, [stat("Ethernet0", u64::MAX)]);
-        batch.push_record(3, [stat("Ethernet0", u64::MAX)]);
-        sender.send(Arc::new(batch)).unwrap();
-        let mut batch = SAIStatsBatch::default();
-        batch.push_record(10_000_000, [stat("Ethernet0", 0)]);
-        sender.send(Arc::new(batch)).unwrap();
-        // Include drops recorded after the last successful enqueue.
-        status.record_input_drop();
-        drop(sender);
-        actor.run();
-        assert!(!status.failed());
-        let shards = shards(temp.path());
-        assert_eq!(shards.len(), 1);
+        let lock = prepare_storage(&config(temp.path())).unwrap();
+        let unknown = temp.path().join(".staging/old-v2");
+        fs::create_dir(&unknown).unwrap();
+        fs::write(unknown.join("keep"), b"prior data").unwrap();
+        assert!(prepare_storage(&config(temp.path())).is_err());
+        drop(lock);
+        assert!(prepare_storage(&config(temp.path())).is_err());
+        assert_eq!(fs::read(unknown.join("keep")).unwrap(), b"prior data");
+        fs::remove_dir_all(unknown).unwrap();
+        fs::create_dir(temp.path().join("shards/v2")).unwrap();
+        assert!(prepare_storage(&config(temp.path())).is_err());
+        fs::remove_dir(temp.path().join("shards/v2")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let link = temp.path().join(".staging/link.arrow.partial");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        assert!(prepare_storage(&config(temp.path())).is_err());
+        assert!(link.is_symlink());
+        for entry in ["root", ".staging", "shards", LOCK_FILE] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join(entry);
+            std::os::unix::fs::symlink(outside.path(), &path).unwrap();
+            assert!(
+                prepare_storage(&config(if entry == "root" { &path } else { root.path() }))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn quota_stops_append_keeps_durable_prefix_and_never_overwrites_published() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        let stats = [stat("a", u64::MAX)];
+        let record = SAIStatsRef {
+            observation_time: 42,
+            stats: &stats,
+        };
+        store.add_record(record).unwrap();
+        store.finish_stream().unwrap();
+        let first = paths(temp.path(), "shards")[0].clone();
+        let bytes = fs::read(&first).unwrap();
+        store.add_record(record).unwrap();
+        store.flush_batch().unwrap();
+        store.add_record(record).unwrap();
+        store.config.max_bytes = store.used_bytes + BATCH_RESERVE_BYTES - 1;
+        assert!(store.flush_batch().is_err());
+        assert_eq!(fs::read(&first).unwrap(), bytes);
+        drop(store);
+        drop(prepare_storage(&config(temp.path())).unwrap());
+        let files = paths(temp.path(), "shards");
+        assert_eq!(files.len(), 1);
+        let partials = paths(temp.path(), ".staging");
+        assert_eq!(partials.len(), 1);
+        assert_eq!(decoded(&partials[0]).len(), 1);
+        let collision = temp.path().join(".staging").join(format!(
+            "{}.partial",
+            first.file_name().unwrap().to_str().unwrap()
+        ));
+        fs::write(&collision, &bytes).unwrap();
+        assert!(publish(temp.path(), &collision).is_err());
+        assert_eq!(fs::read(&first).unwrap(), bytes);
+        assert!(collision.exists());
+    }
+
+    #[test]
+    fn oversized_schema_and_sequence_exhaustion_flush_previous_valid_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        store.next_record_seq = i64::MAX as u64;
+        for value in [u64::MAX, 0, 1 << 63] {
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: value,
+                    stats: &[stat("a", value)],
+                })
+                .unwrap();
+        }
+        assert!(store
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: &[stat(&"x".repeat(16 * 1024 * 1024), 0)]
+            })
+            .is_err());
+        let file = &paths(temp.path(), "shards")[0];
         assert_eq!(
-            fs::read_dir(temp.path().join(".staging")).unwrap().count(),
-            0
+            decoded(file)
+                .iter()
+                .map(|s| s.record_seq)
+                .collect::<Vec<_>>(),
+            vec![i64::MAX as u64, 1 << 63, (1 << 63) + 1]
         );
-        let batches = read_gauges(&shards[0]);
-        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
-        let batch = &batches[0];
-        let first = batch
-            .column_by_name("first_value")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        let last = batch
-            .column_by_name("last_value")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        let previous = batch
-            .column_by_name("previous_value")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        let change = batch
-            .column_by_name("max_change")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        assert_eq!(first.value(0), (1u64 << 63) + 1);
-        assert_eq!(last.value(0), u64::MAX);
-        assert!(previous.is_null(0));
-        assert_eq!(previous.value(1), u64::MAX);
-        assert_eq!(change.value(1), u64::MAX);
-        assert_eq!(first.value(2), (1u64 << 53) + 1);
-        let counts = batch
-            .column_by_name("sample_count")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap();
-        assert_eq!(counts.values().as_ref(), &[3, 1, 1]);
+        store.next_record_seq = u64::MAX;
+        assert!(store
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: &[]
+            })
+            .is_err());
+        assert!(store.batch_started.is_none());
+    }
+
+    #[test]
+    fn actor_drains_input_reports_drops_and_restart_accumulates_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        for i in 1..=2 {
+            let (sender, receiver) = mpsc::sync_channel(2);
+            let status = LocalStorageStatus::default();
+            let actor =
+                LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+            let mut batch = SAIStatsBatch::default();
+            for time in [1, 2, 2, 1] {
+                batch.push_record(time, [stat("Ethernet0", u64::MAX)]);
+            }
+            sender.send(Arc::new(batch)).unwrap();
+            status.record_input_drop();
+            drop(sender);
+            actor.run();
+            assert!(!status.failed());
+            assert_eq!(status.take_input_drops(), 0);
+            let loss: serde_json::Value =
+                serde_json::from_slice(&fs::read(temp.path().join(LOSS_FILE)).unwrap()).unwrap();
+            assert_eq!(loss["dropped_input_messages"], i);
+            assert_eq!(loss["dropped_shards"], 0);
+        }
         assert_eq!(
-            fs::read_to_string(shards[0].join(LOSS_FILE)).unwrap(),
-            "{\"dropped_input_messages\":1,\"dropped_shards\":0}\n"
+            paths(temp.path(), "shards")
+                .iter()
+                .map(|p| decoded(p).len())
+                .sum::<usize>(),
+            8
         );
     }
 
     #[test]
-    fn shutdown_request_flushes_without_waiting_for_sender_disconnect() {
+    fn idle_wall_flush_then_shutdown_with_sender_still_connected() {
         let temp = tempfile::tempdir().unwrap();
-        let (sender, receiver) = mpsc::sync_channel(8);
+        let (sender, receiver) = mpsc::sync_channel(2);
         let status = LocalStorageStatus::default();
         let actor = LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
         let mut batch = SAIStatsBatch::default();
-        batch.push_record(1, [stat("Ethernet0", 10)]);
-        let batch = Arc::new(batch);
-        let consumed = Arc::downgrade(&batch);
-        sender.send(batch).unwrap();
-        let (done_sender, done_receiver) = mpsc::channel();
+        batch.push_record(0, [stat("a", 42)]);
+        sender.send(Arc::new(batch)).unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
             actor.run();
-            done_sender.send(()).unwrap();
+            done_tx.send(()).unwrap();
         });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while consumed.strong_count() != 0 {
-            assert!(Instant::now() < deadline, "actor did not consume the batch");
-            thread::sleep(Duration::from_millis(1));
+        let start = Instant::now();
+        loop {
+            if paths(temp.path(), ".staging")
+                .iter()
+                .any(|p| codec::scan(p).is_ok_and(|r| r.records == 1))
+            {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(3));
+            thread::sleep(Duration::from_millis(10));
         }
-        status.record_input_drop();
+        assert!(paths(temp.path(), "shards").is_empty());
         status.request_shutdown();
-        done_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         handle.join().unwrap();
         assert!(!status.failed());
-        let shards = shards(temp.path());
-        assert_eq!(shards.len(), 1);
-        assert_eq!(read_gauges(&shards[0])[0].num_rows(), 1);
+        assert_eq!(decoded(&paths(temp.path(), "shards")[0]).len(), 1);
         drop(sender);
     }
 
     #[test]
-    fn drop_tracker_marks_existing_and_new_ranges() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        add(&mut reducer, 1, &[stat("Ethernet0", 10)]);
-        reducer.mark_input_drop(3);
-        add(&mut reducer, 2, &[stat("Ethernet4", 20)]);
-        reducer.mark_input_drop(2);
-        let rows = reducer.finish();
-        assert_eq!(rows.dropped_input_messages, 5);
-        assert_eq!(rows.gauges.len(), 2);
-        assert!(rows
-            .gauges
-            .iter()
-            .all(|row| row.state.flags == RANGE_FLAG_STORAGE_DROP));
-    }
-
-    #[test]
-    fn full_writer_queue_carries_loss_to_next_shard() {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        sender.send(ShardRows::default()).unwrap();
-        let lost = ShardRows {
-            dropped_input_messages: 7,
-            dropped_shards: 2,
-            ..Default::default()
-        };
-        queue_shard(&sender, lost, &mut reducer).unwrap();
-        assert!(reducer.writer_drop_warned);
-        let next = reducer.finish();
-        assert!(reducer.writer_drop_warned);
-        assert_eq!(next.dropped_input_messages, 7);
-        assert_eq!(next.dropped_shards, 3);
-        drop(receiver);
-        assert!(queue_shard(&sender, next, &mut reducer).is_err());
-    }
-
-    #[test]
-    fn rejects_second_writer_and_cleans_only_staging_after_lock() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = config(temp.path());
-        let first = prepare_storage(&config).unwrap();
-        fs::create_dir(temp.path().join(".staging/incomplete")).unwrap();
-        fs::write(temp.path().join(".staging/incomplete/partial"), b"data").unwrap();
-        fs::create_dir(temp.path().join("shards/keep")).unwrap();
-        fs::write(temp.path().join("shards/keep/_READY"), FORMAT_VERSION).unwrap();
-        assert!(prepare_storage(&config).is_err());
-        assert!(temp.path().join(".staging/incomplete/partial").exists());
-        drop(first);
-        let _second = prepare_storage(&config).unwrap();
-        assert_eq!(
-            fs::read_dir(temp.path().join(".staging")).unwrap().count(),
-            0
-        );
-        assert!(temp.path().join("shards/keep/_READY").exists());
-    }
-
-    #[test]
-    fn rejects_symlink_roots_directories_and_locks() {
-        use std::os::unix::fs::symlink;
-        let temp = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        fs::write(outside.path().join("keep"), b"untouched").unwrap();
-        for name in ["root", ".staging", "shards", LOCK_FILE] {
-            if temp.path().join(LOCK_FILE).exists() {
-                fs::remove_file(temp.path().join(LOCK_FILE)).unwrap();
-            }
-            let target = if name == LOCK_FILE {
-                outside.path().join("keep")
-            } else {
-                outside.path().to_path_buf()
+    fn size_rotation_waits_for_complete_batch_and_keeps_sequence() {
+        for schema_exceeds_target in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = store(temp.path());
+            store.config.file_target_bytes = if schema_exceeds_target { 1 } else { u64::MAX };
+            let stats = [stat(&"a".repeat(4096), u64::MAX)];
+            let record = SAIStatsRef {
+                observation_time: 0,
+                stats: &stats,
             };
-            let link = temp.path().join(name);
-            symlink(&target, &link).unwrap();
-            let root = if name == "root" { &link } else { temp.path() };
-            assert!(prepare_storage(&config(root)).is_err(), "{name}");
-            fs::remove_file(&link).unwrap();
-            // A failed shards check may already have created .staging.
-            if temp.path().join(".staging").is_dir() {
-                fs::remove_dir(temp.path().join(".staging")).unwrap();
+            for seq in 0..3 {
+                store.add_record(record).unwrap();
+                let active = store.active.as_ref().unwrap();
+                let schema_bytes = active.writer.get_ref().bytes_written;
+                if schema_exceeds_target {
+                    assert!(schema_bytes >= store.config.file_target_bytes);
+                } else {
+                    // Schema is below target; the complete batch must cross it.
+                    store.config.file_target_bytes = schema_bytes + 1;
+                }
+                assert_eq!(schema_bytes, fs::metadata(&active.path).unwrap().len());
+                assert_eq!(paths(temp.path(), "shards").len(), seq);
+                store.flush_batch().unwrap();
+                assert!(store.active.is_none());
+                assert!(store.batch_started.is_none());
+                let files = paths(temp.path(), "shards");
+                assert_eq!(files.len(), seq + 1);
+                assert!(fs::metadata(&files[seq]).unwrap().len() > schema_bytes + 8);
+                let samples = decoded(&files[seq]);
+                assert_eq!(samples.len(), 1);
+                assert_eq!(samples[0].record_seq, seq as u64);
+                assert_eq!(samples[0].value, u64::MAX);
             }
+            store.finish_stream().unwrap();
+            assert_eq!(paths(temp.path(), "shards").len(), 3);
+            assert!(paths(temp.path(), ".staging").is_empty());
+            assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
         }
-        assert_eq!(fs::read(outside.path().join("keep")).unwrap(), b"untouched");
     }
 
     #[test]
-    fn validates_limits_and_dedicated_mount_policy() {
+    fn size_rotation_uses_compressed_bytes_not_128_mib_raw_input() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        let stats = vec![stat("a", 0); 8000];
+        let records = 2100;
+        assert!(records * (stats.len() + 2) * 8 > 128 * 1024 * 1024);
+        // Reuse one input record; the writer must encode all >128 MiB, not a fake counter.
+        for _ in 0..records {
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: 0,
+                    stats: &stats,
+                })
+                .unwrap();
+        }
+        store.flush_batch().unwrap();
+        assert!(paths(temp.path(), "shards").is_empty());
+        let active = store.active.as_ref().unwrap();
+        let bytes = active.writer.get_ref().bytes_written;
+        assert_eq!(bytes, fs::metadata(&active.path).unwrap().len());
+        assert!(bytes < store.config.file_target_bytes);
+        assert_eq!(store.file_sequence, 1);
+        assert!(
+            store
+                .columns
+                .iter()
+                .map(|c| c.capacity() * 8)
+                .sum::<usize>()
+                <= BATCH_TARGET_BYTES
+        );
+        assert!(store.matrix.capacity() * 8 <= BATCH_TARGET_BYTES);
+        store.finish_stream().unwrap();
+        let files = paths(temp.path(), "shards");
+        assert_eq!(files.len(), 1);
+        assert_eq!(fs::metadata(&files[0]).unwrap().len(), bytes + 8);
+        let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+        let mut read_records = 0;
+        for batch in reader {
+            let batch = batch.unwrap();
+            let sequences = child(&batch, 1);
+            for &seq in sequences.values() {
+                assert_eq!(seq, read_records);
+                read_records += 1;
+            }
+            assert_eq!(child(&batch, 2).len(), stats.len() * sequences.len());
+            assert!(child(&batch, 2).values().iter().all(|&value| value == 0));
+        }
+        assert_eq!(read_records, records as u64);
+    }
+
+    #[test]
+    fn max_age_rotation_is_independent_of_source_timestamps() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        for time in [0, u64::MAX, 0] {
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats: &[],
+                })
+                .unwrap();
+        }
+        assert!(paths(temp.path(), "shards").is_empty());
+        store.active.as_mut().unwrap().started = Instant::now() - store.config.shard_interval;
+        store.tick().unwrap();
+        assert_eq!(paths(temp.path(), "shards").len(), 1);
+        assert!(store.active.is_none());
+        assert_eq!(
+            codec::scan(&paths(temp.path(), "shards")[0])
+                .unwrap()
+                .records,
+            3
+        );
+        store
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: &[],
+            })
+            .unwrap();
+        assert!(store.active.is_some());
+        assert_eq!(paths(temp.path(), "shards").len(), 1);
+        store
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: &[],
+            })
+            .unwrap();
+        store.finish_stream().unwrap();
+        assert_eq!(paths(temp.path(), "shards").len(), 2);
+        assert_eq!(store.next_record_seq, 5);
+    }
+
+    #[test]
+    fn names_limits_and_setup_status() {
+        assert_eq!(
+            series_names(1, 0),
+            (
+                "SAI_OBJECT_TYPE_PORT".into(),
+                "SAI_PORT_STAT_IF_IN_OCTETS".into()
+            )
+        );
+        for (id, prefix) in [
+            (21, "SAI_QUEUE_STAT_"),
+            (24, "SAI_BUFFER_POOL_STAT_"),
+            (26, "SAI_INGRESS_PRIORITY_GROUP_STAT_"),
+        ] {
+            assert!(series_names(id, 0).1.starts_with(prefix));
+        }
+        assert_eq!(
+            series_names(u32::MAX, 7).1,
+            "SAI_OBJECT_TYPE_UNKNOWN_4294967295_STAT_UNKNOWN_7"
+        );
         let temp = tempfile::tempdir().unwrap();
         let mut config = config(temp.path());
         config.require_dedicated_filesystem = true;
         assert!(config.validate_root().is_err());
-        config.root = PathBuf::from("/");
-        assert!(config.validate_root().is_err());
-        config = self::config(temp.path());
-        config.range_interval = Duration::ZERO;
+        config.shard_interval = Duration::ZERO;
         assert!(config.validate().is_err());
-        config.range_interval = Duration::from_secs(10);
+        config.shard_interval = Duration::from_secs(1);
+        config.file_target_bytes = 0;
         assert!(config.validate().is_err());
-        config.range_interval = Duration::from_millis(10);
-        config.max_bytes = SHARD_RESERVE_BYTES;
+        config.file_target_bytes = 1;
+        assert!(config.validate().is_ok());
+        config.max_bytes = BATCH_RESERVE_BYTES;
         assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn quota_and_estimate_limits_prevent_publication() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut config = config(temp.path());
-        config.max_bytes = SHARD_RESERVE_BYTES + 1;
-        let _lock = prepare_storage(&config).unwrap();
-        let mut committed_bytes = 2;
-        assert!(write_shard(
-            &config,
-            0,
-            ShardRows {
-                dropped_input_messages: 1,
-                ..Default::default()
-            },
-            &mut committed_bytes
-        )
-        .is_err());
-        assert_eq!(committed_bytes, 2);
-        assert!(write_shard(
-            &config,
-            1,
-            ShardRows {
-                dropped_input_messages: 1,
-                estimated_uncompressed_bytes: MAX_SHARD_UNCOMPRESSED_BYTES + 1,
-                ..Default::default()
-            },
-            &mut 0
-        )
-        .is_err());
-        assert!(shards(temp.path()).is_empty());
-        assert_eq!(
-            fs::read_dir(temp.path().join(".staging")).unwrap().count(),
-            0
-        );
-    }
-
-    #[test]
-    fn reducer_bounds_new_identity_state() {
-        let mut reducer = LocalReducer::new(&config(Path::new("")));
-        reducer.estimated_state_bytes = MAX_SHARD_UNCOMPRESSED_BYTES;
-        assert!(reducer
-            .add_gauges(SAIStatsRef {
-                observation_time: 1,
-                stats: &[stat("Ethernet0", 10)],
-            })
-            .is_err());
-        assert!(reducer.states.is_empty());
-    }
-
-    #[test]
-    fn writer_failure_sets_status_without_publication() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = config(temp.path());
-        let lock = prepare_storage(&config).unwrap();
         let (sender, receiver) = mpsc::sync_channel(1);
         let status = LocalStorageStatus::default();
-        // Deterministic failure independent of host disk free space or uid.
-        sender
-            .send(ShardRows {
-                dropped_input_messages: 1,
-                estimated_uncompressed_bytes: MAX_SHARD_UNCOMPRESSED_BYTES + 1,
-                ..Default::default()
+        assert!(LocalStorageActor::new(receiver, config, status.clone()).is_err());
+        assert!(status.failed());
+        assert!(sender.send(Arc::new(SAIStatsBatch::default())).is_err());
+    }
+
+    #[test]
+    fn standard_reader_accepts_embedded_schema_without_any_sidecars() {
+        let (bytes, _, expected) = small_stream();
+        let reader = StreamReader::try_new(Cursor::new(bytes), None).unwrap();
+        assert_eq!(reader.schema().metadata()["format_version"], FORMAT_VERSION);
+        assert_eq!(
+            reader.map(|b| b.unwrap().num_rows()).sum::<usize>(),
+            expected.len()
+        );
+    }
+
+    #[test]
+    fn independent_typed_reader_uses_ordered_metadata_and_dynamic_block_lengths() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        let mut expected = SAIStatsBatch::default();
+        let mut time = 0u64;
+        for rows in [3, 1, 5] {
+            for _ in 0..rows {
+                let stats = [stat("same|\"\n", time), stat("same|\"\n", u64::MAX - time)];
+                expected.push_record(u64::MAX - time, stats.clone());
+                store
+                    .add_record(SAIStatsRef {
+                        observation_time: u64::MAX - time,
+                        stats: &stats,
+                    })
+                    .unwrap();
+                time += 1;
+            }
+            store.flush_batch().unwrap();
+        }
+        store.finish_stream().unwrap();
+        let path = &paths(temp.path(), "shards")[0];
+        let reader = StreamReader::try_new(File::open(path).unwrap(), None).unwrap();
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 3);
+        assert_eq!(schema.metadata()["matrix_order"], "series-major");
+        let series: serde_json::Value = serde_json::from_str(&schema.metadata()["series"]).unwrap();
+        assert_eq!(series.as_array().unwrap().len(), 2);
+        assert_eq!(series[0], series[1]);
+        assert_eq!(series[0].as_object().unwrap().len(), 3);
+        assert_eq!(series[0]["object_name"], "same|\"\n");
+        for (batch, rows) in reader.zip([3, 1, 5]) {
+            let batch = batch.unwrap();
+            assert_eq!(batch.num_rows(), 1);
+            let timestamps = child(&batch, 0);
+            let sequences = child(&batch, 1);
+            let values = child(&batch, 2);
+            let t = timestamps.len();
+            assert_eq!(t, rows);
+            assert_eq!(values.len(), series.as_array().unwrap().len() * t);
+            for row in 0..t {
+                assert_eq!(timestamps.value(row), u64::MAX - sequences.value(row));
+                assert_eq!(values.value(row), sequences.value(row));
+                assert_eq!(values.value(t + row), timestamps.value(row));
+            }
+        }
+        assert_eq!(decoded(path), self::expected(&expected));
+    }
+
+    #[test]
+    fn interrupted_write_preserves_earlier_batches_without_a_writer_queue() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        store
+            .add_record(SAIStatsRef {
+                observation_time: 42,
+                stats: &[stat("a", u64::MAX)],
             })
             .unwrap();
-        writer_loop(config, receiver, status.clone(), lock);
-        assert!(status.failed());
-        assert!(shards(temp.path()).is_empty());
-    }
-
-    #[test]
-    fn failed_publication_removes_staging_and_does_not_advance_quota() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = config(temp.path());
-        let _lock = prepare_storage(&config).unwrap();
-        fs::remove_dir(temp.path().join("shards")).unwrap();
-        fs::write(temp.path().join("shards"), b"not a directory").unwrap();
-        let mut committed_bytes = 0;
-        assert!(write_shard(
-            &config,
-            0,
-            ShardRows {
-                dropped_input_messages: 1,
-                ..Default::default()
-            },
-            &mut committed_bytes
-        )
-        .is_err());
-        assert_eq!(committed_bytes, 0);
-        assert_eq!(
-            fs::read_dir(temp.path().join(".staging")).unwrap().count(),
-            0
-        );
-        assert_eq!(
-            fs::read(temp.path().join("shards")).unwrap(),
-            b"not a directory"
-        );
-    }
-
-    #[test]
-    fn writes_loss_only_sidecar_and_accounts_allocated_bytes() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = config(temp.path());
-        let _lock = prepare_storage(&config).unwrap();
-        let mut committed_bytes = directory_bytes(temp.path()).unwrap();
-        write_shard(
-            &config,
-            0,
-            ShardRows {
-                dropped_input_messages: 7,
-                dropped_shards: 2,
-                ..Default::default()
-            },
-            &mut committed_bytes,
+        store.flush_batch().unwrap();
+        let layout = &store.layout.as_ref().unwrap().schema;
+        let batch = RecordBatch::try_new(
+            Arc::clone(layout),
+            vec![
+                codec::list(UInt64Array::from(vec![0])),
+                codec::list(UInt64Array::from(vec![1])),
+                codec::list(UInt64Array::from(vec![0])),
+            ],
         )
         .unwrap();
-        let shards = shards(temp.path());
-        assert_eq!(shards.len(), 1);
-        assert!(shards[0].join(READY_FILE).is_file());
-        assert!(!shards[0].join(GAUGE_FILE).exists());
+        let active = store.active.as_mut().unwrap();
+        active.writer.get_mut().remaining = 8;
+        assert!(active.writer.write(&batch).is_err());
+        active.writer.get_mut().flush().unwrap();
+        let partial = active.path.clone();
+        assert_eq!(codec::scan(&partial).unwrap().records, 1);
+        drop(store);
+        drop(prepare_storage(&config(temp.path())).unwrap());
+        assert!(partial.exists());
+        assert!(paths(temp.path(), "shards").is_empty());
+        let samples = decoded(&partial);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].value, u64::MAX);
+    }
+
+    #[test]
+    fn actor_quota_failure_sets_status_and_disconnects_without_touching_archive() {
+        let temp = tempfile::tempdir().unwrap();
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let status = LocalStorageStatus::default();
+        let mut actor =
+            LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+        actor.store.config.max_bytes = actor.store.used_bytes + BATCH_RESERVE_BYTES - 1;
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(42, [stat("a", 42)]);
+        sender.send(Arc::new(batch)).unwrap();
+        actor.run();
+        assert!(status.failed());
+        assert!(sender.send(Arc::new(SAIStatsBatch::default())).is_err());
+        assert!(paths(temp.path(), "shards").is_empty());
+        assert!(paths(temp.path(), ".staging").is_empty());
+    }
+
+    #[test]
+    fn storage_child_sigkill_marker() {
+        let Some(root) = std::env::var_os("HFT_STORAGE_SIGKILL_CHILD_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let mut store = store(&root);
+        for value in [u64::MAX, 0, 1 << 63] {
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: value,
+                    stats: &[stat("a", value)],
+                })
+                .unwrap();
+            store.flush_batch().unwrap();
+        }
+        // An accepted in-memory row is deliberately not promised durable.
+        store
+            .add_record(SAIStatsRef {
+                observation_time: 1,
+                stats: &[stat("a", 99)],
+            })
+            .unwrap();
+        fs::write(root.join("child.ready"), b"three synced batches").unwrap();
+        loop {
+            thread::park();
+        }
+    }
+
+    #[test]
+    fn real_child_sigkill_reader_consumes_synced_prefix_without_repair() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "actor::local_storage::tests::storage_child_sigkill_marker",
+                "--nocapture",
+            ])
+            .env("HFT_STORAGE_SIGKILL_CHILD_ROOT", temp.path())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !temp.path().join("child.ready").exists() && Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                panic!("storage child exited before marker");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let ready = temp.path().join("child.ready").exists();
+        child.kill().unwrap();
+        let exit = child
+            .wait_timeout(Duration::from_secs(5))
+            .unwrap()
+            .expect("child did not exit");
+        assert!(ready, "child marker timed out");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(exit.signal(), Some(libc::SIGKILL));
+        assert!(paths(temp.path(), "shards").is_empty());
+        let files = paths(temp.path(), ".staging");
+        assert_eq!(files.len(), 1);
+        let bytes = fs::read(&files[0]).unwrap();
         assert_eq!(
-            fs::read_to_string(shards[0].join(LOSS_FILE)).unwrap(),
-            "{\"dropped_input_messages\":7,\"dropped_shards\":2}\n"
+            decoded(&files[0])
+                .iter()
+                .map(|s| s.value)
+                .collect::<Vec<_>>(),
+            vec![u64::MAX, 0, 1 << 63]
         );
-        assert_eq!(committed_bytes, directory_bytes(temp.path()).unwrap());
+        assert_eq!(fs::read(&files[0]).unwrap(), bytes);
+        drop(prepare_storage(&config(temp.path())).unwrap());
+        assert_eq!(fs::read(&files[0]).unwrap(), bytes);
+        assert_eq!(paths(temp.path(), ".staging"), files);
+        assert!(paths(temp.path(), "shards").is_empty());
     }
 }

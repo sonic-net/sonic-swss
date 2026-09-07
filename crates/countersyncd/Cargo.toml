@@ -18,10 +18,11 @@ tokio = { workspace = true }
 # Local columnar storage
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
-parquet = { workspace = true }
+arrow-ipc = { workspace = true }
 
 # Configuration and serialization
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Netlink for network operations
@@ -74,7 +75,6 @@ reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
 swss-common = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 # Test utilities  
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
