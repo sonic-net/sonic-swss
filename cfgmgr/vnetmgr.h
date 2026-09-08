@@ -5,6 +5,7 @@
 #include "producerstatetable.h"
 #include "orch.h"
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <vector>
 #include <memory>
@@ -62,6 +63,10 @@ private:
     bool createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
     bool deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
 
+    bool readSwitchState(bool & enabled, std::string & routerMac);
+    bool installDmacBypassIfNeeded(const std::string & vnetVni);
+    void removeDmacBypass(const std::string & vnetVni);
+
     Table m_appSwitchTable;
     ProducerStateTable m_appVnetRouteTunnelTable, m_appVnetRouteTable;
 
@@ -76,6 +81,7 @@ private:
         std::string endpoint;
     };
     std::unordered_map<std::string, MacRef> m_macRefs;
+    std::set<std::string> m_dmacBypassInstalledVnis;
 };
 
 } // namespace swss

@@ -102,6 +102,8 @@ struct VNetMgrTest : public ::testing::Test
         g_fail_route_add = false;
         g_fail_neigh_add = false;
         g_fail_fdb_add = false;
+        swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set(
+            "switch", {{"vxlan_router_mac", "00:00:5e:00:53:01"}});
     }
 
     void TearDown() override
@@ -618,6 +620,119 @@ TEST_F(VNetMgrTest, RouteTunnelDeleteAfterMigrationTearsDownAtCurrentEndpoint)
     ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.9"));
     ASSERT_FALSE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
     ASSERT_EQ(mgr.m_macRefs.count("Vnet1|02:00:00:00:00:01"), 0u);
+}
+
+static void enableAcceptAllInnerDmacs(swss::DBConnector *appDb, bool enable, const std::string & routerMac = "aa:bb:cc:dd:ee:ff")
+{
+    swss::Table t(appDb, APP_SWITCH_TABLE_NAME);
+    t.set("switch", {
+        {"vxlan_accept_all_inner_dmacs", enable ? "true" : "false"},
+        {"vxlan_router_mac", routerMac}});
+}
+
+TEST_F(VNetMgrTest, DmacBypassNotInstalledWhenSwitchAttrUnset)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_FALSE(cmdWasIssued("tc qdisc replace dev Vxlan1000 clsact"));
+    ASSERT_FALSE(cmdWasIssued("tc filter replace dev Vxlan1000"));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
+}
+
+TEST_F(VNetMgrTest, RouteDefersWhenSwitchTableMissing)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).del("switch");
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_FALSE(cmdWasIssued(" route replace "));
+    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
+    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
+    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
+}
+
+TEST_F(VNetMgrTest, DmacBypassInstalledOncePerVniWhenSwitchAttrTrue)
+{
+    enableAcceptAllInnerDmacs(m_app_db.get(), true);
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+
+    auto r1 = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r1));
+    ASSERT_TRUE(cmdHasTokens("tc qdisc replace dev Vxlan1000 clsact"));
+    ASSERT_TRUE(cmdHasTokens("tc filter replace dev Vxlan1000 ingress matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
+
+    mockCallArgs.clear();
+    auto r2 = makeTuple("Vnet1|192.168.2.2/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.3"}, {"mac_address", "02:00:00:00:00:02"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r2));
+    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
+    ASSERT_FALSE(cmdWasIssued("tc filter replace"));
+}
+
+TEST_F(VNetMgrTest, DmacBypassDefersRouteWhenSwitchMacMissing)
+{
+    enableAcceptAllInnerDmacs(m_app_db.get(), true, "");
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
+    ASSERT_FALSE(cmdWasIssued(" route replace "));
+    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
+    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
+
+    enableAcceptAllInnerDmacs(m_app_db.get(), true, "aa:bb:cc:dd:ee:ff");
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(cmdHasTokens("tc filter replace dev Vxlan1000 ingress matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
+    ASSERT_TRUE(cmdWasIssued(" route replace "));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
+}
+
+TEST_F(VNetMgrTest, DmacBypassRemovedOnVnetDelete)
+{
+    enableAcceptAllInnerDmacs(m_app_db.get(), true);
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
+        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
+         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
+    mockCallArgs.clear();
+
+    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
+    ASSERT_TRUE(cmdHasTokens("tc qdisc del dev Vxlan1000 clsact"));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
+}
+
+TEST_F(VNetMgrTest, DmacBypassDeleteSkippedWhenNeverInstalled)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    mockCallArgs.clear();
+
+    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
+    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
+    ASSERT_FALSE(cmdWasIssued("tc qdisc del"));
 }
 
 } // namespace vnetmgr_ut
