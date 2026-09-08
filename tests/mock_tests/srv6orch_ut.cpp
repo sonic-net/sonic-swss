@@ -62,21 +62,25 @@ protected:
         static_cast<Orch*>(gSrv6Orch)->doTask(*consumer);
     }
 
-    void runAppMySidTask(const string& key, const string& action, const string& vrf,
-                        const string& adj, bool is_set = true)
+    void runAppMySidRawTask(const string& key, const string& op, const vector<FieldValueTuple>& fvs)
     {
         auto* executor = static_cast<Orch*>(gSrv6Orch)->getExecutor(APP_SRV6_MY_SID_TABLE_NAME);
         auto* consumer = dynamic_cast<Consumer*>(executor);
         ASSERT_NE(consumer, nullptr);
+        deque<KeyOpFieldsValuesTuple> entries = {{key, op, fvs}};
+        consumer->addToSync(entries);
+        static_cast<Orch*>(gSrv6Orch)->doTask(*consumer);
+    }
+
+    void runAppMySidTask(const string& key, const string& action, const string& vrf,
+                        const string& adj, bool is_set = true)
+    {
         vector<FieldValueTuple> fvs = {{"action", action}};
         if (!vrf.empty())
             fvs.push_back({"vrf", vrf});
         if (!adj.empty())
             fvs.push_back({"adj", adj});
-        deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({key, is_set ? SET_COMMAND : DEL_COMMAND, fvs});
-        consumer->addToSync(entries);
-        static_cast<Orch*>(gSrv6Orch)->doTask(*consumer);
+        runAppMySidRawTask(key, is_set ? SET_COMMAND : DEL_COMMAND, fvs);
     }
 
     void addVrf(const string& vrf)
@@ -138,6 +142,25 @@ TEST_F(Srv6OrchMySidTest, MySidEntryCreation_WithoutDecapDscpMode)
 
     runCfgMySidTask(cfg_key, {});
     runAppMySidTask(app_key, "un", "default", "");
+}
+
+TEST_F(Srv6OrchMySidTest, InvalidMySidRequestsAreDiscarded)
+{
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _)).Times(0);
+
+    runAppMySidTask("32:16:16:0:fc00:0:1:40::", "invalid", "", "");
+    runAppMySidTask("32:16:16:0:fc00:0:1:41::", "end.t", "", "");
+    runAppMySidTask("32:16:16:0:fc00:0:1:42::", "end.x", "", "");
+    runAppMySidRawTask("32:16:16:0:fc00:0:1:43::", "INVALID", {});
+    runAppMySidTask("32:16:16", "end", "", "");
+    runAppMySidTask("129:16:16:0:fc00:0:1:44::", "end", "", "");
+    runAppMySidTask("32:16:16:0:192.0.2.1", "end", "", "");
+    runAppMySidTask("32:16:16:0:not-an-ip", "end", "", "");
+    runAppMySidTask("64:32:32:1:fc00:0:1:45::", "end", "", "");
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
 }
 
 TEST_F(Srv6OrchMySidTest, DuplicateEndReplayIsNoOp)
@@ -412,6 +435,83 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
     runAppMySidTask(key, "end", "", "");
     runAppMySidTask(key, "end", "", "");
     sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+}
+
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReadbackFailureRemainsPending)
+{
+    const string key = "32:16:16:0:fc00:0:1:25::";
+
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t, sai_attribute_t*) -> sai_status_t {
+        return SAI_STATUS_FAILURE;
+    };
+
+    runAppMySidTask(key, "end", "", "");
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_FALSE(pending.empty());
+}
+
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsSetFailureRollsBackInPlace)
+{
+    const string key = "32:16:16:0:fc00:0:1:26::";
+
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        for (uint32_t index = 0; index < attr_count; ++index)
+        {
+            if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T;
+            }
+            else if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE;
+            }
+            else
+            {
+                attrs[index].value.oid = SAI_NULL_OBJECT_ID;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    };
+
+    static vector<pair<sai_attr_id_t, int32_t>> set_attributes;
+    set_attributes.clear();
+    auto old_set = sai_srv6_api->set_my_sid_entry_attribute;
+    sai_srv6_api->set_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, const sai_attribute_t* attr) -> sai_status_t {
+        set_attributes.emplace_back(attr->id, attr->value.s32);
+        return set_attributes.size() == 2 ? SAI_STATUS_INVALID_ATTR_VALUE_0 : SAI_STATUS_SUCCESS;
+    };
+
+    runAppMySidTask(key, "end", "", "");
+    sai_srv6_api->set_my_sid_entry_attribute = old_set;
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    vector<pair<sai_attr_id_t, int32_t>> expected = {
+        {SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E},
+        {SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR,
+         SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+        {SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T},
+    };
+    EXPECT_EQ(set_attributes, expected);
 
     vector<string> pending;
     static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
