@@ -6,6 +6,8 @@
 #include "exec.h"
 #include "shellcmd.h"
 
+#define TC_CMD "/sbin/tc"
+
 #define VXLAN_TUNNEL "vxlan_tunnel"
 #define MAC_ADDRESS "mac_address"
 #define ENDPOINT "endpoint"
@@ -14,6 +16,7 @@
 #define VNET "vnet"
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
+#define VXLAN_ACCEPT_ALL_INNER_DMACS "vxlan_accept_all_inner_dmacs"
 #define RET_SUCCESS 0
 
 using namespace std;
@@ -123,6 +126,27 @@ static int cmdDeleteFdbEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, s
                 << " master";
     swss::exec(bridgeEntry.str(), res);
     return r;
+}
+
+static int cmdInstallDmacBypass(const std::string & vxlanDev, const std::string & brmac, std::string & res)
+{
+    {
+        ostringstream cmd;
+        cmd << TC_CMD " qdisc replace dev " << shellquote(vxlanDev) << " clsact";
+        int r = swss::exec(cmd.str(), res);
+        if (r != RET_SUCCESS) return r;
+    }
+    ostringstream cmd;
+    cmd << TC_CMD " filter replace dev " << shellquote(vxlanDev)
+        << " ingress matchall action pedit ex munge eth dst set " << shellquote(brmac);
+    return swss::exec(cmd.str(), res);
+}
+
+static int cmdRemoveDmacBypass(const std::string & vxlanDev, std::string & res)
+{
+    ostringstream cmd;
+    cmd << TC_CMD " qdisc del dev " << shellquote(vxlanDev) << " clsact";
+    return swss::exec(cmd.str(), res);
 }
 
 VNetMgr::VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tables) :
@@ -241,6 +265,7 @@ bool VNetMgr::doVnetDeleteTask(const KeyOpFieldsValuesTuple & t)
         SWSS_LOG_WARN("Vnet %s hasn't been created", vnetName.c_str());
         return true;
     }
+    removeDmacBypass(it->second.m_vni);
     m_vnetCache.erase(it);
     SWSS_LOG_INFO("Delete vnet %s", vnetName.c_str());
     return true;
@@ -371,6 +396,78 @@ bool VNetMgr::probeVxlanBridgePair(const VxlanKernelRouteInfo & info)
     return true;
 }
 
+bool VNetMgr::readSwitchState(bool & enabled, std::string & routerMac)
+{
+    std::vector<swss::FieldValueTuple> values;
+    if (!m_appSwitchTable.get("switch", values))
+    {
+        return false;
+    }
+    enabled = false;
+    routerMac.clear();
+    for (const auto & kv : values)
+    {
+        if (fvField(kv) == VXLAN_ACCEPT_ALL_INNER_DMACS)
+        {
+            const std::string & v = fvValue(kv);
+            enabled = (v == "true" || v == "True" || v == "TRUE" || v == "1");
+        }
+        else if (fvField(kv) == "vxlan_router_mac")
+        {
+            routerMac = fvValue(kv);
+        }
+    }
+    return true;
+}
+
+bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni)
+{
+    if (m_dmacBypassInstalledVnis.count(vnetVni))
+    {
+        return true;
+    }
+    bool enabled = false;
+    std::string routerMac;
+    if (!readSwitchState(enabled, routerMac))
+    {
+        SWSS_LOG_INFO("SWITCH_TABLE:switch not yet populated, deferring kernel route programming");
+        return false;
+    }
+    if (!enabled)
+    {
+        return true;
+    }
+    if (routerMac.empty())
+    {
+        SWSS_LOG_INFO("DMAC bypass enabled but vxlan_router_mac not yet in SWITCH_TABLE, deferring");
+        return false;
+    }
+    const std::string vxlanDev = getVxlanDeviceName(vnetVni);
+    std::string res;
+    if (cmdInstallDmacBypass(vxlanDev, routerMac, res) != RET_SUCCESS)
+    {
+        SWSS_LOG_WARN("DMAC bypass install on %s failed: %s", vxlanDev.c_str(), res.c_str());
+        return false;
+    }
+    m_dmacBypassInstalledVnis.insert(vnetVni);
+    SWSS_LOG_NOTICE("Installed inner-DMAC bypass (tc pedit -> %s) on %s", routerMac.c_str(), vxlanDev.c_str());
+    return true;
+}
+
+void VNetMgr::removeDmacBypass(const std::string & vnetVni)
+{
+    auto it = m_dmacBypassInstalledVnis.find(vnetVni);
+    if (it == m_dmacBypassInstalledVnis.end())
+    {
+        return;
+    }
+    const std::string vxlanDev = getVxlanDeviceName(vnetVni);
+    std::string res;
+    cmdRemoveDmacBypass(vxlanDev, res);
+    m_dmacBypassInstalledVnis.erase(it);
+    SWSS_LOG_NOTICE("Removed inner-DMAC bypass on %s", vxlanDev.c_str());
+}
+
 // Shared per-(vnet, MAC) refcount key.
 static inline std::string macRefKey(const std::string & vnet, const std::string & mac)
 {
@@ -423,6 +520,12 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
     {
         SWSS_LOG_INFO("Kernel route %s does not have parent vxlan and bridge ready, deferring",
                       info.m_routeName.c_str());
+        return false;
+    }
+
+    if (!installDmacBypassIfNeeded(info.m_vnetVni))
+    {
+        SWSS_LOG_INFO("Kernel route %s deferred: vxlan_router_mac not yet available", info.m_routeName.c_str());
         return false;
     }
 
