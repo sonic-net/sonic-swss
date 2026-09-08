@@ -385,8 +385,22 @@ fn complete_message(
                 "invalid IPC matrix nodes/raw byte limit".into(),
             ));
         }
-        let mut expanded = 0u64;
-        for buffer in buffers {
+        // The raw cap covers u64 data, not Arrow's validity bitmaps or offsets.
+        // Budget each buffer from the validated nodes: at most 128 MiB of data,
+        // ceil(T/8) + ceil(C*T/8) child validity bytes, two one-byte list validity
+        // buffers and 16 offset bytes. Slack cannot fund an oversized bitmap.
+        let values = counters * rows;
+        let raw_limits = [
+            1,
+            8,
+            rows.div_ceil(8),
+            rows * 8,
+            1,
+            8,
+            values.div_ceil(8),
+            values * 8,
+        ];
+        for (buffer, limit) in buffers.iter().zip(raw_limits) {
             let offset =
                 u64::try_from(buffer.offset()).map_err(|e| ArrowError::IpcError(e.to_string()))?;
             let length =
@@ -413,12 +427,11 @@ fn complete_message(
             } else {
                 length
             };
-            expanded = expanded
-                .checked_add(raw)
-                .filter(|&n| n <= MAX_RECORD_BYTES as u64 + 16)
-                .ok_or_else(|| {
-                    ArrowError::IpcError("IPC expanded buffers exceed raw limit".into())
-                })?;
+            if raw > limit as u64 {
+                return Err(ArrowError::IpcError(
+                    "IPC expanded buffer exceeds node byte limit".into(),
+                ));
+            }
         }
     }
     Ok(position + prefix + size as u64 + body as u64 <= len)
@@ -799,6 +812,114 @@ mod tests {
             ])
             .unwrap();
             assert!(validate_batch(&batch, 1).is_err());
+        }
+    }
+
+    #[test]
+    fn compressed_raw_limit_block_keeps_valid_suffix() {
+        use arrow_ipc::{writer::IpcWriteOptions, CompressionType};
+        let counters = 4095;
+        assert_eq!((counters + 1) * MAX_ROWS * 8, MAX_RECORD_BYTES);
+        let layout = Layout::new(&vec![SAIStat::new("a", 1, 0, 0); counters]).unwrap();
+        let options = IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::ZSTD))
+            .unwrap();
+        let mut writer =
+            StreamWriter::try_new_with_options(Vec::new(), &layout.schema, options).unwrap();
+        let mut starts = Vec::new();
+        for (block, rows) in [1, MAX_ROWS, 1].into_iter().enumerate() {
+            starts.push(writer.get_ref().len());
+            let batch = RecordBatch::try_new(
+                Arc::clone(&layout.schema),
+                vec![
+                    list(vec![block as u64; rows].into()),
+                    list(vec![42; counters * rows].into()),
+                ],
+            )
+            .unwrap();
+            writer.write(&batch).unwrap();
+        }
+        writer.finish().unwrap();
+        let mut bytes = writer.into_inner().unwrap();
+        for &start in &starts {
+            assert!(complete_message(
+                &mut io::Cursor::new(&bytes),
+                bytes.len() as u64,
+                start as u64,
+                false,
+                counters,
+            )
+            .unwrap());
+        }
+        let mut arrow_count = 0;
+        let mut blocks = 0;
+        for batch in StreamReader::try_new(io::Cursor::new(&bytes), None).unwrap() {
+            let batch = batch.unwrap();
+            let [times, values] = validate_batch(&batch, counters).unwrap();
+            assert_eq!(times.len(), [1, MAX_ROWS, 1][blocks]);
+            assert!(times.values().iter().all(|&time| time == blocks as u64));
+            assert!(values.values().iter().all(|&value| value == 42));
+            arrow_count += values.len();
+            blocks += 1;
+        }
+        assert_eq!(blocks, 3);
+        assert_eq!(arrow_count, 16_781_310);
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("raw-limit.arrow.partial");
+        std::fs::write(&path, &bytes).unwrap();
+        let mut count = 0;
+        let mut suffix_count = 0;
+        read_shard(&path, |sample| {
+            let expected_time = if count < counters {
+                0
+            } else if count < counters * (MAX_ROWS + 1) {
+                1
+            } else {
+                2
+            };
+            assert_eq!(sample.observation_time, expected_time);
+            assert_eq!(sample.stat_index as usize, count % counters);
+            assert_eq!(sample.value, 42);
+            count += 1;
+            suffix_count += usize::from(sample.observation_time == 2);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(count, arrow_count);
+        assert_eq!(suffix_count, counters);
+
+        let start = starts[1];
+        let size = i32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()) as usize;
+        let message = arrow_ipc::root_as_message(&bytes[start + 8..start + 8 + size]).unwrap();
+        let buffers = message.header_as_record_batch().unwrap().buffers().unwrap();
+        assert_eq!(buffers.len(), 8);
+        assert!(buffers.iter().all(|buffer| buffer.length() >= 8));
+        let body = start + 8 + size;
+        let value_start = body + buffers.get(7).offset() as usize;
+        let bitmap_start = body + buffers.get(6).offset() as usize;
+        let value_bytes = (counters * MAX_ROWS * 8) as i64;
+        assert_eq!(
+            i64::from_le_bytes(bytes[value_start..value_start + 8].try_into().unwrap()),
+            value_bytes
+        );
+        // Neither one extra u64 nor a bitmap inflated into the data budget may
+        // pass preflight, even though the encoded body remains tiny.
+        for (offset, oversized) in [
+            (value_start, value_bytes + 8),
+            (bitmap_start, (counters * MAX_ROWS).div_ceil(8) as i64 + 1),
+        ] {
+            let original: [u8; 8] = bytes[offset..offset + 8].try_into().unwrap();
+            bytes[offset..offset + 8].copy_from_slice(&oversized.to_le_bytes());
+            let error = complete_message(
+                &mut io::Cursor::new(&bytes),
+                bytes.len() as u64,
+                start as u64,
+                false,
+                counters,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("node byte limit"));
+            bytes[offset..offset + 8].copy_from_slice(&original);
         }
     }
 

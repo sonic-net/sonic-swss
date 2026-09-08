@@ -363,11 +363,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging(&args.log_level, &args.log_format);
     args.normalize_capacities();
 
-    let mut interrupt_signal =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    let mut terminate_signal =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-
     if let Some(value) = args.socket_readiness_timeout_ms {
         warn!(
             "--socket-readiness-timeout-ms={} is deprecated and ignored; netlink reads are event-driven",
@@ -556,6 +551,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         (None, None)
     };
+
+    // Keep default SIGINT/SIGTERM termination during critical startup: synchronous
+    // initialization (notably SwssActor's Redis connection) can block indefinitely.
+    let mut interrupt_signal =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let mut terminate_signal =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     info!("Starting actor tasks...");
 

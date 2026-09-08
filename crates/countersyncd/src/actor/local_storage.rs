@@ -67,14 +67,17 @@ impl LocalStorageConfig {
 
     pub fn validate_root(&self) -> Result<(), String> {
         self.validate()?;
-        let metadata = fs::symlink_metadata(&self.root).map_err(|e| e.to_string())?;
+        // Strip trailing separators and `/.` before lstat; either spelling would
+        // otherwise follow a symlink at the root. Do not canonicalize it away.
+        let root: PathBuf = self.root.components().collect();
+        let metadata = fs::symlink_metadata(&root).map_err(|e| e.to_string())?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(format!(
                 "local storage root {} must be an existing directory, not a symbolic link",
                 self.root.display()
             ));
         }
-        if self.require_dedicated_filesystem && !is_mount_point(&self.root)? {
+        if self.require_dedicated_filesystem && !is_mount_point(&root)? {
             return Err(format!(
                 "local storage root {} must be a dedicated mount point",
                 self.root.display()
@@ -468,7 +471,8 @@ impl LocalStorageActor {
 
     /// One isolated blocking storage loop: no secondary queue or whole-shard drops.
     /// Run on a dedicated blocking worker, never on a shared async runtime thread.
-    /// Shutdown closes the receiver before draining all accepted messages.
+    /// Shutdown closes the receiver to new sends, then drains accepted buffered
+    /// messages and flushes them before returning (unless storage fails).
     pub fn run(mut self) {
         let result = tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -515,15 +519,27 @@ fn is_mount_point(path: &Path) -> Result<bool, String> {
     Ok(metadata.dev() != fs::metadata(parent).map_err(|e| e.to_string())?.dev())
 }
 
-fn ensure_directory(path: &Path) -> Result<(), String> {
+fn validate_storage_device(root_dev: u64, child_dev: u64, path: &Path) -> Result<(), String> {
+    if child_dev != root_dev {
+        return Err(format!(
+            "{} must be on the same filesystem as the local storage root",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_directory(path: &Path, root_dev: u64) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() || !m.is_dir() => Err(format!(
             "{} must be a directory, not a symbolic link",
             path.display()
         )),
-        Ok(_) => Ok(()),
+        Ok(metadata) => validate_storage_device(root_dev, metadata.dev(), path),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(|e| e.to_string())
+            fs::create_dir(path).map_err(|e| e.to_string())?;
+            let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+            validate_storage_device(root_dev, metadata.dev(), path)
         }
         Err(e) => Err(e.to_string()),
     }
@@ -545,8 +561,11 @@ fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
             io::Error::last_os_error()
         ));
     }
-    ensure_directory(&config.root.join(".staging"))?;
-    ensure_directory(&config.root.join("shards"))?;
+    // Reservation uses root's statvfs, and publication renames between these
+    // directories. Reject nested filesystems before writing any IPC data.
+    let root_dev = fs::metadata(&config.root).map_err(|e| e.to_string())?.dev();
+    ensure_directory(&config.root.join(".staging"), root_dev)?;
+    ensure_directory(&config.root.join("shards"), root_dev)?;
     sync_directory(&config.root).map_err(|e| e.to_string())?;
     // Leave regular files from every writer generation untouched. Readers decide
     // format support; all abandoned files remain charged against the disk quota.
@@ -1061,6 +1080,52 @@ mod tests {
                 prepare_storage(&config(if entry == "root" { &path } else { root.path() }))
                     .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn root_symlink_spelling_cannot_bypass_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        fs::create_dir(&target).unwrap();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        for suffix in ["", "/", "/."] {
+            let path = PathBuf::from(format!("{}{suffix}", link.display()));
+            for dedicated in [false, true] {
+                let mut config = config(&path);
+                config.require_dedicated_filesystem = dedicated;
+                assert!(prepare_storage(&config)
+                    .unwrap_err()
+                    .contains("not a symbolic link"));
+                assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+            }
+            let path = PathBuf::from(format!("{}{suffix}", target.display()));
+            drop(prepare_storage(&config(&path)).unwrap());
+            fs::remove_file(target.join(LOCK_FILE)).unwrap();
+            fs::remove_dir(target.join(".staging")).unwrap();
+            fs::remove_dir(target.join("shards")).unwrap();
+        }
+    }
+
+    #[test]
+    fn storage_children_must_share_root_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_dev = fs::metadata(temp.path()).unwrap().dev();
+        for child in [".staging", "shards"] {
+            let path = temp.path().join(child);
+            ensure_directory(&path, root_dev).unwrap();
+            ensure_directory(&path, root_dev).unwrap();
+            assert!(validate_storage_device(root_dev, root_dev, &path).is_ok());
+            let error = validate_storage_device(root_dev, root_dev ^ 1, &path).unwrap_err();
+            assert!(error.contains("same filesystem"));
+            assert!(error.contains(child));
+            // Inject a mismatched root device to exercise the metadata check,
+            // without requiring privileged mounts or a second host filesystem.
+            assert!(ensure_directory(&path, root_dev ^ 1)
+                .unwrap_err()
+                .contains("same filesystem"));
+            assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
         }
     }
 

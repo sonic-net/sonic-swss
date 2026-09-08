@@ -50,9 +50,11 @@
 //! exact timestamps, values, full series names, record/stat order and uniqueness
 //! against deterministic input. Audit memory scales with records, not metrics.
 //!
-//! An independent watchdog bounds each segment, including blocking joins. On a
-//! hard timeout/quota violation it emits JSON and exits; the reported private run
-//! directory may remain for inspection/removal. Normal/error unwinding cleans it.
+//! A dedicated deadline thread bounds each segment, including readback, cleanup
+//! and sampler joins. Hard timeout exits immediately with status 124, without
+//! logging or cleanup. Quota/accounting diagnostics are best-effort JSON from a
+//! separate sampler. Private run directories may remain after either abort.
+//! Trial-summary output and between-segment setup are outside the deadline.
 //! Disk peaks are sampled every 10 ms (plus final usage), not exact high-water
 //! marks. RSS is sampled from /proc/self/statm every 10ms during writing until
 //! storage worker join; a separate overall sample peak includes readback. Write
@@ -66,7 +68,7 @@
 //! produce loss.json. Bounded storage queues backpressure rather than discard.
 //! No compression numerator includes dropped input.
 //!
-//! CLI examples (append to `cargo bench -p countersyncd --bench local_storage_perf --`):
+//! CLI examples (append to `cargo bench -p countersyncd --features local-storage-benchmark --bench local_storage_perf --`):
 //! - Smoke: --root <disk> --mode udp --streaming --records 16 --counters 8
 //!   --repeats 1 --rate 0 --audit-values --require-lossless
 //! - Four-pattern throughput: --root <disk> --mode udp --streaming --records 60000
@@ -154,8 +156,11 @@ enum Mode {
 #[command(about = "Verified local-storage metrics/s; JSONL on stdout", long_about = None)]
 struct Args {
     /// Existing real-disk parent for private temporary trial directories (no tmpfs).
+    #[arg(long, required_unless_present = "self_check")]
+    root: Option<PathBuf>,
+    /// Run pure benchmark regression checks and exit without disk/network work.
     #[arg(long)]
-    root: PathBuf,
+    self_check: bool,
     /// Retain trials under this initially empty directory for independent readers.
     /// Must be on the same disk filesystem as --root; all trials share the quota.
     #[arg(long)]
@@ -373,6 +378,52 @@ fn generator_self_check() {
     );
 }
 
+fn self_check() {
+    generator_self_check();
+    assert!(Args::try_parse_from(["bench"]).is_err());
+    assert!(Args::try_parse_from(["bench", "--self-check"]).is_ok());
+    assert_eq!(metric_count(600_000, 8000), 4_800_000_000);
+    assert_eq!(metric_count(6_000_000, 8000), 48_000_000_000);
+    let before = pacing_target(metric_count(536_870, 8000), 1_000_000);
+    let after = pacing_target(metric_count(536_871, 8000), 1_000_000);
+    assert!(after > before);
+    assert_eq!(after, Duration::from_millis(4_294_968));
+    let names = [
+        "00000000000000000030-0000000042-00000000000000000000.arrow",
+        "00000000000000000020-0000000042-00000000000000000001.arrow",
+        "00000000000000000010-0000000042-00000000000000000002.arrow",
+    ]
+    .map(PathBuf::from);
+    assert_eq!(
+        sort_shards(vec![names[2].clone(), names[0].clone(), names[1].clone()]).unwrap(),
+        names
+    );
+    assert_eq!(shard_sequence(Path::new("1-42-10.arrow")).unwrap(), 10);
+    assert_eq!(
+        sort_shards(vec![
+            PathBuf::from("1-42-10.arrow"),
+            PathBuf::from("1-42-2.arrow")
+        ])
+        .unwrap(),
+        [
+            PathBuf::from("1-42-2.arrow"),
+            PathBuf::from("1-42-10.arrow")
+        ]
+    );
+    for name in [
+        "unknown.arrow",
+        "1-42-bad.arrow",
+        "1-42-0.partial",
+        "1-42-18446744073709551616.arrow",
+    ] {
+        assert!(shard_sequence(Path::new(name)).is_err());
+    }
+    println!(
+        "{}",
+        json!({"event":"benchmark_self_check", "status":"passed"})
+    );
+}
+
 fn mix(mut x: u64) -> u64 {
     x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
@@ -431,7 +482,44 @@ fn rss_bytes() -> io::Result<u64> {
         .ok_or_else(|| io::Error::other("RSS byte count overflow"))
 }
 
+struct HardDeadline {
+    cancel: mpsc::Sender<()>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl HardDeadline {
+    fn new(timeout: Duration) -> Self {
+        let start = Instant::now();
+        let (cancel, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            if matches!(
+                rx.recv_timeout(timeout.saturating_sub(start.elapsed())),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                // No I/O, allocator work, exit handlers or destructors: another
+                // thread may hold any of their locks or be stuck in filesystem I/O.
+                unsafe { libc::_exit(124) }
+            }
+        });
+        Self {
+            cancel,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for HardDeadline {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 struct Watchdog {
+    // Dropped only after Watchdog::drop has joined the accounting sampler.
+    _deadline: HardDeadline,
     stop: mpsc::Sender<()>,
     handle: Option<thread::JoinHandle<()>>,
     peak: Arc<AtomicU64>,
@@ -441,6 +529,7 @@ struct Watchdog {
 }
 impl Watchdog {
     fn new(root: &Path, args: &Args, counts: Arc<Counts>) -> Result<Self> {
+        let deadline = HardDeadline::new(Duration::from_secs(args.timeout_secs));
         let (stop, rx) = mpsc::channel();
         let peak = Arc::new(AtomicU64::new(0));
         let high = peak.clone();
@@ -451,11 +540,13 @@ impl Watchdog {
         let writing_high = writing_rss_peak.clone();
         let writing_active = writing.clone();
         let root = root.to_path_buf();
-        let deadline = Duration::from_secs(args.timeout_secs);
         let counters = args.counters;
         let handle = thread::spawn(move || {
             let start = Instant::now();
-            while rx.recv_timeout(Duration::from_millis(10)).is_err() {
+            while matches!(
+                rx.recv_timeout(Duration::from_millis(10)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
                 let rss = rss_bytes();
                 if let Ok(bytes) = rss.as_ref() {
                     rss_high.fetch_max(*bytes, Ordering::Relaxed);
@@ -467,9 +558,7 @@ impl Watchdog {
                 if let Ok(bytes) = &disk {
                     high.fetch_max(*bytes, Ordering::Relaxed);
                 }
-                let reason = if start.elapsed() >= deadline {
-                    Some("timeout")
-                } else if disk.is_err() {
+                let reason = if disk.is_err() {
                     Some("disk_accounting_error")
                 } else if rss.is_err() {
                     Some("rss_accounting_error")
@@ -483,17 +572,18 @@ impl Watchdog {
                         "{}",
                         json!({"event":"aborted_segment", "status":reason,
                         "root":root, "seconds":start.elapsed().as_secs_f64(),
-                        "sent_metrics":counts.sent.load(Ordering::Relaxed) * counters as u64,
-                        "received_metrics":counts.received.load(Ordering::Relaxed) * counters as u64,
+                        "sent_metrics":metric_count(counts.sent.load(Ordering::Relaxed), counters),
+                        "received_metrics":metric_count(counts.received.load(Ordering::Relaxed), counters),
                         "decoded_metrics":counts.decoded.load(Ordering::Relaxed),
                         "persisted_metrics":null, "disk_allocated_peak_sampled":high.load(Ordering::Relaxed)})
                     );
                     let _ = io::stdout().flush();
-                    std::process::exit(124);
+                    unsafe { libc::_exit(124) }
                 }
             }
         });
         Ok(Self {
+            _deadline: deadline,
             stop,
             handle: Some(handle),
             peak,
@@ -512,11 +602,21 @@ impl Drop for Watchdog {
     }
 }
 
-fn pace(start: Instant, metrics: usize, rate: u64) {
+fn metric_count(records: u64, counters: usize) -> u64 {
+    records
+        .checked_mul(counters as u64)
+        .expect("validated metric count fits u64")
+}
+
+fn pacing_target(metrics: u64, rate: u64) -> Duration {
+    Duration::from_secs_f64(metrics as f64 / rate as f64)
+}
+
+fn pace(start: Instant, metrics: u64, rate: u64) {
     if rate == 0 {
         return;
     }
-    let target = Duration::from_secs_f64(metrics as f64 / rate as f64);
+    let target = pacing_target(metrics, rate);
     if let Some(delay) = target.checked_sub(start.elapsed()) {
         thread::sleep(delay);
     }
@@ -659,7 +759,7 @@ async fn udp(
     let send = thread::spawn(move || {
         let result = (|| {
             for i in 0..count {
-                pace(start, i * counters, rate);
+                pace(start, metric_count(i as u64, counters), rate);
                 let payload = if streaming {
                     generate(&mut base, offset + i);
                     &base
@@ -785,6 +885,36 @@ struct Verification {
     loss_file_bytes: u64,
 }
 
+fn shard_sequence(path: &Path) -> Result<u64> {
+    let invalid = || format!("unexpected shard name: {}", path.display());
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(invalid)?;
+    let parts: Vec<_> = stem.split('-').collect();
+    if path
+        .extension()
+        .is_none_or(|extension| extension != "arrow")
+        || parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(invalid().into());
+    }
+    Ok(parts[2].parse()?)
+}
+
+fn sort_shards(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    // Private segments have one writer; its sequence survives wall-clock rollback.
+    let mut ordered = paths
+        .into_iter()
+        .map(|path| Ok((shard_sequence(&path)?, path)))
+        .collect::<Result<Vec<_>>>()?;
+    ordered.sort_by_key(|(sequence, _)| *sequence);
+    Ok(ordered.into_iter().map(|(_, path)| path).collect())
+}
+
 fn verify(
     root: &Path,
     args: &Args,
@@ -810,11 +940,10 @@ fn verify(
         // These are private, fresh trial roots, not an existing data migration.
         result.errors += 1;
     }
-    let mut paths = fs::read_dir(root.join("shards"))?
+    let paths = fs::read_dir(root.join("shards"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<io::Result<Vec<_>>>()?;
-    paths.sort();
-    for path in paths {
+    for path in sort_shards(paths)? {
         if path
             .extension()
             .is_none_or(|extension| extension != "arrow")
@@ -991,7 +1120,7 @@ fn verify(
         .map_err(io::Error::other)?;
     }
     if result.records != raw_records.iter().filter(|seen| **seen).count() as u64
-        || result.persisted != result.records * args.counters as u64
+        || result.persisted != metric_count(result.records, args.counters)
         || (args.reader_api_check
             && (api_samples != result.persisted
                 || api_records != result.records
@@ -1006,6 +1135,10 @@ fn verify(
 }
 
 fn run(args: Args) -> Result<()> {
+    if args.self_check {
+        self_check();
+        return Ok(());
+    }
     if args.full_queue && (!matches!(args.mode, Mode::Standalone) || args.records < 2) {
         return Err("--full-queue requires --mode standalone and at least two records".into());
     }
@@ -1032,7 +1165,11 @@ fn run(args: Args) -> Result<()> {
         generator_self_check();
     }
     let process_initial_rss = rss_bytes()?;
-    let root = fs::canonicalize(&args.root)?;
+    let root = fs::canonicalize(
+        args.root
+            .as_ref()
+            .ok_or("--root is required for performance runs")?,
+    )?;
     if !root.is_dir() {
         return Err("--root must be an existing directory".into());
     }
@@ -1184,8 +1321,8 @@ fn run(args: Args) -> Result<()> {
                         let start = Instant::now();
                         let mut prebuilt = batches.into_iter();
                         for begin in (offset..offset + count).step_by(batch_records) {
-                            let before = counts.sent.load(Ordering::Relaxed) as usize;
-                            pace(start, before * args.counters, args.rate);
+                            let before = counts.sent.load(Ordering::Relaxed);
+                            pace(start, metric_count(before, args.counters), args.rate);
                             let batch = if args.streaming {
                                 generate_batch(begin)
                             } else {
@@ -1225,7 +1362,7 @@ fn run(args: Args) -> Result<()> {
                         counts.received.store(sent, Ordering::Relaxed);
                         counts
                             .decoded
-                            .store(sent * args.counters as u64, Ordering::Relaxed);
+                            .store(metric_count(sent, args.counters), Ordering::Relaxed);
                         (
                             start,
                             Audit {
@@ -1295,8 +1432,9 @@ fn run(args: Args) -> Result<()> {
                     udp_totals.receiver_seconds += audit.receiver_seconds;
                     udp_totals.decoder_seconds += audit.decoder_seconds;
                     failed |= status.failed();
-                    sent += counts.sent.load(Ordering::Relaxed) * args.counters as u64;
-                    received += counts.received.load(Ordering::Relaxed) * args.counters as u64;
+                    sent += metric_count(counts.sent.load(Ordering::Relaxed), args.counters);
+                    received +=
+                        metric_count(counts.received.load(Ordering::Relaxed), args.counters);
                     decoded += counts.decoded.load(Ordering::Relaxed);
                     current = allocated(monitored_root, &mut HashSet::new())?;
                     finalized_allocated_bytes += allocated(segment.path(), &mut HashSet::new())?;
@@ -1312,7 +1450,7 @@ fn run(args: Args) -> Result<()> {
                     }
                     drop(guard);
                 }
-                let expected = (args.records * args.counters) as u64;
+                let expected = metric_count(args.records as u64, args.counters);
                 if (readback_errors.is_empty() && totals.persisted > decoded)
                     || (args.full_queue && full_queue_events == 0)
                 {
@@ -1459,5 +1597,70 @@ fn main() {
     if let Err(error) = run(Args::parse()) {
         println!("{}", json!({"event":"error", "error":error.to_string()}));
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pure_checks() {
+        use super::*;
+
+        run(Args::try_parse_from(["bench", "--self-check"]).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn watchdog_blocked_sampler_and_stdout() {
+        use super::*;
+        use std::process::{Command, Stdio};
+        use wait_timeout::ChildExt;
+
+        const CHILD: &str = "LOCAL_STORAGE_BENCH_WATCHDOG_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let deadline = HardDeadline::new(Duration::from_secs(1));
+            let (ready, rx) = mpsc::channel();
+            let handle = thread::spawn(move || {
+                let mut stdout = io::stdout().lock();
+                ready.send(()).unwrap();
+                // The parent deliberately never drains this pipe. Simulate the
+                // accounting sampler blocking while holding the stdout lock.
+                for _ in 0..64 {
+                    stdout.write_all(&[b'x'; 64 * 1024]).unwrap();
+                }
+                thread::sleep(Duration::from_secs(60));
+            });
+            rx.recv().unwrap();
+            let (stop, _rx) = mpsc::channel();
+            let guard = Watchdog {
+                _deadline: deadline,
+                stop,
+                handle: Some(handle),
+                peak: Arc::new(AtomicU64::new(0)),
+                rss_peak: Arc::new(AtomicU64::new(0)),
+                writing_rss_peak: Arc::new(AtomicU64::new(0)),
+                writing: Arc::new(AtomicBool::new(false)),
+            };
+            drop(guard); // Must not cancel the deadline before the blocked join.
+            panic!("blocked sampler unexpectedly returned");
+        }
+        let start = Instant::now();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "benchmark::tests::watchdog_blocked_sampler_and_stdout",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = child.wait_timeout(Duration::from_secs(5)).unwrap();
+        if status.is_none() {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("hard deadline failed with blocked sampler/stdout");
+        }
+        assert_eq!(status.unwrap().code(), Some(124));
+        assert!(start.elapsed() >= Duration::from_secs(1));
     }
 }
