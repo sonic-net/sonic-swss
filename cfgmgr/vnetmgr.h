@@ -5,6 +5,7 @@
 #include "producerstatetable.h"
 #include "orch.h"
 #include <map>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <string>
@@ -43,8 +44,8 @@ public:
         std::string m_dstIp;
         std::string m_srcIp;
         std::string m_srcMac;
-        std::string m_vni;         // encap VNI (route VNI, may differ from vnet VNI)
-        std::string m_vnetVni;     // vnet's own VNI (identifies the shared Vxlan<vnetVni> netdev)
+        std::string m_vni;
+        std::string m_vnetVni;
         std::string m_vnet;
         std::string m_prefix;
     } VxlanKernelRouteInfo;
@@ -68,6 +69,13 @@ private:
     std::map<std::string, VnetInfo> m_vnetCache;
     std::map<std::string, VxlanRouteTunnelInfo> m_vnetRouteTunnelCache;
     std::map<std::string, VxlanKernelRouteInfo> m_kernelRouteTunnelCache;
+
+    struct MacRef
+    {
+        int count;
+        std::string endpoint;
+    };
+    std::unordered_map<std::string, MacRef> m_macRefs;
 };
 
 } // namespace swss
