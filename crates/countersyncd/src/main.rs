@@ -17,14 +17,14 @@ use crate::actor::{
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
     ipfix::IpfixActor,
+    otel::{OtelActor, OtelActorConfig},
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
-    otel::{OtelActor, OtelActorConfig},
 };
 
 // Internal exit codes
-use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED};
 use crate::utilities::{set_comm_capacity, set_comm_log_interval_secs, ChannelLabel};
+use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED};
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -146,6 +146,29 @@ fn classify_otel_join(
     }
 }
 
+fn parse_positive_capacity(value: &str) -> Result<usize, String> {
+    let capacity = value
+        .parse::<usize>()
+        .map_err(|e| format!("invalid channel capacity '{value}': {e}"))?;
+    if capacity == 0 {
+        return Err("channel capacity must be at least 1".to_string());
+    }
+    Ok(capacity)
+}
+
+const MAX_BATCH_CHANNEL_CAPACITY: usize = 64;
+
+fn clamp_batch_capacity(option: &str, capacity: usize) -> usize {
+    if capacity > MAX_BATCH_CHANNEL_CAPACITY {
+        warn!(
+            "{option}={capacity} exceeds the effective maximum {MAX_BATCH_CHANNEL_CAPACITY}; clamping for bounded batch memory"
+        );
+        MAX_BATCH_CHANNEL_CAPACITY
+    } else {
+        capacity
+    }
+}
+
 /// SONiC High Frequency Telemetry Counter Sync Daemon
 ///
 /// This application processes high-frequency telemetry data from SONiC switches,
@@ -231,6 +254,7 @@ struct Args {
     #[arg(
         long,
         default_value = "1024",
+        value_parser = parse_positive_capacity,
         help = "Set the channel capacity for IPFIX records from data_netlink to ipfix actor"
     )]
     data_netlink_capacity: usize,
@@ -238,16 +262,18 @@ struct Args {
     /// Channel capacity for stats_reporter communication  
     #[arg(
         long,
-        default_value = "1024",
-        help = "Set the channel capacity for stats_reporter actor"
+        default_value = "32",
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for stats_reporter; values above 64 are accepted and clamped to 64"
     )]
     stats_reporter_capacity: usize,
 
     /// Channel capacity for counter_db communication  
     #[arg(
         long,
-        default_value = "1024",
-        help = "Set the channel capacity for counter_db actor"
+        default_value = "32",
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for counter_db; values above 64 are accepted and clamped to 64"
     )]
     counter_db_capacity: usize,
 
@@ -267,7 +293,8 @@ struct Args {
     #[arg(
         long,
         default_value = "1024",
-        help = "Set the channel capacity for otel actor"
+        value_parser = parse_positive_capacity,
+        help = "Set the SAI stats batch channel capacity for otel; must be positive, with no upper clamp"
     )]
     otel_capacity: usize,
 
@@ -288,13 +315,23 @@ struct Args {
     otel_flush_timeout_ms: u64,
 }
 
+impl Args {
+    fn normalize_capacities(&mut self) {
+        self.stats_reporter_capacity =
+            clamp_batch_capacity("--stats-reporter-capacity", self.stats_reporter_capacity);
+        self.counter_db_capacity =
+            clamp_batch_capacity("--counter-db-capacity", self.counter_db_capacity);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
+    args.normalize_capacities();
 
     if let Some(value) = args.socket_readiness_timeout_ms {
         warn!(
@@ -332,7 +369,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Netlink data socket uses event-driven readiness notifications");
     info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
-        args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
+        args.data_netlink_capacity,
+        args.stats_reporter_capacity,
+        args.counter_db_capacity,
+        args.otel_capacity
     );
 
     set_comm_log_interval_secs(args.comm_stats_interval);
@@ -347,9 +387,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (otel_shutdown_sender, _otel_shutdown_receiver) = tokio::sync::oneshot::channel();
 
     set_comm_capacity(ChannelLabel::ControlNetlinkToDataNetlink, 10);
-    set_comm_capacity(ChannelLabel::DataNetlinkToIpfixRecords, args.data_netlink_capacity);
+    set_comm_capacity(
+        ChannelLabel::DataNetlinkToIpfixRecords,
+        args.data_netlink_capacity,
+    );
     set_comm_capacity(ChannelLabel::SwssToIpfixTemplates, 10);
-    set_comm_capacity(ChannelLabel::IpfixToStatsReporter, args.stats_reporter_capacity);
+    set_comm_capacity(
+        ChannelLabel::IpfixToStatsReporter,
+        args.stats_reporter_capacity,
+    );
     set_comm_capacity(ChannelLabel::IpfixToCounterDb, args.counter_db_capacity);
     set_comm_capacity(ChannelLabel::IpfixToOtel, args.otel_capacity);
 
@@ -366,8 +412,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     data_netlink.add_recipient(ipfix_record_sender);
 
-    let control_netlink =
-        ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
+    let control_netlink = ControlNetlinkActor::new(family.as_str(), group.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
 
@@ -465,15 +510,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Control netlink actor terminated");
     });
 
-    // Use spawn_blocking to ensure IPFIX actor runs on a dedicated thread
-    // This is important for thread-local variables
-    let mut ipfix_handle = tokio::task::spawn_blocking(move || {
-        info!("IPFIX actor started on dedicated thread");
-        // Create a new runtime for async operations within this blocking thread
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
-        rt.block_on(async move {
-            IpfixActor::run(ipfix).await;
-        });
+    let mut ipfix_handle = spawn(async move {
+        info!("IPFIX actor started");
+        IpfixActor::run(ipfix).await;
         info!("IPFIX actor terminated");
     });
 
@@ -547,8 +586,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     error!(
         "Critical actor '{}' triggered daemon shutdown: {}",
-        first_exit.actor_name,
-        first_exit.message
+        first_exit.actor_name, first_exit.message
     );
 
     data_netlink_handle.abort();
@@ -579,11 +617,17 @@ mod tests {
 
     #[test]
     fn test_defaults() {
-        let args = parse(&["countersyncd"]).unwrap();
+        let mut args = parse(&["countersyncd"]).unwrap();
+        assert_eq!(args.otel_capacity, 1024);
+        args.normalize_capacities();
         assert_eq!(args.socket_readiness_timeout_ms, None);
         assert_eq!(args.netlink_rcvbuf, 4194304);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
+        assert_eq!(args.stats_reporter_capacity, 32);
+        assert_eq!(args.counter_db_capacity, 32);
+        assert_eq!(args.data_netlink_capacity, 1024);
+        assert_eq!(args.otel_capacity, 1024);
         assert!(!args.enable_stats);
         assert!(!args.enable_counter_db);
         assert!(!args.enable_otel);
@@ -610,6 +654,58 @@ mod tests {
     fn test_comm_stats_interval_custom() {
         let args = parse(&["countersyncd", "--comm-stats-interval", "60"]).unwrap();
         assert_eq!(args.comm_stats_interval, 60);
+    }
+
+    #[test]
+    fn test_batch_channel_capacity_legacy_values_are_accepted() {
+        for option in [
+            "--stats-reporter-capacity",
+            "--counter-db-capacity",
+            "--otel-capacity",
+        ] {
+            assert!(parse(&["countersyncd", option, "0"]).is_err());
+            assert!(parse(&["countersyncd", option, "65"]).is_ok());
+            assert!(parse(&["countersyncd", option, "1024"]).is_ok());
+            assert!(parse(&["countersyncd", option, "64"]).is_ok());
+        }
+        assert!(parse(&["countersyncd", "--data-netlink-capacity", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_batch_channel_capacity_is_clamped() {
+        assert_eq!(clamp_batch_capacity("--test", 1), 1);
+        assert_eq!(clamp_batch_capacity("--test", 64), 64);
+        assert_eq!(clamp_batch_capacity("--test", 65), 64);
+        assert_eq!(clamp_batch_capacity("--test", 1024), 64);
+    }
+
+    #[test]
+    fn test_otel_capacity_is_not_clamped() {
+        for capacity in ["1", "64", "65", "1024", "2048"] {
+            let mut args = parse(&[
+                "countersyncd",
+                "--otel-capacity",
+                capacity,
+                "--stats-reporter-capacity",
+                "1024",
+                "--counter-db-capacity",
+                "1024",
+            ])
+            .unwrap();
+            let expected = capacity.parse::<usize>().unwrap();
+            assert_eq!(args.otel_capacity, expected);
+            args.normalize_capacities();
+            assert_eq!(args.otel_capacity, expected);
+            let (sender, _receiver) = channel::<()>(args.otel_capacity);
+            assert_eq!(sender.max_capacity(), expected);
+            assert_eq!(args.stats_reporter_capacity, 64);
+            assert_eq!(args.counter_db_capacity, 64);
+        }
+    }
+
+    #[test]
+    fn test_otel_capacity_zero_rejected() {
+        assert!(parse(&["countersyncd", "--otel-capacity", "0"]).is_err());
     }
 
     #[test]

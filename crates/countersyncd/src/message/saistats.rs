@@ -1,103 +1,42 @@
-//! SAI (Switch Abstraction Interface) Statistics Message Types
-//!
-//! This module defines the data structures for representing SAI statistics
-//! extracted from IPFIX data records. SAI statistics contain information
-//! about switch hardware counters and performance metrics.
+//! SAI statistics exchanged between countersyncd actors.
 
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
-use ahash::HashMap;
-use byteorder::{ByteOrder, NetworkEndian};
-use ipfixrw::parser::{DataRecordValue, FieldSpecifier};
+/// Base of the SAI extension identifier range.
+pub const EXTENSIONS_RANGE_BASE: u32 = 0x2000_0000;
 
-/// Represents a single SAI statistic entry containing counter information.
+/// Decode the SONiC HFT private enterprise-number layout.
 ///
-/// SAI statistics are extracted from IPFIX data records and contain
-/// information about switch hardware counters and their current values.
+/// The high half contains the SAI object type and the low half contains the
+/// statistic ID. The top bit in each half selects the SAI extension range.
+pub fn decode_sai_ids(enterprise_number: u32) -> (u32, u32) {
+    let mut type_id = (enterprise_number & 0x7fff_0000) >> 16;
+    let mut stat_id = enterprise_number & 0x0000_7fff;
+
+    if enterprise_number & 0x8000_0000 != 0 {
+        type_id = type_id.saturating_add(EXTENSIONS_RANGE_BASE);
+    }
+    if enterprise_number & 0x0000_8000 != 0 {
+        stat_id = stat_id.saturating_add(EXTENSIONS_RANGE_BASE);
+    }
+
+    (type_id, stat_id)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SAIStat {
-    /// Object name corresponding to the label/object ID mapping
-    pub object_name: String,
-    /// SAI object type identifier (with possible extensions)
+    /// Shared because a template reuses the same object name for every sample.
+    pub object_name: Arc<str>,
     pub type_id: u32,
-    /// SAI statistic identifier (with possible extensions)
     pub stat_id: u32,
-    /// Current counter value
     pub counter: u64,
 }
 
-/// Base value for extended SAI identifiers.
-///
-/// When the extension bit is set in the enterprise number,
-/// this value is added to the base type_id or stat_id to create
-/// an extended identifier space.
-const EXTENSIONS_RANGE_BASE: u32 = 0x2000_0000;
-
 impl SAIStat {
-    /// Creates a SAIStat directly from IPFIX field specifier and data record value.
-    ///
-    /// # Arguments
-    ///
-    /// * `field_spec` - IPFIX field specifier containing identifiers
-    /// * `value` - IPFIX data record value containing counter data
-    /// * `object_name_lookup` - Precomputed map from label/object ID to object name
-    ///
-    /// # Returns
-    ///
-    /// A new SAIStat instance with decoded identifiers and resolved object name
-    pub fn from_ipfix(
-        field_spec: &FieldSpecifier,
-        value: &DataRecordValue,
-        object_name_lookup: Option<&HashMap<u16, String>>,
-    ) -> Self {
-        let enterprise_number = field_spec.enterprise_number.unwrap_or(0);
-        let label = field_spec.information_element_identifier;
-
-        // Extract extension flags from enterprise number
-        let type_id_extension = (enterprise_number & 0x8000_0000) != 0;
-        let stat_id_extension = (enterprise_number & 0x0000_8000) != 0;
-
-        // Extract base identifiers from enterprise number
-        let mut type_id = (enterprise_number & 0x7FFF_0000) >> 16;
-        let mut stat_id = enterprise_number & 0x0000_7FFF;
-
-        // Apply extensions if flags are set
-        if type_id_extension {
-            type_id = type_id.saturating_add(EXTENSIONS_RANGE_BASE);
-        }
-
-        if stat_id_extension {
-            stat_id = stat_id.saturating_add(EXTENSIONS_RANGE_BASE);
-        }
-
-        // Extract counter value from data record
-        let counter = match value {
-            DataRecordValue::Bytes(bytes) => {
-                if bytes.len() >= 8 {
-                    NetworkEndian::read_u64(bytes)
-                } else {
-                    // Handle shorter byte arrays by padding with zeros
-                    let mut padded = [0u8; 8];
-                    let copy_len = std::cmp::min(bytes.len(), 8);
-                    padded[8 - copy_len..].copy_from_slice(&bytes[..copy_len]);
-                    NetworkEndian::read_u64(&padded)
-                }
-            }
-            _ => {
-                // For non-byte values, default to 0
-                // Could potentially handle other DataRecordValue variants here
-                0
-            }
-        };
-
-        // Resolve object name from label via a precomputed O(1) lookup map.
-        let object_name = object_name_lookup
-            .and_then(|lookup| lookup.get(&label))
-            .cloned()
-            .unwrap_or_else(|| format!("unknown_{}", label));
-
-        SAIStat {
-            object_name,
+    #[allow(dead_code)]
+    pub fn new(object_name: impl Into<Arc<str>>, type_id: u32, stat_id: u32, counter: u64) -> Self {
+        Self {
+            object_name: object_name.into(),
             type_id,
             stat_id,
             counter,
@@ -105,359 +44,261 @@ impl SAIStat {
     }
 }
 
-/// Collection of SAI statistics with an associated observation timestamp.
-///
-/// This structure represents a snapshot of multiple SAI statistics
-/// collected at a specific point in time, as indicated by the observation_time.
 #[derive(Debug, Clone)]
 pub struct SAIStats {
-    /// Timestamp when these statistics were observed (typically from IPFIX observation time field)
     pub observation_time: u64,
-    /// Vector of individual SAI statistic entries
     pub stats: Vec<SAIStat>,
 }
 
+impl PartialEq for SAIStats {
+    fn eq(&self, other: &Self) -> bool {
+        if self.observation_time != other.observation_time || self.stats.len() != other.stats.len()
+        {
+            return false;
+        }
+        let mut counts = std::collections::HashMap::with_capacity(self.stats.len());
+        for stat in &self.stats {
+            *counts.entry(stat).or_insert(0usize) += 1;
+        }
+        for stat in &other.stats {
+            let Some(count) = counts.get_mut(stat) else {
+                return false;
+            };
+            if *count == 0 {
+                return false;
+            }
+            *count -= 1;
+        }
+        counts.values().all(|count| *count == 0)
+    }
+}
+
+impl Eq for SAIStats {}
+
 impl SAIStats {
-    /// Creates a new SAIStats instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `observation_time` - Timestamp when statistics were collected
-    /// * `stats` - Vector of SAI statistics
-    ///
-    /// # Returns
-    ///
-    /// A new SAIStats instance
+    #[allow(dead_code)]
     pub fn new(observation_time: u64, stats: Vec<SAIStat>) -> Self {
         Self {
             observation_time,
             stats,
         }
     }
+}
 
-    /// Returns the number of statistics in this collection.
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SAIStatsRecord {
+    observation_time: u64,
+    stats: Range<usize>,
+}
+
+/// A borrowed record in a [`SAIStatsBatch`].
+#[derive(Debug, Clone, Copy)]
+pub struct SAIStatsRef<'a> {
+    pub observation_time: u64,
+    pub stats: &'a [SAIStat],
+}
+
+/// Flat representation of many samples.
+///
+/// Keeping one stat vector per channel item avoids a vector and Arc allocation
+/// for every IPFIX record while preserving record boundaries and wire order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SAIStatsBatch {
+    records: Vec<SAIStatsRecord>,
+    stats: Vec<SAIStat>,
+}
+
+pub struct SAIStatsBatchChunks {
+    records: std::iter::Peekable<std::vec::IntoIter<SAIStatsRecord>>,
+    stats: std::vec::IntoIter<SAIStat>,
+    target_counters: usize,
+}
+
+impl Iterator for SAIStatsBatchChunks {
+    type Item = SAIStatsBatch;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut batch = SAIStatsBatch::default();
+        while let Some(record) = self.records.peek() {
+            let record_len = record.stats.len();
+            if !batch.is_empty()
+                && batch.counter_count().saturating_add(record_len) > self.target_counters
+            {
+                break;
+            }
+            let record = self.records.next().expect("record was peeked");
+            batch.push_record(
+                record.observation_time,
+                self.stats.by_ref().take(record_len),
+            );
+        }
+        (!batch.is_empty()).then_some(batch)
+    }
+}
+
+impl SAIStatsBatch {
+    pub fn with_capacity(records: usize, stats: usize) -> Self {
+        Self {
+            records: Vec::with_capacity(records),
+            stats: Vec::with_capacity(stats),
+        }
+    }
+
+    pub fn from_stats(stats: SAIStats) -> Self {
+        let mut batch = Self::with_capacity(1, stats.stats.len());
+        batch.push_record(stats.observation_time, stats.stats);
+        batch
+    }
+
+    pub fn push_record(&mut self, observation_time: u64, stats: impl IntoIterator<Item = SAIStat>) {
+        let start = self.stats.len();
+        self.stats.extend(stats);
+        let end = self.stats.len();
+        self.records.push(SAIStatsRecord {
+            observation_time,
+            stats: start..end,
+        });
+    }
+
+    pub fn reserve(&mut self, records: usize, counters: usize) {
+        self.records.reserve(records);
+        self.stats.reserve(counters);
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn counter_count(&self) -> usize {
         self.stats.len()
     }
 
-    /// Returns true if this collection contains no statistics.
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.stats.is_empty()
+        self.records.is_empty()
     }
 
-    /// Returns an iterator over the statistics.
-    #[allow(dead_code)]
-    pub fn iter(&self) -> std::slice::Iter<SAIStat> {
-        self.stats.iter()
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = SAIStatsRef<'_>> {
+        self.records.iter().map(|record| SAIStatsRef {
+            observation_time: record.observation_time,
+            stats: &self.stats[record.stats.clone()],
+        })
     }
-}
 
-impl PartialEq for SAIStats {
-    /// Compares two SAIStats instances for equality.
-    ///
-    /// Two SAIStats are considered equal if they have the same observation_time
-    /// and contain the same set of statistics (order independent).
-    ///
-    /// # Arguments
-    ///
-    /// * `other` - The other SAIStats instance to compare with
-    ///
-    /// # Returns
-    ///
-    /// true if the instances are equal, false otherwise
-    fn eq(&self, other: &Self) -> bool {
-        // Quick checks first
-        if self.observation_time != other.observation_time {
-            return false;
+    /// Group whole records toward a target size. A larger record is emitted alone.
+    pub fn into_record_batches(self, target_counters: usize) -> SAIStatsBatchChunks {
+        assert!(target_counters > 0);
+        let Self { records, stats } = self;
+        SAIStatsBatchChunks {
+            records: records.into_iter().peekable(),
+            stats: stats.into_iter(),
+            target_counters,
         }
-
-        if self.stats.len() != other.stats.len() {
-            return false;
-        }
-
-        // For small collections, use the existing approach
-        if self.stats.len() <= 10 {
-            return self.stats.iter().all(|stat| other.stats.contains(stat));
-        }
-
-        // For larger collections, use a more efficient approach
-        use std::collections::HashSet;
-        let self_set: HashSet<&SAIStat> = self.stats.iter().collect();
-        let other_set: HashSet<&SAIStat> = other.stats.iter().collect();
-        self_set == other_set
     }
 }
 
-/// Type alias for Arc-wrapped SAIStats to enable efficient sharing between actors.
-///
-/// This type is used for passing SAI statistics messages between different
-/// parts of the system without expensive cloning operations.
-pub type SAIStatsMessage = Arc<SAIStats>;
-
-/// Extension trait for creating SAIStatsMessage instances.
-#[allow(dead_code)]
-pub trait SAIStatsMessageExt {
-    /// Creates a new SAIStatsMessage from SAIStats.
-    ///
-    /// # Arguments
-    ///
-    /// * `stats` - The SAIStats instance to wrap in an Arc
-    ///
-    /// # Returns
-    ///
-    /// A new SAIStatsMessage (Arc<SAIStats>)
-    fn into_message(self) -> SAIStatsMessage;
-
-    /// Creates a new SAIStatsMessage with the given observation time and statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `observation_time` - Timestamp when statistics were collected
-    /// * `stats` - Vector of SAI statistics
-    ///
-    /// # Returns
-    ///
-    /// A new SAIStatsMessage (Arc<SAIStats>)
-    fn from_parts(observation_time: u64, stats: Vec<SAIStat>) -> SAIStatsMessage;
-}
-
-impl SAIStatsMessageExt for SAIStats {
-    fn into_message(self) -> SAIStatsMessage {
-        Arc::new(self)
-    }
-
-    fn from_parts(observation_time: u64, stats: Vec<SAIStat>) -> SAIStatsMessage {
-        Arc::new(SAIStats::new(observation_time, stats))
+impl From<SAIStats> for SAIStatsBatch {
+    fn from(value: SAIStats) -> Self {
+        Self::from_stats(value)
     }
 }
+
+pub type SAIStatsBatchMessage = Arc<SAIStatsBatch>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ipfixrw::parser::{DataRecordValue, FieldSpecifier};
 
-    fn build_object_name_lookup(entries: &[(u16, &str)]) -> HashMap<u16, String> {
-        entries
-            .iter()
-            .map(|(object_id, name)| (*object_id, (*name).to_string()))
-            .collect()
-    }
-
-    /// Helper function to create a test field specifier
-    fn create_field_spec(element_id: u16, enterprise_number: Option<u32>) -> FieldSpecifier {
-        FieldSpecifier::new(enterprise_number, element_id, 8)
-    }
-
-    /// Helper function to create test byte data
-    fn create_byte_value(value: u64) -> DataRecordValue {
-        let mut bytes = [0u8; 8];
-        NetworkEndian::write_u64(&mut bytes, value);
-        DataRecordValue::Bytes(bytes.to_vec())
+    #[test]
+    fn decodes_sai_ids_with_distinct_halves() {
+        assert_eq!(decode_sai_ids(0x1234_0567), (0x1234, 0x0567));
+        assert_eq!(
+            decode_sai_ids(0x9234_8567),
+            (
+                EXTENSIONS_RANGE_BASE + 0x1234,
+                EXTENSIONS_RANGE_BASE + 0x0567
+            )
+        );
     }
 
     #[test]
-    fn test_sai_stat_from_ipfix_basic() {
-        let field_spec = create_field_spec(2, Some(0x12340000)); // label 2, type_id 0x1234, stat_id 0
-        let value = create_byte_value(12345);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0"), (2, "Ethernet1")]);
+    fn flat_batch_preserves_record_boundaries_and_order() {
+        let mut batch = SAIStatsBatch::with_capacity(2, 3);
+        batch.push_record(
+            10,
+            [
+                SAIStat::new("Ethernet0", 1, 2, 3),
+                SAIStat::new("Ethernet4", 1, 2, 4),
+            ],
+        );
+        batch.push_record(20, [SAIStat::new("Ethernet8", 1, 2, 5)]);
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "Ethernet1");
-        assert_eq!(stat.type_id, 0x1234);
-        assert_eq!(stat.stat_id, 0);
-        assert_eq!(stat.counter, 12345);
+        let records: Vec<_> = batch.iter().collect();
+        assert_eq!(batch.record_count(), 2);
+        assert_eq!(batch.counter_count(), 3);
+        assert_eq!(records[0].observation_time, 10);
+        assert_eq!(records[0].stats[1].object_name.as_ref(), "Ethernet4");
+        assert_eq!(records[1].observation_time, 20);
+        assert_eq!(records[1].stats[0].counter, 5);
     }
 
     #[test]
-    fn test_sai_stat_from_ipfix_with_extensions() {
-        // Test with both extension bits set
-        let enterprise_number = 0x80008000 | 0x12340567;
-        let field_spec = create_field_spec(1, Some(enterprise_number)); // label 1
-        let value = create_byte_value(99999);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0")]);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "Ethernet0");
-        assert_eq!(stat.type_id, 0x1234 + EXTENSIONS_RANGE_BASE);
-        assert_eq!(stat.stat_id, 0x0567 + EXTENSIONS_RANGE_BASE);
-        assert_eq!(stat.counter, 99999);
+    fn counter_bounded_batches_preserve_complete_records() {
+        let mut batch = SAIStatsBatch::default();
+        for observation_time in 1..=3 {
+            batch.push_record(
+                observation_time,
+                (0..4).map(|counter| SAIStat::new("Ethernet0", 1, counter, counter as u64)),
+            );
+        }
+        let batches = batch.into_record_batches(8).collect::<Vec<_>>();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].counter_count(), 8);
+        assert_eq!(batches[0].record_count(), 2);
+        assert_eq!(batches[1].counter_count(), 4);
+        assert_eq!(batches[1].iter().next().unwrap().observation_time, 3);
     }
 
     #[test]
-    fn test_sai_stat_from_ipfix_short_bytes() {
-        let field_spec = create_field_spec(1, Some(0x00010002));
-        let short_bytes = vec![0x12, 0x34]; // Only 2 bytes instead of 8
-        let value = DataRecordValue::Bytes(short_bytes);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0")]);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "Ethernet0");
-        assert_eq!(stat.counter, 0x1234); // Should be padded correctly
+    fn large_record_is_kept_whole_between_small_records() {
+        let mut batch = SAIStatsBatch::default();
+        for (time, counters) in [(1, 2), (2, 8193), (3, 2)] {
+            batch.push_record(
+                time,
+                (0..counters).map(|value| SAIStat::new("Ethernet0", 1, 2, value)),
+            );
+        }
+        let batches = batch.into_record_batches(8192).collect::<Vec<_>>();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[1].counter_count(), 8193);
+        for (index, batch) in batches.iter().enumerate() {
+            assert_eq!(batch.record_count(), 1);
+            assert_eq!(
+                batch.iter().next().unwrap().observation_time,
+                index as u64 + 1
+            );
+        }
     }
 
     #[test]
-    fn test_sai_stat_from_ipfix_non_bytes() {
-        let field_spec = create_field_spec(1, Some(0x00050006));
-        let value = DataRecordValue::String("test".to_string());
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0")]);
+    fn equality_preserves_duplicate_multiplicity() {
+        let duplicate = SAIStat::new("Ethernet0", 1, 2, 3);
+        let left = SAIStats::new(1, vec![duplicate.clone(), duplicate]);
+        let right = SAIStats::new(
+            1,
+            vec![
+                SAIStat::new("Ethernet0", 1, 2, 3),
+                SAIStat::new("Ethernet4", 1, 2, 3),
+            ],
+        );
+        assert_ne!(left, right);
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "Ethernet0");
-        assert_eq!(stat.counter, 0); // Should default to 0 for non-byte values
-    }
-
-    #[test]
-    fn test_sai_stat_from_ipfix_invalid_label() {
-        let field_spec = create_field_spec(5, Some(0x00010002)); // label 5, out of range
-        let value = create_byte_value(1000);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0"), (2, "Ethernet1")]); // Only 2 objects
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "unknown_5"); // Fallback for invalid label
-        assert_eq!(stat.type_id, 1);
-        assert_eq!(stat.stat_id, 2);
-        assert_eq!(stat.counter, 1000);
-    }
-
-    #[test]
-    fn test_sai_stat_from_ipfix_zero_label() {
-        let field_spec = create_field_spec(0, Some(0x00010002)); // label 0, invalid
-        let value = create_byte_value(1000);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0")]);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "unknown_0"); // Fallback for zero label
-        assert_eq!(stat.type_id, 1);
-        assert_eq!(stat.stat_id, 2);
-        assert_eq!(stat.counter, 1000);
-    }
-
-
-    #[test]
-    fn test_sai_stat_from_ipfix_uses_object_ids_mapping() {
-        let field_spec = create_field_spec(20, Some(0x00010002));
-        let value = create_byte_value(1000);
-        let object_name_lookup = build_object_name_lookup(&[(10, "Ethernet0"), (20, "Ethernet8")]);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        assert_eq!(stat.object_name, "Ethernet8");
-        assert_eq!(stat.counter, 1000);
-    }
-
-    #[test]
-    fn test_sai_stat_from_ipfix_without_lookup_uses_unknown_label() {
-        let field_spec = create_field_spec(20, Some(0x00010002));
-        let value = create_byte_value(1000);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, None);
-
-        assert_eq!(stat.object_name, "unknown_20");
-        assert_eq!(stat.counter, 1000);
-    }
-
-    #[test]
-    fn test_sai_stats_creation() {
-        let stats = vec![
-            SAIStat {
-                object_name: "Ethernet0".to_string(),
-                type_id: 100,
-                stat_id: 200,
-                counter: 1000,
-            },
-            SAIStat {
-                object_name: "Ethernet1".to_string(),
-                type_id: 101,
-                stat_id: 201,
-                counter: 2000,
-            },
-        ];
-
-        let sai_stats = SAIStats::new(12345, stats.clone());
-
-        assert_eq!(sai_stats.observation_time, 12345);
-        assert_eq!(sai_stats.len(), 2);
-        assert!(!sai_stats.is_empty());
-        assert_eq!(sai_stats.stats, stats);
-    }
-
-    #[test]
-    fn test_sai_stats_equality() {
-        let stats1 = vec![
-            SAIStat {
-                object_name: "Ethernet0".to_string(),
-                type_id: 100,
-                stat_id: 200,
-                counter: 1000,
-            },
-            SAIStat {
-                object_name: "Ethernet1".to_string(),
-                type_id: 101,
-                stat_id: 201,
-                counter: 2000,
-            },
-        ];
-
-        let stats2 = vec![
-            SAIStat {
-                object_name: "Ethernet1".to_string(),
-                type_id: 101,
-                stat_id: 201,
-                counter: 2000,
-            },
-            SAIStat {
-                object_name: "Ethernet0".to_string(),
-                type_id: 100,
-                stat_id: 200,
-                counter: 1000,
-            },
-        ];
-
-        let sai_stats1 = SAIStats::new(12345, stats1);
-        let sai_stats2 = SAIStats::new(12345, stats2.clone());
-        let sai_stats3 = SAIStats::new(12346, stats2);
-
-        assert_eq!(sai_stats1, sai_stats2); // Same content, different order
-        assert_ne!(sai_stats1, sai_stats3); // Different observation time
-    }
-
-    #[test]
-    fn test_sai_stats_message_creation() {
-        let stats = vec![SAIStat {
-            object_name: "Ethernet0".to_string(),
-            type_id: 100,
-            stat_id: 200,
-            counter: 1000,
-        }];
-
-        let message1 = SAIStats::new(12345, stats.clone()).into_message();
-        let message2 = SAIStats::from_parts(12345, stats);
-
-        assert_eq!(message1.observation_time, message2.observation_time);
-        assert_eq!(message1.stats, message2.stats);
-    }
-
-    #[test]
-    fn test_extensions_range_overflow() {
-        // Test that we handle potential overflow gracefully
-        let enterprise_number = 0x80008000 | 0x7FFF7FFF; // Maximum values with extensions
-        let field_spec = create_field_spec(1, Some(enterprise_number));
-        let value = create_byte_value(555);
-        let object_name_lookup = build_object_name_lookup(&[(1, "Ethernet0")]);
-
-        let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
-
-        // Should use saturating_add to prevent overflow
-        assert_eq!(stat.type_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
-        assert_eq!(stat.stat_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
-        assert_eq!(stat.object_name, "Ethernet0");
+        let reordered = SAIStats::new(
+            1,
+            vec![
+                SAIStat::new("Ethernet4", 1, 2, 3),
+                SAIStat::new("Ethernet0", 1, 2, 3),
+            ],
+        );
+        assert_eq!(right, reordered);
     }
 }

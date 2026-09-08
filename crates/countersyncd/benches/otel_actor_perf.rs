@@ -1,4 +1,7 @@
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use std::{net::SocketAddr, thread};
 
@@ -6,14 +9,14 @@ use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criteri
 use tokio::runtime::Builder;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::{Request, Response, Status};
 use tonic::transport::Server;
+use tonic::{Request, Response, Status};
 
 use countersyncd::actor::otel::{OtelActor, OtelActorConfig};
-use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
+use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsBatch};
 
 mod ipfix_bench_data;
-use ipfix_bench_data::{PreparedDataset, datasets};
+use ipfix_bench_data::{datasets, PreparedDataset};
 
 /// Simple mock collector service that just counts exports.
 struct MockMetricsService {
@@ -21,18 +24,30 @@ struct MockMetricsService {
 }
 
 #[tonic::async_trait]
-impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsService for MockMetricsService {
+impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsService
+    for MockMetricsService
+{
     async fn export(
         &self,
-        _request: Request<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest>,
-    ) -> Result<Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>, Status> {
+        _request: Request<
+            opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest,
+        >,
+    ) -> Result<
+        Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>,
+        Status,
+    > {
         self.exports.fetch_add(1, Ordering::Relaxed);
         Ok(Response::new(Default::default()))
     }
 }
 
 /// Start a mock OTLP collector on an ephemeral port, returning its endpoint and a shutdown handle.
-fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()>, Arc<AtomicU64>) {
+fn start_mock_collector() -> (
+    String,
+    oneshot::Sender<()>,
+    thread::JoinHandle<()>,
+    Arc<AtomicU64>,
+) {
     let (addr_tx, addr_rx) = std::sync::mpsc::channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let exports = Arc::new(AtomicU64::new(0));
@@ -68,17 +83,17 @@ fn start_mock_collector() -> (String, oneshot::Sender<()>, thread::JoinHandle<()
     (format!("http://{}", addr), shutdown_tx, handle, exports)
 }
 
-fn build_stats_message(counters: usize, seed: u64) -> SAIStatsMessage {
+fn build_stats_message(counters: usize, seed: u64) -> Arc<SAIStatsBatch> {
     let stats = (0..counters)
         .map(|idx| SAIStat {
-            object_name: format!("obj_{idx}"),
+            object_name: format!("obj_{idx}").into(),
             type_id: 1 + (idx as u32 % 4),
             stat_id: 100 + idx as u32,
             counter: seed.wrapping_add(idx as u64),
         })
         .collect::<Vec<_>>();
 
-    Arc::new(SAIStats::new(seed, stats))
+    Arc::new(SAIStats::new(seed, stats).into())
 }
 
 async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::Duration, usize) {
@@ -135,7 +150,7 @@ fn bench_otel_actor(c: &mut Criterion) {
     for spec in datasets() {
         let bench_id = BenchmarkId::from_parameter(spec.name);
         group.throughput(Throughput::Elements(
-            spec.total_counters_per_iteration() as u64,
+            spec.total_counters_per_iteration() as u64
         ));
 
         let endpoint = endpoint_clone.clone();
@@ -185,7 +200,10 @@ fn bench_otel_actor(c: &mut Criterion) {
     let _ = collector_shutdown.send(());
     let _ = collector_handle.join();
 
-    println!("Total mock exports: {}", exports_counter_total.load(Ordering::Relaxed));
+    println!(
+        "Total mock exports: {}",
+        exports_counter_total.load(Ordering::Relaxed)
+    );
 }
 
 criterion_group!(benches, bench_otel_actor);
