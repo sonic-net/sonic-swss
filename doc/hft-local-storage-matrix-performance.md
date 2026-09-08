@@ -273,6 +273,43 @@ was performed.
 
 ## Reproduction
 
+### Current Benchmark Checks
+
+The current disk benchmark is opt-in via `local-storage-benchmark` (disabled by
+default), so default aggregate Cargo tests/benches do not select it. Performance
+runs still require an explicit `--root`; selecting all features and all targets
+also opts into that requirement. Use the targeted integration test below for
+disk-free regression coverage, rather than executing the custom benchmark as
+a libtest harness. Run these commands inside the CI-like Bookworm container:
+
+```bash
+timeout --signal=TERM --kill-after=30s 600s env RUSTFLAGS=-Dwarnings \
+  cargo test --locked -p countersyncd --features local-storage-benchmark \
+  --test local_storage_benchmark
+timeout --signal=TERM --kill-after=30s 600s env RUSTFLAGS=-Dwarnings \
+  cargo bench --locked -p countersyncd --features local-storage-benchmark \
+  --bench local_storage_perf -- --self-check
+# Small current-format disk smoke; substitute an existing real-disk bind mount.
+timeout --signal=TERM --kill-after=30s 600s env RUSTFLAGS=-Dwarnings \
+  cargo bench --locked -p countersyncd --features local-storage-benchmark \
+  --bench local_storage_perf -- --root /path/to/disk --mode standalone \
+  --full-queue --records 32 --counters 8 --patterns mixed --repeats 1 \
+  --rate 0 --local-storage-file-bytes 1 --reader-api-check --require-lossless
+```
+
+`--self-check` exits before disk/network work and exercises the generator,
+64-bit metric counts/pacing across the 32-bit boundary, and shard ordering by
+numeric writer sequence despite backward wall-clock prefixes. The integration
+test also checks exit 124 in a child with a blocked accounting-sampler join and
+an undrained stdout pipe. The independent deadline thread performs no logging,
+filesystem access or destructor cleanup. It covers segment setup, writing,
+readback, segment cleanup and sampler shutdown; trial-summary output and
+between-segment setup are outside its scope. Hard aborts may leave directories
+behind and need not emit JSON. Quota/accounting diagnostics are best effort.
+No new performance measurements are claimed by these checks.
+
+### Historical Reproduction
+
 Run in the existing container, working directory `/workspace/repos/sonic-swss`,
 with the pinned dependencies above. Preserve the copied v3 binary: rebuilding
 the current tree produces v4, not the baseline. The parent-produced JSONL names
