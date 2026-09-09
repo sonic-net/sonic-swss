@@ -1077,7 +1077,7 @@ TEST_F(GreTunnelManagerTest, DrainStopOnFirstFailureCreate) {
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
                       Eq(kfvFieldsValues(app_db_entry_3)),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 
   const auto gre_tunnel_key_1 = KeyGenerator::generateTunnelKey("tunnel-1");
@@ -1248,7 +1248,7 @@ TEST_F(GreTunnelManagerTest, DrainStopOnFirstFailureDel) {
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
                       Eq(kfvFieldsValues(app_db_entry_3)),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
   EXPECT_EQ(nullptr, GetGreTunnelEntry(gre_tunnel_key_1));
   EXPECT_FALSE(
