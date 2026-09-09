@@ -573,6 +573,189 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 0);
     }
 
+    /* The SAI attribute union has uninitialised padding, so render only the
+     * member that each attribute id actually uses. */
+    static std::string renderFdbAttrs(const sai_attribute_t *attrs, uint32_t count)
+    {
+        std::vector<std::string> rendered;
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            std::string line = to_string(attrs[i].id) + "=";
+
+            switch (attrs[i].id)
+            {
+                case SAI_FDB_ENTRY_ATTR_TYPE:
+                    line += to_string(attrs[i].value.s32);
+                    break;
+                case SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID:
+                    line += to_string(attrs[i].value.oid);
+                    break;
+                case SAI_FDB_ENTRY_ATTR_ENDPOINT_IP:
+                    line += to_string(attrs[i].value.ipaddr.addr_family) + "/" +
+                            to_string(attrs[i].value.ipaddr.addr.ip4);
+                    break;
+                case SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE:
+                    line += to_string(attrs[i].value.booldata);
+                    break;
+                default:
+                    line += "unrendered";
+                    break;
+            }
+
+            rendered.push_back(line);
+        }
+
+        std::sort(rendered.begin(), rendered.end());
+
+        std::string out;
+        for (const auto &line : rendered)
+        {
+            out += line + ";";
+        }
+        return out;
+    }
+
+    /*
+     * fdbsyncd and fpmsyncd's MacSync populate VXLAN_FDB_TABLE independently.
+     * MacSync omits "protocol", which FdbOrch never reads, so both producers
+     * must still program byte-identical FDB state.
+     */
+    TEST_F(VxlanFdbOrchTest, FpmAndKernelFieldSetsProgramIdenticalFdbEntry)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor("VXLAN_FDB_TABLE"));
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpVxlanPort(m_portsOrch.get());
+        setUpVxlanMember(m_portsOrch.get());
+
+        const std::string key = "Vlan40:7c:fe:90:12:22:ec";
+
+        sai_fdb_entry_t kernelEntry = {};
+        sai_fdb_entry_t fpmEntry = {};
+        sai_attribute_t kernelAttrs[16] = {};
+        sai_attribute_t fpmAttrs[16] = {};
+        uint32_t kernelCount = 0;
+        uint32_t fpmCount = 0;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .Times(2)
+            .WillOnce(::testing::DoAll(SaveArgPointee<0>(&kernelEntry),
+                                       SaveArg<1>(&kernelCount),
+                                       SaveSAIAttrs(kernelAttrs),
+                                       ::testing::Return(SAI_STATUS_SUCCESS)))
+            .WillOnce(::testing::DoAll(SaveArgPointee<0>(&fpmEntry),
+                                       SaveArg<1>(&fpmCount),
+                                       SaveSAIAttrs(fpmAttrs),
+                                       ::testing::Return(SAI_STATUS_SUCCESS)));
+
+        /* fdbsyncd's field set, as built by FdbSync::macAddVxlan for a VTEP */
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({key, "SET", {
+            {"remote_vtep", "1.1.1.1"},
+            {"type", "dynamic"},
+            {"vni", "40"},
+            {"protocol", "186"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+
+        entries.clear();
+        entries.push_back({key, "DEL", {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 0);
+
+        /* MacSync's field set, as built by MacSync::onMacMsg */
+        entries.clear();
+        entries.push_back({key, "SET", {
+            {"remote_vtep", "1.1.1.1"},
+            {"type", "dynamic"},
+            {"vni", "40"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+
+        ASSERT_EQ(kernelCount, fpmCount);
+        ASSERT_EQ(kernelEntry.bv_id, fpmEntry.bv_id);
+        ASSERT_EQ(memcmp(kernelEntry.mac_address, fpmEntry.mac_address, sizeof(sai_mac_t)), 0);
+        ASSERT_EQ(renderFdbAttrs(kernelAttrs, kernelCount), renderFdbAttrs(fpmAttrs, fpmCount));
+    }
+
+    /*
+     * FdbOrch applies no precedence between remote_vtep, nexthop_group and
+     * ifname: the last one parsed wins. No producer emits more than one today,
+     * so this pins current behaviour rather than endorsing it.
+     */
+    TEST_F(VxlanFdbOrchTest, DestinationFieldOrderDecidesDestType)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor("VXLAN_FDB_TABLE"));
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+        setUpVxlanPort(m_portsOrch.get());
+        setUpVxlanMember(m_portsOrch.get());
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        /* ifname parsed last, so the entry lands on the physical port */
+        entries.push_back({"Vlan40:7c:fe:90:12:22:ec", "SET", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"remote_vtep", "1.1.1.1"},
+            {"ifname", ETH0}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 0);
+
+        /* Same fields, reversed, so the entry lands on the VTEP instead */
+        entries.clear();
+        entries.push_back({"Vlan40:7c:fe:90:12:22:ed", "SET", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"ifname", ETH0},
+            {"remote_vtep", "1.1.1.1"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 2);
+    }
+
     TEST_F(VxlanFdbOrchTest, RemoteMacAddAfterNeighborDoesNotDisableNeighbor)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
