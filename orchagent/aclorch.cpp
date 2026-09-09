@@ -3734,7 +3734,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     string platform = getenv("platform") ? getenv("platform") : "";
     string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
     if (platform == BRCM_PLATFORM_SUBSTRING ||
-            platform == CISCO_8000_PLATFORM_SUBSTRING ||
+            isCiscoPlatform(platform) ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PRST_PLATFORM_SUBSTRING ||
@@ -3795,7 +3795,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == CISCO_8000_PLATFORM_SUBSTRING ||
+        isCiscoPlatform(platform) ||
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
         platform == CLX_PLATFORM_SUBSTRING ||
