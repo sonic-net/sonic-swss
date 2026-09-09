@@ -16,6 +16,7 @@ extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
+extern PortsOrch *gPortsOrch;
 
 void RouteOrch::doLabelTask(ConsumerBase& consumer)
 {
@@ -874,6 +875,28 @@ bool RouteOrch::removeLabelRoute(LabelRouteBulkContext& ctx)
         SWSS_LOG_INFO("Failed to find inseg entry, vrf_id 0x%" PRIx64 ", label %u\n",
                       vrf_id, label);
         return true;
+    }
+
+    if (it_route->second.nhg_index.empty())
+    {
+        const auto& nexthops = it_route->second.nhg_key.getNextHops();
+        const auto remote_mpls_nexthop = find_if(nexthops.begin(), nexthops.end(),
+            [this](const auto& nexthop)
+            {
+                return nexthop.isMplsNextHop() &&
+                       m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias);
+            });
+
+        if (remote_mpls_nexthop != nexthops.end())
+        {
+            Port inbp;
+            if (!gPortsOrch->getInbandPort(inbp))
+            {
+                SWSS_LOG_INFO("Inband port is not available for remote MPLS next hop %s",
+                              remote_mpls_nexthop->to_string().c_str());
+                return false;
+            }
+        }
     }
 
     auto& object_statuses = ctx.object_statuses;
