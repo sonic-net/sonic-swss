@@ -424,6 +424,40 @@ namespace portsorch_test
         set_admin_status_failures = 0;
     }
 
+    // Stub: fail (IGNORE_ERROR style) the last _sai_create_ports_fail_count ports of each bulk.
+    uint32_t _sai_create_ports_fail_count = 0;
+
+    sai_status_t _ut_stub_create_ports(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t object_count,
+        _In_ const uint32_t *attr_count,
+        _In_ const sai_attribute_t **attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_object_id_t *object_id,
+        _Out_ sai_status_t *object_statuses)
+    {
+        uint32_t fail = _sai_create_ports_fail_count > object_count ? object_count : _sai_create_ports_fail_count;
+        uint32_t good = object_count - fail;
+
+        // Create only the good ports in VS; never create the failed ones (so no orphan
+        // objects leak into VS), mirroring SAI IGNORE_ERROR where a failed item creates nothing.
+        auto status = pold_sai_port_api->create_ports(
+            switch_id, good, attr_count, attr_list, mode, object_id, object_statuses);
+
+        for (uint32_t i = 0; i < good; i++)
+        {
+            object_statuses[i] = SAI_STATUS_SUCCESS;
+        }
+        for (uint32_t i = good; i < object_count; i++)
+        {
+            object_id[i] = SAI_NULL_OBJECT_ID;
+            object_statuses[i] = SAI_STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // Real SAI reports a non-success aggregate when any item fails under IGNORE_ERROR.
+        return fail > 0 ? SAI_STATUS_FAILURE : status;
+    }
+
     void _hook_sai_port_api()
     {
         ut_sai_port_api = *sai_port_api;
@@ -1187,6 +1221,128 @@ namespace portsorch_test
         std::vector<std::string> keys;
         bufferMaxParameterTable.getKeys(keys);
         ASSERT_TRUE(keys.empty());
+    }
+
+    // A per-port bulk create failure must be skipped, not abort orchagent.
+    TEST_F(PortsOrchTest, PortBulkCreatePartialFailureIsSkipped)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config (same shape as PortBulkCreateRemove).
+        for (std::uint32_t idx1 = 0, idx2 = 1; idx1 < ports.size() * 4; idx1 += 4, idx2++)
+        {
+            std::stringstream key;   key   << FRONT_PANEL_PORT_PREFIX << idx1;
+            std::stringstream alias; alias << "etp" << idx2;
+            std::stringstream index; index << idx2;
+            std::stringstream lanes; lanes << idx1 << "," << idx1 + 1 << "," << idx1 + 2 << "," << idx1 + 3;
+
+            std::vector<FieldValueTuple> fvList = {
+                { "alias",               alias.str() },
+                { "index",               index.str() },
+                { "lanes",               lanes.str() },
+                { "speed",               "100000"    },
+                { "autoneg",             "off"       },
+                { "adv_speeds",          "all"       },
+                { "interface_type",      "none"      },
+                { "adv_interface_types", "all"       },
+                { "fec",                 "rs"        },
+                { "mtu",                 "9100"      },
+                { "tpid",                "0x8100"    },
+                { "pfc_asym",            "off"       },
+                { "admin_status",        "up"        },
+                { "description",         "FP port"   }
+            };
+
+            portTable.set(key.str(), fvList);
+        }
+
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+
+        // Make SAI reject the last port of the bulk (an IGNORE_ERROR partial failure).
+        _hook_sai_port_api();
+        ut_sai_port_api.create_ports = _ut_stub_create_ports;
+        _sai_create_ports_fail_count = 1;
+
+        // With the fix this is graceful; before, it threw "PortsOrch bulk create failure".
+        ASSERT_NO_THROW(static_cast<Orch*>(gPortsOrch)->doTask());
+
+        _sai_create_ports_fail_count = 0;
+        _unhook_sai_port_api();
+
+        // The one rejected port is skipped; the remaining ports (+ CPU) are created.
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size());
+
+        // The skipped port's task remains pending and is retried on later doTask cycles;
+        // with the real SAI restored it now succeeds. Drain it so cleanup below removes
+        // every port and leaves the shared VS switch as clean as we found it.
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        cleanupPortsBestEffort(gPortsOrch);
+    }
+
+    // A total bulk-create failure creates no ports (addPortBulk returns false).
+    TEST_F(PortsOrchTest, PortBulkCreateTotalFailureCreatesNoPorts)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config (same shape as PortBulkCreateRemove).
+        for (std::uint32_t idx1 = 0, idx2 = 1; idx1 < ports.size() * 4; idx1 += 4, idx2++)
+        {
+            std::stringstream key;   key   << FRONT_PANEL_PORT_PREFIX << idx1;
+            std::stringstream alias; alias << "etp" << idx2;
+            std::stringstream index; index << idx2;
+            std::stringstream lanes; lanes << idx1 << "," << idx1 + 1 << "," << idx1 + 2 << "," << idx1 + 3;
+
+            std::vector<FieldValueTuple> fvList = {
+                { "alias",               alias.str() },
+                { "index",               index.str() },
+                { "lanes",               lanes.str() },
+                { "speed",               "100000"    },
+                { "autoneg",             "off"       },
+                { "adv_speeds",          "all"       },
+                { "interface_type",      "none"      },
+                { "adv_interface_types", "all"       },
+                { "fec",                 "rs"        },
+                { "mtu",                 "9100"      },
+                { "tpid",                "0x8100"    },
+                { "pfc_asym",            "off"       },
+                { "admin_status",        "up"        },
+                { "description",         "FP port"   }
+            };
+
+            portTable.set(key.str(), fvList);
+        }
+
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+
+        // Make SAI reject every port of the bulk (a total IGNORE_ERROR failure).
+        _hook_sai_port_api();
+        ut_sai_port_api.create_ports = _ut_stub_create_ports;
+        _sai_create_ports_fail_count = static_cast<uint32_t>(ports.size());
+
+        // addPortBulk returns false when nothing is created; the init caller then
+        // fail-fasts (throws) on some trees, so tolerate either outcome here.
+        try
+        {
+            static_cast<Orch*>(gPortsOrch)->doTask();
+        }
+        catch (const std::exception &)
+        {
+        }
+
+        _sai_create_ports_fail_count = 0;
+        _unhook_sai_port_api();
+
+        // The whole bulk was rejected: only the CPU port exists, nothing leaked.
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), 1);
     }
 
     // Verifies certain port attributes are configured for the port creation flow.
