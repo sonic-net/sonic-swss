@@ -85,7 +85,7 @@ bool gRouteStateAsyncPublish = false;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }

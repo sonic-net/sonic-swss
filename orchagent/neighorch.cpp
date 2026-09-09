@@ -9,6 +9,8 @@
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
 
+#include <boost/algorithm/string.hpp>
+
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
@@ -24,8 +26,9 @@ extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
+extern string gMyAsicName;
 
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 
 const int neighorch_pri = 30;
 
@@ -48,7 +51,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
@@ -1589,7 +1592,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Sync the neighbor to add to the CHASSIS_APP_DB
         voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
@@ -1768,7 +1771,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
@@ -2253,11 +2256,26 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        size_t pos = alias.find('|');
-        std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
-        if(gIntfsOrch->isLocalSystemPortIntf(alias))
+        // VoQ aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
+        const auto alias_tokens = tokenize(alias, '|');
+        std::string port_hostname = alias_tokens.empty() ? alias : alias_tokens[0];
+        bool is_local_by_host_asic = false;
+        if (isVoqChassisDbInUse() && gMyHostName == port_hostname)
         {
-            //Synced local neighbor. Skip
+            std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+            std::string lower_port_asic = port_asic;
+            std::string lower_my_asic = gMyAsicName;
+            boost::algorithm::to_lower(lower_port_asic);
+            boost::algorithm::to_lower(lower_my_asic);
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
+                           alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+            is_local_by_host_asic = (lower_port_asic == lower_my_asic);
+        }
+        bool is_local_intf = gIntfsOrch->isLocalSystemPortIntf(alias);
+        if(is_local_intf || is_local_by_host_asic)
+        {
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: skipping local neighbor %s (isLocalIntf=%d isLocalByHostAsic=%d)",
+                           alias.c_str(), is_local_intf, is_local_by_host_asic);
             it = consumer.m_toSync.erase(it);
             continue;
         }
