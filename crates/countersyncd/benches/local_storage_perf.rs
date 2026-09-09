@@ -85,7 +85,10 @@ use std::{
     ffi::CString,
     fs::{self, File},
     io::{self, Write},
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -1134,6 +1137,12 @@ fn verify(
     Ok(result)
 }
 
+fn is_disk_filesystem(fs_type: u32) -> bool {
+    const DISK_FILESYSTEMS: [u32; 5] = [0xef53, 0x58465342, 0x9123683e, 0x2fc12fc1, 0xf2f52010];
+    // Overlay cannot prove a real-disk backing filesystem: require a bind mount.
+    DISK_FILESYSTEMS.contains(&fs_type)
+}
+
 fn run(args: Args) -> Result<()> {
     if args.self_check {
         self_check();
@@ -1178,9 +1187,9 @@ fn run(args: Args) -> Result<()> {
     if unsafe { libc::statfs(cpath.as_ptr(), stats.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error().into());
     }
-    let fs_type = unsafe { stats.assume_init() }.f_type;
-    // Overlay cannot prove a real-disk backing filesystem: require a bind mount.
-    if ![0xef53, 0x58465342, 0x9123683e, 0x2fc12fc1, 0xf2f52010].contains(&fs_type) {
+    // Linux filesystem magics are 32-bit bit patterns, even when f_type is signed.
+    let fs_type = unsafe { stats.assume_init() }.f_type as u32;
+    if !is_disk_filesystem(fs_type) {
         return Err(format!("--root filesystem {fs_type:#x} is not a recognized disk filesystem (ext4/xfs/btrfs/zfs/f2fs); bind-mount real disk, not tmpfs/overlay").into());
     }
     let output_root = if let Some(path) = &args.output_root {
@@ -1219,6 +1228,7 @@ fn run(args: Args) -> Result<()> {
             for repeat in 1..=args.repeats {
                 let trial = tempfile::Builder::new()
                     .prefix("local-storage-perf-")
+                    .permissions(fs::Permissions::from_mode(0o700))
                     .tempdir_in(output_root.as_ref().unwrap_or(&root))?;
                 let monitored_root = output_root.as_deref().unwrap_or(trial.path());
                 let mut totals = Verification::default();
@@ -1240,6 +1250,7 @@ fn run(args: Args) -> Result<()> {
                     let guard = Watchdog::new(monitored_root, &args, counts.clone())?;
                     let segment = tempfile::Builder::new()
                         .prefix("segment-")
+                        .permissions(fs::Permissions::from_mode(0o700))
                         .tempdir_in(trial.path())?;
                     let status = LocalStorageStatus::default();
                     let queue_batches = if args.full_queue {
@@ -1602,6 +1613,29 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn filesystem_magics_preserve_signed_32_bit_patterns() {
+        use super::*;
+
+        for magic in [0xef53u32, 0x58465342, 0x9123683e, 0x2fc12fc1, 0xf2f52010] {
+            assert!(is_disk_filesystem(magic));
+            assert!(is_disk_filesystem((magic as i32) as u32));
+            assert!(is_disk_filesystem(i64::from(magic as i32) as u32));
+            assert!(is_disk_filesystem(i64::from(magic) as u32));
+            let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+            stat.f_type = magic as _;
+            assert!(is_disk_filesystem(stat.f_type as u32));
+        }
+        for magic in [0x9123683eu32, 0xf2f52010] {
+            assert!((magic as i32) < 0, "btrfs/f2fs exercise the sign bit");
+        }
+        // tmpfs, overlay, ramfs and unknown filesystems must remain rejected.
+        for magic in [0x01021994u32, 0x794c7630, 0x858458f6, 0, u32::MAX] {
+            assert!(!is_disk_filesystem(magic));
+            assert!(!is_disk_filesystem(i64::from(magic as i32) as u32));
+        }
+    }
+
     #[test]
     fn pure_checks() {
         use super::*;

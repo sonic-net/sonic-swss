@@ -320,14 +320,14 @@ struct Args {
     #[arg(long, default_value = "false")]
     enable_local_storage: bool,
 
-    /// Existing local storage directory (dedicated filesystem by default)
-    #[arg(long, default_value = "/mnt/hft")]
+    /// Private capture directory; create the final directory when capture is enabled
+    #[arg(long, default_value = "/tmp/hft")]
     local_storage_root: PathBuf,
 
     /// Local storage quota in bytes; must exceed the 64 MiB batch reserve
     #[arg(
         long,
-        default_value = "4000000000",
+        default_value = "134217728",
         value_parser = clap::value_parser!(u64).range(67_108_865..)
     )]
     local_storage_max_bytes: u64,
@@ -340,9 +340,17 @@ struct Args {
     #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
     local_storage_file_seconds: u64,
 
-    /// Allow a shared filesystem for capture; other root safety checks still apply
-    #[arg(long, default_value = "false", requires = "enable_local_storage")]
+    /// Legacy no-op retained for external collectors; shared filesystems are the default
+    #[arg(long, hide = true, requires = "enable_local_storage")]
     local_storage_allow_shared_filesystem: bool,
+
+    /// Require the capture root to be a dedicated mount point
+    #[arg(
+        long,
+        requires = "enable_local_storage",
+        conflicts_with = "local_storage_allow_shared_filesystem"
+    )]
+    local_storage_require_dedicated_filesystem: bool,
 }
 
 impl Args {
@@ -534,7 +542,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             shard_interval: Duration::from_secs(args.local_storage_file_seconds),
             file_target_bytes: args.local_storage_file_bytes,
             max_bytes: args.local_storage_max_bytes,
-            require_dedicated_filesystem: !args.local_storage_allow_shared_filesystem,
+            require_dedicated_filesystem: args.local_storage_require_dedicated_filesystem,
         };
         // Flat messages hold many records; do not carry over PR7's 1024-sample queue.
         let (sender, receiver) = channel(32);
@@ -760,11 +768,12 @@ mod tests {
             };
             let args = parse(&argv).unwrap();
             assert_eq!(args.enable_local_storage, enabled);
-            assert_eq!(args.local_storage_root, PathBuf::from("/mnt/hft"));
-            assert_eq!(args.local_storage_max_bytes, 4_000_000_000);
+            assert_eq!(args.local_storage_root, PathBuf::from("/tmp/hft"));
+            assert_eq!(args.local_storage_max_bytes, 128 * 1024 * 1024);
             assert_eq!(args.local_storage_file_bytes, 100_000_000);
             assert_eq!(args.local_storage_file_seconds, 1800);
             assert!(!args.local_storage_allow_shared_filesystem);
+            assert!(!args.local_storage_require_dedicated_filesystem);
         }
     }
 
@@ -790,6 +799,52 @@ mod tests {
         assert_eq!(args.local_storage_file_bytes, 2_000_000);
         assert_eq!(args.local_storage_file_seconds, 60);
         assert!(args.local_storage_allow_shared_filesystem);
+        assert!(!args.local_storage_require_dedicated_filesystem);
+    }
+
+    #[test]
+    fn local_storage_dedicated_filesystem_is_opt_in() {
+        let args = parse(&[
+            "countersyncd",
+            "--enable-local-storage",
+            "--local-storage-require-dedicated-filesystem",
+        ])
+        .unwrap();
+        assert!(args.local_storage_require_dedicated_filesystem);
+        assert!(parse(&[
+            "countersyncd",
+            "--enable-local-storage",
+            "--local-storage-require-dedicated-filesystem",
+            "--local-storage-allow-shared-filesystem",
+        ])
+        .is_err());
+        assert!(parse(&[
+            "countersyncd",
+            "--local-storage-require-dedicated-filesystem"
+        ])
+        .is_err());
+        use clap::CommandFactory;
+        let help = Args::command().render_long_help().to_string();
+        assert!(!help.contains("--local-storage-allow-shared-filesystem"));
+        assert!(help.contains("--local-storage-require-dedicated-filesystem"));
+    }
+
+    #[test]
+    fn local_storage_parsing_does_not_create_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("capture");
+        for enabled in [false, true] {
+            let mut argv = vec![
+                "countersyncd",
+                "--local-storage-root",
+                root.to_str().unwrap(),
+            ];
+            if enabled {
+                argv.push("--enable-local-storage");
+            }
+            assert_eq!(parse(&argv).unwrap().enable_local_storage, enabled);
+            assert!(!root.exists());
+        }
     }
 
     #[test]
