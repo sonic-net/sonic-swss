@@ -250,6 +250,8 @@ class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
     MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
+    ~MuxOrch() override;
+    void detachObservers() override;
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
