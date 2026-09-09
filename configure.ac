@@ -156,6 +156,7 @@ AC_CONFIG_FILES([
     Makefile
     orchagent/Makefile
     fpmsyncd/Makefile
+    bfdsyncd/Makefile
     neighsyncd/Makefile
     gearsyncd/Makefile
     fdbsyncd/Makefile
