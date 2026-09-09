@@ -1,0 +1,12 @@
+# sonic-swss build and link dependencies.
+#
+# base.yaml cascades to any future downstream consumers of sonic-swss. Packages
+# already present in the sairedis -> swss-common cascade are repeated when SWSS
+# directly depends on them; buildenv_setup deduplicates apt installs.
+
+packages:
+  - libhiredis-dev
+  - libzmq3-dev
+  - swig
+  - libdbus-1-dev
+  - libteam-dev

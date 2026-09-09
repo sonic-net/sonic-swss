@@ -1,10 +1,11 @@
 parameters:
+- name: repo
+  type: string
+  default: self
+
 - name: arch
   type: string
-  values:
-  - amd64
-  - armhf
-  - arm64
+  values: [amd64]
   default: amd64
 
 - name: timeout
@@ -14,57 +15,54 @@ parameters:
 - name: swss_artifact_name
   type: string
 
+- name: sairedis_artifact_name
+  type: string
+
+- name: sairedis_current_run
+  type: boolean
+  default: false
+
 - name: swss_common_artifact_name
   type: string
 
-- name: swss_common_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
-- name: debian_version
-  type: string
-
-- name: vpp_artifact_name
-  type: string
-  default: 'vpp-bookworm'
+- name: swss_common_current_run
+  type: boolean
+  default: false
 
 - name: artifact_name
   type: string
 
+- name: vpp_artifact_name
+  type: string
+  default: vpp-bookworm
+
 - name: buildimage_artifact_name
   type: string
-  default: 'sonic-buildimage.vs'
+  default: sonic-buildimage.vs
 
 - name: buildimage_artifact_project
   type: string
-  default: 'build'
+  default: build
 
 - name: buildimage_artifact_pipeline
   type: string
-  default: 'Azure.sonic-buildimage.official.vs'
+  default: Azure.sonic-buildimage.official.vs
 
 - name: buildimage_artifact_branch
   type: string
   default: '$(BUILD_BRANCH)'
 
-- name: sairedis_artifact_name
+- name: debug_pkg
   type: string
+  default: swss-dbg
 
-- name: sairedis_artifact_project
-  type: string
-  default: 'build'
+- name: include_gcov
+  type: boolean
+  default: true
 
-- name: sairedis_artifact_pipeline
-  type: string
-  default: 'Azure.sonic-sairedis'
-
-- name: sairedis_artifact_branch
-  type: string
-  default: '$(BUILD_BRANCH)'
-
-- name: sairedis_artifact_pattern
-  type: string
-  default: '**'
+- name: include_vpp
+  type: boolean
+  default: true
 
 - name: asan
   type: boolean
@@ -79,38 +77,65 @@ jobs:
     vmImage: 'ubuntu-22.04'
 
   steps:
-  - checkout: self
-  - template: merge-target-branch.yml
+  - checkout: ${{ parameters.repo }}
+    clean: true
+
+  - ${{ if eq(parameters.repo, 'self') }}:
+    - template: merge-target-branch.yml
+
+  - ${{ if eq(parameters.swss_common_current_run, true) }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: ${{ parameters.swss_common_artifact_name }}
+        path: $(Build.ArtifactStagingDirectory)/download
+      displayName: "Download current-run ${{ parameters.swss_common_artifact_name }}"
+  - ${{ else }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        source: specific
+        project: build
+        pipeline: Azure.sonic-swss-common
+        artifact: ${{ parameters.swss_common_artifact_name }}
+        runVersion: latestFromBranch
+        runBranch: refs/heads/$(BUILD_BRANCH)
+        allowPartiallySucceededBuilds: true
+        path: $(Build.ArtifactStagingDirectory)/download
+      displayName: "Download sonic-swss-common artifacts"
+
+  - ${{ if eq(parameters.sairedis_current_run, true) }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: ${{ parameters.sairedis_artifact_name }}
+        path: $(Build.ArtifactStagingDirectory)/download/sairedis
+      displayName: "Download current-run ${{ parameters.sairedis_artifact_name }}"
+  - ${{ else }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        source: specific
+        project: build
+        pipeline: Azure.sonic-sairedis
+        artifact: ${{ parameters.sairedis_artifact_name }}
+        runVersion: latestFromBranch
+        runBranch: refs/heads/$(BUILD_BRANCH)
+        allowPartiallySucceededBuilds: true
+        path: $(Build.ArtifactStagingDirectory)/download/sairedis
+        patterns: |
+          **/libsaivs_*.deb
+          **/libsaivs-dev_*.deb
+          **/libsairedis_*.deb
+          **/libsairedis-dev_*.deb
+          **/libsaimetadata_*.deb
+          **/libsaimetadata-dev_*.deb
+          **/syncd-vs_*.deb
+      displayName: "Download sonic-sairedis artifacts"
+
+  # The swss artifact is always produced earlier in the current consumer run.
   - task: DownloadPipelineArtifact@2
     inputs:
-      source: specific
-      project: build
-      pipeline: Azure.sonic-swss-common
-      artifact: ${{ parameters.swss_common_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
+      artifact: ${{ parameters.swss_artifact_name }}
       path: $(Build.ArtifactStagingDirectory)/download
-      allowPartiallySucceededBuilds: true
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.sairedis_artifact_project }}
-      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
-      artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
-      allowPartiallySucceededBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download/sairedis
-      patterns: |
-        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
-        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
-    displayName: "Download sonic sairedis deb packages"
+    displayName: "Download current-run ${{ parameters.swss_artifact_name }}"
+
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -120,82 +145,79 @@ jobs:
         artifact: sonic-dash-api
       ${{ else }}:
         artifact: sonic-dash-api.${{ parameters.arch }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runVersion: latestFromBranch
+      runBranch: refs/heads/$(BUILD_BRANCH)
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: |
         libdashapi*.deb
-    displayName: "Download dash api"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      artifact: ${{ parameters.swss_artifact_name }}
-      path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download pre-stage built ${{ parameters.swss_artifact_name }}"
+    displayName: "Download dash-api"
+
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: ${{ parameters.buildimage_artifact_project }}
       pipeline: ${{ parameters.buildimage_artifact_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      runVersion: latestFromBranch
+      runBranch: refs/heads/${{ parameters.buildimage_artifact_branch }}
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
-    displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: ${{ parameters.buildimage_artifact_project }}
-      pipeline: ${{ parameters.buildimage_artifact_pipeline }}
-      artifact: ${{ parameters.buildimage_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
-      path: $(Build.ArtifactStagingDirectory)/download
-      patterns: '**/target/debs/${{ parameters.debian_version }}/framework_*.deb'
-    displayName: "Download sonic-buildimage sonic-framework package"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: sonic-net.sonic-platform-vpp
-      artifact: ${{ parameters.vpp_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      allowPartiallySucceededBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download sonic platform-vpp deb packages"
-    condition: eq('${{ parameters.arch }}', 'amd64')
+    displayName: "Download base ${{ parameters.artifact_name }} image"
+
+  - ${{ if eq(parameters.include_vpp, true) }}:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        source: specific
+        project: build
+        pipeline: sonic-net.sonic-platform-vpp
+        artifact: ${{ parameters.vpp_artifact_name }}
+        runVersion: latestFromBranch
+        runBranch: refs/heads/master
+        allowPartiallySucceededBuilds: true
+        path: $(Build.ArtifactStagingDirectory)/download
+      displayName: "Download VPP artifacts"
+
   - script: |
       set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
       docker load < $(Build.ArtifactStagingDirectory)/download/target/${{ parameters.artifact_name }}.gz
 
+      rm -rf .azure-pipelines/docker-sonic-vs/debs
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
+      find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp -v "{}" .azure-pipelines/docker-sonic-vs/debs \;
+      find $(Build.ArtifactStagingDirectory)/download -maxdepth 1 -name '*.deb' -exec cp -v "{}" .azure-pipelines/docker-sonic-vs/debs \;
 
-      find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
-      cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
-      if [ -f $(Build.ArtifactStagingDirectory)/download/coverage.info ]; then
+      if [ '${{ parameters.include_gcov }}' == True ] && [ -f $(Build.ArtifactStagingDirectory)/download/coverage.info ]; then
         cp -v $(Build.ArtifactStagingDirectory)/download/coverage.info $(Build.ArtifactStagingDirectory)/
         cp -v $(Build.ArtifactStagingDirectory)/download/coverage.xml $(Build.ArtifactStagingDirectory)/
       fi
 
-      pushd .azure-pipelines
-      ls -l docker-sonic-vs/debs
+      build_dir=""
+      if [ '${{ parameters.include_gcov }}' == True ] && [ -f $(Build.ArtifactStagingDirectory)/download/build.info ]; then
+        build_dir=$(grep BUILD_DIR $(Build.ArtifactStagingDirectory)/download/build.info | cut -d= -f2)
+      fi
 
-      build_dir=$(grep BUILD_DIR $(Build.ArtifactStagingDirectory)/download/build.info | cut -d= -f2)
       build_args="--build-arg build_dir=$build_dir"
+      build_args="$build_args --build-arg debug_pkg=${{ parameters.debug_pkg }}"
+      build_args="$build_args --build-arg include_gcov=$([ '${{ parameters.include_gcov }}' == True ] && echo y || echo n)"
+      build_args="$build_args --build-arg include_vpp=$([ '${{ parameters.include_vpp }}' == True ] && echo y || echo n)"
       if [ '${{ parameters.asan }}' == True ]; then
         build_args="$build_args --build-arg need_dbg=y"
       fi
 
-      docker build $build_args --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} docker-sonic-vs
-
+      pushd .azure-pipelines
+      docker build $build_args --no-cache \
+        -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} \
+        docker-sonic-vs
       popd
 
-      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
+      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} \
+        | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
       rm -rf $(Build.ArtifactStagingDirectory)/download
+      rm -rf .azure-pipelines/docker-sonic-vs/debs
     displayName: "Build ${{ parameters.artifact_name }}"
+
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: ${{ parameters.artifact_name }}
-    displayName: "Archive sonic docker vs image"
+    displayName: "Archive sonic docker VS image"

@@ -1,0 +1,47 @@
+# VS test-host dependencies. sonic-swss owns the shared VS test stack, so this
+# is the single package list used by its run-vs-tests template.
+
+packages:
+  # Python test runner and helpers.
+  - { name: pytest, type: pip }
+  - { name: flaky, type: pip }
+  - { name: exabgp, type: pip }
+  - { name: docker, type: pip }
+  - { name: lcov_cobertura, type: pip }
+  - { name: wheel, type: pip }
+  - name: libyang==3.3.0
+    type: pip
+    pip_args: [--no-build-isolation]
+    requires: [libyang3, python3-cffi, python3-dev, wheel]
+
+  # Common VS/DVS and KVM host packages (union of the three existing templates).
+  - python3-pip
+  - libvirt-clients
+  - qemu
+  - openvswitch-switch
+  - net-tools
+  - bridge-utils
+  - vlan
+  - python3-libvirt
+  - libzmq3-dev
+  - libzmq5
+  - libhiredis0.14
+  - libpcre3-dev
+  - python3-redis
+  - python3-cffi
+  - python3-dev
+  - uuid-dev
+  - parallel
+
+post_install:
+  # The cascaded Redis hook restarts redis-server after libswsscommon installs
+  # its runtime DB config, and the service recreates /run/redis. Restore the
+  # canonical config from the matching swss-common source clone used to run
+  # buildenv_setup. This avoids duplicating the file in sonic-swss.
+  - name: restore-sonic-db-config
+    script: |
+      sudo install -d -m 755 /var/run/redis/sonic-db
+      sudo install -m 644 \
+        /tmp/sw-common/common/database_config.json \
+        /var/run/redis/sonic-db/database_config.json
+    scopes: [test]
