@@ -54,6 +54,7 @@ cfgmgr/teammgrd
 cfgmgr/vlanmgrd
 cfgmgr/vrfmgrd
 cfgmgr/vxlanmgrd
+cfgmgr/vnetmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
