@@ -3056,7 +3056,7 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 
     if (port.m_rif_id)
     {
-        SWSS_LOG_ERROR("pvid setting for router interface %s is not allowed", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("pvid setting for router interface %s is not allowed", port.m_alias.c_str());
         return false;
     }
 
@@ -8093,11 +8093,19 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
-    /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
+    /* Restore to default pvid if this port joined this VLAN in untagged mode previously.
+     * Skip pvid restore if a router interface is already active on this port: pvid is
+     * irrelevant for a routed port and setPortPvid() would return false, which would
+     * leave vlan.m_members inconsistent with m_portVlanMember and cause undefined behaviour to fail. */
     if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
         port.m_type != Port::TUNNEL)
     {
-        if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        if (port.m_rif_id)
+        {
+            SWSS_LOG_NOTICE("Skipping pvid restore for port %s: router interface is active rif_id:%" PRIx64,
+                    port.m_alias.c_str(), port.m_rif_id);
+        }
+        else if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
             return false;
         }
