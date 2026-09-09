@@ -288,6 +288,124 @@ class TestHashBasicFlows:
         )
 
 
+PKT_TYPE_HASH_FIELD_LIST = [
+    "DST_IP",
+    "SRC_IP",
+    "L4_DST_PORT",
+    "L4_SRC_PORT"
+]
+SAI_PKT_TYPE_HASH_FIELD_LIST = [
+    "SAI_NATIVE_HASH_FIELD_DST_IP",
+    "SAI_NATIVE_HASH_FIELD_SRC_IP",
+    "SAI_NATIVE_HASH_FIELD_L4_DST_PORT",
+    "SAI_NATIVE_HASH_FIELD_L4_SRC_PORT"
+]
+RDMA_HASH_FIELD_LIST = [
+    "DST_IP",
+    "SRC_IP",
+    "RDMA_BTH_OPCODE",
+    "RDMA_BTH_DEST_QP"
+]
+SAI_RDMA_HASH_FIELD_LIST = [
+    "SAI_NATIVE_HASH_FIELD_DST_IP",
+    "SAI_NATIVE_HASH_FIELD_SRC_IP",
+    "SAI_NATIVE_HASH_FIELD_RDMA_BTH_OPCODE",
+    "SAI_NATIVE_HASH_FIELD_RDMA_BTH_DEST_QP"
+]
+
+
+@pytest.mark.usefixtures("dvs_hash_manager")
+class TestHashPacketType:
+    """Test per-packet-type hash configuration (ECMP and LAG)."""
+
+    @pytest.mark.parametrize(
+        "field,hfList,saiHfList", [
+            pytest.param(
+                "ecmp_hash_ipv4",
+                ",".join(PKT_TYPE_HASH_FIELD_LIST),
+                SAI_PKT_TYPE_HASH_FIELD_LIST,
+                id="ecmp-ipv4"
+            ),
+            pytest.param(
+                "lag_hash_ipv4",
+                ",".join(PKT_TYPE_HASH_FIELD_LIST),
+                SAI_PKT_TYPE_HASH_FIELD_LIST,
+                id="lag-ipv4"
+            ),
+            pytest.param(
+                "ecmp_hash_ipv4_rdma",
+                ",".join(RDMA_HASH_FIELD_LIST),
+                SAI_RDMA_HASH_FIELD_LIST,
+                id="ecmp-ipv4-rdma"
+            ),
+            pytest.param(
+                "lag_hash_ipv6_rdma",
+                ",".join(RDMA_HASH_FIELD_LIST),
+                SAI_RDMA_HASH_FIELD_LIST,
+                id="lag-ipv6-rdma"
+            ),
+        ]
+    )
+    def test_HashPacketTypeCreate(self, field, hfList, saiHfList, testlog):
+        """Configure a per-packet-type hash (including RDMA) and verify a new ASIC hash object is created."""
+
+        hashlogger.info("Configure %s", field)
+        self.dvs_hash.update_switch_hash(qualifiers={field: hfList})
+
+        new_ids = self.dvs_hash.get_hash_ids(expected=1)
+        assert len(new_ids) == 1, "Expected 1 new hash object"
+
+        sai_attr = {"SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST": saiHfList}
+        self.dvs_hash.verify_hash_generic(sai_hash_id=new_ids[0], sai_qualifiers=sai_attr)
+
+        hashlogger.info("Cleanup %s", field)
+        self.dvs_hash.delete_switch_hash_field(field)
+
+    def test_HashPacketTypeUpdate(self, testlog):
+        """Configure a per-packet-type hash, update its fields, and verify ASIC DB reflects the update."""
+        field = "ecmp_hash_ipv6"
+
+        hashlogger.info("Create %s with basic fields", field)
+        self.dvs_hash.update_switch_hash(
+            qualifiers={field: ",".join(PKT_TYPE_HASH_FIELD_LIST)}
+        )
+
+        new_ids = self.dvs_hash.get_hash_ids(expected=1)
+        assert len(new_ids) == 1
+        hash_oid = new_ids[0]
+
+        sai_attr = {"SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST": SAI_PKT_TYPE_HASH_FIELD_LIST}
+        self.dvs_hash.verify_hash_generic(sai_hash_id=hash_oid, sai_qualifiers=sai_attr)
+
+        hashlogger.info("Update %s to RDMA fields", field)
+        self.dvs_hash.update_switch_hash(
+            qualifiers={field: ",".join(RDMA_HASH_FIELD_LIST)}
+        )
+
+        sai_attr_updated = {"SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST": SAI_RDMA_HASH_FIELD_LIST}
+        self.dvs_hash.verify_hash_generic(sai_hash_id=hash_oid, sai_qualifiers=sai_attr_updated)
+
+        hashlogger.info("Cleanup %s", field)
+        self.dvs_hash.delete_switch_hash_field(field)
+
+    def test_HashPacketTypeDelete(self, testlog):
+        """Configure a per-packet-type hash, then remove it and verify the ASIC hash object is removed."""
+        field = "lag_hash_ipnip"
+
+        hashlogger.info("Create %s", field)
+        self.dvs_hash.update_switch_hash(
+            qualifiers={field: ",".join(PKT_TYPE_HASH_FIELD_LIST)}
+        )
+
+        new_ids = self.dvs_hash.get_hash_ids(expected=1)
+        assert len(new_ids) == 1
+
+        hashlogger.info("Delete %s", field)
+        self.dvs_hash.delete_switch_hash_field(field)
+
+        self.dvs_hash.verify_hash_count(0)
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
