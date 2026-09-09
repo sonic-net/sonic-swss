@@ -413,9 +413,21 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                     mac = fvValue(i);
                     setHostVlanMac(vlan_id, mac);
                 }
+                else if (fvField(i) == "mac_learning")
+                {
+                    /* Propagate the per-VLAN MAC-learning setting to APPL_DB for PortsOrch. */
+                    fvVector.push_back(i);
+                }
                 else if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
+                }
+                /* Propagate per-VLAN BUM flood control to APPL_DB for PortsOrch. */
+                else if (fvField(i) == "unknown_unicast_flood" ||
+                         fvField(i) == "unknown_multicast_flood" ||
+                         fvField(i) == "broadcast_flood")
+                {
+                    fvVector.push_back(i);
                 }
             }
             /* fvVector should not be empty */
@@ -770,6 +782,102 @@ void VlanMgr::doVlanPacPortTask(Consumer &consumer)
     }
 }
 
+void VlanMgr::doFdbTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        /* CONFIG_DB FDB key format: <VLAN_name>|<MAC_address> */
+        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter, 1);
+        if (keys.size() != 2 ||
+            keys[0].compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX) != 0)
+        {
+            SWSS_LOG_ERROR("Invalid FDB key %s, expected <Vlan>|<mac>", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        /* stoi() and MacAddress() both throw on malformed input; a bad key must
+         * not crash vlanmgrd, so parse defensively and skip on failure. */
+        int vlan_id = 0;
+        MacAddress mac;
+        try
+        {
+            vlan_id = stoi(keys[0].substr(strlen(VLAN_PREFIX)));
+            mac = MacAddress(keys[1]);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid FDB key %s (%s), skipping", kfvKey(t).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        string op = kfvOp(t);
+
+        /* APPL_DB FDB_TABLE key: Vlan<id>:<mac> (consumed by FdbOrch) */
+        string key = VLAN_PREFIX + to_string(vlan_id);
+        key += DEFAULT_KEY_SEPARATOR;
+        key += mac.to_string();
+
+        if (op == SET_COMMAND)
+        {
+            /*
+             * A static FDB entry may be configured before its port joins the
+             * VLAN; FdbOrch keeps it as saved FDB until then. Defer only until
+             * the VLAN itself exists.
+             */
+            if (!m_vlans.count(keys[0]))
+            {
+                SWSS_LOG_INFO("Vlan %s not ready, defer static FDB for mac %s",
+                    keys[0].c_str(), keys[1].c_str());
+                it++;
+                continue;
+            }
+
+            string port, type = "static";
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "port")
+                {
+                    port = fvValue(i);
+                }
+                else if (fvField(i) == "type")
+                {
+                    type = fvValue(i);
+                }
+            }
+
+            if (port.empty())
+            {
+                SWSS_LOG_ERROR("Static FDB %s has no port, skipping", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            vector<FieldValueTuple> fvVector;
+            fvVector.emplace_back("port", port);
+            fvVector.emplace_back("type", type);
+            fvVector.emplace_back("discard", "false");
+            m_appFdbTableProducer.set(key, fvVector);
+
+            SWSS_LOG_NOTICE("Set static FDB %s port %s type %s", key.c_str(), port.c_str(), type.c_str());
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_appFdbTableProducer.del(key);
+            SWSS_LOG_NOTICE("Del static FDB %s", key.c_str());
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void VlanMgr::doVlanPacFdbTask(Consumer &consumer)
 {
     auto it = consumer.m_toSync.begin();
@@ -987,6 +1095,10 @@ void VlanMgr::doTask(Consumer &consumer)
     else if (table_name == CFG_VLAN_MEMBER_TABLE_NAME)
     {
         doVlanMemberTask(consumer);
+    }
+    else if (table_name == CFG_FDB_TABLE_NAME)
+    {
+        doFdbTask(consumer);
     }
     else if (table_name == STATE_OPER_PORT_TABLE_NAME)
     {
