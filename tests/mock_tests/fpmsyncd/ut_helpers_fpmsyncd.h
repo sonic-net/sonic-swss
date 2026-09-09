@@ -2,6 +2,7 @@
 #include "ipprefix.h"
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <vector>
 
 using namespace swss;
 
@@ -74,6 +75,14 @@ enum {  /* Values copied from fpmsyncd/routesync.cpp */
 
 namespace ut_fpmsyncd
 {
+    struct Srv6RouteNextHop
+    {
+        IpAddress *nexthop;
+        IpAddress *encap_src_addr;
+        IpAddress *vpn_sid;
+        uint32_t ifindex;
+    };
+
     struct nlmsg
     {
         struct nlmsghdr n;
@@ -97,11 +106,22 @@ namespace ut_fpmsyncd
     struct rtattr *nl_attr_nest(struct nlmsghdr *n, unsigned int maxlen, int type);
     /* Finalize nesting of attributes */
     int nl_attr_nest_end(struct nlmsghdr *n, struct rtattr *nest);
+    struct rtnexthop *nl_attr_rtnh(struct nlmsghdr *n, unsigned int maxlen);
+    void nl_attr_rtnh_end(struct nlmsghdr *n, struct rtnexthop *rtnh);
     /* Build a Netlink object containing an SRv6 VPN Route */
     struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
                                               IpAddress *vpn_sid, uint16_t table_id = 10, uint8_t prefixlen = 0,
 											  uint8_t address_family = 0, uint8_t rtm_type = 0,
 											  uint32_t nhg_id = 0, uint32_t pic_id = 0);
+    struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst, IpAddress *encap_src_addr,
+                                              IpAddress *vpn_sid, IpAddress *nexthop, uint32_t ifindex = 0,
+                                              uint16_t table_id = 10, uint8_t prefixlen = 0,
+											  uint8_t address_family = 0, uint8_t rtm_type = 0,
+											  uint32_t nhg_id = 0, uint32_t pic_id = 0);
+    struct nlmsg *create_srv6_vpn_route_nlmsg(uint16_t cmd, IpPrefix *dst,
+                                              const std::vector<Srv6RouteNextHop> &nexthops,
+                                              uint16_t table_id = 10, uint8_t prefixlen = 0,
+											  uint8_t address_family = 0, uint8_t rtm_type = 0);
     /* Build a Netlink object containing an SRv6 My SID */
     struct nlmsg *create_srv6_mysid_nlmsg(uint16_t cmd, IpAddress *mysid, int8_t block_len,
                                              int8_t node_len, int8_t func_len, int8_t arg_len,
