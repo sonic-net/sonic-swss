@@ -339,18 +339,6 @@ struct Args {
     /// Maximum local storage file age in wall-clock seconds
     #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
     local_storage_file_seconds: u64,
-
-    /// Legacy no-op retained for external collectors; shared filesystems are the default
-    #[arg(long, hide = true, requires = "enable_local_storage")]
-    local_storage_allow_shared_filesystem: bool,
-
-    /// Require the capture root to be a dedicated mount point
-    #[arg(
-        long,
-        requires = "enable_local_storage",
-        conflicts_with = "local_storage_allow_shared_filesystem"
-    )]
-    local_storage_require_dedicated_filesystem: bool,
 }
 
 impl Args {
@@ -542,16 +530,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             shard_interval: Duration::from_secs(args.local_storage_file_seconds),
             file_target_bytes: args.local_storage_file_bytes,
             max_bytes: args.local_storage_max_bytes,
-            require_dedicated_filesystem: args.local_storage_require_dedicated_filesystem,
         };
         // Flat messages hold many records; do not carry over PR7's 1024-sample queue.
         let (sender, receiver) = channel(32);
         ipfix.add_recipient(sender);
         info!(
-            "Local storage requested: path={}, format=sonic-hft-arrow-v5, compression=zstd, max_bytes={}, require_dedicated_filesystem={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture applies backpressure",
+            "Local storage requested: path={}, format=sonic-hft-arrow-v5, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture applies backpressure",
             config.root.display(),
             config.max_bytes,
-            config.require_dedicated_filesystem,
             config.file_target_bytes,
             config.shard_interval.as_secs()
         );
@@ -772,8 +758,6 @@ mod tests {
             assert_eq!(args.local_storage_max_bytes, 128 * 1024 * 1024);
             assert_eq!(args.local_storage_file_bytes, 100_000_000);
             assert_eq!(args.local_storage_file_seconds, 1800);
-            assert!(!args.local_storage_allow_shared_filesystem);
-            assert!(!args.local_storage_require_dedicated_filesystem);
         }
     }
 
@@ -790,7 +774,6 @@ mod tests {
             "2000000",
             "--local-storage-file-seconds",
             "60",
-            "--local-storage-allow-shared-filesystem",
         ])
         .unwrap();
         assert!(args.enable_local_storage);
@@ -798,35 +781,32 @@ mod tests {
         assert_eq!(args.local_storage_max_bytes, 2_400_000_000);
         assert_eq!(args.local_storage_file_bytes, 2_000_000);
         assert_eq!(args.local_storage_file_seconds, 60);
-        assert!(args.local_storage_allow_shared_filesystem);
-        assert!(!args.local_storage_require_dedicated_filesystem);
     }
 
     #[test]
-    fn local_storage_dedicated_filesystem_is_opt_in() {
-        let args = parse(&[
-            "countersyncd",
-            "--enable-local-storage",
-            "--local-storage-require-dedicated-filesystem",
-        ])
-        .unwrap();
-        assert!(args.local_storage_require_dedicated_filesystem);
-        assert!(parse(&[
-            "countersyncd",
-            "--enable-local-storage",
-            "--local-storage-require-dedicated-filesystem",
-            "--local-storage-allow-shared-filesystem",
-        ])
-        .is_err());
-        assert!(parse(&[
-            "countersyncd",
-            "--local-storage-require-dedicated-filesystem"
-        ])
-        .is_err());
+    fn removed_local_storage_filesystem_options_are_unknown() {
         use clap::CommandFactory;
-        let help = Args::command().render_long_help().to_string();
-        assert!(!help.contains("--local-storage-allow-shared-filesystem"));
-        assert!(help.contains("--local-storage-require-dedicated-filesystem"));
+        let short_help = Args::command().render_help().to_string();
+        let long_help = Args::command().render_long_help().to_string();
+        for option in [
+            "--local-storage-allow-shared-filesystem",
+            "--local-storage-require-dedicated-filesystem",
+        ] {
+            for enabled in [false, true] {
+                let mut argv = vec!["countersyncd"];
+                if enabled {
+                    argv.push("--enable-local-storage");
+                }
+                argv.push(option);
+                assert_eq!(
+                    parse(&argv).err().unwrap().kind(),
+                    clap::error::ErrorKind::UnknownArgument,
+                    "{option}, enabled={enabled}"
+                );
+            }
+            assert!(!short_help.contains(option));
+            assert!(!long_help.contains(option));
+        }
     }
 
     #[test]
@@ -887,11 +867,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn local_storage_shared_filesystem_requires_enable() {
-        assert!(parse(&["countersyncd", "--local-storage-allow-shared-filesystem",]).is_err());
     }
 
     #[test]

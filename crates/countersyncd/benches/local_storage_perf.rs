@@ -1270,7 +1270,6 @@ fn run(args: Args) -> Result<()> {
                             max_bytes: QUOTA
                                 .checked_sub(retained_bytes)
                                 .ok_or("retained output exhausted the shared 2.4 GB quota")?,
-                            require_dedicated_filesystem: false,
                         },
                         status.clone(),
                     )
