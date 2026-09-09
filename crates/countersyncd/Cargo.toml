@@ -10,13 +10,20 @@ edition.workspace = true
 
 [features]
 benchmark = []
+local-storage-benchmark = []
 
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
 
+# Local columnar storage
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-ipc = { workspace = true }
+
 # Configuration and serialization
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Netlink for network operations
@@ -81,6 +88,11 @@ which = "7.0.3"
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+
+[[bench]]
+name = "local_storage_perf"
+harness = false
+required-features = ["local-storage-benchmark"]
 
 [[bench]]
 name = "end_to_end"

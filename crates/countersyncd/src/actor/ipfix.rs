@@ -957,6 +957,41 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::channel;
 
+    #[tokio::test]
+    async fn recipient_backpressure_preserves_fanout_and_closed_receivers_unblock() {
+        for close in [false, true] {
+            let mut actor = actor();
+            let (sender, mut receiver) = channel(1);
+            sender
+                .send(Arc::new(SAIStatsBatch::default()))
+                .await
+                .unwrap();
+            actor.add_recipient(sender);
+            let (healthy_sender, mut healthy_receiver) = channel(1);
+            actor.add_recipient(healthy_sender);
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(42, [SAIStat::new("Ethernet0", 1, 2, u64::MAX)]);
+            let send = actor.send_batch(batch);
+            tokio::pin!(send);
+            assert!(tokio::time::timeout(Duration::from_millis(20), &mut send)
+                .await
+                .is_err());
+            let received = healthy_receiver.try_recv().unwrap();
+            assert_eq!(received.iter().next().unwrap().stats[0].counter, u64::MAX);
+            if close {
+                receiver.close();
+            } else {
+                receiver.try_recv().unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(1), &mut send)
+                .await
+                .unwrap();
+            if !close {
+                assert!(Arc::ptr_eq(&received, &receiver.try_recv().unwrap()));
+            }
+        }
+    }
+
     // Field specifiers preserve the E bit independently of the IE number.
     fn hardware_template(id: u16, fields: &[(u16, u16, Option<u32>)]) -> IPFixTemplatesMessage {
         let mut bytes = vec![0; IPFIX_HEADER_LEN + SET_HEADER_LEN];
