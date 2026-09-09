@@ -144,7 +144,6 @@ pub struct LocalStorageConfig {
     /// Logical compressed IPC bytes, checked after each complete batch flush.
     pub file_target_bytes: u64,
     pub max_bytes: u64,
-    pub require_dedicated_filesystem: bool,
 }
 
 impl LocalStorageConfig {
@@ -191,12 +190,6 @@ impl LocalStorageConfig {
         }
         let metadata = fs::symlink_metadata(&root).map_err(|e| e.to_string())?;
         validate_root_access(&root, metadata.uid(), metadata.mode())?;
-        if self.require_dedicated_filesystem && !is_mount_point(&root)? {
-            return Err(format!(
-                "local storage root {} must be a dedicated mount point",
-                self.root.display()
-            ));
-        }
         Ok(())
     }
 }
@@ -639,13 +632,6 @@ fn validate_root_access(path: &Path, owner: u32, mode: u32) -> Result<(), String
     Ok(())
 }
 
-fn is_mount_point(path: &Path) -> Result<bool, String> {
-    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
-    let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
-    let parent = path.parent().ok_or("local storage root has no parent")?;
-    Ok(metadata.dev() != fs::metadata(parent).map_err(|e| e.to_string())?.dev())
-}
-
 fn validate_storage_device(root_dev: u64, child_dev: u64, path: &Path) -> Result<(), String> {
     if child_dev != root_dev {
         return Err(format!(
@@ -853,7 +839,6 @@ mod tests {
             shard_interval: Duration::from_secs(1800),
             file_target_bytes: 100_000_000,
             max_bytes: 1_000_000_000,
-            require_dedicated_filesystem: false,
         }
     }
 
@@ -1279,6 +1264,7 @@ mod tests {
             let metadata = fs::metadata(directory).unwrap();
             assert_eq!(metadata.mode() & 0o777, 0o700);
             assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+            assert_eq!(metadata.dev(), fs::metadata(parent.path()).unwrap().dev());
         }
         for file in [root.join(LOCK_FILE), paths(&root, "shards")[0].clone()] {
             assert_eq!(fs::metadata(file).unwrap().mode() & 0o777, 0o600);
@@ -1356,14 +1342,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         for suffix in ["", "/", "/.", "//./", "/../target", "/missing"] {
             let path = PathBuf::from(format!("{}{suffix}", link.display()));
-            for dedicated in [false, true] {
-                let mut config = config(&path);
-                config.require_dedicated_filesystem = dedicated;
-                assert!(prepare_storage(&config)
-                    .unwrap_err()
-                    .contains("not a symbolic link"));
-                assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
-            }
+            assert!(prepare_storage(&config(&path))
+                .unwrap_err()
+                .contains("not a symbolic link"));
+            assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
         }
         // A symlink in an ancestor is rejected before creating the final root.
         let alias = temp.path().join("alias");
@@ -1752,8 +1734,7 @@ mod tests {
         );
         let temp = private_tempdir();
         let mut config = config(temp.path());
-        config.require_dedicated_filesystem = true;
-        assert!(config.prepare_root().is_err());
+        config.prepare_root().unwrap();
         config.shard_interval = Duration::ZERO;
         assert!(config.validate().is_err());
         config.shard_interval = Duration::from_secs(1);
