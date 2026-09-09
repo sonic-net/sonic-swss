@@ -12,6 +12,7 @@
 #include <iostream>
 #include "orch_zmq_config.h"
 #include "saihelper.h"
+#include "poeorch.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -59,6 +60,7 @@ SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
 PolicerOrch *gPolicerOrch;
+PoeOrch *gPoeOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
@@ -922,6 +924,10 @@ bool OrchDaemon::init()
     {
         SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
     }
+
+    vector<string> poe_tables = {APP_POE_TABLE_NAME};
+    gPoeOrch = new PoeOrch(m_applDb, m_configDb, m_stateDb, poe_tables);
+    m_orchList.push_back(gPoeOrch);
 
     if (WarmStart::isWarmStart())
     {
