@@ -66,6 +66,9 @@ protected:
 
     void doTask(ConsumerBase &consumer);
     void doTask(swss::NotificationConsumer &consumer);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
+    void handleHaSetEventNotification(const std::string &data);
+    void handleHaScopeEventNotification(const std::string &data);
     void doTaskEniTable(ConsumerBase &consumer);
     void doTaskHaSetTable(ConsumerBase &consumer);
     void doTaskHaScopeTable(ConsumerBase &consumer);

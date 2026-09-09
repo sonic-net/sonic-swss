@@ -11,6 +11,7 @@
 #include "macaddress.h"
 #include "swssnet.h"
 #include "schema.h"
+#include "sainotificationorch.h"
 
 #include <chrono>
 #include <cinttypes>
@@ -786,6 +787,16 @@ DashHaFlowOrch::DashHaFlowOrch(DBConnector *db, const vector<string> &tableNames
     Orch::addExecutor(flowBulkGetSessionNotifier);
 
     registerFlowBulkGetSessionNotifier();
+
+    if (gSaiNotificationOrch)
+    {
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            });
+    }
 }
 
 bool DashHaFlowOrch::registerFlowBulkGetSessionNotifier()
@@ -854,13 +865,22 @@ void DashHaFlowOrch::doTask(NotificationConsumer &consumer)
 
     consumer.pop(notification_name, data, values);
 
-    if (notification_name == SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT)
+    KeyOpFieldsValuesTuple entry = std::make_tuple(data, notification_name, values);
+    handleNotification(entry);
+}
+
+void DashHaFlowOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
+{
+    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT)
     {
-        handleSessionNotification(notification_name, data, values);
+        handleSessionNotification(
+                kfvOp(entry),
+                kfvKey(entry),
+                kfvFieldsValues(entry));
     }
     else
     {
-        SWSS_LOG_WARN("Unknown notification: %s", notification_name.c_str());
+        SWSS_LOG_WARN("Unknown notification: %s", kfvOp(entry).c_str());
     }
 }
 

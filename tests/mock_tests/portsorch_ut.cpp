@@ -13,7 +13,6 @@
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
-#include "notifications.h"
 #include <sys/mman.h>
 #undef private
 #define private public
@@ -947,12 +946,6 @@ namespace portsorch_test
             consumer->readData();
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
-
-            // Call the orchagent port state change callback method with zmq mode
-            sai_redis_communication_mode_t oldRedisCommunicationMode = gRedisCommunicationMode;
-            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
-            on_port_state_change(1, &port_oper_status);
-            gRedisCommunicationMode = oldRedisCommunicationMode;
 
             gPortsOrch->getPort("Ethernet0", port);
             ASSERT_TRUE(port.m_oper_status == oper_status);

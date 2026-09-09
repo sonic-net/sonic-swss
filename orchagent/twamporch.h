@@ -130,6 +130,8 @@ private:
     void saveSessionStatsLatest(const sai_object_id_t session_id, const uint32_t index, const vector<uint64_t>& stats);
     void calculateCounters(const string&, const uint32_t index, const vector<uint64_t>& stats);
     void saveCountersTotal(const string&, const sai_object_id_t session_id);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
+    void handleTwampSessionEventNotification(const std::string &data);
     void doTask(NotificationConsumer& consumer);
 };
 
