@@ -523,16 +523,141 @@ namespace portsorch_test
     sai_bridge_api_t ut_sai_bridge_api;
     sai_bridge_api_t *org_sai_bridge_api;
 
+    bool _sai_mock_default_bridge_ports = false;
+    uint32_t _sai_default_bridge_port_count = 0;
+    uint32_t _sai_remove_bridge_port_count = 0;
+    static const sai_object_id_t _sai_fake_bridge_port_base = 0x3a0000000000ULL;
+    static const sai_object_id_t _sai_fake_1q_router_bridge_port = 0x3b0000000000ULL;
+
+    sai_status_t _ut_stub_sai_get_bridge_attribute(
+        _In_ sai_object_id_t bridge_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (_sai_mock_default_bridge_ports &&
+            attr_count == 1 && attr_list[0].id == SAI_BRIDGE_ATTR_PORT_LIST)
+        {
+            // `+ 1` for the 1Q router bridge port
+            auto total = _sai_default_bridge_port_count + 1;
+            if (attr_list[0].value.objlist.count < total)
+            {
+                attr_list[0].value.objlist.count = total;
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+
+            for (uint32_t i = 0; i < _sai_default_bridge_port_count; i++)
+            {
+                attr_list[0].value.objlist.list[i] = _sai_fake_bridge_port_base + i;
+            }
+            attr_list[0].value.objlist.list[_sai_default_bridge_port_count] =
+                _sai_fake_1q_router_bridge_port;
+            attr_list[0].value.objlist.count = total;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        return org_sai_bridge_api->get_bridge_attribute(bridge_id, attr_count, attr_list);
+    }
+
+    sai_status_t _ut_stub_sai_get_bridge_port_attribute(
+        _In_ sai_object_id_t bridge_port_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (_sai_mock_default_bridge_ports &&
+            attr_count == 1 && attr_list[0].id == SAI_BRIDGE_PORT_ATTR_TYPE)
+        {
+            attr_list[0].value.s32 =
+                (bridge_port_id == _sai_fake_1q_router_bridge_port)
+                    ? SAI_BRIDGE_PORT_TYPE_1Q_ROUTER
+                    : SAI_BRIDGE_PORT_TYPE_PORT;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        return org_sai_bridge_api->get_bridge_port_attribute(bridge_port_id, attr_count, attr_list);
+    }
+
+    sai_status_t _ut_stub_sai_remove_bridge_port(_In_ sai_object_id_t bridge_port_id)
+    {
+        if (_sai_mock_default_bridge_ports)
+        {
+            _sai_remove_bridge_port_count++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        return org_sai_bridge_api->remove_bridge_port(bridge_port_id);
+    }
+
     void _hook_sai_bridge_api()
     {
         ut_sai_bridge_api = *sai_bridge_api;
         org_sai_bridge_api = sai_bridge_api;
+        ut_sai_bridge_api.get_bridge_attribute = _ut_stub_sai_get_bridge_attribute;
+        ut_sai_bridge_api.get_bridge_port_attribute = _ut_stub_sai_get_bridge_port_attribute;
+        ut_sai_bridge_api.remove_bridge_port = _ut_stub_sai_remove_bridge_port;
         sai_bridge_api = &ut_sai_bridge_api;
     }
 
     void _unhook_sai_bridge_api()
     {
         sai_bridge_api = org_sai_bridge_api;
+    }
+
+    sai_vlan_api_t ut_sai_vlan_api;
+    sai_vlan_api_t *pold_sai_vlan_api;
+
+    bool _sai_mock_default_vlan_members = false;
+    uint32_t _sai_default_vlan_member_count = 0;
+    uint32_t _sai_remove_vlan_member_count = 0;
+
+    sai_status_t _ut_stub_sai_get_vlan_attribute(
+        _In_ sai_object_id_t vlan_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (_sai_mock_default_vlan_members &&
+            attr_count == 1 && attr_list[0].id == SAI_VLAN_ATTR_MEMBER_LIST)
+        {
+            auto count = attr_list[0].value.objlist.count;
+            if (count < _sai_default_vlan_member_count)
+            {
+                attr_list[0].value.objlist.count = _sai_default_vlan_member_count;
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+
+            attr_list[0].value.objlist.count = _sai_default_vlan_member_count;
+            for (uint32_t i = 0; i < _sai_default_vlan_member_count; i++)
+            {
+                attr_list[0].value.objlist.list[i] = 0x260000000000ULL + i;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
+
+        return pold_sai_vlan_api->get_vlan_attribute(vlan_id, attr_count, attr_list);
+    }
+
+    sai_status_t _ut_stub_sai_remove_vlan_member(_In_ sai_object_id_t vlan_member_id)
+    {
+        if (_sai_mock_default_vlan_members)
+        {
+            _sai_remove_vlan_member_count++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        return pold_sai_vlan_api->remove_vlan_member(vlan_member_id);
+    }
+
+    void _hook_sai_vlan_api()
+    {
+        ut_sai_vlan_api = *sai_vlan_api;
+        pold_sai_vlan_api = sai_vlan_api;
+        ut_sai_vlan_api.get_vlan_attribute = _ut_stub_sai_get_vlan_attribute;
+        ut_sai_vlan_api.remove_vlan_member = _ut_stub_sai_remove_vlan_member;
+        sai_vlan_api = &ut_sai_vlan_api;
+    }
+
+    void _unhook_sai_vlan_api()
+    {
+        sai_vlan_api = pold_sai_vlan_api;
     }
 
     void cleanupPorts(PortsOrch *obj)
@@ -1187,6 +1312,93 @@ namespace portsorch_test
         std::vector<std::string> keys;
         bufferMaxParameterTable.getKeys(keys);
         ASSERT_TRUE(keys.empty());
+    }
+
+    // When ports are created via bulk create, SAI may place them into the
+    // default VLAN and the default 1Q bridge. PortsOrch::addPortBulk() must
+    // remove them from both (for all non-DPU switch types), otherwise the ports
+    // end up unintentionally bridged together in a single L2 broadcast domain.
+    TEST_F(PortsOrchTest, PortBulkCreateRemovesDefaultVlanAndBridgePorts)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (std::uint32_t idx1 = 0, idx2 = 1; idx1 < ports.size() * 4; idx1 += 4, idx2++)
+        {
+            std::stringstream key;
+            key << FRONT_PANEL_PORT_PREFIX << idx1;
+
+            std::stringstream alias;
+            alias << "etp" << idx2;
+
+            std::stringstream index;
+            index << idx2;
+
+            std::stringstream lanes;
+            lanes << idx1 << "," << idx1 + 1 << "," << idx1 + 2 << "," << idx1 + 3;
+
+            std::vector<FieldValueTuple> fvList = {
+                { "alias",               alias.str() },
+                { "index",               index.str() },
+                { "lanes",               lanes.str() },
+                { "speed",               "100000"    },
+                { "autoneg",             "off"       },
+                { "unreliable_los",      "off"       },
+                { "adv_speeds",          "all"       },
+                { "interface_type",      "none"      },
+                { "adv_interface_types", "all"       },
+                { "fec",                 "rs"        },
+                { "mtu",                 "9100"      },
+                { "tpid",                "0x8100"    },
+                { "pfc_asym",            "off"       },
+                { "admin_status",        "up"        },
+                { "description",         "FP port"   }
+            };
+
+            portTable.set(key.str(), fvList);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Pretend SAI placed all created ports into the default VLAN and the
+        // default 1Q bridge, and start counting how many addPortBulk() removes.
+        _hook_sai_vlan_api();
+        _hook_sai_bridge_api();
+        _sai_default_vlan_member_count = static_cast<uint32_t>(ports.size());
+        _sai_remove_vlan_member_count = 0;
+        _sai_mock_default_vlan_members = true;
+        _sai_default_bridge_port_count = static_cast<uint32_t>(ports.size());
+        _sai_remove_bridge_port_count = 0;
+        _sai_mock_default_bridge_ports = true;
+
+        // Apply configuration (creates the ports via addPortBulk)
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _sai_mock_default_vlan_members = false;
+        _sai_mock_default_bridge_ports = false;
+        _unhook_sai_bridge_api();
+        _unhook_sai_vlan_api();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // addPortBulk() must have removed every default VLAN member
+        ASSERT_EQ(_sai_remove_vlan_member_count, static_cast<uint32_t>(ports.size()));
+
+        // addPortBulk() must have removed every SAI_BRIDGE_PORT_TYPE_PORT bridge
+        // port from the default 1Q bridge, while leaving the 1Q router port.
+        ASSERT_EQ(_sai_remove_bridge_port_count, static_cast<uint32_t>(ports.size()));
+
+        // Cleanup ports
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     // Verifies certain port attributes are configured for the port creation flow.
