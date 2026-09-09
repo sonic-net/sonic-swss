@@ -179,7 +179,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             {
                 attr.id = SAI_POLICER_ATTR_CIR;
                 /*convert kbps to bps*/
-                attr.value.u64 = (stoul(value)*1000/8);
+                attr.value.u64 = to_uint<uint64_t>(value) * 1000 / 8;
                 cir = true;
                 attrs.push_back(attr);
                 SWSS_LOG_DEBUG("CIR %s",value.c_str());
@@ -393,7 +393,16 @@ void PolicerOrch::doTask(Consumer &consumer)
         // Special handling for storm-control configuration.
         if (table_name == CFG_PORT_STORM_CONTROL_TABLE_NAME)
         {
-            storm_status = handlePortStormControlTable(tuple);
+            try
+            {
+                storm_status = handlePortStormControlTable(tuple);
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                               table_name.c_str(), key.c_str(), e.what());
+                storm_status = task_process_status::task_failed;
+            }
             if ((storm_status == task_process_status::task_success) ||
                     (storm_status == task_process_status::task_failed))
             {
@@ -413,76 +422,86 @@ void PolicerOrch::doTask(Consumer &consumer)
             vector<sai_attribute_t> attrs;
             bool meter_type = false, mode = false;
 
-            for (auto i = kfvFieldsValues(tuple).begin();
-                    i != kfvFieldsValues(tuple).end(); ++i)
+            try
             {
-                auto field = to_upper(fvField(*i));
-                auto value = to_upper(fvValue(*i));
+                for (auto i = kfvFieldsValues(tuple).begin();
+                        i != kfvFieldsValues(tuple).end(); ++i)
+                {
+                    auto field = to_upper(fvField(*i));
+                    auto value = to_upper(fvValue(*i));
 
-                SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
+                    SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
 
-                sai_attribute_t attr;
+                    sai_attribute_t attr;
 
-                if (field == meter_type_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_METER_TYPE;
-                    attr.value.s32 = (sai_meter_type_t) meter_type_map.at(value);
-                    meter_type = true;
-                }
-                else if (field == mode_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_MODE;
-                    attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at(value);
-                    mode = true;
-                }
-                else if (field == color_source_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_COLOR_SOURCE;
-                    attr.value.s32 = policer_color_source_map.at(value);
-                }
-                else if (field == cbs_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_CBS;
-                    attr.value.u64 = stoul(value);
-                }
-                else if (field == cir_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_CIR;
-                    attr.value.u64 = stoul(value);
-                }
-                else if (field == pbs_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_PBS;
-                    attr.value.u64 = stoul(value);
-                }
-                else if (field == pir_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_PIR;
-                    attr.value.u64 = stoul(value);
-                }
-                else if (field == red_packet_action_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
-                    attr.value.s32 = packet_action_map.at(value);
-                }
-                else if (field == green_packet_action_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
-                    attr.value.s32 = packet_action_map.at(value);
-                }
-                else if (field == yellow_packet_action_field)
-                {
-                    attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
-                    attr.value.s32 = packet_action_map.at(value);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown policer attribute %s specified",
-                            field.c_str());
-                    continue;
-                }
+                    if (field == meter_type_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_METER_TYPE;
+                        attr.value.s32 = (sai_meter_type_t) meter_type_map.at(value);
+                        meter_type = true;
+                    }
+                    else if (field == mode_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_MODE;
+                        attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at(value);
+                        mode = true;
+                    }
+                    else if (field == color_source_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_COLOR_SOURCE;
+                        attr.value.s32 = policer_color_source_map.at(value);
+                    }
+                    else if (field == cbs_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_CBS;
+                        attr.value.u64 = to_uint<uint64_t>(value);
+                    }
+                    else if (field == cir_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_CIR;
+                        attr.value.u64 = to_uint<uint64_t>(value);
+                    }
+                    else if (field == pbs_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_PBS;
+                        attr.value.u64 = to_uint<uint64_t>(value);
+                    }
+                    else if (field == pir_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_PIR;
+                        attr.value.u64 = to_uint<uint64_t>(value);
+                    }
+                    else if (field == red_packet_action_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
+                        attr.value.s32 = packet_action_map.at(value);
+                    }
+                    else if (field == green_packet_action_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
+                        attr.value.s32 = packet_action_map.at(value);
+                    }
+                    else if (field == yellow_packet_action_field)
+                    {
+                        attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
+                        attr.value.s32 = packet_action_map.at(value);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Unknown policer attribute %s specified",
+                                field.c_str());
+                        continue;
+                    }
 
-                attrs.push_back(attr);
+                    attrs.push_back(attr);
+                }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                               table_name.c_str(), key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             // Create a new policer

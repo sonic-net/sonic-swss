@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "sai_serialize.h"
 #include "warm_restart.h"
+#include "converter.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -425,7 +426,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_type_field_name)
@@ -489,7 +490,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             }
             else if (field == buffer_pool_xoff_field_name)
             {
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
                 xoff = value;
@@ -664,19 +665,19 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             }
             else if (field == buffer_xon_field_name)
             {
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
                 is_lossless = true;
@@ -684,7 +685,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             else if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_dynamic_th_field_name)
@@ -702,7 +703,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-                attr.value.s8 = (sai_int8_t)stol(value);
+                attr.value.s8 = to_int<sai_int8_t>(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_static_th_field_name)
@@ -720,7 +721,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u64 = (uint64_t)stoul(value);
+                attr.value.u64 = to_uint<uint64_t>(value);
                 attribs.push_back(attr);
             }
             else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
@@ -2108,7 +2109,17 @@ void BufferOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
+        task_process_status task_status;
+        try
+        {
+            task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                           map_type_name.c_str(), kfvKey(it->second).c_str(), e.what());
+            task_status = task_process_status::task_invalid_entry;
+        }
         switch(task_status)
         {
             case task_process_status::task_success :

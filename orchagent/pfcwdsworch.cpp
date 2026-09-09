@@ -43,7 +43,16 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
 
             if (field == POLL_INTERVAL_FIELD)
             {
-                this->m_pfcwdFlexCounterManager->updateGroupPollingInterval(stoi(value));
+                try
+                {
+                    this->m_pfcwdFlexCounterManager->updateGroupPollingInterval(to_uint<uint32_t>(value));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid %s value %s for %s: %s",
+                                   POLL_INTERVAL_FIELD, value.c_str(), key.c_str(), e.what());
+                    continue;
+                }
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
