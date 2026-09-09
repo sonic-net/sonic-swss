@@ -1477,6 +1477,7 @@ namespace portsorch_test
                 { "attn",          "0x80,0x82,0x81,0x83"         },
                 { "tx_precoding",  "0x1,0x0,0x1,0x0"             },
                 { "rx_precoding",  "0x0,0x1,0x0,0x1"             },
+                { "reach_mode",    "ER,NR,ER,NR"                 },
                 { "unreliable_los","off"                         },
                 { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
                 { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
@@ -1582,6 +1583,13 @@ namespace portsorch_test
         // Verify rx_precoding
         std::vector<std::uint32_t> rx_precoding = { 0x0, 0x1, 0x0, 0x1 };
         ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_RX_PRECODING), SerdesValue(rx_precoding));
+
+        // Verify reach_mode
+        std::vector<std::uint32_t> reach_mode = {
+            SAI_PORT_SERDES_REACH_MODE_ER, SAI_PORT_SERDES_REACH_MODE_NR,
+            SAI_PORT_SERDES_REACH_MODE_ER, SAI_PORT_SERDES_REACH_MODE_NR
+        };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_REACH_MODE), SerdesValue(reach_mode));
 
         // Verify ob_m2lp
         std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };

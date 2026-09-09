@@ -221,6 +221,11 @@ public:
         } rx_precoding; // Port serdes rx_precoding (per-lane)
 
         struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } reach_mode; // Port serdes reach mode (per-lane)
+
+        struct {
             std::string value;
             bool is_set = false;
         } custom_collection; // Port serdes custom_collection

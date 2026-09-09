@@ -599,6 +599,11 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfi
     {
         map[SAI_PORT_SERDES_ATTR_RX_PRECODING] = SerdesValue(serdes.rx_precoding.value);
     }
+
+    if (serdes.reach_mode.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_REACH_MODE] = SerdesValue(serdes.reach_mode.value);
+    }
 }
 
 static bool isPathTracingSupported()

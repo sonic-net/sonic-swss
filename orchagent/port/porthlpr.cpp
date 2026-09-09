@@ -776,6 +776,44 @@ PortHelper::parseSerdesValueImpl(T &serdes, const std::string &field, const std:
     return true;
 }
 
+// Reach mode uses symbolic per-lane values ("NR"/"ER") rather than the numeric
+// lists handled by parseSerdesValueImpl, so it gets a dedicated parser.
+template<typename T>
+bool PortHelper::parsePortReachMode(T &serdes, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    for (const auto &cit : tokenize(value, ','))
+    {
+        const auto &mode = boost::algorithm::to_lower_copy(cit);
+
+        if (mode == "nr")
+        {
+            serdes.value.push_back(static_cast<std::uint32_t>(SAI_PORT_SERDES_REACH_MODE_NR));
+        }
+        else if (mode == "er")
+        {
+            serdes.value.push_back(static_cast<std::uint32_t>(SAI_PORT_SERDES_REACH_MODE_ER));
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s), expected 'NR' or 'ER'",
+                           field.c_str(), value.c_str());
+            return false;
+        }
+    }
+
+    serdes.is_set = true;
+
+    return true;
+}
+
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::preemphasis) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::idriver) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ipredriver) &serdes, const std::string &field, const std::string &value) const;
@@ -798,6 +836,7 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &se
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::tx_precoding) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rx_precoding) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortReachMode(decltype(PortSerdes_t::reach_mode) &serdes, const std::string &field, const std::string &value) const;
 
 
 
@@ -1289,6 +1328,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (serdes_field == PORT_RX_PRECODING)
         {
             if (!this->parsePortSerdes(serdes->rx_precoding, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_REACH_MODE)
+        {
+            if (!this->parsePortReachMode(serdes->reach_mode, field, value))
             {
                 return false;
             }
