@@ -1,5 +1,6 @@
 #include <cassert>
 #include <sstream>
+#include <stdexcept>
 
 #include "warmRestartHelper.h"
 
@@ -12,13 +13,12 @@ WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
                                  const std::string  &syncTableName,
                                  const std::string  &dockerName,
                                  const std::string  &appName) :
-    m_restorationTable(pipeline, syncTableName, false),
-    m_syncTable(syncTable),
     m_syncTableName(syncTableName),
     m_dockName(dockerName),
     m_appName(appName)
 {
     WarmStart::initialize(appName, dockerName);
+    registerTable(pipeline, syncTable, syncTableName);
 }
 
 
@@ -61,12 +61,18 @@ bool WarmStartHelper::checkAndStart(void)
                         m_appName.c_str());
 
         setState(WarmStart::INITIALIZED);
-        m_syncTable->clear();
     }
 
     /* Cleaning state from previous (unsuccessful) warm-restart attempts */
-    m_restorationVector.clear();
-    m_refreshMap.clear();
+    for (auto &table : m_tableContexts)
+    {
+        if (enabled)
+        {
+            table.second->syncTable->clear();
+        }
+        table.second->restorationVector.clear();
+        table.second->refreshMap.clear();
+    }
 
     /* Keeping track of warm-reboot active/inactive state */
     m_enabled = enabled;
@@ -93,6 +99,20 @@ uint32_t WarmStartHelper::getRestartTimer(void) const
 }
 
 
+void WarmStartHelper::registerTable(RedisPipeline *pipeline,
+                                    ProducerStateTable *syncTable,
+                                    const std::string &syncTableName)
+{
+    auto result = m_tableContexts.emplace(
+        syncTableName,
+        std::unique_ptr<TableContext>(new TableContext(pipeline, syncTable, syncTableName)));
+    if (!result.second)
+    {
+        throw std::invalid_argument("Warm restart table already registered: " + syncTableName);
+    }
+}
+
+
 /*
  * Invoked by warmStartHelper clients during initialization. All interested parties
  * are expected to call this method to upload their associated redisDB state into
@@ -104,13 +124,18 @@ bool WarmStartHelper::runRestoration()
     SWSS_LOG_NOTICE("Warm-Restart: Initiating AppDB restoration process for %s "
                     "application.", m_appName.c_str());
 
-    m_restorationTable.getContent(m_restorationVector);
+    size_t restoredCount = 0;
+    for (auto &table : m_tableContexts)
+    {
+        table.second->restorationTable.getContent(table.second->restorationVector);
+        restoredCount += table.second->restorationVector.size();
+    }
 
     /*
      * If there's no AppDB state to restore, then alert callee right away to avoid
      * iterating through the 'reconciliation' process.
      */
-    if (!m_restorationVector.size())
+    if (!restoredCount)
     {
         SWSS_LOG_NOTICE("Warm-Restart: No records received from AppDB for %s "
                         "application.", m_appName.c_str());
@@ -122,7 +147,7 @@ bool WarmStartHelper::runRestoration()
 
     SWSS_LOG_NOTICE("Warm-Restart: Received %zu records from AppDB for %s "
                     "application.",
-                    m_restorationVector.size(),
+                    restoredCount,
                     m_appName.c_str());
 
     setState(WarmStart::RESTORED);
@@ -136,9 +161,18 @@ bool WarmStartHelper::runRestoration()
 
 void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
 {
-    const std::string key = kfvKey(kfv);
+    insertRefreshMap(m_syncTableName, kfv);
+}
 
-    m_refreshMap[key] = kfv;
+
+void WarmStartHelper::insertRefreshMap(const std::string &syncTableName,
+                                       const KeyOpFieldsValuesTuple &kfv)
+{
+    const std::string key = kfvKey(kfv);
+    auto table = m_tableContexts.find(syncTableName);
+
+    assert(table != m_tableContexts.end());
+    table->second->refreshMap[key] = kfv;
 }
 
 
@@ -156,102 +190,83 @@ void WarmStartHelper::reconcile(void)
 
     assert(getState() == WarmStart::RESTORED);
 
-    for (auto &restoredElem : m_restorationVector)
+    for (auto &table : m_tableContexts)
     {
-        std::string restoredKey  = kfvKey(restoredElem);
-        auto restoredFV          = kfvFieldsValues(restoredElem);
+        auto &context = *table.second;
 
-        auto iter = m_refreshMap.find(restoredKey);
-
-        /*
-         * If the restored element is not found in the refreshMap, we must
-         * push a delete operation for this entry.
-         */
-        if (iter == m_refreshMap.end())
+        for (auto &restoredElem : context.restorationVector)
         {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s",
-                            printKFV(restoredKey, restoredFV).c_str());
+            std::string restoredKey  = kfvKey(restoredElem);
+            auto restoredFV          = kfvFieldsValues(restoredElem);
 
-            m_syncTable->del(restoredKey);
-            continue;
-        }
+            auto iter = context.refreshMap.find(restoredKey);
 
-        /*
-         * If an explicit delete request is sent by the application, process it
-         * right away.
-         */
-        else if (kfvOp(iter->second) == DEL_COMMAND)
-        {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s",
-                            printKFV(restoredKey, restoredFV).c_str());
-
-            m_syncTable->del(restoredKey);
-        }
-
-        /*
-         * If a matching entry is found in refreshMap, proceed to compare it
-         * with its restored counterpart.
-         */
-        else
-        {
-            auto refreshedKey = kfvKey(iter->second);
-            auto refreshedFV  = kfvFieldsValues(iter->second);
-
-            if (compareAllFV(restoredFV, refreshedFV))
+            if (iter == context.refreshMap.end())
             {
-                SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s",
-                                printKFV(refreshedKey, refreshedFV).c_str());
+                SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s from %s",
+                                printKFV(restoredKey, restoredFV).c_str(), table.first.c_str());
 
-                m_syncTable->set(refreshedKey, refreshedFV);
+                context.syncTable->del(restoredKey);
+                continue;
+            }
+
+            if (kfvOp(iter->second) == DEL_COMMAND)
+            {
+                SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s from %s",
+                                printKFV(restoredKey, restoredFV).c_str(), table.first.c_str());
+
+                context.syncTable->del(restoredKey);
             }
             else
             {
-                SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
-                              "existing entry %s",
-                              printKFV(refreshedKey, refreshedFV).c_str());
+                auto refreshedKey = kfvKey(iter->second);
+                auto refreshedFV  = kfvFieldsValues(iter->second);
+
+                if (compareAllFV(restoredFV, refreshedFV))
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s in %s",
+                                    printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
+
+                    context.syncTable->set({
+                        {refreshedKey, DEL_COMMAND, {}},
+                        {refreshedKey, SET_COMMAND, refreshedFV},
+                    });
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
+                                  "existing entry %s in %s",
+                                  printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
+                }
+            }
+
+            context.refreshMap.erase(restoredKey);
+        }
+
+        for (auto &kfv : context.refreshMap)
+        {
+            auto refreshedKey = kfvKey(kfv.second);
+            auto refreshedOp  = kfvOp(kfv.second);
+            auto refreshedFV  = kfvFieldsValues(kfv.second);
+
+            if (refreshedOp == DEL_COMMAND)
+            {
+                SWSS_LOG_NOTICE("Warm-Restart reconciliation: discarding non-existing"
+                                " entry %s from %s\n",
+                                refreshedKey.c_str(), table.first.c_str());
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s in %s",
+                                printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
+
+                context.syncTable->set(refreshedKey, refreshedFV);
             }
         }
 
-        /* Deleting the just-processed restored entry from the refreshMap */
-        m_refreshMap.erase(restoredKey);
+        context.refreshMap.clear();
+        context.restorationVector.clear();
     }
-
-    /*
-     * Iterate through all the entries left in the refreshMap, which correspond
-     * to brand-new entries to be pushed down to AppDB.
-     */
-    for (auto &kfv : m_refreshMap)
-    {
-        auto refreshedKey = kfvKey(kfv.second);
-        auto refreshedOp  = kfvOp(kfv.second);
-        auto refreshedFV  = kfvFieldsValues(kfv.second);
-
-        /*
-         * During warm-reboot, apps could receive an 'add' and a 'delete' for an
-         * entry that does not exist in AppDB. In these cases we must prevent the
-         * 'delete' from being pushed down to AppDB, so we are handling this case
-         * differently than the 'add' one.
-         */
-        if(refreshedOp == DEL_COMMAND)
-        {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: discarding non-existing"
-                            " entry %s\n",
-                            refreshedKey.c_str());
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s",
-                            printKFV(refreshedKey, refreshedFV).c_str());
-
-            m_syncTable->set(refreshedKey, refreshedFV);
-        }
-    }
-
-    /* Clearing pending kfv's from refreshMap */
-    m_refreshMap.clear();
-
-    /* Clearing restoration vector */
-    m_restorationVector.clear();
 
     setState(WarmStart::RECONCILED);
 

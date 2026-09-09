@@ -239,11 +239,41 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
 ---------------------------------------------
 ### SRV6_MY_SID_TABLE
-    ; Stores SRV6 MY_SID table entries and associated actions
-    key           = STRING ; SRV6 MY_SID prefix string
+    ; Stores SRV6 MySID forwarding entries and associated endpoint behaviors.
+    ; Static entries are owned by FRR/staticd or the kernel. Zebra sends them to
+    ; fpmsyncd as RTM_NEWSRV6LOCALSID and RTM_DELSRV6LOCALSID messages; fpmsyncd
+    ; is the producer of this APP_DB table. CONFIG_DB SRV6_MY_SIDS and
+    ; SRV6_MY_LOCATORS provide supplemental locator and decapsulation policy and
+    ; do not create the forwarding entry.
+    ;
+    ; The four decimal lengths describe the SID structure. Their sum must not
+    ; exceed 128, and sid must be an IPv6 address.
+    key           = block_len ":" node_len ":" function_len ":" argument_len ":" sid
+    block_len     = 1*3DIGIT
+    node_len      = 1*3DIGIT
+    function_len  = 1*3DIGIT
+    argument_len  = 1*3DIGIT
+    sid           = IPv6address
     ; field       = value
-    action        = STRING ; MY_SID actions like "end", "end.dt46"
-    vrf           = STRING ; VRF string for END.DT46 or END.DT4 or END.DT6
+    action        = STRING ; MySID action, for example "end", "end.x", "end.dt46", "un", or "udt46"
+    vrf           = STRING ; Required by VRF-based actions; "default" selects the default virtual router
+    adj           = IPv4address / IPv6address [ "@" ifName ] ; Required by adjacency-based actions
+
+    ; During a bgp/fpmsyncd warm restart, ROUTE_TABLE and SRV6_MY_SID_TABLE are
+    ; restored and reconciled by one WarmStartHelper and one bgp finite-state
+    ; machine. Unchanged rows produce no APP_DB write. Replayed SET and DEL
+    ; messages are deferred until reconciliation; changed and new rows are set,
+    ; explicitly deleted and stale rows are removed. When bgp warm restart is
+    ; disabled, fpmsyncd writes this table directly.
+    ;
+    ; Reconciliation is safe only when zebra's reconnect replay includes every
+    ; static MySID before the selected completion barrier closes. Deployments
+    ; using BGP EOIU must guarantee that staticd/kernel MySID replay precedes the
+    ; IPv4 and IPv6 EOIU markers plus the configured hold interval. The timer
+    ; fallback has the same complete-replay requirement. If FRR cannot provide
+    ; that ordering, it must provide a dedicated replay-complete marker before
+    ; bgp warm restart is enabled for static MySIDs; SWSS cannot infer completion
+    ; from an idle FPM stream.
 
 ---------------------------------------------
 ### FDB_TABLE
