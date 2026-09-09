@@ -55,6 +55,7 @@ private:
     struct nl_sock     *m_nl_sock;
     AppRestartAssist  *m_AppRestartAssist;
     Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+    bool m_isDualToR = false;
     bool m_isEvpnNvoExist = false;
 
     bool isLinkLocalEnabled(const std::string &port);
