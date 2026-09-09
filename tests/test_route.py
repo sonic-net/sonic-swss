@@ -901,6 +901,109 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 20.0.1.2/24 dev eth0")
 
+    def test_RouteVrfTableCleanupRaceCondition(self, dvs, testlog):
+        """Test VRF table cleanup race condition fix.
+        
+        Verifies that deleting all routes in a VRF and adding new routes in the same
+        bulk operation works correctly. Without the fix, m_syncdRoutes[vrf_id] is
+        deleted prematurely, causing new routes to fail tracking and remain in ASIC
+        after deletion.
+        """
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+
+        vrf_oid = self.create_vrf("Vrf_test")
+
+        self.create_l3_intf("Ethernet0", "Vrf_test")
+        self.add_ip_address("Ethernet0", "10.0.0.1/24")
+        self.set_admin_status("Ethernet0", "up")
+
+        dvs.runcmd("ip neigh replace 10.0.0.2 lladdr 00:00:00:00:00:02 dev Ethernet0")
+        time.sleep(1)
+
+        def _check_nexthop():
+            nexthop_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+            for nh in nexthop_entries:
+                fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nh)
+                if fvs.get("SAI_NEXT_HOP_ATTR_IP") == "10.0.0.2":
+                    return (True, None)
+            return (False, None)
+        
+        wait_for_result(_check_nexthop, failure_message="Nexthop 10.0.0.2 not found in ASIC DB")
+
+        # Clean up auto-created routes
+        initial_routes = [k for k in self.pdb.get_keys("ROUTE_TABLE") if k.startswith("Vrf_test:")]
+        for route_key in initial_routes:
+            self.remove_route_entry(route_key)
+        time.sleep(2)
+
+        route_table = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        route_table.setBuffered(True)
+
+        # Add 5 initial routes
+        initial_route_prefixes = [
+            "20.0.0.0/24",
+            "20.0.1.0/24",
+            "20.0.2.0/24",
+            "20.0.3.0/24",
+            "20.0.4.0/24"
+        ]
+        
+        for prefix in initial_route_prefixes:
+            fvs = swsscommon.FieldValuePairs([("nexthop", "10.0.0.2"), ("ifname", "Ethernet0")])
+            route_table.set(f"Vrf_test:{prefix}", fvs)
+        
+        route_table.flush()
+        time.sleep(2)
+        
+        self.check_route_entries_with_vrf(initial_route_prefixes, [vrf_oid] * len(initial_route_prefixes))
+
+        # Delete all 5 routes and add 5 new routes in same batch
+        for prefix in initial_route_prefixes:
+            route_table._del(f"Vrf_test:{prefix}")
+        
+        new_route_prefixes = [
+            "30.0.0.0/24",
+            "30.0.1.0/24",
+            "30.0.2.0/24",
+            "30.0.3.0/24",
+            "30.0.4.0/24"
+        ]
+        
+        for prefix in new_route_prefixes:
+            fvs = swsscommon.FieldValuePairs([("nexthop", "10.0.0.2"), ("ifname", "Ethernet0")])
+            route_table.set(f"Vrf_test:{prefix}", fvs)
+        
+        route_table.flush()
+        time.sleep(1)
+
+        # Verify initial routes removed
+        for prefix in initial_route_prefixes:
+            self.pdb.wait_for_deleted_entry("ROUTE_TABLE", f"Vrf_test:{prefix}")
+        self.check_deleted_route_entries(initial_route_prefixes)
+        
+        # Verify new routes in ASIC
+        self.check_route_entries_with_vrf(new_route_prefixes, [vrf_oid] * len(new_route_prefixes))
+
+        # Delete new routes
+        for prefix in new_route_prefixes:
+            route_table._del(f"Vrf_test:{prefix}")
+        route_table.flush()
+        time.sleep(2)
+        
+        for prefix in new_route_prefixes:
+            self.pdb.wait_for_deleted_entry("ROUTE_TABLE", f"Vrf_test:{prefix}")
+        
+        # Verify new routes properly removed from ASIC (fails without fix)
+        self.check_deleted_route_entries(new_route_prefixes)
+
+        route_table.setBuffered(False)
+
+        self.remove_ip_address("Ethernet0", "10.0.0.1/24")
+        self.remove_l3_intf("Ethernet0")
+        self.set_admin_status("Ethernet0", "down")
+        self.remove_vrf("Vrf_test")
+
     def test_RouteAddRemoveIpv4BlackholeRoute(self, dvs, testlog):
         self.setup_db(dvs)
 

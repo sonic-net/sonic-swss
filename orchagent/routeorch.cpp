@@ -1243,6 +1243,9 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
 
+        /* Remove VRF tables that became empty after route deletions */
+        cleanupEmptyVrfTables();
+
         // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
         // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
         // flush.
@@ -2596,7 +2599,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 // Routeorch internal cache has an entry, but it has already been removed in sai.
                 // This can happen in dualtor when a tunnel route is removed that matches a learned route
                 // remove the entry from the cache and retry route creation
-                m_syncdRoutes.at(vrf_id).erase(ipPrefix);
+                auto& routeTable = m_syncdRoutes.at(vrf_id);
+                routeTable.erase(ipPrefix);
+                if (routeTable.empty())
+                {
+                    m_pendingEmptyVrfCleanup.push_back(vrf_id);
+                }
                 return false;
             }
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
@@ -2785,19 +2793,6 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     size_t creating = gRouteBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
-        /*
-         * Clean up the VRF routing table if
-         * 1. there is no routing entry in the VRF routing table and
-         * 2. there is no pending bulk creation routing entry in gRouteBulker
-         * The ideal way of the 2nd condition is to check pending bulk creation entries of a certain VRF.
-         * However, we can not do that unless going over all entries in gRouteBulker.
-         * So, we use above strict conditions here
-         */
-        if (it_route_table->second.size() == 0 && gRouteBulker.creating_entries_count() == 0)
-        {
-            m_syncdRoutes.erase(vrf_id);
-            m_vrfOrch->decreaseVrfRefCount(vrf_id);
-        }
         SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
                       ipPrefix.to_string().c_str());
  
@@ -3009,20 +3004,50 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     else
     {
         it_route_table->second.erase(ipPrefix);
+        if (it_route_table->second.empty())
+        {
+            m_pendingEmptyVrfCleanup.push_back(vrf_id);
+        }
 
         /* Notify about the route next hop removal */
         notifyNextHopChangeObservers(vrf_id, ipPrefix, NextHopGroupKey(), false);
-
-        if (it_route_table->second.size() == 0)
-        {
-            m_syncdRoutes.erase(vrf_id);
-            m_vrfOrch->decreaseVrfRefCount(vrf_id);
-        }
 
         gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
     }
 
     return true;
+}
+
+void RouteOrch::cleanupEmptyVrfTables()
+{
+    SWSS_LOG_ENTER();
+
+    for (auto vrf_id : m_pendingEmptyVrfCleanup)
+    {
+        auto it_vrf = m_syncdRoutes.find(vrf_id);
+        if (it_vrf != m_syncdRoutes.end() && it_vrf->second.empty())
+        {
+            SWSS_LOG_INFO("Cleaning up empty VRF table for vrf_id 0x%" PRIx64, vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+            m_syncdRoutes.erase(it_vrf);
+        }
+    }
+    m_pendingEmptyVrfCleanup.clear();
+}
+
+void RouteOrch::cleanupVrfTable(sai_object_id_t vrf_id)
+{
+    SWSS_LOG_ENTER();
+
+    auto it_vrf = m_syncdRoutes.find(vrf_id);
+    if (it_vrf == m_syncdRoutes.end() || !it_vrf->second.empty())
+    {
+        return;
+    }
+
+    SWSS_LOG_INFO("Cleaning up empty VRF table for vrf_id 0x%" PRIx64, vrf_id);
+    m_vrfOrch->decreaseVrfRefCount(vrf_id);
+    m_syncdRoutes.erase(it_vrf);
 }
 
 bool RouteOrch::isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix)
