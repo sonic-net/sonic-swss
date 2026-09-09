@@ -1,7 +1,7 @@
 # HFT Local Storage: v5 Arrow IPC Matrix
 
 `countersyncd --enable-local-storage` enables best-effort capture of **exact raw
-decoded observations** on `/mnt/hft`. It is disabled by default. The current
+decoded observations** on `/tmp/hft`. It is disabled by default. The current
 format is `sonic-hft-arrow-v5`: self-contained, ZSTD-compressed standard Arrow IPC
 streams with one series-major matrix block per record batch. This is not the
 old range-summary implementation, a custom delta codec, Parquet, or Feather.
@@ -17,7 +17,8 @@ of their throughput, compression, RSS, or test results establishes v5 performanc
 
 ## CLI
 
-Local capture remains opt-in. Defaults use an existing dedicated filesystem:
+Local capture remains opt-in. Defaults allow a shared filesystem and create a
+missing final `/tmp/hft` directory privately when the storage actor starts:
 
 ```sh
 countersyncd --enable-local-storage
@@ -26,34 +27,49 @@ countersyncd --enable-local-storage
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--enable-local-storage` | `false` | Enable best-effort local capture |
-| `--local-storage-root PATH` | `/mnt/hft` | Existing capture directory |
-| `--local-storage-max-bytes BYTES` | `4000000000` | Application quota in decimal bytes |
+| `--local-storage-root PATH` | `/tmp/hft` | Private, service-owned capture directory; parent must already exist |
+| `--local-storage-max-bytes BYTES` | `134217728` | Static 128 MiB application quota, expressed in bytes |
 | `--local-storage-file-bytes BYTES` | `100000000` | Compressed IPC logical file-size target (decimal 100 MB), checked after a complete batch flush |
 | `--local-storage-file-seconds SECONDS` | `1800` | Maximum wall-clock file age (30 minutes), independent of source timestamps |
-| `--local-storage-allow-shared-filesystem` | `false` | Disable only the dedicated-filesystem requirement; requires `--enable-local-storage` |
+| `--local-storage-require-dedicated-filesystem` | `false` | Opt in to the dedicated-mount requirement; requires `--enable-local-storage` |
 
-For a real-DUT capture in an existing operator-controlled directory on a shared
-filesystem, with a decimal 2.4 GB quota:
+The hidden legacy bare flag `--local-storage-allow-shared-filesystem` remains
+accepted for existing external collector invocations that use it. It is now a
+no-op, still requires `--enable-local-storage`, and conflicts with
+`--local-storage-require-dedicated-filesystem`. No permission, lock, quota, or
+reserve checks are bypassed.
+
+For an operator-provisioned private dedicated mount, with an explicitly sized
+decimal 2.4 GB quota (not a recommendation for tmpfs):
 
 ```sh
 countersyncd --enable-local-storage \
   --local-storage-root /mnt/dut-capture \
   --local-storage-max-bytes 2400000000 \
-  --local-storage-allow-shared-filesystem
+  --local-storage-require-dedicated-filesystem
 ```
 
 Quota parsing accepts `u64` values from `67108865` through `18446744073709551615`.
 Zero and values at or below the 64 MiB batch reserve are rejected before actor
 startup. File bytes and seconds must be positive `u64` values; zero, negative,
 invalid, and overflowing values are rejected by CLI parsing. Root, quota, and
-rotation options alone do not enable capture. Root existence,
-symlink, locking, entry, and filesystem-space checks remain in the storage actor;
-the shared-filesystem flag does not bypass them or change permissions. Setup
-failure still disables only local output. Shared capture is an explicit exception
-to the production dedicated-filesystem policy below: unrelated writers can
-consume space, and the application quota does not constrain them. Startup logs
+rotation options alone do not enable capture. Parsing creates no directories,
+even with `--enable-local-storage`. Root creation, ownership/permission checks,
+symlink, locking, entry, and filesystem-space checks run in the storage actor.
+Setup failure still disables only local output. On shared filesystems, unrelated
+writers can consume space, and the application quota does not constrain them. Startup logs
 report the selected root, quota, file-size target, maximum age,
 dedicated-filesystem requirement, v5 format, and backpressure behavior.
+
+`/tmp` may be tmpfs or disk-backed and is volatile across reboot or temporary-file
+cleanup; fsync does not make tmpfs survive power loss. A container's `/tmp/hft`
+need not be the host's `/tmp/hft`. Check the service's mount namespace and arrange
+an explicit mount/transfer path if an external collector needs access. Prevent
+temporary-directory cleanup while capturing. For cleanup, stop capture and
+prevent restart, verify the transferred archive, then remove only verified
+service-owned capture files and use `rmdir` on the now-empty owned directories.
+Never recursively remove an arbitrary supplied path or delete the live lock file.
+There is no automatic upload, retention, or cleanup.
 
 ## Capture Contract
 
@@ -97,7 +113,7 @@ an ordinary `tokio::sync::mpsc::channel(32)` registered with
 `IpfixActor::add_recipient(sender)`. There is no storage-specific message alias
 or dedicated IPFIX tap/status input.
 `LocalStorageActor::new(receiver, config, status) -> Result<Self, String>`
-validates and locks the root, checks directory entries, and accounts for existing
+creates a missing final private root, validates and locks it, checks directory entries, and accounts for existing
 files. **It does not repair or publish abandoned streams.** `actor.run()` is one
 blocking storage loop that creates its own current-thread Tokio runtime for
 channel receive and timer waits. Synchronous compression and filesystem I/O stay
@@ -220,8 +236,8 @@ format. Despite the `.arrow` suffix, use `pyarrow.ipc.open_stream`, not
 
 | Setting | Current Value |
 | --- | --- |
-| Root | `/mnt/hft`, existing dedicated filesystem |
-| Application quota | 4,000,000,000 bytes (decimal 4 GB) |
+| Root | `/tmp/hft`, shared filesystem allowed; missing final directory created with mode `0700` |
+| Application quota | 134,217,728 bytes (128 MiB), static rather than memory-derived |
 | Input queue | 32 flat batches |
 | Maximum counters per record/layout | 65,536 |
 | `series` metadata budget | 16 MiB of actual serialized JSON bytes |
@@ -232,6 +248,7 @@ format. Despite the `.arrow` suffix, use `pyarrow.ipc.open_stream`, not
 | Raw record/reader block safety limit | 128 MiB |
 | Minimum schema/block disk reservation | 64 MiB |
 | Filesystem emergency reserve | 512 MiB |
+| Tmpfs host-memory admission | Also require host `MemAvailable` to cover the write reservation plus 512 MiB |
 
 For `C` counters, raw record bytes are `8 * (C + 1)`: one timestamp and `C`
 values, with no sequence. The block's record capacity is
@@ -278,7 +295,7 @@ filesystem/device honoring fsync.
 ## Files And Quota
 
 ```text
-/mnt/hft/
+/tmp/hft/
   .writer.lock
   .staging/
     <unix-ns>-<pid>-<file_sequence>.arrow.partial
@@ -296,13 +313,23 @@ per-shard directories, `_READY` markers, or required sidecars. v5 creates no
 loss diagnostic files. Historical `loss.json` and `.loss.json.partial` files,
 if present, are left untouched and charged to quota, not read or updated.
 
-Only one writer holds the nonblocking exclusive `.writer.lock`. Production
-rejects a symlink root, the root filesystem, ordinary directories, and
-same-device bind mounts: the existing root must be on a different device from
-its parent. Staging/shard directories reject symlinks; relevant writer opens
-use `O_NOFOLLOW`. The whole root must be service/operator-controlled, not
-writable by untrusted users. There is no fallback to the system filesystem.
-Tests can explicitly disable the dedicated-mount requirement.
+Only one writer holds the nonblocking exclusive `.writer.lock`. Root path
+components reject symlinks, including aliases with trailing `/`, `/.`, or `/..`.
+Only a missing final directory is created, with mode `0700`; parents must already
+exist and remain trusted (the default `/tmp` is the system-managed sticky
+directory). An existing root must belong to the effective service UID and have
+**no group/other permissions** (`mode & 077 == 0`): even `0755` is rejected.
+Existing paths are never automatically chmodded or chowned. New staging/shard
+directories use `0700`; new IPC and lock files use `0600`, further restricted by
+the process umask. Existing files and child-directory permissions remain unchanged
+behind the private root. The root and its contents must remain service-controlled.
+
+With `--local-storage-require-dedicated-filesystem`, the root must additionally
+be on a different device from its parent. This rejects ordinary shared directories
+and same-device bind mounts; it is a device-ID check, not a mount-ID check.
+Staging/shard directories reject symlinks and must share the root's device in
+either mode. Relevant writer opens use `O_NOFOLLOW`. No automatic mount or
+fallback path is provided.
 
 Opening a stream flushes/fsyncs its schema and fsyncs `.staging`. Normal
 finalization flushes the last block, writes the standard EOS marker,
@@ -316,12 +343,29 @@ not just logical lengths. A block write reserves the larger of 64 MiB and
 `2 * raw_block_bytes + 256 * (C + 1) + 8 MiB`; `C + 1` counts the writer's
 original in-memory columns, not the two Arrow fields. Admission checks both
 the application quota and `statvfs` available space plus the 512 MiB emergency
-reserve. Encoded writes are capped to the reservation; allocation accounting
+reserve. On tmpfs (`statfs` type `0x01021994`), each reservation uses the minimum
+of filesystem available bytes and host `MemAvailable` from `/proc/meminfo`.
+Missing, unreadable, or invalid `MemAvailable` fails closed. Thus a minimum
+64 MiB write reservation needs at least 576 MiB of both tmpfs space and host
+available memory; larger reservations need more. Non-tmpfs capture does not read
+`/proc/meminfo`. Encoded writes are capped to the reservation; allocation accounting
 is updated after writes. Capture can stop before the nominal quota is full.
-This application policy is not a filesystem-enforced quota against unrelated
-writers; the dedicated service-owned filesystem remains necessary.
+With the default 128 MiB quota and at least 64 MiB reserved per write, capture
+can stop well before the 100 MB rotation target, leaving a readable durable
+prefix in staging rather than a finalized file. The smaller static default
+reduces potential tmpfs consumption compared with 4 GB; it is not dynamically
+sized to available RAM and does not promise a particular capture duration.
 
-Quota exhaustion, `ENOSPC`, `EIO`, `EROFS`, write/fsync/publication failure, or a
+This application policy is not a filesystem-enforced quota against unrelated
+writers. A dedicated filesystem can isolate disk use but is not a memory safety
+guarantee. The host-memory check is only a point-in-time admission guard, not a
+memory reservation: concurrent allocations can race it. It does **not** inspect
+cgroup v1/v2 memory limits or usage. Operators must budget tmpfs, queued input,
+metadata, compression buffers, and all other process/container memory within
+their cgroup limits. Neither the quota nor host `MemAvailable` prevents cgroup
+OOM, abrupt host memory pressure, or all allocation failures.
+
+Quota or tmpfs host-memory admission failure, `ENOSPC`, `EIO`, `EROFS`, write/fsync/publication failure, or a
 format/size-limit failure stops local output for the process and closes its
 receiver. Other recipients can continue through generic fanout, but accepted
 input may remain unpersisted; there is no complete-capture guarantee. The policy is
@@ -460,7 +504,7 @@ def iter_records(path):
         raise
 
 
-files = sorted(Path("/mnt/hft/shards").glob("*.arrow"))
+files = sorted(Path("/tmp/hft/shards").glob("*.arrow"))
 # Deterministic file enumeration only, not global arrival/timestamp order.
 for path in files:
     for timestamp_ns, stats in iter_records(path):
@@ -490,7 +534,7 @@ writer and preventing restart, holding the lock throughout iteration:
 ```python
 import fcntl
 
-root = Path("/mnt/hft")
+root = Path("/tmp/hft")
 partial = root / ".staging" / "<existing-filename>.arrow.partial"
 with (root / ".writer.lock").open("rb") as lock:
     # Failure to acquire means do not read the partial.
@@ -539,7 +583,13 @@ values and timestamps, matrix ordering and zero-counter records, metadata and
 counter limits, buffer reuse, rotation, read-only complete-prefix handling,
 operational I/O errors, abandoned-file preservation, quota, locking, process
 interruption, receiver-close-and-drain shutdown, and generic recipient
-backpressure/disconnection. The codec includes explicit v4 rejection coverage.
+backpressure/disconnection. Root-policy tests cover private creation, unchanged
+existing permissions, effective-UID validation, symlink aliases, and same-device
+children. CLI tests cover the defaults, dedicated opt-in, hidden legacy flag,
+conflicts, and side-effect-free parsing. Pure tmpfs budget tests cover malformed
+or missing memory data, the minimum of space and memory, and the reserve boundary;
+they do not reproduce real memory pressure or cgroup OOM.
+The codec includes explicit v4 rejection coverage.
 
 Rotation regressions cover tiny targets publishing only after complete batches,
 record preservation across files, more than 128 MiB of real compressible raw
@@ -549,8 +599,7 @@ v5 or the current rotation policy. Their old column/buffer counts, drop
 accounting, RSS, compression, throughput, and verification counts remain
 historical evidence only.
 
-This documentation edit does not claim those tests or the PyArrow example were
-executed, and no builds or benchmarks were rerun. Current verification results
+This document does not claim that the PyArrow example or benchmarks were rerun. Current verification results
 belong in the parent integration report, not guessed or copied historical test
 counts. Neither source coverage nor a process SIGKILL test establishes
 physical power-loss behavior, arbitrary corruption repair, a hard durability/RSS

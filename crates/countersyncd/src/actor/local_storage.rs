@@ -14,7 +14,7 @@ use std::{
     io::{self, BufWriter, Write},
     os::unix::{
         ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt},
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
         io::AsRawFd,
     },
     path::{Path, PathBuf},
@@ -65,18 +65,34 @@ impl LocalStorageConfig {
         Ok(())
     }
 
-    pub fn validate_root(&self) -> Result<(), String> {
+    fn prepare_root(&self) -> Result<(), String> {
         self.validate()?;
-        // Strip trailing separators and `/.` before lstat; either spelling would
-        // otherwise follow a symlink at the root. Do not canonicalize it away.
-        let root: PathBuf = self.root.components().collect();
-        let metadata = fs::symlink_metadata(&root).map_err(|e| e.to_string())?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "local storage root {} must be an existing directory, not a symbolic link",
-                self.root.display()
-            ));
+        // Inspect every component before traversing it, including aliases ending
+        // in `/`, `/.`, or `/..`. Only the final directory may be created.
+        let mut root = PathBuf::new();
+        let mut components = self.root.components().peekable();
+        while let Some(component) = components.next() {
+            root.push(component);
+            let metadata = match fs::symlink_metadata(&root) {
+                Ok(metadata) => metadata,
+                Err(e) if e.kind() == io::ErrorKind::NotFound && components.peek().is_none() => {
+                    fs::DirBuilder::new()
+                        .mode(0o700)
+                        .create(&root)
+                        .map_err(|e| e.to_string())?;
+                    fs::symlink_metadata(&root).map_err(|e| e.to_string())?
+                }
+                Err(e) => return Err(e.to_string()),
+            };
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(format!(
+                    "local storage path {} must be a directory, not a symbolic link",
+                    root.display()
+                ));
+            }
         }
+        let metadata = fs::symlink_metadata(&root).map_err(|e| e.to_string())?;
+        validate_root_access(&root, metadata.uid(), metadata.mode())?;
         if self.require_dedicated_filesystem && !is_mount_point(&root)? {
             return Err(format!(
                 "local storage root {} must be a dedicated mount point",
@@ -161,7 +177,9 @@ impl Store {
             ));
         }
         if available_bytes(&self.config.root)? < bytes.saturating_add(FILESYSTEM_RESERVE_BYTES) {
-            return Err("local storage filesystem emergency reserve reached".into());
+            return Err(
+                "local storage filesystem or tmpfs host-memory emergency reserve reached".into(),
+            );
         }
         Ok(())
     }
@@ -205,6 +223,7 @@ impl Store {
                 .create_new(true)
                 .read(true)
                 .write(true)
+                .mode(0o600)
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(&path)
             {
@@ -512,6 +531,16 @@ impl LocalStorageActor {
     }
 }
 
+fn validate_root_access(path: &Path, owner: u32, mode: u32) -> Result<(), String> {
+    if owner != unsafe { libc::geteuid() } || mode & 0o077 != 0 {
+        return Err(format!(
+            "local storage root {} must be owned by the effective service user with no group/other permissions",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn is_mount_point(path: &Path) -> Result<bool, String> {
     let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
     let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
@@ -537,7 +566,10 @@ fn ensure_directory(path: &Path, root_dev: u64) -> Result<(), String> {
         )),
         Ok(metadata) => validate_storage_device(root_dev, metadata.dev(), path),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(|e| e.to_string())?;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(path)
+                .map_err(|e| e.to_string())?;
             let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
             validate_storage_device(root_dev, metadata.dev(), path)
         }
@@ -546,12 +578,13 @@ fn ensure_directory(path: &Path, root_dev: u64) -> Result<(), String> {
 }
 
 fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
-    config.validate_root()?;
+    config.prepare_root()?;
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
+        .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(config.root.join(LOCK_FILE))
         .map_err(|e| e.to_string())?;
@@ -661,7 +694,36 @@ fn available_bytes(path: &Path) -> Result<u64, String> {
         return Err(io::Error::last_os_error().to_string());
     }
     let stats = unsafe { stats.assume_init() };
-    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+    let free = (stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64);
+    let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::statfs(path.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    if unsafe { filesystem.assume_init() }.f_type == 0x0102_1994 {
+        let meminfo = fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
+        return tmpfs_available_bytes(free, &meminfo);
+    }
+    Ok(free)
+}
+
+fn tmpfs_available_bytes(free: u64, meminfo: &str) -> Result<u64, String> {
+    for line in meminfo.lines() {
+        let mut fields = line.split_whitespace();
+        if fields.next() != Some("MemAvailable:") {
+            continue;
+        }
+        let bytes = fields
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .and_then(|kb| kb.checked_mul(1024));
+        if let Some(bytes) = bytes {
+            if fields.next() == Some("kB") && fields.next().is_none() {
+                return Ok(free.min(bytes));
+            }
+        }
+        break;
+    }
+    Err("tmpfs capture requires valid MemAvailable in /proc/meminfo".into())
 }
 
 #[cfg(test)]
@@ -678,6 +740,14 @@ mod tests {
     };
     use tokio::sync::mpsc::channel;
     use wait_timeout::ChildExt;
+
+    fn private_tempdir() -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap()
+    }
 
     fn config(root: &Path) -> LocalStorageConfig {
         LocalStorageConfig {
@@ -750,7 +820,7 @@ mod tests {
     }
 
     fn encode(batch: &SAIStatsBatch) -> (tempfile::TempDir, Vec<PathBuf>) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         for record in batch.iter() {
             store.add_record(record).unwrap();
@@ -869,7 +939,7 @@ mod tests {
             (8000, 262),
             (codec::MAX_COUNTERS, 31),
         ] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = private_tempdir();
             let mut store = store(temp.path());
             let stats: Vec<_> = (0..width).map(|i| stat("port", i as u64)).collect();
             let record = SAIStatsRef {
@@ -947,7 +1017,7 @@ mod tests {
     #[test]
     fn read_every_byte_truncation_preserves_exact_complete_batch_prefix() {
         let (bytes, boundaries, expected) = small_stream();
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let _lock = prepare_storage(&config(temp.path())).unwrap();
         let partial = temp.path().join(".staging/truncated.arrow.partial");
         for cut in 0..=bytes.len() {
@@ -975,7 +1045,7 @@ mod tests {
             vec![255, 255, 255, 255, 255, 255, 255, 127],
             vec![255, 255, 255, 255, 0, 0, 0, 0],
         ] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = private_tempdir();
             drop(prepare_storage(&config(temp.path())).unwrap());
             let partial = temp.path().join(".staging/recovered.arrow.partial");
             let end = boundaries.last().unwrap().0;
@@ -1002,7 +1072,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_header_and_nullable_schema_without_removing_state() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         drop(prepare_storage(&config(temp.path())).unwrap());
         let partial = temp.path().join(".staging/bad.arrow.partial");
         for bytes in [b"not an Arrow stream".to_vec(), {
@@ -1025,7 +1095,7 @@ mod tests {
     #[test]
     fn startup_preserves_empty_unknown_and_old_files_and_charges_quota() {
         let (bytes, _, _) = small_stream();
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         drop(prepare_storage(&config(temp.path())).unwrap());
         let files = [
             (".staging/empty.arrow.partial", &b""[..]),
@@ -1054,7 +1124,7 @@ mod tests {
 
     #[test]
     fn lock_unknown_staging_legacy_archives_and_symlinks_are_preserved() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let lock = prepare_storage(&config(temp.path())).unwrap();
         let unknown = temp.path().join(".staging/old-v2");
         fs::create_dir(&unknown).unwrap();
@@ -1067,13 +1137,13 @@ mod tests {
         fs::create_dir(temp.path().join("shards/v2")).unwrap();
         assert!(prepare_storage(&config(temp.path())).is_err());
         fs::remove_dir(temp.path().join("shards/v2")).unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let outside = private_tempdir();
         let link = temp.path().join(".staging/link.arrow.partial");
         std::os::unix::fs::symlink(outside.path(), &link).unwrap();
         assert!(prepare_storage(&config(temp.path())).is_err());
         assert!(link.is_symlink());
         for entry in ["root", ".staging", "shards", LOCK_FILE] {
-            let root = tempfile::tempdir().unwrap();
+            let root = private_tempdir();
             let path = root.path().join(entry);
             std::os::unix::fs::symlink(outside.path(), &path).unwrap();
             assert!(
@@ -1084,13 +1154,109 @@ mod tests {
     }
 
     #[test]
+    fn actor_creates_only_final_private_root_and_private_output() {
+        let parent = private_tempdir();
+        let root = parent.path().join("capture");
+        let mut config = config(&root);
+        config.max_bytes = BATCH_RESERVE_BYTES;
+        assert!(prepare_storage(&config).is_err());
+        assert!(!root.exists());
+        config.max_bytes = 128 * 1024 * 1024;
+        config.validate().unwrap();
+        assert!(!root.exists());
+        let (_, receiver) = channel(32);
+        let mut actor =
+            LocalStorageActor::new(receiver, config, LocalStorageStatus::default()).unwrap();
+        actor
+            .store
+            .add_record(SAIStatsRef {
+                observation_time: 42,
+                stats: &[stat("a", 7)],
+            })
+            .unwrap();
+        let partial = actor.store.active.as_ref().unwrap().path.clone();
+        assert_eq!(fs::metadata(partial).unwrap().mode() & 0o777, 0o600);
+        actor.store.finish_stream().unwrap();
+        for directory in [root.clone(), root.join(".staging"), root.join("shards")] {
+            let metadata = fs::metadata(directory).unwrap();
+            assert_eq!(metadata.mode() & 0o777, 0o700);
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        }
+        for file in [root.join(LOCK_FILE), paths(&root, "shards")[0].clone()] {
+            assert_eq!(fs::metadata(file).unwrap().mode() & 0o777, 0o600);
+        }
+        let missing_parent = parent.path().join("missing");
+        assert!(prepare_storage(&self::config(&missing_parent.join("capture"))).is_err());
+        assert!(!missing_parent.exists());
+    }
+
+    #[test]
+    fn root_access_rejects_foreign_owner_and_all_group_other_permissions_without_chmod() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = private_tempdir();
+        let uid = unsafe { libc::geteuid() };
+        assert!(validate_root_access(root.path(), uid ^ 1, 0o700).is_err());
+        assert!(validate_root_access(root.path(), uid, 0o700).is_ok());
+        fs::write(root.path().join("keep"), b"unchanged").unwrap();
+        for mode in [
+            0o755, 0o770, 0o707, 0o740, 0o720, 0o710, 0o704, 0o702, 0o701,
+        ] {
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(mode)).unwrap();
+            assert!(prepare_storage(&config(root.path()))
+                .unwrap_err()
+                .contains("effective service user"));
+            assert_eq!(fs::metadata(root.path()).unwrap().mode() & 0o777, mode);
+            assert_eq!(fs::read(root.path().join("keep")).unwrap(), b"unchanged");
+            assert!(!root.path().join(LOCK_FILE).exists());
+        }
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        drop(prepare_storage(&config(root.path())).unwrap());
+    }
+
+    #[test]
+    fn tmpfs_memory_budget_is_fail_closed_and_preserves_emergency_reserve() {
+        for invalid in [
+            "",
+            "MemFree: 999999 kB",
+            "MemAvailable:",
+            "MemAvailable: nope kB",
+            "MemAvailable: -1 kB",
+            "MemAvailable: 123 MB",
+            "MemAvailable: 123 kB extra",
+            "MemAvailable: 18446744073709551615 kB",
+        ] {
+            assert!(
+                tmpfs_available_bytes(u64::MAX, invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        let needed = FILESYSTEM_RESERVE_BYTES + BATCH_RESERVE_BYTES;
+        for memory in [
+            0,
+            FILESYSTEM_RESERVE_BYTES,
+            needed - 1024,
+            needed,
+            needed + 1024,
+        ] {
+            let meminfo = format!("MemTotal: 9999999 kB\nMemAvailable: {} kB\n", memory / 1024);
+            let available = tmpfs_available_bytes(u64::MAX, &meminfo).unwrap();
+            assert_eq!(available, memory);
+            assert_eq!(available >= needed, memory >= needed);
+            assert_eq!(
+                tmpfs_available_bytes(1024, &meminfo).unwrap(),
+                memory.min(1024)
+            );
+        }
+    }
+
+    #[test]
     fn root_symlink_spelling_cannot_bypass_validation() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let target = temp.path().join("target");
-        fs::create_dir(&target).unwrap();
+        fs::DirBuilder::new().mode(0o700).create(&target).unwrap();
         let link = temp.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        for suffix in ["", "/", "/."] {
+        for suffix in ["", "/", "/.", "//./", "/../target", "/missing"] {
             let path = PathBuf::from(format!("{}{suffix}", link.display()));
             for dedicated in [false, true] {
                 let mut config = config(&path);
@@ -1100,6 +1266,13 @@ mod tests {
                     .contains("not a symbolic link"));
                 assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
             }
+        }
+        // A symlink in an ancestor is rejected before creating the final root.
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(temp.path(), &alias).unwrap();
+        assert!(prepare_storage(&config(&alias.join("new-root"))).is_err());
+        assert!(!temp.path().join("new-root").exists());
+        for suffix in ["", "/", "/."] {
             let path = PathBuf::from(format!("{}{suffix}", target.display()));
             drop(prepare_storage(&config(&path)).unwrap());
             fs::remove_file(target.join(LOCK_FILE)).unwrap();
@@ -1110,7 +1283,7 @@ mod tests {
 
     #[test]
     fn storage_children_must_share_root_device() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let root_dev = fs::metadata(temp.path()).unwrap().dev();
         for child in [".staging", "shards"] {
             let path = temp.path().join(child);
@@ -1131,7 +1304,7 @@ mod tests {
 
     #[test]
     fn quota_stops_append_keeps_durable_prefix_and_never_overwrites_published() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         let stats = [stat("a", u64::MAX)];
         let record = SAIStatsRef {
@@ -1167,7 +1340,7 @@ mod tests {
 
     #[test]
     fn oversized_schema_flushes_previous_valid_rows() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         for value in [u64::MAX, 0, 1 << 63] {
             store
@@ -1196,7 +1369,7 @@ mod tests {
 
     #[test]
     fn actor_drains_disconnected_input_and_preserves_obsolete_sidecars() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let loss = temp.path().join("loss.json");
         fs::write(&loss, b"obsolete diagnostics").unwrap();
         for _ in 0..2 {
@@ -1227,7 +1400,7 @@ mod tests {
     #[test]
     fn shutdown_closes_full_queue_wakes_producer_and_drains_every_accepted_batch() {
         for shutdown_before_run in [true, false] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = private_tempdir();
             let (sender, receiver) = channel(32);
             let status = LocalStorageStatus::default();
             let actor =
@@ -1289,7 +1462,7 @@ mod tests {
 
     #[test]
     fn idle_wall_flush_then_shutdown_with_sender_still_connected() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         let actor = LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
@@ -1324,7 +1497,7 @@ mod tests {
     #[test]
     fn size_rotation_waits_for_complete_batch_and_preserves_records() {
         for schema_exceeds_target in [true, false] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = private_tempdir();
             let mut store = store(temp.path());
             store.config.file_target_bytes = if schema_exceeds_target { 1 } else { u64::MAX };
             let stats = [stat(&"a".repeat(4096), u64::MAX)];
@@ -1364,7 +1537,7 @@ mod tests {
 
     #[test]
     fn size_rotation_uses_compressed_bytes_not_128_mib_raw_input() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         let stats = vec![stat("a", 0); 8000];
         let records = 2100;
@@ -1413,7 +1586,7 @@ mod tests {
 
     #[test]
     fn max_age_rotation_is_independent_of_source_timestamps() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         for time in [0, u64::MAX, 0] {
             store
@@ -1479,10 +1652,10 @@ mod tests {
             series_names(u32::MAX, 7).1,
             "SAI_OBJECT_TYPE_UNKNOWN_4294967295_STAT_UNKNOWN_7"
         );
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut config = config(temp.path());
         config.require_dedicated_filesystem = true;
-        assert!(config.validate_root().is_err());
+        assert!(config.prepare_root().is_err());
         config.shard_interval = Duration::ZERO;
         assert!(config.validate().is_err());
         config.shard_interval = Duration::from_secs(1);
@@ -1514,7 +1687,7 @@ mod tests {
 
     #[test]
     fn independent_typed_reader_uses_ordered_metadata_and_dynamic_block_lengths() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         let mut expected = SAIStatsBatch::default();
         let mut time = 0u64;
@@ -1564,7 +1737,7 @@ mod tests {
 
     #[test]
     fn interrupted_write_preserves_earlier_batches_without_a_writer_queue() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut store = store(temp.path());
         store
             .add_record(SAIStatsRef {
@@ -1599,7 +1772,7 @@ mod tests {
 
     #[test]
     fn actor_quota_failure_sets_status_and_disconnects_without_touching_archive() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         let mut actor =
@@ -1660,7 +1833,7 @@ mod tests {
 
     #[test]
     fn real_child_sigkill_reader_consumes_synced_prefix_without_repair() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_tempdir();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
