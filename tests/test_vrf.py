@@ -5,9 +5,12 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result
 
 
 class TestVrf(object):
+    SENTINEL_METRIC = "4278198272"
+
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -52,6 +55,105 @@ class TestVrf(object):
         for name, value in fvs:
             assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
                                                    (value, name, expected_attributes[name])
+
+    def wait_for_kernel_link(self, dvs, vrf_name, present=True):
+        def _access_function():
+            status, output = dvs.runcmd(["ip", "link", "show", vrf_name])
+            return (status == 0) == present, output
+
+        wait_for_result(
+            _access_function,
+            failure_message="Kernel VRF {} was not {}".format(
+                vrf_name, "created" if present else "removed"
+            ),
+        )
+
+    def wait_for_sentinel(self, dvs, vrf_name, ipv6=False, present=True):
+        command = ["ip"]
+        if ipv6:
+            command.append("-6")
+        command.extend(["route", "show", "vrf", vrf_name])
+
+        def _access_function():
+            status, output = dvs.runcmd(command)
+            found = False
+            if status == 0:
+                for line in output.splitlines():
+                    fields = line.split()
+                    if fields[:2] != ["unreachable", "default"]:
+                        continue
+                    found = any(
+                        fields[index:index + 2] == ["metric", self.SENTINEL_METRIC]
+                        for index in range(len(fields) - 1)
+                    )
+                    if found:
+                        break
+            return found == present, output
+
+        wait_for_result(
+            _access_function,
+            failure_message="{} sentinel for {} was not {}".format(
+                "IPv6" if ipv6 else "IPv4",
+                vrf_name,
+                "installed" if present else "removed",
+            ),
+        )
+
+    def wait_for_unicast_default(self, dvs, vrf_name, interface, ipv6=False):
+        command = ["ip"]
+        if ipv6:
+            command.append("-6")
+        command.extend(["route", "show", "vrf", vrf_name])
+
+        def _access_function():
+            status, output = dvs.runcmd(command)
+            if status == 0:
+                for line in output.splitlines():
+                    fields = line.split()
+                    has_interface = any(
+                        fields[index:index + 2] == ["dev", interface]
+                        for index in range(len(fields) - 1)
+                    )
+                    has_metric = any(
+                        fields[index:index + 2] == ["metric", "100"]
+                        for index in range(len(fields) - 1)
+                    )
+                    if fields and fields[0] == "default" and \
+                            has_interface and has_metric:
+                        return True, output
+            return False, output
+
+        wait_for_result(
+            _access_function,
+            failure_message="{} unicast default for {} was not preserved".format(
+                "IPv6" if ipv6 else "IPv4", vrf_name
+            ),
+        )
+
+    def count_asic_link_local_routes(self):
+        route_table = swsscommon.Table(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+        )
+        count = 0
+        for key in route_table.getKeys():
+            try:
+                if json.loads(key).get("dest") == "fe80::/10":
+                    count += 1
+            except (TypeError, ValueError):
+                continue
+        return count
+
+    def wait_for_asic_link_local_routes(self, expected_count):
+        def _access_function():
+            count = self.count_asic_link_local_routes()
+            return count == expected_count, count
+
+        wait_for_result(
+            _access_function,
+            failure_message="ASIC link-local route count did not reach {}".format(
+                expected_count
+            ),
+        )
 
 
     def vrf_create(self, dvs, vrf_name, attributes, expected_attributes):
@@ -215,6 +317,122 @@ class TestVrf(object):
             }
         )
         self.vrf_remove(dvs, "Vrf1", state)
+
+    def test_kernel_vrf_fallback_lifecycle(self, dvs, testlog):
+        self.setup_db(dvs)
+        fallback_table = swsscommon.Table(self.cdb, "KERNEL_VRF_FALLBACK")
+        vrf_table = swsscommon.Table(self.cdb, "VRF")
+        app_route_table = swsscommon.Table(self.pdb, "ROUTE_TABLE")
+        asic_route_table = swsscommon.Table(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+        )
+        vrfs = ["VrfFallback", "VrfFallbackNew"]
+        initial_link_local_routes = self.count_asic_link_local_routes()
+
+        fallback_table._del("GLOBAL")
+        try:
+            vrf_table.set(
+                vrfs[0], swsscommon.FieldValuePairs([("fallback", "true")])
+            )
+            self.wait_for_kernel_link(dvs, vrfs[0])
+            self.wait_for_sentinel(dvs, vrfs[0])
+            self.wait_for_sentinel(dvs, vrfs[0], ipv6=True)
+            self.wait_for_asic_link_local_routes(initial_link_local_routes + 1)
+
+            app_routes_with_sentinels = set(app_route_table.getKeys())
+            asic_routes_with_sentinels = set(asic_route_table.getKeys())
+
+            fallback_table.set(
+                "GLOBAL", swsscommon.FieldValuePairs([("status", "enabled")])
+            )
+            self.wait_for_sentinel(dvs, vrfs[0], present=False)
+            self.wait_for_sentinel(dvs, vrfs[0], ipv6=True, present=False)
+            assert set(app_route_table.getKeys()) == app_routes_with_sentinels
+            assert set(asic_route_table.getKeys()) == asic_routes_with_sentinels
+
+            vrf_table.set(
+                vrfs[1], swsscommon.FieldValuePairs([("fallback", "false")])
+            )
+            self.wait_for_kernel_link(dvs, vrfs[1])
+            self.wait_for_sentinel(dvs, vrfs[1], present=False)
+            self.wait_for_sentinel(dvs, vrfs[1], ipv6=True, present=False)
+            self.wait_for_asic_link_local_routes(initial_link_local_routes + 2)
+
+            app_routes_without_sentinels = set(app_route_table.getKeys())
+            asic_routes_without_sentinels = set(asic_route_table.getKeys())
+
+            fallback_table._del("GLOBAL")
+            for vrf_name in vrfs:
+                self.wait_for_sentinel(dvs, vrf_name)
+                self.wait_for_sentinel(dvs, vrf_name, ipv6=True)
+            assert set(app_route_table.getKeys()) == app_routes_without_sentinels
+            assert set(asic_route_table.getKeys()) == asic_routes_without_sentinels
+        finally:
+            fallback_table._del("GLOBAL")
+            for vrf_name in reversed(vrfs):
+                vrf_table._del(vrf_name)
+            for vrf_name in vrfs:
+                self.wait_for_kernel_link(dvs, vrf_name, present=False)
+            self.wait_for_asic_link_local_routes(initial_link_local_routes)
+
+    def test_kernel_vrf_fallback_preserves_unicast_defaults(self, dvs, testlog):
+        self.setup_db(dvs)
+        fallback_table = swsscommon.Table(self.cdb, "KERNEL_VRF_FALLBACK")
+        vrf_table = swsscommon.Table(self.cdb, "VRF")
+        vrf_name = "VrfFallbackRt"
+        interface = "VrfFbDummy"
+        initial_link_local_routes = self.count_asic_link_local_routes()
+
+        fallback_table._del("GLOBAL")
+        try:
+            vrf_table.set(
+                vrf_name, swsscommon.FieldValuePairs([("fallback", "false")])
+            )
+            self.wait_for_kernel_link(dvs, vrf_name)
+            self.wait_for_sentinel(dvs, vrf_name)
+            self.wait_for_sentinel(dvs, vrf_name, ipv6=True)
+            self.wait_for_asic_link_local_routes(initial_link_local_routes + 1)
+
+            commands = [
+                ["ip", "link", "add", interface, "type", "dummy"],
+                ["ip", "link", "set", interface, "master", vrf_name],
+                ["sysctl", "-w", "net.ipv6.conf.{}.disable_ipv6=0".format(interface)],
+                ["ip", "link", "set", interface, "up"],
+                ["ip", "address", "replace", "192.0.2.1/24", "dev", interface],
+                ["ip", "-6", "address", "replace", "2001:db8:ffff::1/64", "dev", interface],
+                ["ip", "route", "replace", "vrf", vrf_name, "default", "dev", interface,
+                 "metric", "100"],
+                ["ip", "-6", "route", "replace", "vrf", vrf_name, "default", "dev",
+                 interface, "metric", "100"],
+            ]
+            for command in commands:
+                status, output = dvs.runcmd(command)
+                assert status == 0, "Command failed: {}: {}".format(command, output)
+
+            self.wait_for_unicast_default(dvs, vrf_name, interface)
+            self.wait_for_unicast_default(dvs, vrf_name, interface, ipv6=True)
+
+            fallback_table.set(
+                "GLOBAL", swsscommon.FieldValuePairs([("status", "enabled")])
+            )
+            self.wait_for_sentinel(dvs, vrf_name, present=False)
+            self.wait_for_sentinel(dvs, vrf_name, ipv6=True, present=False)
+            self.wait_for_unicast_default(dvs, vrf_name, interface)
+            self.wait_for_unicast_default(dvs, vrf_name, interface, ipv6=True)
+
+            fallback_table.set(
+                "GLOBAL", swsscommon.FieldValuePairs([("status", "disabled")])
+            )
+            self.wait_for_sentinel(dvs, vrf_name)
+            self.wait_for_sentinel(dvs, vrf_name, ipv6=True)
+            self.wait_for_unicast_default(dvs, vrf_name, interface)
+            self.wait_for_unicast_default(dvs, vrf_name, interface, ipv6=True)
+        finally:
+            fallback_table._del("GLOBAL")
+            dvs.runcmd(["ip", "link", "del", interface])
+            vrf_table._del(vrf_name)
+            self.wait_for_kernel_link(dvs, vrf_name, present=False)
+            self.wait_for_asic_link_local_routes(initial_link_local_routes)
 
     def test_VRFMgr_Update(self, dvs, testlog):
         self.setup_db(dvs)

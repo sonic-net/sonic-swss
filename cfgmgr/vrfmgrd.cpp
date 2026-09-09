@@ -16,6 +16,9 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
+/* Matches the CFG table name generated from the companion YANG model. */
+constexpr auto KERNEL_VRF_FALLBACK_CONFIG_TABLE = "KERNEL_VRF_FALLBACK";
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vrfmgrd");
@@ -30,7 +33,8 @@ int main(int argc, char **argv)
             CFG_VRF_TABLE_NAME,
             CFG_VNET_TABLE_NAME,
             CFG_VXLAN_EVPN_NVO_TABLE_NAME,
-            CFG_MGMT_VRF_CONFIG_TABLE_NAME
+            CFG_MGMT_VRF_CONFIG_TABLE_NAME,
+            KERNEL_VRF_FALLBACK_CONFIG_TABLE
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
@@ -68,6 +72,7 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 vrfmgr.doTask();
+                vrfmgr.retryPendingKernelVrfs();
                 if (isWarmStart && firstReadTimeout)
                 {
                     firstReadTimeout = false;
