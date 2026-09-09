@@ -1,4 +1,102 @@
 //! Bounded capture of exact raw observations in Arrow IPC streams.
+//!
+//! # File format and interpretation
+//!
+//! Each file is a self-contained **Arrow IPC stream**, compressed with ZSTD, not
+//! an Arrow IPC file/Feather file or Parquet file. Schema metadata contains:
+//! - `format_version = sonic-hft-arrow-v5`
+//! - `timestamp_unit = ns` (the source observation time, not writer wall time)
+//! - `matrix_order = series-major`
+//! - `series`: an ordered JSON array of `{object_name, type_name, stat_name}`.
+//!
+//! Known identities use full SAI names, e.g. `Ethernet0`, `SAI_OBJECT_TYPE_PORT`,
+//! `SAI_PORT_STAT_IF_IN_OCTETS`; unknown IDs use explicit numeric-suffix names.
+//! Names are stored once per file, not per sample. Array position identifies the
+//! series, including duplicate identity tuples: do not sort or deduplicate it.
+//! Object type is not a counter/gauge classification. Units, clock epoch and
+//! counter/reset semantics are source-specific, not inferred by this format.
+//!
+//! Every record batch has **one row**, containing two non-null `List<UInt64>`
+//! fields with non-null elements:
+//! - `timestamps_ns[0]`: T observation timestamps, shared by all C series.
+//! - `values[0]`: C*T raw values, with series c / observation t at `c*T + t`.
+//!
+//! C is the length of `series`; T can vary between batches. For example:
+//! ```text
+//! series = [Ethernet0/IF_IN_OCTETS, Ethernet8/IF_IN_OCTETS]
+//! timestamps_ns[0] = [1000000, 1100000, 1200000]
+//! values[0]        = [10, 12, 12, 40, 40, 45]
+//!                     Ethernet0    Ethernet8
+//! ```
+//! Thus Ethernet8 has value 45 at 1200000 ns. Empty input records are represented
+//! by timestamps with C=0 and an empty values list. No stored record sequence,
+//! application delta encoding, rounding, aggregation or resampling is applied.
+//! Duplicate/regressing timestamps and decreasing values remain in input order.
+//!
+//! # Reading
+//!
+//! Rust clients can use [`read_shard`] for ordered [`DecodedSample`] callbacks.
+//! Standard PyArrow can stream completed files without a private decoder:
+//! ```python
+//! import json
+//! import pyarrow as pa
+//! import pyarrow.ipc as ipc
+//!
+//! with pa.OSFile("capture.arrow", "rb") as source:
+//!     reader = ipc.open_stream(source)
+//!     meta = reader.schema.metadata
+//!     assert meta[b"format_version"] == b"sonic-hft-arrow-v5"
+//!     assert meta[b"timestamp_unit"] == b"ns"
+//!     assert meta[b"matrix_order"] == b"series-major"
+//!     series = json.loads(meta[b"series"].decode("utf-8"))
+//!     for batch in reader:
+//!         assert batch.num_rows == 1
+//!         times = batch.column(0)[0].values
+//!         values = batch.column(1)[0].values
+//!         assert len(values) == len(series) * len(times)
+//!         for c, identity in enumerate(series):
+//!             samples = values.slice(c * len(times), len(times))
+//!             # Process identity, times and samples here, one block at a time.
+//! ```
+//! Keep timestamps and values as unsigned integers/Python ints, not floats or
+//! JavaScript Numbers. Compute differences with signed/widened arithmetic to
+//! handle timestamp regressions and counter resets without unsigned underflow.
+//! Do not reconstruct timestamps from a nominal polling interval. Earlier format
+//! versions require their corresponding readers; v5 rejects them explicitly.
+//!
+//! # Publication, limits and lifetime
+//!
+//! One blocking storage worker consumes a bounded generic IPFIX recipient with
+//! backpressure. Blocks target 16 MiB of raw data and at most 4096 observations;
+//! partial blocks are due for flush after 100 ms. Encoding and I/O can delay this.
+//! Each block is flushed and fsynced. A layout change, shutdown, maximum age or
+//! encoded-byte target closes the stream, writes EOS, fsyncs and atomically moves
+//! `.staging/<time_ns>-<pid>-<file_sequence>.arrow.partial` to `shards/*.arrow`.
+//! The default target is 100,000,000 bytes / 30 minutes, checked after full blocks.
+//! Files can exceed the size target by a block; earlier closure yields smaller
+//! files. Within one known writer run, order files by numeric file_sequence, not
+//! wall time (which can regress). Filenames alone do not identify runs globally.
+//!
+//! Writers never repair abandoned partials. After the writer stops, `read_shard`
+//! can return the completely decoded prefix of an interrupted stream; an invalid
+//! suffix is not returned and operational I/O errors propagate. Standard Arrow
+//! readers may instead report a truncated-tail error. Neither proves that the
+//! source delivered every observation, and unflushed memory can be lost.
+//!
+//! Capture is opt-in. The default `/tmp/hft` is created privately (0700), with
+//! service-owned files (0600), a single-writer lock, symlink/device checks and a
+//! 128 MiB quota including directory/staging allocation. Schema and batch admission
+//! require at least 64 MiB of headroom, so capture can stop before the 100 MB
+//! rotation target. Storage
+//! errors close this recipient; backpressure and upstream receive loss remain
+//! possible. There is no automatic upload, eviction or retention management.
+//!
+//! On tmpfs, admission also checks host MemAvailable with a 512 MiB emergency
+//! reserve; this does not cover cgroup limits or guarantee against concurrent OOM.
+//! `/tmp` may disappear on reboot/cleanup and differs across host/container
+//! namespaces. For longer captures, configure a suitable root and quota. Stop
+//! capture and verify transfer before deleting the capture directory.
+
 use crate::message::{
     local_storage::LocalStorageStatus,
     saistats::{SAIStatsBatchMessage, SAIStatsRef},
