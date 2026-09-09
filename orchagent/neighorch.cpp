@@ -1819,9 +1819,8 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
         {
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
-                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
+                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, reconciling: status:%s",
                            macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
-                return true;
             }
             else
             {
@@ -2052,13 +2051,14 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         if (isHwConfigured(neighborEntry))
         {
@@ -2071,6 +2071,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!addNeighbor(*ctx))
         {
             SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
     }
@@ -2106,19 +2107,21 @@ bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
 
         if(!removeNeighbor(*ctx, true))
         {
             SWSS_LOG_ERROR("Neighbor %s remove entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
         }
     }
 
