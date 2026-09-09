@@ -149,6 +149,8 @@ protected:
     void getTrapIdsFromTrapGroup (sai_object_id_t trap_group_obj,
                                   std::vector<sai_hostif_trap_type_t> &trap_ids);
 
+    void applyCpuQueueShaper();
+
     bool trapGroupProcessTrapIdChange (std::string trap_group_name,
                                        std::vector<sai_hostif_trap_type_t> &add_trap_ids,
                                        std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
