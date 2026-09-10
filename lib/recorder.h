@@ -63,6 +63,10 @@ public:
     RetryRec();
 };
 
+#ifndef ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD
+#define ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD 100000
+#endif
+
 struct AsyncSwssRecorderDebugStats
 {
     uint64_t pending_count;
@@ -109,6 +113,7 @@ private:
     mutable std::atomic<uint64_t> m_highWatermark{0};
     mutable std::atomic<uint64_t> m_enqueuedTotal{0};
     mutable std::atomic<uint64_t> m_drainedTotal{0};
+    std::atomic<bool> m_pendingWarnActive{false};
     std::mutex m_stateMutex; // Serializes async mode transitions and worker lifecycle.
     std::mutex m_mutex;
     std::condition_variable m_signal;
