@@ -22,7 +22,9 @@
 #include "qosorch.h"
 #define protected public
 #include "pfcwdorch.h"
+#include "pfcwdhworch.h"
 #include "pfcwdsworch.h"
+#include "pfcwdhworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"
@@ -57,6 +59,7 @@ extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gUnderlayIfId;
 
 extern SwitchOrch *gSwitchOrch;
+extern PfcWdHwOrch *gPfcWdHwOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern DebugCounterOrch *gDebugCounterOrch;

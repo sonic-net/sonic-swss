@@ -4,6 +4,7 @@
 #include "pfcwdorch.h"
 #include "timer.h"
 #include "dbconnector.h"
+#include "flex_counter/flex_counter_manager.h"
 
 extern "C" {
 #include "sai.h"
@@ -33,7 +34,7 @@ public:
     task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
     task_process_status deleteEntry(const string& key) override;
 
-    // Periodic timer task
+    // Timer-based polling for hardware counters
     virtual void doTask(SelectableTimer &timer);
 
 protected:
@@ -42,6 +43,40 @@ protected:
 public:
     // PFC deadlock notification callback
     void onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data);
+
+private:
+
+    // Queue statistics for state tracking
+    struct PfcWdQueueStats
+    {
+        uint64_t detectCount;
+        uint64_t restoreCount;
+        uint64_t txPkt;
+        uint64_t txDropPkt;
+        uint64_t rxPkt;
+        uint64_t rxDropPkt;
+        uint64_t txPktLast;
+        uint64_t txDropPktLast;
+        uint64_t rxPktLast;
+        uint64_t rxDropPktLast;
+        bool     operational;
+    };
+
+    // Get current queue statistics from COUNTERS_DB
+    PfcWdQueueStats getQueueStats(const string &queueIdStr);
+
+    // Update queue statistics in COUNTERS_DB
+    void updateQueueStats(const string &queueIdStr, const PfcWdQueueStats &stats);
+
+    // Read hardware counters from COUNTERS_DB
+    bool readHwCounters(sai_object_id_t queueId, uint8_t queueIndex, PfcWdHwStats& counters);
+
+    // Initialize counters when deadlock is detected
+    void initQueueCounters(const string& queueIdStr, sai_object_id_t queueId, uint8_t queueIndex);
+
+    // Update counters periodically or on recovery
+    void updateQueueCounters(const string& queueIdStr, sai_object_id_t queueId,
+                            uint8_t queueIndex, bool periodic);
 
 private:
     // Hardware-specific methods
@@ -53,7 +88,7 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-
+    
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
     uint32_t m_detectionTimeMax;
@@ -75,6 +110,7 @@ private:
                            const set<uint8_t>& losslessTc, uint32_t expected,
                            uint32_t& actual, const string& timerName);
 
+    // Initialization functions
     void initializeTimerRanges();
     void registerCallbacks();
     void recoverWarmReboot(DBConnector *db);
@@ -88,6 +124,7 @@ private:
     bool enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
+    void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
 
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;
@@ -102,7 +139,9 @@ private:
 
     // Queue ID to port/queue info mapping
     std::unordered_map<sai_object_id_t, PortQueueInfo> m_queueToPortMap;
+
+    // Queue ID to baseline hardware counters
+    std::unordered_map<sai_object_id_t, PfcWdHwStats> m_queueBaselineStats;
 };
 
 #endif
-

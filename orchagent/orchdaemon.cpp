@@ -24,7 +24,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -702,6 +701,7 @@ bool OrchDaemon::init()
         static const vector<sai_queue_stat_t> queueStatIds =
         {
             SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_DROPPED_PACKETS,
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
@@ -827,13 +827,20 @@ bool OrchDaemon::init()
 
         // Complete hardware recovery needs deadlock detection and recovery in
         // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
-        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT, and a platform
+        // that reports DLDR may report DLR init too, so DLDR is checked first:
+        // starting a software handler there would duplicate the hardware.
         if (gSwitchOrch->checkPfcDldrEnable())
         {
-            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
         }
-
-        if(pfcDlrInit)
+        else if(pfcDlrInit)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
