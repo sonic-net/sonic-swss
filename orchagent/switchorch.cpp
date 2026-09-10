@@ -737,7 +737,18 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
-                        attr.value.u16 = to_uint<uint16_t>(value);
+                        // Some SAI implementations do not support runtime set of
+                        // SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT. Query first so we skip
+                        // the set and avoid handleSaiFailure ERR on a working datapath.
+                        ret = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT);
+                        if (ret == false)
+                        {
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u16 = to_uint<uint16_t>(value);
+                        }
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
@@ -810,7 +821,16 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                     break;
                 }
                 if (unsupported_attr){
-                    SWSS_LOG_ERROR("Unsupported Attribute %s", attribute.c_str());
+                    // vxlan_port is unimplemented on some platforms. NOTICE (not ERROR)
+                    // so loganalyzer does not fail a working VXLAN datapath.
+                    if (attr.id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT)
+                    {
+                        SWSS_LOG_NOTICE("Switch attribute vxlan_port is not supported, skipping");
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Unsupported Attribute %s", attribute.c_str());
+                    }
                     // Continue to set the rest of the attributes, even if current attribute is unsupported
                     continue;
                 }
@@ -818,6 +838,15 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
+                    // Capability can report set_implemented while set still returns
+                    // NOT_SUPPORTED / NOT_IMPLEMENTED. Skip without handleSaiFailure.
+                    if (attr.id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT &&
+                        (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED))
+                    {
+                        SWSS_LOG_NOTICE("Switch attribute vxlan_port set is not supported (rv:%d), skipping",
+                                        status);
+                        continue;
+                    }
                     SWSS_LOG_ERROR("Failed to set switch attribute %s to %s, rv:%d",
                             attribute.c_str(), value.c_str(), status);
                     retry = (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry);
