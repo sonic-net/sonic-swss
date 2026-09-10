@@ -439,6 +439,9 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
     m_cfgL2McMrouterTable.getKeys(l2mcIgmpMrouterKeys);
     m_cfgL2McMldMrouterTable.getKeys(l2mcMldMrouterKeys);
 
+    SWSS_LOG_NOTICE("Found %zu IGMP mrouter keys, %zu MLD mrouter keys",
+                    l2mcIgmpMrouterKeys.size(), l2mcMldMrouterKeys.size());
+
     vector<pair<string, int>> l2mcMrouterKeys;
     uint32_t msg_len = 0;
     L2MCD_CONFIG_MSG *msg = NULL;
@@ -459,7 +462,7 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
             SWSS_LOG_ERROR("Invalid MROUTER key: %s", entry.c_str());
             continue;
         }
-        SWSS_LOG_NOTICE("Invalid MROUTER key: %s", entry.c_str());
+        SWSS_LOG_NOTICE("Processing MROUTER key: %s", entry.c_str());
 
         string vlanStr = tokens[0];
         string iname   = tokens[1];
@@ -481,10 +484,16 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
 
         //SWSS_LOG_INFO("vlanKey %s, vlan_id %s ,iname %s ", vlanKey.c_str(), vlan_id.c_str(), iname.c_str());
 
-        if (!vlan_id.empty() && vlanNum != vlan_id)
+        if (!vlan_id.empty() && vlanNum != vlan_id) {
+            SWSS_LOG_INFO("Skipping entry: vlanNum '%s' != filter vlan_id '%s'",
+                           vlanNum.c_str(), vlan_id.c_str());
             continue;
-        if (!ifname.empty()  && iname  != ifname)
+        }
+        if (!ifname.empty()  && iname  != ifname) {
+            SWSS_LOG_INFO("Skipping entry: iname '%s' != filter ifname '%s'",
+                           iname.c_str(), ifname.c_str());
             continue;
+        }
 
         msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
         if (msg_len > L2MCD_MAX_SIZE)
@@ -508,6 +517,41 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
 
         SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] port:%s vlan:%d afi:%d",entry.c_str(), ports[0].pnames, msg->vlan_id, msg->afi);
         sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, msg_len, (void *)msg);
+    }
+}
+
+void L2McMgr::updateReadyVlanEntries(const string vlan_id)
+{
+    const string prefix = vlan_id + "|";
+    for (const auto &vlan_port : m_readyVlanPorts)
+    {
+        if (vlan_port.compare(0, prefix.size(), prefix) != 0)
+            continue;
+
+        const string ifname = vlan_port.substr(prefix.size());
+        if (m_operUpPorts.count(ifname) || getPortOperState(ifname))
+        {
+            updateMrouterEntry(vlan_id, ifname);
+            updateGrpStaticEntry(vlan_id, ifname);
+        }
+    }
+}
+
+void L2McMgr::updateReadyPortEntries(const string ifname)
+{
+    const string suffix = "|" + ifname;
+    for (const auto &vlan_port : m_readyVlanPorts)
+    {
+        if (vlan_port.size() < suffix.size() ||
+            vlan_port.compare(vlan_port.size() - suffix.size(), suffix.size(), suffix) != 0)
+            continue;
+
+        const string vlan_id = vlan_port.substr(0, vlan_port.size() - suffix.size());
+        if (m_snoopEnabledVlans.count(vlan_id))
+        {
+            updateMrouterEntry(vlan_id, ifname);
+            updateGrpStaticEntry(vlan_id, ifname);
+        }
     }
 }
 
@@ -1064,6 +1108,34 @@ int L2McMgr::isPortInitComplete(DBConnector *app_db)
     return portInit;
 }
 
+bool L2McMgr::isPortStateOk(const string &alias)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (!m_statePortTable.get(alias, temp))
+    {
+        SWSS_LOG_INFO("Port %s is not ready", alias.c_str());
+        return false;
+    }
+    SWSS_LOG_INFO("Port %s is ready", alias.c_str());
+    return true;
+}
+
+bool L2McMgr::isLagStateOk(const string &alias)
+{
+    vector<FieldValueTuple> temp;
+
+    if (!m_stateLagTable.get(alias, temp))
+    {
+        SWSS_LOG_INFO("Lag %s is not ready", alias.c_str());
+        return false;
+    }
+
+    SWSS_LOG_INFO("Lag %s is ready", alias.c_str());
+    return true;
+}
 
 int L2McMgr::getPortOperState(string if_name)
 {
@@ -1128,6 +1200,7 @@ int  L2McMgr::getL2McPortList(DBConnector *state_db)
         ports[i].oper_state = getPortOperState(lag_name);
         memcpy(ports[i++].pnames, lag_name.c_str(), (lag_name.length()<L2MCD_IFNAME_SIZE)? lag_name.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_INFO("Port:%s oper:%d", lag_name.c_str(), ports[i-1].oper_state);
+        m_readyLags.insert(lag_name);
     }
     msg->op_code = L2MCD_OP_ENABLE;
     SWSS_LOG_NOTICE("L2MCD_CFG:PORTLIST count:%d ",  msg->count);
@@ -1386,6 +1459,11 @@ void L2McMgr::doL2McLagMemberUpdateTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            if (!isLagStateOk(po_name) || !isPortStateOk(po_mem)|| !m_readyLags.count(po_name))
+            {
+                it++;
+                continue;
+            }
             msg->op_code = L2MCD_OP_ENABLE;
         }
         else
@@ -1486,6 +1564,10 @@ void L2McMgr::doL2McInterfaceUpdateTask(Consumer &consumer)
         PORT_ATTR *ports = msg->ports;
         memcpy(ports[0].pnames, key.c_str(), (key.length()<L2MCD_IFNAME_SIZE)? key.length():L2MCD_IFNAME_SIZE);
         ports[0].oper_state = getPortOperState(ports[0].pnames);
+        if (0 == key.find("PortChannel"))
+        {
+          m_readyLags.insert(key);
+        }
         SWSS_LOG_NOTICE("L2MCD_CFG: IF:%s op:%s oper:%d", key.c_str(), op.c_str(),ports[0].oper_state);
         sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, msg_len, (void *)msg);
         it = consumer.m_toSync.erase(it);
@@ -1749,12 +1831,33 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
         string vlan_id = "";
         string ifname = "";
         SWSS_LOG_INFO("Received l2mcd_sync op  %s option %s vlan_id %s",op.c_str(), option.c_str(), param.c_str());
-        if (op == "SNP")
+        if (op == "VLAN_MEMBER_READY")
+        {
+            ifname = option;
+            vlan_id = param;
+            auto ready = m_readyVlanPorts.insert(vlan_id + "|" + ifname);
+            bool port_up = m_operUpPorts.count(ifname) || getPortOperState(ifname);
+            if (port_up)
+                m_operUpPorts.insert(ifname);
+
+            if (ready.second && m_snoopEnabledVlans.count(vlan_id) && port_up)
+            {
+                SWSS_LOG_INFO("Vlan %s member %s is ready and UP, refresh static/mrouter entries",
+                              vlan_id.c_str(), ifname.c_str());
+                updateMrouterEntry(vlan_id, ifname);
+                updateGrpStaticEntry(vlan_id, ifname);
+            }
+        }
+        else if (op == "VLAN_MEMBER_REMOVED")
+        {
+            m_readyVlanPorts.erase(param + "|" + option);
+        }
+        else if (op == "SNP")
         {
             vlan_id = param;
             if (option == "enable")
             {
-                auto res = m_operUpPorts.insert(vlan_id);
+                auto res = m_snoopEnabledVlans.insert(vlan_id);
 
                 if (!res.second)
                 {
@@ -1763,13 +1866,20 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
                 }
                 SWSS_LOG_INFO("Vlan %s changed to enable", vlan_id.c_str());
                 updateVlanMember(vlan_id);
-                updateMrouterEntry(vlan_id, ifname);
-                updateGrpStaticEntry(vlan_id, ifname);
+                updateReadyVlanEntries(vlan_id);
             }
             else if (option == "disable")
             {
-                SWSS_LOG_INFO("Vlan %s changed to disable", ifname.c_str());
-                m_operUpPorts.erase(ifname);
+                SWSS_LOG_INFO("Vlan %s changed to disable", vlan_id.c_str());
+                m_snoopEnabledVlans.erase(vlan_id);
+                const string prefix = vlan_id + "|";
+                for (auto it = m_readyVlanPorts.begin(); it != m_readyVlanPorts.end();)
+                {
+                    if (it->compare(0, prefix.size(), prefix) == 0)
+                        it = m_readyVlanPorts.erase(it);
+                    else
+                        ++it;
+                }
             }
         }
         else if (op == "LINK_STATUS")
@@ -1786,11 +1896,11 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
                     //return;
                 }
                 SWSS_LOG_INFO("Port %s changed to UP", ifname.c_str());
-                updateMrouterEntry(vlan_id, ifname);
-                updateGrpStaticEntry(vlan_id, ifname);
+                updateReadyPortEntries(ifname);
             }
             else if (option == "down")
             {
+                SWSS_LOG_INFO("Port %s changed to DOWM", ifname.c_str());
                 m_operUpPorts.erase(ifname);
             }
         }
@@ -1843,6 +1953,7 @@ void L2McMgr::waitTillReadyToReconcile()
             reconciled = true;
             break;
         }
+        SWSS_LOG_INFO("Vlanmgrd NOT Reconciled %d", (int) state);            
         sleep(1);
         cnt++;
     }

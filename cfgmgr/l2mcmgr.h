@@ -86,6 +86,9 @@ private:
     
     bool m_warmstart;
     std::unordered_set<std::string> m_operUpPorts;
+    std::unordered_set<std::string> m_snoopEnabledVlans;
+    std::unordered_set<std::string> m_readyVlanPorts;
+    std::unordered_set<std::string> m_readyLags;
     map<string, string> m_l2mcentry;
     map<string, string> m_l2mcVlanentry;
     map<string, string> m_l2mcGrpMementry;
@@ -109,6 +112,8 @@ private:
     void doL2McMldMrouterUpdateTask(Consumer &consumer);
     void doL2McVlanMemUpdateTask(Consumer &consumer);
     void updateVlanMember(const string vlan_id);
+    void updateReadyVlanEntries(const string vlan_id);
+    void updateReadyPortEntries(const string ifname);
     void updateMrouterEntry(const string vlan_id, const string ifname);
     void updateGrpStaticEntry(const string vlan_id, const string ifname);
     void doL2McSuppressUpdateTask(Consumer &consumer);
@@ -119,6 +124,8 @@ private:
     void doL2McProcRemoteMrouterEntries(string op, string key, string key_seperator);
     int getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list);
     int getPortOperState(string if_name);
+    bool isLagStateOk(const string &alias);
+    bool isPortStateOk(const string &alias);
     void sendL2McSnoopConfig(const string &key,int vlan_id,int afi,const string &op,const vector<FieldValueTuple> &tuples);
 
 };
