@@ -15,7 +15,6 @@ redis.call('SELECT', counters_db)
 -- Iterate through each queue
 local n = table.getn(KEYS)
 for i = n, 1, -1 do
-    local counter_keys = redis.call('HKEYS', counters_table_name .. ':' .. KEYS[i])
     local pfc_rx_pkt_key = ''
     local pfc_wd_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_STATUS')
     local restoration_time = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_RESTORATION_TIME')
