@@ -1201,8 +1201,6 @@ namespace portsorch_test
         ASSERT_TRUE(!ports.empty());
 
         // default Ethernet0 has different lanes so create_ports() is triggered.
-        // Set role explicitly: PortConfig::role.value has no default initializer,
-        // so leaving it unset would propagate uninitialized memory into Port::m_role.
         std::vector<FieldValueTuple> fvList = {
             { "alias",               alias       },
             { "index",               "0"         },
@@ -1217,7 +1215,6 @@ namespace portsorch_test
             { "tpid",                "0x8101"    },
             { "pfc_asym",            "on"        },
             { "admin_status",        "up"        },
-            { "role",                "Ext"       },
             { "description",         "FP port"   }
         };
 
@@ -1248,6 +1245,7 @@ namespace portsorch_test
 
         Port p;
         EXPECT_TRUE(gPortsOrch->getPort(alias, p));
+        EXPECT_EQ(p.m_role, Port::Role::Ext);
 
         // Validate SAI port configuration
 
