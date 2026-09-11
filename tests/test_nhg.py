@@ -75,6 +75,19 @@ class TestNextHopGroupBase(object):
 
         return nhgms
 
+    def get_nhg_ips(self, keys):
+        nhgips = []
+        for k in keys:
+            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+            try:
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                nhgips.append(nh_fvs["SAI_NEXT_HOP_ATTR_IP"])
+            except KeyError as e:
+                pass
+
+        return nhgips
+
     def get_nhg_map_id(self, nhg_map_index):
         nhg_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_NEXTHOP_GROUP_TABLE_NAME)
         cbf_nhg_ps = swsscommon.ProducerStateTable(self.app_db.db_connection,
@@ -1040,6 +1053,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         #check nexthop group member is removed
         keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        ip_list = self.get_nhg_ips(keys)
+        assert not '10.0.0.3' in ip_list
         assert len(keys) == 2
 
         # Send BFD session state notification to update BFD session state
@@ -1051,11 +1066,34 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         #check nexthop group member is added back
         keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        ip_list = self.get_nhg_ips(keys)
+        assert '10.0.0.3' in ip_list
         assert len(keys) == 3
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Down")
+        time.sleep(1)
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Down"
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        #check nexthop group member is removed
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        ip_list = self.get_nhg_ips(keys)
+        assert not '10.0.0.3' in ip_list
+        assert len(keys) == 2
+
 
         # Remove the BFD session
         self.remove_bfd_session("default:default:10.0.0.3")
         self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+        time.sleep(1)
+
+        #check nexthop group member is added back after bfd session deletion
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        ip_list = self.get_nhg_ips(keys)
+        assert '10.0.0.3' in ip_list
+        assert len(keys) == 3
         # BFD: test validate/invalidate nexthop group member when bfd state changes -- end
 
         # Remove route 2.2.2.0/24
