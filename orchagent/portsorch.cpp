@@ -1077,8 +1077,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         // Get System ports
         getSystemPorts();
 
-        removeDefaultVlanMembers();
-        removeDefaultBridgePorts();
+        if (!WarmStart::isWarmStart())
+        {
+            removeDefaultVlanMembers();
+            removeDefaultBridgePorts();
+        }
     }
 
     // Enable fdb event notifications after all ports are removed from default 1Q bridge
