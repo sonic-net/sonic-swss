@@ -19,8 +19,13 @@
 using namespace std;
 using namespace swss;
 
+static constexpr int RESOLVED_NEIGH_STATES =
+    NUD_PERMANENT | NUD_NOARP | NUD_REACHABLE | NUD_PROBE | NUD_STALE | NUD_DELAY;
+
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_kernelFailedNeighTable(pipelineAppDB, APP_NEIGH_FAILED_TABLE_NAME),
+    m_kernelFailedNeighCheckTable(pipelineAppDB->getDBConnector(), APP_NEIGH_FAILED_TABLE_NAME),
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
@@ -112,6 +117,30 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    if (is_dualtor && family == IPV6_NAME)
+    {
+        if (nlmsg_type == RTM_NEWNEIGH && state == NUD_FAILED)
+        {
+            std::vector<FieldValueTuple> failedNeighFields = {
+                FieldValueTuple("NULL", "NULL"),
+            };
+            m_kernelFailedNeighTable.set(key, failedNeighFields);
+            SWSS_LOG_NOTICE("Published failed kernel neighbor '%s' for nbrmgrd processing", key.c_str());
+        }
+        else if (nlmsg_type == RTM_DELNEIGH ||
+                 ((nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_GETNEIGH) &&
+                  (state & RESOLVED_NEIGH_STATES)))
+        {
+            std::vector<FieldValueTuple> failedNeighFields;
+            if (m_kernelFailedNeighCheckTable.get(key, failedNeighFields))
+            {
+                m_kernelFailedNeighTable.del(key);
+                SWSS_LOG_NOTICE("Removed resolved or deleted kernel neighbor '%s' from failed neighbor table",
+                                key.c_str());
+            }
+        }
+    }
+
     if (state == NUD_NOARP)
     {
         /* For externally learned neighbors, e.g. VXLAN EVPN, we want to keep
@@ -122,6 +151,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
             return;
         }
     }
+
+    SWSS_LOG_INFO("Get neighbor msg %s, state %d, type %d", ipStr, state, nlmsg_type);
 
     bool delete_key = false;
     bool use_zero_mac = false;

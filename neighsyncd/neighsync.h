@@ -36,8 +36,9 @@ public:
     }
 
 private:
-    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable;
+    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable, m_kernelFailedNeighCheckTable;
     ProducerStateTable m_neighTable;
+    ProducerStateTable m_kernelFailedNeighTable;
     AppRestartAssist  *m_AppRestartAssist;
     Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
 
