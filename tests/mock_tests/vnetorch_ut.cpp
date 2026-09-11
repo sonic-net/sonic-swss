@@ -4277,6 +4277,28 @@ namespace vnetorch_test
         createL3Interface("Ethernet4", "9.1.0.1/32");
         addNeighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05");
 
+        // Recreating a local-only route must recreate its custom BFD session,
+        // even though the directly-connected next-hop group is reused.
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
+
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
+
         // Priority route: primary 9.1.0.1 (local), secondary 9.1.0.2 (remote),
         // custom_bfd monitoring with per-endpoint monitor timers.
         setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1,9.1.0.2",
