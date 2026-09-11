@@ -57,6 +57,11 @@ namespace
 
         thread_local Hook g_hook = Hook::None;
     }
+
+    // Generic per-attribute capability override (sai_cap_ut), checked first in
+    // __wrap_sai_query_attribute_capability so any orch UT (e.g. the ACL
+    // match-field gate) can inject a result regardless of object type.
+    thread_local sai_cap_ut::AttrCapabilityOverride g_attr_cap_override;
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -165,6 +170,24 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Out_ sai_attr_capability_t *attr_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when it
+        // handles the query, its status and capability are used verbatim;
+        // otherwise fall through to the per-orch handling below.
+        if (g_attr_cap_override)
+        {
+            sai_attr_capability_t cap;
+            std::memset(&cap, 0, sizeof(cap));
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_attr_cap_override(object_type, attr_id, &cap, &st))
+            {
+                if (attr_capability)
+                {
+                    *attr_capability = cap;
+                }
+                return st;
+            }
+        }
+
         // ICMP echo session selective-counter capability (IcmpOrch via the shared
         // SaiOffloadSession base). Fail only the ICMP echo session object; any
         // other object type falls through to the HFTel handling / real impl so
@@ -337,5 +360,18 @@ namespace hftelorch_sai_wrap_ut
     HFTelSaiHookGuard::~HFTelSaiHookGuard()
     {
         setSaiHookNone();
+    }
+}
+
+namespace sai_cap_ut
+{
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn)
+    {
+        g_attr_cap_override = std::move(fn);
+    }
+
+    void clearAttrCapabilityOverride()
+    {
+        g_attr_cap_override = nullptr;
     }
 }
