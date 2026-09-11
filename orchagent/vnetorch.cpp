@@ -1173,7 +1173,9 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     else
     {
         bool next_hop_group_exists = hasNextHopGroup(vnet, nexthops_primary);
-        bool route_exists = syncd_tunnel_routes_[vnet].find(ipPrefix) != syncd_tunnel_routes_[vnet].end();
+        auto vnet_routes = syncd_tunnel_routes_.find(vnet);
+        bool route_exists = vnet_routes != syncd_tunnel_routes_.end() &&
+                            vnet_routes->second.find(ipPrefix) != vnet_routes->second.end();
 
         if (!next_hop_group_exists || !route_exists)
         {
