@@ -1,1559 +1,2974 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{
+    error::Error,
+    fmt::{Display, Formatter},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
-use ahash::{HashMap, HashMapExt};
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use byteorder::{ByteOrder, NetworkEndian};
-use log::{debug, warn};
+use log::{error, warn};
 use tokio::{
     select,
     sync::mpsc::{Receiver, Sender},
-};
-
-use ipfixrw::{
-    information_elements::Formatter,
-    parse_ipfix_message,
-    parser::{DataRecord, DataRecordKey, DataRecordValue, Message},
-    template_store::TemplateStore,
+    time::Instant,
 };
 
 use super::super::message::{
     buffer::SocketBufferMessage,
-    ipfix::IPFixTemplatesMessage,
-    saistats::{SAIStat, SAIStats, SAIStatsMessage},
+    ipfix::{
+        IPFixTemplateOperation, IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE,
+        MAX_OBJECT_METADATA_BYTES, MAX_TEMPLATE_CONFIG_BYTES,
+    },
+    saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
-/// Helper functions for debug logging formatting
-impl IpfixActor {
-    /// Formats IPFIX template data in human-readable format for debug logging.
-    /// Only performs formatting if debug logging is enabled to avoid performance impact.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates_data` - Raw IPFIX template bytes
-    /// * `key` - Template key for context
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the templates
-    fn format_templates_for_debug(templates_data: &[u8], key: &str) -> String {
-        let mut result = format!(
-            "IPFIX Templates for key '{}' (size: {} bytes):\n",
-            key,
-            templates_data.len()
-        );
-        let mut read_size: usize = 0;
-        let mut template_count = 0;
+const IPFIX_VERSION: u16 = 10;
+const IPFIX_HEADER_LEN: usize = 16;
+const SET_HEADER_LEN: usize = 4;
+const TEMPLATE_SET_ID: u16 = 2;
+const MIN_DATA_SET_ID: u16 = 256;
+const OBSERVATION_TIME_SECONDS: u16 = 322;
+const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
+const OBSERVATION_TIME_LEN: u16 = 8;
+const SPLIT_OBSERVATION_TIME_LEN: u16 = 4;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const MIN_HFT_TEMPLATE_RECORD_LEN: usize = 12;
+const DROP_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+// Accommodate one Set per queue at 2048 ports * 8 queues, with 2x headroom.
+const MAX_DATA_SETS_PER_RECORD_INPUT: usize = 32 * 1024;
+const MAX_RECORD_INPUTS_PER_BATCH: usize = 64;
+const MAX_RECORD_INPUT_BYTES_PER_BATCH: usize = 4 * 1024 * 1024;
+// A batching target, not a limit on a template or logical record.
+const TARGET_COUNTERS_PER_BATCH: usize = 8192;
 
-        while read_size < templates_data.len() {
-            match get_ipfix_message_length(&templates_data[read_size..]) {
-                Ok(len) => {
-                    let len = len as usize;
-                    if read_size + len > templates_data.len() {
-                        break;
-                    }
-
-                    let template_data = &templates_data[read_size..read_size + len];
-                    result.push_str(&format!(
-                        "  Template Message {} (offset: {}, length: {}):\n",
-                        template_count + 1,
-                        read_size,
-                        len
-                    ));
-
-                    // Format header information
-                    if template_data.len() >= 16 {
-                        let version = NetworkEndian::read_u16(&template_data[0..2]);
-                        let length = NetworkEndian::read_u16(&template_data[2..4]);
-                        let export_time = NetworkEndian::read_u32(&template_data[4..8]);
-                        let sequence_number = NetworkEndian::read_u32(&template_data[8..12]);
-                        let observation_domain_id = NetworkEndian::read_u32(&template_data[12..16]);
-
-                        result.push_str(&format!("    Header: version={}, length={}, export_time={}, seq={}, domain_id={}\n",
-                                               version, length, export_time, sequence_number, observation_domain_id));
-                    }
-
-                    // Try to parse and format the template data in human-readable format
-                    if let Ok(parsed_templates) =
-                        Self::try_parse_ipfix_message_for_debug(template_data)
-                    {
-                        result.push_str(&format!("    Parsed Template Details:\n"));
-                        result.push_str(&parsed_templates);
-                    } else {
-                        // Fallback to sets parsing if detailed parsing fails
-                        result.push_str(&Self::format_ipfix_sets_for_debug(template_data));
-                    }
-
-                    read_size += len;
-                    template_count += 1;
-                }
-                Err(e) => {
-                    result.push_str(&format!(
-                        "  Error parsing message length at offset {}: {}\n",
-                        read_size, e
-                    ));
-                    break;
-                }
-            }
-        }
-
-        result.push_str(&format!(
-            "  Total templates processed: {}\n",
-            template_count
-        ));
-        result
-    }
-
-    /// Formats IPFIX sets within a message for debug logging.
-    /// Parses and displays set headers (set ID, length) and basic content information.
-    ///
-    /// # Arguments
-    ///
-    /// * `message_data` - Raw IPFIX message bytes including header
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the sets within the message
-    fn format_ipfix_sets_for_debug(message_data: &[u8]) -> String {
-        let mut result = String::new();
-
-        // Skip IPFIX message header (16 bytes) to get to sets
-        if message_data.len() < 16 {
-            result.push_str("    Error: Message too short for IPFIX header\n");
-            return result;
-        }
-
-        let mut offset = 16; // Start after IPFIX header
-        let mut set_count = 0;
-
-        result.push_str("    Sets within message:\n");
-
-        while offset + 4 <= message_data.len() {
-            // Each set starts with 4-byte header: set_id (2 bytes) + length (2 bytes)
-            let set_id = NetworkEndian::read_u16(&message_data[offset..offset + 2]);
-            let set_length = NetworkEndian::read_u16(&message_data[offset + 2..offset + 4]);
-
-            set_count += 1;
-
-            // Validate set length
-            if set_length < 4 {
-                result.push_str(&format!(
-                    "      Set {}: INVALID (set_id={}, length={} < 4)\n",
-                    set_count, set_id, set_length
-                ));
-                break;
-            }
-
-            if offset + set_length as usize > message_data.len() {
-                result.push_str(&format!(
-                    "      Set {}: TRUNCATED (set_id={}, length={}, exceeds message boundary)\n",
-                    set_count, set_id, set_length
-                ));
-                break;
-            }
-
-            // Determine set type based on set_id
-            let set_type = if set_id == 2 {
-                "Template Set"
-            } else if set_id == 3 {
-                "Options Template Set"
-            } else if set_id >= 256 {
-                "Data Set"
-            } else {
-                "Reserved/Unknown"
-            };
-
-            result.push_str(&format!(
-                "      Set {} (offset: {}, set_id: {}, length: {} bytes, type: {})\n",
-                set_count, offset, set_id, set_length, set_type
-            ));
-
-            // For data sets, show complete structure info
-            if set_id >= 256 && set_length > 4 {
-                let data_length = set_length as usize - 4; // Exclude 4-byte set header
-                let data_start = offset + 4;
-                result.push_str(&format!("        Data payload: {} bytes", data_length));
-
-                // Show complete data payload
-                if data_length > 0 {
-                    let data_bytes = &message_data[data_start..data_start + data_length];
-                    let hex_data = data_bytes
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-
-                    // Format with line breaks for better readability if data is long
-                    if data_length <= 32 {
-                        // Short data on single line
-                        result.push_str(&format!(" [{}]\n", hex_data));
-                    } else {
-                        // Long data with line breaks every 16 bytes
-                        result.push_str(":\n");
-                        for (i, chunk) in data_bytes.chunks(16).enumerate() {
-                            let chunk_hex = chunk
-                                .iter()
-                                .map(|b| format!("{:02x}", b))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            result.push_str(&format!("          {:04x}: {}\n", i * 16, chunk_hex));
-                        }
-                    }
-                } else {
-                    result.push_str("\n");
-                }
-            }
-
-            // Move to next set
-            offset += set_length as usize;
-        }
-
-        if set_count == 0 {
-            result.push_str("      No valid sets found\n");
-        } else {
-            result.push_str(&format!("      Total sets: {}\n", set_count));
-        }
-
-        result
-    }
-
-    /// Formats IPFIX data records in human-readable format for debug logging.
-    /// Only performs formatting if debug logging is enabled to avoid performance impact.
-    ///
-    /// # Arguments
-    ///
-    /// * `records_data` - Raw IPFIX data record bytes
-    ///
-    /// # Returns
-    ///
-    /// Formatted string representation of the data records
-    fn format_records_for_debug(records_data: &[u8]) -> String {
-        let mut result = format!("IPFIX Data Records (size: {} bytes):\n", records_data.len());
-        let mut read_size: usize = 0;
-        let mut message_count = 0;
-
-        while read_size < records_data.len() {
-            match get_ipfix_message_length(&records_data[read_size..]) {
-                Ok(len) => {
-                    let len = len as usize;
-                    if read_size + len > records_data.len() {
-                        break;
-                    }
-
-                    let message_data = &records_data[read_size..read_size + len];
-                    result.push_str(&format!(
-                        "  Data Message {} (offset: {}, length: {}):\n",
-                        message_count + 1,
-                        read_size,
-                        len
-                    ));
-
-                    // Format header information
-                    if message_data.len() >= 16 {
-                        let version = NetworkEndian::read_u16(&message_data[0..2]);
-                        let length = NetworkEndian::read_u16(&message_data[2..4]);
-                        let export_time = NetworkEndian::read_u32(&message_data[4..8]);
-                        let sequence_number = NetworkEndian::read_u32(&message_data[8..12]);
-                        let observation_domain_id = NetworkEndian::read_u32(&message_data[12..16]);
-
-                        result.push_str(&format!("    Header: version={}, length={}, export_time={}, seq={}, domain_id={}\n",
-                                               version, length, export_time, sequence_number, observation_domain_id));
-                    }
-
-                    // Try to parse and format the data records in human-readable format
-                    if let Ok(parsed_message) =
-                        Self::try_parse_ipfix_message_for_debug(message_data)
-                    {
-                        result.push_str(&format!("    Parsed Data Records:\n"));
-                        result.push_str(&parsed_message);
-                    } else {
-                        // Fallback to sets parsing if detailed parsing fails
-                        result.push_str(&Self::format_ipfix_sets_for_debug(message_data));
-                    }
-
-                    read_size += len;
-                    message_count += 1;
-                }
-                Err(e) => {
-                    result.push_str(&format!(
-                        "  Error parsing message length at offset {}: {}\n",
-                        read_size, e
-                    ));
-                    break;
-                }
-            }
-        }
-
-        result.push_str(&format!("  Total messages processed: {}\n", message_count));
-        result
-    }
-
-    /// Attempts to parse an IPFIX message for debug formatting purposes.
-    /// Returns a human-readable representation of the data records if successful.
-    ///
-    /// # Arguments
-    ///
-    /// * `message_data` - Raw IPFIX message bytes
-    ///
-    /// # Returns
-    ///
-    /// Result containing formatted string if parsing succeeds, error otherwise
-    fn try_parse_ipfix_message_for_debug(message_data: &[u8]) -> Result<String, &'static str> {
-        // Create a separate temporary cache for debug parsing to avoid borrowing conflicts
-        let temp_cache = IpfixCache::new();
-
-        // Try to parse the IPFIX message
-        let parsed_message = parse_ipfix_message(
-            &message_data,
-            temp_cache.templates.clone(),
-            temp_cache.formatter.clone(),
-        )
-        .map_err(|_| "Failed to parse IPFIX message")?;
-
-        let mut result = String::new();
-
-        // Format each set in the message
-        for (set_index, set) in parsed_message.sets.iter().enumerate() {
-            result.push_str(&format!(
-                "      Set {} (records type: {:?}):\n",
-                set_index + 1,
-                std::mem::discriminant(&set.records)
-            ));
-
-            match &set.records {
-                ipfixrw::parser::Records::Data { set_id, data } => {
-                    result.push_str(&format!(
-                        "        Type: Data Set (template_id: {})\n",
-                        set_id
-                    ));
-                    result.push_str(&format!("        Data records count: {}\n", data.len()));
-
-                    // Format each data record
-                    for (record_index, record) in data.iter().enumerate() {
-                        result.push_str(&format!(
-                            "        Record {} ({} fields):\n",
-                            record_index + 1,
-                            record.values.len()
-                        ));
-
-                        for (field_key, field_value) in &record.values {
-                            let field_desc = match field_key {
-                                DataRecordKey::Unrecognized(field_spec) => {
-                                    let enterprise = field_spec
-                                        .enterprise_number
-                                        .map_or("None".to_string(), |e| e.to_string());
-                                    format!(
-                                        "Field(id={}, enterprise={})",
-                                        field_spec.information_element_identifier, enterprise
-                                    )
-                                }
-                                DataRecordKey::Str(s) => format!("String Field: {}", s),
-                                DataRecordKey::Err(e) => format!("Error Field: {:?}", e),
-                            };
-
-                            let value_desc = match field_value {
-                                DataRecordValue::Bytes(bytes) => {
-                                    if bytes.len() <= 8 {
-                                        // Try to interpret as different numeric types
-                                        let hex_str = bytes
-                                            .iter()
-                                            .map(|b| format!("{:02x}", b))
-                                            .collect::<Vec<_>>()
-                                            .join(" ");
-                                        if bytes.len() == 1 {
-                                            format!("u8={}, hex=[{}]", bytes[0], hex_str)
-                                        } else if bytes.len() == 2 {
-                                            format!(
-                                                "u16={}, hex=[{}]",
-                                                NetworkEndian::read_u16(bytes),
-                                                hex_str
-                                            )
-                                        } else if bytes.len() == 4 {
-                                            format!(
-                                                "u32={}, hex=[{}]",
-                                                NetworkEndian::read_u32(bytes),
-                                                hex_str
-                                            )
-                                        } else if bytes.len() == 8 {
-                                            format!(
-                                                "u64={}, hex=[{}]",
-                                                NetworkEndian::read_u64(bytes),
-                                                hex_str
-                                            )
-                                        } else {
-                                            format!("bytes({})=[{}]", bytes.len(), hex_str)
-                                        }
-                                    } else {
-                                        // For longer byte arrays, just show length and first few bytes
-                                        let preview = bytes
-                                            .iter()
-                                            .take(8)
-                                            .map(|b| format!("{:02x}", b))
-                                            .collect::<Vec<_>>()
-                                            .join(" ");
-                                        format!("bytes({})=[{} ...]", bytes.len(), preview)
-                                    }
-                                }
-                                DataRecordValue::String(s) => format!("string=\"{}\"", s),
-                                DataRecordValue::U8(v) => format!("u8={}", v),
-                                DataRecordValue::U16(v) => format!("u16={}", v),
-                                DataRecordValue::U32(v) => format!("u32={}", v),
-                                DataRecordValue::U64(v) => format!("u64={}", v),
-                                DataRecordValue::I8(v) => format!("i8={}", v),
-                                DataRecordValue::I16(v) => format!("i16={}", v),
-                                DataRecordValue::I32(v) => format!("i32={}", v),
-                                DataRecordValue::I64(v) => format!("i64={}", v),
-                                DataRecordValue::F32(v) => format!("f32={}", v),
-                                DataRecordValue::F64(v) => format!("f64={}", v),
-                                _ => format!("unknown_value={:?}", field_value),
-                            };
-
-                            result.push_str(&format!("          {}: {}\n", field_desc, value_desc));
-                        }
-                    }
-                }
-                _ => {
-                    // For template sets and other types, show basic information
-                    result.push_str(&format!("        Type: Template or other set type\n"));
-                    // We can use the iterator methods to get template information if needed
-                    let template_count = parsed_message.iter_template_records().count();
-                    if template_count > 0 {
-                        result.push_str(&format!("        Templates found: {}\n", template_count));
-                        for (template_index, template) in
-                            parsed_message.iter_template_records().enumerate()
-                        {
-                            result.push_str(&format!(
-                                "        Template {} (ID: {}, field_count: {}):\n",
-                                template_index + 1,
-                                template.template_id,
-                                template.field_specifiers.len()
-                            ));
-                            for (field_index, field) in template.field_specifiers.iter().enumerate()
-                            {
-                                let enterprise = field
-                                    .enterprise_number
-                                    .map_or("None".to_string(), |e| e.to_string());
-                                result.push_str(&format!(
-                                    "          Field {}: ID={}, length={}, enterprise={}\n",
-                                    field_index + 1,
-                                    field.information_element_identifier,
-                                    field.field_length,
-                                    enterprise
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TemplateKey {
+    observation_domain_id: u32,
+    template_id: u16,
 }
 
-/// Cache for IPFIX templates and formatting data
-struct IpfixCache {
-    pub templates: TemplateStore,
-    pub formatter: Rc<Formatter>,
-    pub last_observer_time: Option<u64>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledCounter {
+    offset: usize,
+    len: u8,
+    object_name: Arc<str>,
+    type_id: u32,
+    stat_id: u32,
 }
 
-impl IpfixCache {
-    /// Creates a new IPFIX cache with current timestamp as initial observer time
-    pub fn new() -> Self {
-        let duration_since_epoch = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("System time should be after Unix epoch");
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ObservationTime {
+    RawNanoseconds {
+        offset: usize,
+    },
+    Split {
+        seconds_offset: usize,
+        nanos_offset: usize,
+    },
+    Missing,
+}
 
-        IpfixCache {
-            templates: Rc::new(RefCell::new(HashMap::new())),
-            formatter: Rc::new(Formatter::new()),
-            last_observer_time: Some(duration_since_epoch.as_nanos() as u64),
+impl ObservationTime {
+    fn extract(&self, record: &[u8]) -> Option<u64> {
+        match *self {
+            Self::RawNanoseconds { offset } => Some(NetworkEndian::read_u64(
+                &record[offset..offset + usize::from(OBSERVATION_TIME_LEN)],
+            )),
+            Self::Split {
+                seconds_offset,
+                nanos_offset,
+            } => {
+                let seconds = NetworkEndian::read_u32(
+                    &record
+                        [seconds_offset..seconds_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                );
+                let nanos = NetworkEndian::read_u32(
+                    &record[nanos_offset..nanos_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
+                );
+                Some(u64::from(seconds) * NANOS_PER_SECOND + u64::from(nanos))
+            }
+            Self::Missing => None,
         }
     }
 }
 
-type IpfixCacheRef = Rc<RefCell<IpfixCache>>;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledTemplate {
+    key: TemplateKey,
+    owner: Arc<str>,
+    observation_time: ObservationTime,
+    counters: Arc<[CompiledCounter]>,
+    record_len: usize,
+}
 
-/// Actor responsible for processing IPFIX messages and converting them to SAI statistics.
+#[derive(Debug, Clone, Copy)]
+struct DataSetLayout {
+    record_bytes: usize,
+    record_count: usize,
+    counter_count: usize,
+}
+
+#[derive(Debug)]
+struct ValidatedDataSet<'a> {
+    key: TemplateKey,
+    bytes: &'a [u8],
+    decoder: Option<(Arc<CompiledTemplate>, DataSetLayout)>,
+}
+
+#[derive(Debug)]
+struct ValidatedDataMessage<'a> {
+    sets: Vec<ValidatedDataSet<'a>>,
+    counter_count: usize,
+}
+
+#[derive(Debug)]
+struct ValidatedRecordInput<'a> {
+    messages: Vec<ValidatedDataMessage<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TemplateGeneration {
+    templates: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionTemplates {
+    active: TemplateGeneration,
+    // Latest complete snapshot, promoted by valid data on a new pending key.
+    pending: Option<TemplateGeneration>,
+}
+
+#[derive(Debug)]
+pub struct IpfixError(String);
+
+impl Display for IpfixError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for IpfixError {}
+
+impl From<&str> for IpfixError {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<String> for IpfixError {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+/// Decodes the fixed-width SONiC HFT IPFIX profile into SAI statistics.
 ///
-/// The IpfixActor handles:
-/// - Processing IPFIX template messages to understand data structure
-/// - Parsing IPFIX data records and extracting SAI statistics
-/// - Managing template mappings between temporary and applied states
-/// - Distributing parsed statistics to multiple recipients
+/// Template IDs are expected to increase, with reuse only after a long wrap.
+/// Unknown Sets are dropped; transition delivery is best effort, without replay.
+/// Active and pending snapshots coexist regardless of counter-list changes.
+/// Valid nonempty data on a new pending key promotes the entire snapshot and
+/// retires all old-only keys. Shared unchanged keys do not trigger promotion.
+/// A newer snapshot supersedes pending state; resending active cancels it.
+/// Missing times use the last explicit time in the same message, then the last
+/// explicit time processed by this actor, then system UTC. History is shared
+/// across owners/domains and survives template changes, without an expiry;
+/// it is not a numeric maximum and system UTC never seeds it. A lost timestamp
+/// message can therefore leave continuations using stale history until the next
+/// explicit time arrives (or the actor is recreated).
 pub struct IpfixActor {
-    /// List of channels to send processed SAI statistics to
-    saistats_recipients: LinkedList<Sender<SAIStatsMessage>>,
-    /// Channel for receiving IPFIX template messages
+    saistats_recipients: Vec<Sender<SAIStatsBatchMessage>>,
     template_recipient: Receiver<IPFixTemplatesMessage>,
-    /// Channel for receiving IPFIX data records
     record_recipient: Receiver<SocketBufferMessage>,
-    /// Mapping from template ID to message key for temporary templates
-    temporary_templates_map: HashMap<u16, String>,
-    /// Mapping from message key to template IDs for applied templates
-    applied_templates_map: HashMap<String, Vec<u16>>,
-    /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
-    object_id_name_map: HashMap<String, HashMap<u16, String>>,
+    sessions: HashMap<Arc<str>, SessionTemplates>,
+    installed: HashMap<TemplateKey, Arc<CompiledTemplate>>,
+    last_observation_time: Option<u64>,
+    dropped_sets: u64,
+    next_drop_warning: Instant,
+    next_invalid_warning: Instant,
+    suppressed_invalid_warnings: u64,
 }
 
 impl IpfixActor {
-    /// Creates a new IpfixActor instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `template_recipient` - Channel for receiving IPFIX template messages
-    /// * `record_recipient` - Channel for receiving IPFIX data records
-    ///
-    /// # Returns
-    ///
-    /// A new IpfixActor instance with empty recipient lists and template maps
     pub fn new(
         template_recipient: Receiver<IPFixTemplatesMessage>,
         record_recipient: Receiver<SocketBufferMessage>,
     ) -> Self {
-        IpfixActor {
-            saistats_recipients: LinkedList::new(),
+        Self {
+            saistats_recipients: Vec::new(),
             template_recipient,
             record_recipient,
-            temporary_templates_map: HashMap::new(),
-            applied_templates_map: HashMap::new(),
-            object_id_name_map: HashMap::new(),
+            sessions: HashMap::new(),
+            installed: HashMap::new(),
+            last_observation_time: None,
+            dropped_sets: 0,
+            next_drop_warning: Instant::now(),
+            next_invalid_warning: Instant::now(),
+            suppressed_invalid_warnings: 0,
         }
     }
 
-    /// Adds a new recipient channel for receiving processed SAI statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `recipient` - Channel sender for distributing SAI statistics messages
-    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsMessage>) {
-        self.saistats_recipients.push_back(recipient);
+    pub fn add_recipient(&mut self, recipient: Sender<SAIStatsBatchMessage>) {
+        self.saistats_recipients.push(recipient);
     }
 
-    /// Stores template information temporarily until it's applied to actual data.
-    ///
-    /// # Arguments
-    ///
-    /// * `msg_key` - Unique key identifying the template message
-    /// * `templates` - Parsed IPFIX template message containing template definitions
-    fn insert_temporary_template(&mut self, msg_key: &String, templates: Message) {
-        templates.iter_template_records().for_each(|record| {
-            self.temporary_templates_map
-                .insert(record.template_id, msg_key.clone());
-        });
-    }
+    fn compile_generation(
+        templates: &IPFixTemplatesMessage,
+    ) -> Result<TemplateGeneration, IpfixError> {
+        validate_template_update_limits(templates)?;
+        let bytes = templates
+            .templates
+            .as_deref()
+            .ok_or("template update has no template data")?;
+        let names = templates
+            .object_names
+            .as_ref()
+            .ok_or("HFT template update has no object_names")?;
+        let ids = templates
+            .object_ids
+            .as_ref()
+            .ok_or("HFT template update has no object_ids")?;
 
-    /// Returns true if the template is still known (temporary or applied).
-    fn is_template_known(&self, template_id: u16) -> bool {
-        self.temporary_templates_map.contains_key(&template_id)
-            || self
-                .applied_templates_map
-                .values()
-                .any(|ids| ids.contains(&template_id))
-    }
-
-    /// Moves a template from temporary to applied state when it's used in data records.
-    ///
-    /// # Arguments
-    ///
-    /// * `template_id` - ID of the template to apply
-    fn update_applied_template(&mut self, template_id: u16) {
-        if !self.temporary_templates_map.contains_key(&template_id) {
-            return;
+        if names.len() != ids.len() || names.is_empty() {
+            return Err(format!(
+                "object_names/object_ids must be non-empty and equal length (names={}, ids={})",
+                names.len(),
+                ids.len()
+            )
+            .into());
         }
-        let msg_key = self
-            .temporary_templates_map
-            .get(&template_id)
-            .expect("Template ID should exist in temporary map")
-            .clone();
-        let mut template_ids = Vec::new();
-        self.temporary_templates_map
-            .iter()
-            .filter(|(_, v)| **v == msg_key)
-            .for_each(|(&k, _)| {
-                template_ids.push(k);
-            });
-        self.temporary_templates_map.retain(|_, v| *v != msg_key);
-        self.applied_templates_map.insert(msg_key, template_ids);
-    }
 
-    fn get_template_key(&self, template_id: u16) -> Option<&String> {
-        self.temporary_templates_map.get(&template_id).or_else(|| {
-            self.applied_templates_map
-                .iter()
-                .find(|(_, template_ids)| template_ids.contains(&template_id))
-                .map(|(msg_key, _)| msg_key)
+        let mut object_names = HashMap::with_capacity(ids.len());
+        for (id, name) in ids.iter().copied().zip(names) {
+            if !(1..=0x7fff).contains(&id) {
+                return Err(format!("object ID {id} is outside the IPFIX 15-bit IE range").into());
+            }
+            if name.is_empty() {
+                return Err(format!("object ID {id} has an empty object name").into());
+            }
+            if object_names
+                .insert(id, Arc::<str>::from(name.as_str()))
+                .is_some()
+            {
+                return Err(format!("duplicate object ID {id}").into());
+            }
+        }
+
+        let owner = Arc::<str>::from(templates.key.as_str());
+        let mut compiled = HashMap::new();
+        for message in IpfixMessages::new(bytes) {
+            let message = message?;
+            let domain = NetworkEndian::read_u32(&message[12..16]);
+            let mut offset = IPFIX_HEADER_LEN;
+            while offset < message.len() {
+                let (set_id, set) = next_set(message, &mut offset)?;
+                if set.is_empty() {
+                    break;
+                }
+                if set_id != TEMPLATE_SET_ID {
+                    return Err(format!(
+                        "template channel only supports Template Set ID 2, got {set_id}"
+                    )
+                    .into());
+                }
+                compile_template_set(set, domain, &owner, &object_names, &mut compiled)?;
+            }
+        }
+        if compiled.is_empty() {
+            return Err("template update contains no HFT templates".into());
+        }
+        Ok(TemplateGeneration {
+            templates: compiled,
         })
     }
 
-    /// Processes IPFIX template messages and stores them for later use.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates` - IPFixTemplatesMessage containing template data and metadata
-    fn handle_template(&mut self, templates: IPFixTemplatesMessage) {
-        if templates.is_delete {
-            // Handle template deletion
-            self.handle_template_deletion(&templates.key);
-            return;
+    fn remove_session(&mut self, owner: &str) {
+        self.sessions.remove(owner);
+        self.installed
+            .retain(|_, template| template.owner.as_ref() != owner);
+    }
+
+    fn handle_template(&mut self, update: IPFixTemplatesMessage) -> Result<(), IpfixError> {
+        if matches!(
+            update.operation,
+            IPFixTemplateOperation::Delete | IPFixTemplateOperation::Deactivate
+        ) {
+            self.remove_session(&update.key);
+            return Ok(());
         }
 
-        let templates_data = match templates.templates {
-            Some(data) => data,
-            None => {
-                warn!(
-                    "Received template message without template data for key: {}",
-                    templates.key
-                );
+        let mut generation = match Self::compile_generation(&update) {
+            Ok(generation) => generation,
+            Err(err) => {
+                // Malformed configuration locally deactivates its owner.
+                self.remove_session(&update.key);
+                return Err(err);
+            }
+        };
+        // Check the entire candidate before changing any installed/session state.
+        // Conflicts, unlike compile errors, must preserve both owners' snapshots.
+        for (key, template) in &mut generation.templates {
+            if let Some(installed) = self.installed.get(key) {
+                if installed.as_ref() != template.as_ref() {
+                    return Err(format!(
+                        "template collision at {key:?}: incoming owner {:?}, existing owner {:?}; different schema or owner",
+                        update.key, installed.owner
+                    )
+                    .into());
+                }
+                // Shared keys have one decoder/allocation across both generations.
+                *template = Arc::clone(installed);
+            }
+        }
+        let owner = Arc::clone(
+            &generation
+                .templates
+                .values()
+                .next()
+                .expect("nonempty generation")
+                .owner,
+        );
+        let session = match self.sessions.get(update.key.as_str()) {
+            Some(previous) => SessionTemplates {
+                active: previous.active.clone(),
+                pending: (generation != previous.active).then_some(generation),
+            },
+            None => SessionTemplates {
+                active: generation,
+                pending: None,
+            },
+        };
+
+        // Keep active plus the latest pending snapshot, never historical pending keys.
+        self.installed
+            .retain(|_, template| template.owner.as_ref() != update.key);
+        for generation in std::iter::once(&session.active).chain(session.pending.iter()) {
+            self.installed.extend(
+                generation
+                    .templates
+                    .iter()
+                    .map(|(key, template)| (*key, Arc::clone(template))),
+            );
+        }
+        self.sessions.insert(owner, session);
+        Ok(())
+    }
+
+    fn promote_pending_for(&mut self, template: &CompiledTemplate) {
+        let session = self
+            .sessions
+            .get_mut(template.owner.as_ref())
+            .expect("installed owner");
+        let Some(pending) = &session.pending else {
+            return;
+        };
+        if !pending.templates.contains_key(&template.key)
+            || session.active.templates.contains_key(&template.key)
+        {
+            return;
+        }
+        for key in session.active.templates.keys() {
+            if !pending.templates.contains_key(key) {
+                self.installed.remove(key);
+            }
+        }
+        session.active = session.pending.take().expect("pending generation");
+    }
+
+    #[cfg(test)]
+    fn handle_record(&mut self, records: &[u8]) -> Result<SAIStatsBatch, IpfixError> {
+        let mut batch = SAIStatsBatch::default();
+        let input = self.validate_record_input(records)?;
+        for validated in input.messages {
+            self.process_data_message(validated, &mut batch);
+        }
+        Ok(batch)
+    }
+
+    fn validate_record_input<'a>(
+        &self,
+        records: &'a [u8],
+    ) -> Result<ValidatedRecordInput<'a>, IpfixError> {
+        if records.is_empty() {
+            return Err("empty IPFIX payload".into());
+        }
+        let mut messages = Vec::new();
+        let mut total_sets = 0usize;
+        // Validate the whole input before emitting data or changing generations.
+        for message in IpfixMessages::new(records) {
+            let validated = self.validate_data_message(message?)?;
+            total_sets = total_sets
+                .checked_add(validated.sets.len())
+                .ok_or("data Set count overflow")?;
+            if total_sets > MAX_DATA_SETS_PER_RECORD_INPUT {
+                return Err(format!(
+                    "record input exceeds {MAX_DATA_SETS_PER_RECORD_INPUT} data Sets"
+                )
+                .into());
+            }
+            messages.push(validated);
+        }
+        Ok(ValidatedRecordInput { messages })
+    }
+
+    fn validate_data_message<'a>(
+        &self,
+        message: &'a [u8],
+    ) -> Result<ValidatedDataMessage<'a>, IpfixError> {
+        let domain = NetworkEndian::read_u32(&message[12..16]);
+        let mut offset = IPFIX_HEADER_LEN;
+        let mut sets = Vec::new();
+        let mut counter_count = 0usize;
+        while offset < message.len() {
+            let (set_id, set) = next_set(message, &mut offset)?;
+            if set.is_empty() {
+                break;
+            }
+            if set_id < MIN_DATA_SET_ID {
+                return Err(format!("data channel contains non-data IPFIX Set ID {set_id}").into());
+            }
+            let key = TemplateKey {
+                observation_domain_id: domain,
+                template_id: set_id,
+            };
+            let decoder = self
+                .installed
+                .get(&key)
+                .map(|template| {
+                    validate_data_set(template, set).map(|layout| (Arc::clone(template), layout))
+                })
+                .transpose()?;
+            if let Some((_, layout)) = &decoder {
+                counter_count = counter_count
+                    .checked_add(layout.counter_count)
+                    .ok_or("decoded counter count overflow")?;
+            }
+            sets.push(ValidatedDataSet {
+                key,
+                bytes: set,
+                decoder,
+            });
+        }
+        if sets.is_empty() {
+            return Err("IPFIX data message contains no sets".into());
+        }
+        Ok(ValidatedDataMessage {
+            sets,
+            counter_count,
+        })
+    }
+
+    fn process_data_message(
+        &mut self,
+        mut message: ValidatedDataMessage<'_>,
+        batch: &mut SAIStatsBatch,
+    ) {
+        let dropped_before = self.dropped_sets;
+        let mut message_time = None;
+        // Resolve cutovers in wire order before looking ahead for a fallback.
+        // Keep earlier live descriptors even if a later Set retires them.
+        for set in &mut message.sets {
+            if let Some((template, layout)) = &set.decoder {
+                // A preceding Set in this input may have retired this descriptor.
+                if self
+                    .installed
+                    .get(&set.key)
+                    .is_some_and(|installed| Arc::ptr_eq(installed, template))
+                {
+                    self.promote_pending_for(template);
+                    let end = SET_HEADER_LEN + layout.record_bytes;
+                    if let Some(time) = template
+                        .observation_time
+                        .extract(&set.bytes[end - template.record_len..end])
+                    {
+                        message_time = Some(time);
+                    }
+                    continue;
+                }
+            }
+            set.decoder = None;
+            self.dropped_sets = self.dropped_sets.saturating_add(1);
+        }
+        let fallback_time = message_time.or(self.last_observation_time);
+        for set in message.sets {
+            if let Some((template, layout)) = set.decoder {
+                self.decode_set(&template, set.bytes, layout, fallback_time, batch);
+            }
+        }
+        if message_time.is_some() {
+            self.last_observation_time = message_time;
+        }
+        let now = Instant::now();
+        if self.dropped_sets != dropped_before && now >= self.next_drop_warning {
+            warn!(
+                "Dropping HFT data Sets without a live template; total dropped Sets={}",
+                self.dropped_sets
+            );
+            self.next_drop_warning = now + DROP_WARNING_INTERVAL;
+        }
+    }
+
+    fn decode_set(
+        &self,
+        template: &CompiledTemplate,
+        set: &[u8],
+        layout: DataSetLayout,
+        fallback_time: Option<u64>,
+        batch: &mut SAIStatsBatch,
+    ) {
+        let payload = &set[SET_HEADER_LEN..];
+        batch.reserve(layout.record_count, layout.counter_count);
+        for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
+            let observation_time = template
+                .observation_time
+                .extract(record)
+                .or(fallback_time)
+                .unwrap_or_else(|| {
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .expect("System time should be after Unix epoch")
+                        .as_nanos() as u64
+                });
+            batch.push_record(
+                observation_time,
+                template.counters.iter().map(|counter| SAIStat {
+                    object_name: Arc::clone(&counter.object_name),
+                    type_id: counter.type_id,
+                    stat_id: counter.stat_id,
+                    counter: read_be_u64(
+                        &record[counter.offset..counter.offset + counter.len as usize],
+                    ),
+                }),
+            );
+        }
+    }
+
+    fn record_invalid_input_warning(&mut self) -> Option<u64> {
+        let now = Instant::now();
+        if now < self.next_invalid_warning {
+            self.suppressed_invalid_warnings = self.suppressed_invalid_warnings.saturating_add(1);
+            return None;
+        }
+        self.next_invalid_warning = now + DROP_WARNING_INTERVAL;
+        Some(std::mem::take(&mut self.suppressed_invalid_warnings))
+    }
+
+    async fn process_record_input(&mut self, records: &[u8], batch: &mut SAIStatsBatch) {
+        let input = match self.validate_record_input(records) {
+            Ok(input) => input,
+            Err(err) => {
+                if let Some(suppressed) = self.record_invalid_input_warning() {
+                    warn!(
+                        "Dropping invalid HFT IPFIX message: {err}; {suppressed} prior invalid-input warning(s) suppressed"
+                    );
+                }
                 return;
             }
         };
-
-        debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
-            templates.key, templates.object_names, templates.object_ids
-        );
-
-        // Add detailed debug logging for template content if debug level is enabled
-        if log::log_enabled!(log::Level::Debug) {
-            let formatted_templates =
-                Self::format_templates_for_debug(&templates_data, &templates.key);
-            if !formatted_templates.is_empty() {
-                debug!("Received template details:\n{}", formatted_templates);
+        for validated in input.messages {
+            if !batch.is_empty()
+                && batch
+                    .counter_count()
+                    .saturating_add(validated.counter_count)
+                    > TARGET_COUNTERS_PER_BATCH
+            {
+                self.send_batch(std::mem::take(batch)).await;
+            }
+            self.process_data_message(validated, batch);
+            if batch.counter_count() >= TARGET_COUNTERS_PER_BATCH {
+                self.send_batch(std::mem::take(batch)).await;
             }
         }
-
-        if let (Some(object_names), Some(object_ids)) =
-            (&templates.object_names, &templates.object_ids)
-        {
-            if object_ids.len() == object_names.len() {
-                let mut lookup = HashMap::with_capacity(object_ids.len());
-                let mut has_duplicate_object_id = false;
-
-                for (object_id, object_name) in
-                    object_ids.iter().copied().zip(object_names.iter().cloned())
-                {
-                    if let Some(previous_name) = lookup.insert(object_id, object_name.clone()) {
-                        warn!(
-                            "IPFIX template key {} contains duplicate object_id {} ({} -> {}). Skipping object_id_name_map entry to avoid ambiguous label resolution.",
-                            templates.key,
-                            object_id,
-                            previous_name,
-                            object_name
-                        );
-                        has_duplicate_object_id = true;
-                        break;
-                    }
-                }
-
-                if has_duplicate_object_id {
-                    self.object_id_name_map.remove(&templates.key);
-                } else {
-                    self.object_id_name_map
-                        .insert(templates.key.clone(), lookup);
-                }
-            } else {
-                warn!(
-                    "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",
-                    templates.key,
-                    object_ids.len(),
-                    object_names.len()
-                );
-                self.object_id_name_map.remove(&templates.key);
-            }
-        } else {
-            self.object_id_name_map.remove(&templates.key);
-        }
-
-        let cache_ref = Self::get_cache();
-        let cache = cache_ref.borrow_mut();
-        let mut read_size: usize = 0;
-
-        while read_size < templates_data.len() {
-            let len = match get_ipfix_message_length(&templates_data[read_size..]) {
-                Ok(len) => len,
-                Err(e) => {
-                    warn!("Failed to parse IPFIX message length: {}", e);
-                    break;
-                }
-            };
-
-            // Check if the template header's length is larger than the remaining data
-            if read_size + len as usize > templates_data.len() {
-                warn!("IPFIX template header length {} exceeds remaining data size {} at offset {}, skipping this template group", 
-                      len, templates_data.len() - read_size, read_size);
-                break;
-            }
-
-            let template = &templates_data[read_size..read_size + len as usize];
-            // Parse the template message - if this fails, log error and skip this template
-            let new_templates: ipfixrw::parser::Message = match parse_ipfix_message(
-                &template,
-                cache.templates.clone(),
-                cache.formatter.clone(),
-            ) {
-                Ok(templates) => templates,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse IPFIX template message for key {}: {}",
-                        templates.key, e
-                    );
-                    read_size += len as usize;
-                    continue;
-                }
-            };
-
-            self.insert_temporary_template(&templates.key, new_templates);
-            read_size += len as usize;
-        }
-        debug!("Template handled successfully for key: {}", templates.key);
     }
 
-    /// Handles template deletion for a given key.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key of the template to delete
-    fn handle_template_deletion(&mut self, key: &str) {
-        debug!("Handling template deletion for key: {}", key);
-
-        // Remove from applied templates map and get template IDs
-        if let Some(template_ids) = self.applied_templates_map.remove(key) {
-            // Remove from temporary templates map
-            for template_id in &template_ids {
-                self.temporary_templates_map.remove(template_id);
-            }
-            debug!("Removed {} templates for key: {}", template_ids.len(), key);
+    async fn send_batch(&self, batch: SAIStatsBatch) {
+        if batch.is_empty() || self.saistats_recipients.is_empty() {
+            return;
         }
-
-        // Also check and remove any remaining entries in temporary_templates_map
-        self.temporary_templates_map
-            .retain(|_, msg_key| msg_key != key);
-
-        // Remove object metadata for this key
-        self.object_id_name_map.remove(key);
-
-        debug!("Template deletion completed for key: {}", key);
-    }
-
-    /// Processes IPFIX data records and converts them to SAI statistics.
-    ///
-    /// # Arguments
-    ///
-    /// * `records` - Raw IPFIX data record bytes
-    ///
-    /// # Returns
-    ///
-    /// Vector of SAI statistics messages parsed from the records
-    fn handle_record(&mut self, records: SocketBufferMessage) -> Vec<SAIStatsMessage> {
-        let cache_ref = Self::get_cache();
-        let mut cache = cache_ref.borrow_mut();
-        let mut read_size: usize = 0;
-        let mut messages: Vec<SAIStatsMessage> = Vec::new();
-
-        debug!("Processing IPFIX records of length: {}", records.len());
-
-        while read_size < records.len() {
-            let len = get_ipfix_message_length(&records[read_size..]);
-            let len = match len {
-                Ok(len) => {
-                    if len as usize + read_size > records.len() {
-                        warn!(
-                            "Invalid IPFIX message length: {} at offset {}, exceeds buffer size {}",
-                            len,
-                            read_size,
-                            records.len()
-                        );
-                        break;
-                    }
-                    len
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to get IPFIX message length at offset {}: {}",
-                        read_size, e
-                    );
-                    break;
-                }
-            };
-
-            let data = &records[read_size..read_size + len as usize];
-            // Debug log the parsed records if debug logging is enabled
-            if log::log_enabled!(log::Level::Debug) {
-                let formatted_records = Self::format_records_for_debug(data);
-                debug!("Received IPFIX data records: {}", formatted_records);
-            }
-            let data_message =
-                parse_ipfix_message(&data, cache.templates.clone(), cache.formatter.clone());
-            let data_message = match data_message {
-                Ok(message) => message,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse IPFIX data message at offset {} : {}",
-                        read_size, e
-                    );
-                    read_size += len as usize;
-                    continue;
-                }
-            };
-
-            let mut should_drop_message = false;
-
-            data_message.sets.iter().for_each(|set| {
-                if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
-                    self.update_applied_template(set_id);
-                    if !self.is_template_known(set_id) {
-                        should_drop_message = true;
-                    }
-                }
-            });
-
-            if should_drop_message {
-                debug!("Dropping IPFIX data message because template was deleted or unknown");
-                read_size += len as usize;
-                continue;
-            }
-
-            for set in &data_message.sets {
-                let (template_id, datarecords) = match &set.records {
-                    ipfixrw::parser::Records::Data { set_id, data } => (*set_id, data),
-                    _ => continue,
-                };
-
-                let object_name_lookup = self
-                    .get_template_key(template_id)
-                    .and_then(|key| self.object_id_name_map.get(key));
-
-                let mut observation_time: Option<u64>;
-
-                for record in datarecords {
-                    observation_time = get_observation_time(record);
-                    if observation_time.is_none() {
-                        debug!(
-                            "No observation time in record, use the last observer time {:?}",
-                            cache.last_observer_time
-                        );
-                        observation_time = cache.last_observer_time;
-                    } else if let (Some(obs_time), Some(last_time)) =
-                        (observation_time, cache.last_observer_time)
-                    {
-                        if obs_time > last_time {
-                            cache.last_observer_time = observation_time;
-                        }
-                    } else {
-                        // If we have observation time but no last time, update it
-                        cache.last_observer_time = observation_time;
-                    }
-
-                    // If we still don't have observation time, skip this record
-                    if observation_time.is_none() {
-                        warn!("No observation time available for record, skipping");
-                        continue;
-                    }
-
-                    // Collect final stats directly
-                    let mut final_stats: Vec<SAIStat> = Vec::new();
-
-                    // Debug: Log all fields in the record to understand what we're getting
-                    debug!(
-                        "Processing record for template_id {} with {} fields:",
-                        template_id,
-                        record.values.len()
-                    );
-                    for (key, val) in record.values.iter() {
-                        match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                debug!(
-                                    "  Field ID: {}, Enterprise: {:?}, Length: {}, Value: {:?}",
-                                    field_spec.information_element_identifier,
-                                    field_spec.enterprise_number,
-                                    field_spec.field_length,
-                                    val
-                                );
-                            }
-                            _ => {
-                                debug!("  Key: {:?}, Value: {:?}", key, val);
-                            }
-                        }
-                    }
-
-                    for (key, val) in record.values.iter() {
-                        // Check if this is the observation time field or system time field
-                        let is_time_field = match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let field_id = field_spec.information_element_identifier;
-                                let is_standard_field = field_spec.enterprise_number.is_none();
-
-                                (field_id == OBSERVATION_TIME_NANOSECONDS
-                                    || field_id == OBSERVATION_TIME_SECONDS)
-                                    && is_standard_field
-                            }
-                            _ => false,
-                        };
-
-                        if is_time_field {
-                            if let DataRecordKey::Unrecognized(field_spec) = key {
-                                debug!(
-                                    "Skipping time field (ID: {})",
-                                    field_spec.information_element_identifier
-                                );
-                            }
-                            continue;
-                        }
-
-                        match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let stat = SAIStat::from_ipfix(field_spec, val, object_name_lookup);
-                                debug!("Created SAIStat: {:?}", stat);
-                                final_stats.push(stat);
-                            }
-                            _ => continue,
-                        }
-                    }
-
-                    let saistats = SAIStatsMessage::new(SAIStats {
-                        observation_time: observation_time
-                            .expect("observation_time should be Some at this point"),
-                        stats: final_stats,
-                    });
-
-                    messages.push(saistats.clone());
-                    debug!("Record parsed {:?}", saistats);
-                }
-            }
-            read_size += len as usize;
-            debug!(
-                "Consuming IPFIX message of length: {}, rest length: {}",
-                len,
-                records.len() - read_size
-            );
+        if batch.counter_count() <= TARGET_COUNTERS_PER_BATCH || batch.record_count() == 1 {
+            self.send_chunk(batch).await;
+            return;
         }
-        messages
+        for batch in batch.into_record_batches(TARGET_COUNTERS_PER_BATCH) {
+            self.send_chunk(batch).await;
+        }
     }
 
-    thread_local! {
-        static IPFIX_CACHE: RefCell<IpfixCacheRef> = RefCell::new(Rc::new(RefCell::new(IpfixCache::new())));
-    }
-
-    fn get_cache() -> IpfixCacheRef {
-        Self::IPFIX_CACHE.with(|cache| cache.borrow().clone())
+    async fn send_chunk(&self, batch: SAIStatsBatch) {
+        let batch = Arc::new(batch);
+        let mut blocked = Vec::new();
+        for recipient in &self.saistats_recipients {
+            match recipient.try_reserve() {
+                Ok(permit) => permit.send(Arc::clone(&batch)),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => blocked.push(recipient),
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+            }
+        }
+        for recipient in blocked {
+            let _ = recipient.send(Arc::clone(&batch)).await;
+        }
     }
 
     pub async fn run(mut actor: IpfixActor) {
         loop {
             select! {
-                templates = actor.template_recipient.recv() => {
-                    match templates {
-                        Some(templates) => {
-                            record_comm_stats(
-                                ChannelLabel::SwssToIpfixTemplates,
-                                actor.template_recipient.len(),
-                            );
-                            actor.handle_template(templates);
-                        },
-                        None => {
-                            break;
+                template = actor.template_recipient.recv() => match template {
+                    Some(template) => {
+                        record_comm_stats(ChannelLabel::SwssToIpfixTemplates, actor.template_recipient.len());
+                        if let Err(err) = actor.handle_template(template) {
+                            error!("HFT template update rejected: {err}");
                         }
                     }
+                    None => break,
                 },
-                record = actor.record_recipient.recv() => {
-                    match record {
-                        Some(record) => {
-                            record_comm_stats(
-                                ChannelLabel::DataNetlinkToIpfixRecords,
-                                actor.record_recipient.len(),
-                            );
-                            let messages = actor.handle_record(record);
-                            for recipient in &actor.saistats_recipients {
-                                for message in &messages {
-                                    let _ = recipient.send(message.clone()).await;
-                                }
-                            }
-                        },
-                        None => {
-                            break;
+                record = actor.record_recipient.recv() => match record {
+                    Some(record) => {
+                        record_comm_stats(ChannelLabel::DataNetlinkToIpfixRecords, actor.record_recipient.len());
+                        let mut batch = SAIStatsBatch::default();
+                        let mut input_count = 1usize;
+                        let mut input_bytes = record.len();
+                        actor.process_record_input(&record, &mut batch).await;
+                        while input_count < MAX_RECORD_INPUTS_PER_BATCH
+                            && input_bytes < MAX_RECORD_INPUT_BYTES_PER_BATCH
+                            && actor.template_recipient.is_empty()
+                        {
+                            let Ok(next) = actor.record_recipient.try_recv() else { break; };
+                            record_comm_stats(ChannelLabel::DataNetlinkToIpfixRecords, actor.record_recipient.len());
+                            input_count += 1;
+                            input_bytes = input_bytes.saturating_add(next.len());
+                            actor.process_record_input(&next, &mut batch).await;
                         }
+                        actor.send_batch(batch).await;
                     }
+                    None => break,
                 }
             }
         }
     }
 }
 
-impl Drop for IpfixActor {
-    fn drop(&mut self) {
-        self.template_recipient.close();
+fn validate_template_update_limits(templates: &IPFixTemplatesMessage) -> Result<(), IpfixError> {
+    let bytes = templates
+        .templates
+        .as_ref()
+        .ok_or("template update has no template data")?;
+    if bytes.len() > MAX_TEMPLATE_CONFIG_BYTES {
+        return Err(format!("template update exceeds {MAX_TEMPLATE_CONFIG_BYTES} bytes").into());
     }
+    let names = templates
+        .object_names
+        .as_ref()
+        .ok_or("HFT template update has no object_names")?;
+    let ids = templates
+        .object_ids
+        .as_ref()
+        .ok_or("HFT template update has no object_ids")?;
+    if names.len() > MAX_OBJECTS_PER_UPDATE || ids.len() > MAX_OBJECTS_PER_UPDATE {
+        return Err(format!("object metadata exceeds {MAX_OBJECTS_PER_UPDATE} entries").into());
+    }
+    let metadata_bytes = names
+        .iter()
+        .try_fold(templates.key.len(), |total, name| {
+            total.checked_add(name.len())
+        })
+        .ok_or("object metadata size overflow")?
+        .checked_add(
+            ids.len()
+                .checked_mul(std::mem::size_of::<u16>())
+                .ok_or("object metadata size overflow")?,
+        )
+        .ok_or("object metadata size overflow")?;
+    if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+        return Err(format!("object metadata exceeds {MAX_OBJECT_METADATA_BYTES} bytes").into());
+    }
+    Ok(())
 }
 
-/// IPFIX Information Element ID for observationTimeNanoseconds (Field ID 325).
-///
-/// This field represents the absolute timestamp of the observation of the packet
-/// within a nanosecond resolution. The timestamp is based on the local time zone
-/// of the Exporter and is represented as nanoseconds since the UNIX epoch.
-///
-/// According to IANA IPFIX Information Elements Registry:
-/// - ElementId: 325
-/// - Data Type: dateTimeNanoseconds
-/// - Semantics: default
-/// - Status: current
-const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
+struct IpfixMessages<'a> {
+    remaining: &'a [u8],
+    failed: bool,
+}
 
-/// IPFIX Information Element ID for observationTimeSeconds (Field ID 322).
-///
-/// This field represents the absolute timestamp of the observation of the packet
-/// within a second resolution. The timestamp is based on the local time zone
-/// of the Exporter and is represented as seconds since the UNIX epoch.
-///
-/// According to IANA IPFIX Information Elements Registry:
-/// - ElementId: 322
-/// - Data Type: dateTimeSeconds  
-/// - Semantics: default
-/// - Status: current
-const OBSERVATION_TIME_SECONDS: u16 = 322;
-
-/// Extracts observation time from an IPFIX data record.
-///
-/// Converts timestamp to 64-bit nanoseconds following this priority:
-/// 1. If 64-bit nanoseconds field exists, use it directly
-/// 2. If 32-bit seconds and 32-bit nanoseconds fields exist, combine them
-/// 3. Otherwise, use current UTC time as 64-bit nanoseconds timestamp
-///
-/// # Arguments
-///
-/// * `data_record` - The IPFIX data record to extract time from
-///
-/// # Returns
-///
-/// Some(timestamp_in_nanoseconds) if observation time field is present, None otherwise
-fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
-    let mut seconds_value: Option<u32> = None;
-    let mut nanoseconds_value: Option<u32> = None;
-    let mut full_nanoseconds_value: Option<u64> = None;
-
-    // First pass: collect all time-related fields
-    for (key, val) in &data_record.values {
-        if let DataRecordKey::Unrecognized(field_spec) = key {
-            if field_spec.enterprise_number.is_none() {
-                match field_spec.information_element_identifier {
-                    OBSERVATION_TIME_NANOSECONDS => {
-                        debug!(
-                            "Found observation time nanoseconds field with value: {:?}",
-                            val
-                        );
-                        match val {
-                            DataRecordValue::Bytes(bytes) => {
-                                if bytes.len() == 8 {
-                                    full_nanoseconds_value = Some(NetworkEndian::read_u64(bytes));
-                                    debug!(
-                                        "Extracted 64-bit nanoseconds: {}",
-                                        full_nanoseconds_value.unwrap()
-                                    );
-                                } else if bytes.len() == 4 {
-                                    nanoseconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!(
-                                        "Extracted 32-bit nanoseconds: {}",
-                                        nanoseconds_value.unwrap()
-                                    );
-                                }
-                            }
-                            DataRecordValue::U64(val) => {
-                                full_nanoseconds_value = Some(*val);
-                                debug!("Extracted 64-bit nanoseconds (u64): {}", val);
-                            }
-                            DataRecordValue::U32(val) => {
-                                nanoseconds_value = Some(*val);
-                                debug!("Extracted 32-bit nanoseconds (u32): {}", val);
-                            }
-                            _ => {
-                                debug!("Observation time nanoseconds field has unexpected value type: {:?}", val);
-                            }
-                        }
-                    }
-                    OBSERVATION_TIME_SECONDS => {
-                        debug!("Found observation time seconds field with value: {:?}", val);
-                        match val {
-                            DataRecordValue::Bytes(bytes) => {
-                                if bytes.len() == 4 {
-                                    seconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!("Extracted 32-bit seconds: {}", seconds_value.unwrap());
-                                }
-                            }
-                            DataRecordValue::U32(val) => {
-                                seconds_value = Some(*val);
-                                debug!("Extracted 32-bit seconds (u32): {}", val);
-                            }
-                            _ => {
-                                debug!("Observation time seconds field has unexpected value type: {:?}", val);
-                            }
-                        }
-                    }
-                    _ => {} // Ignore other fields
-                }
-            }
+impl<'a> IpfixMessages<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            remaining: bytes,
+            failed: false,
         }
     }
-
-    // Priority 1: Use 64-bit nanoseconds directly if available
-    if let Some(nano_time) = full_nanoseconds_value {
-        debug!("Using 64-bit nanoseconds timestamp: {}", nano_time);
-        return Some(nano_time);
-    }
-
-    // Priority 2: Combine 32-bit seconds and 32-bit nanoseconds
-    if let (Some(seconds), Some(nanoseconds)) = (seconds_value, nanoseconds_value) {
-        let combined_timestamp = (seconds as u64) * 1_000_000_000 + (nanoseconds as u64);
-        debug!(
-            "Combined timestamp from seconds({}) and nanoseconds({}): {}",
-            seconds, nanoseconds, combined_timestamp
-        );
-        return Some(combined_timestamp);
-    }
-
-    // Priority 3: Use current UTC time
-    debug!("No complete observation time fields found, using current UTC time");
-    let current_time = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("System time should be after Unix epoch")
-        .as_nanos() as u64;
-    debug!(
-        "Using current UTC time as observation time: {}",
-        current_time
-    );
-    Some(current_time)
 }
 
-/// Parse IPFIX message length according to IPFIX RFC specification
-/// IPFIX message length is stored in bytes 2-3 of the message header (16-bit network byte order)
-fn get_ipfix_message_length(data: &[u8]) -> Result<u16, &'static str> {
-    if data.len() < 4 {
-        return Err("Data too short for IPFIX header");
+impl<'a> Iterator for IpfixMessages<'a> {
+    type Item = Result<&'a [u8], IpfixError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed || self.remaining.is_empty() {
+            return None;
+        }
+        if self.remaining.len() < IPFIX_HEADER_LEN {
+            self.failed = true;
+            return Some(Err(format!(
+                "IPFIX payload has {} trailing bytes, shorter than the 16-byte header",
+                self.remaining.len()
+            )
+            .into()));
+        }
+        let version = NetworkEndian::read_u16(&self.remaining[0..2]);
+        if version != IPFIX_VERSION {
+            self.failed = true;
+            return Some(Err(format!("unsupported IPFIX version {version}").into()));
+        }
+        let len = NetworkEndian::read_u16(&self.remaining[2..4]) as usize;
+        if len < IPFIX_HEADER_LEN {
+            self.failed = true;
+            return Some(Err(format!("invalid IPFIX message length {len}").into()));
+        }
+        if len > self.remaining.len() {
+            self.failed = true;
+            return Some(Err(format!(
+                "IPFIX message length {len} exceeds remaining payload {}",
+                self.remaining.len()
+            )
+            .into()));
+        }
+        let (message, remaining) = self.remaining.split_at(len);
+        self.remaining = remaining;
+        Some(Ok(message))
     }
-    // IPFIX message length is at byte positions 2-3 (0-indexed)
-    Ok(NetworkEndian::read_u16(&data[2..4]))
+}
+
+fn next_set<'a>(message: &'a [u8], offset: &mut usize) -> Result<(u16, &'a [u8]), IpfixError> {
+    if message.len().saturating_sub(*offset) < SET_HEADER_LEN {
+        if message[*offset..].iter().all(|byte| *byte == 0) {
+            *offset = message.len();
+            return Ok((0, &message[message.len()..]));
+        }
+        return Err("IPFIX message has a truncated set header".into());
+    }
+    let set_id = NetworkEndian::read_u16(&message[*offset..*offset + 2]);
+    let set_len = NetworkEndian::read_u16(&message[*offset + 2..*offset + 4]) as usize;
+    if set_len <= SET_HEADER_LEN {
+        return Err(format!("invalid IPFIX set length {set_len}").into());
+    }
+    let end = (*offset)
+        .checked_add(set_len)
+        .ok_or("IPFIX set length overflow")?;
+    if end > message.len() {
+        return Err(format!("IPFIX set length {set_len} exceeds message boundary").into());
+    }
+    let set = &message[*offset..end];
+    *offset = end;
+    Ok((set_id, set))
+}
+
+fn validate_data_set(template: &CompiledTemplate, set: &[u8]) -> Result<DataSetLayout, IpfixError> {
+    if set.len() <= SET_HEADER_LEN {
+        return Err(format!("data set {} contains no records", template.key.template_id).into());
+    }
+    let payload = &set[SET_HEADER_LEN..];
+    let record_bytes = payload.len() / template.record_len * template.record_len;
+    if record_bytes == 0 {
+        return Err(format!(
+            "data set {} is shorter than its {}-byte record",
+            template.key.template_id, template.record_len
+        )
+        .into());
+    }
+    let padding = &payload[record_bytes..];
+    if padding.iter().any(|byte| *byte != 0) {
+        return Err(format!(
+            "data set {} has {} invalid trailing bytes",
+            template.key.template_id,
+            padding.len()
+        )
+        .into());
+    }
+    let record_count = record_bytes / template.record_len;
+    let counter_count = record_count
+        .checked_mul(template.counters.len())
+        .ok_or("decoded counter count overflow")?;
+    Ok(DataSetLayout {
+        record_bytes,
+        record_count,
+        counter_count,
+    })
+}
+
+fn read_be_u64(bytes: &[u8]) -> u64 {
+    debug_assert!((1..=8).contains(&bytes.len()));
+    if bytes.len() == 8 {
+        return NetworkEndian::read_u64(bytes);
+    }
+    bytes
+        .iter()
+        .fold(0u64, |value, byte| (value << 8) | u64::from(*byte))
+}
+
+fn compile_template_set(
+    set: &[u8],
+    domain: u32,
+    owner: &Arc<str>,
+    object_names: &HashMap<u16, Arc<str>>,
+    output: &mut HashMap<TemplateKey, Arc<CompiledTemplate>>,
+) -> Result<(), IpfixError> {
+    let mut offset = SET_HEADER_LEN;
+    while offset < set.len() {
+        let remaining = &set[offset..];
+        if remaining.len() < MIN_HFT_TEMPLATE_RECORD_LEN && remaining.iter().all(|byte| *byte == 0)
+        {
+            break;
+        }
+        if remaining.len() < 4 {
+            return Err("template set has a truncated template record".into());
+        }
+        let template_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+        let field_count = NetworkEndian::read_u16(&set[offset + 2..offset + 4]) as usize;
+        offset += 4;
+        if template_id < MIN_DATA_SET_ID {
+            return Err(format!("reserved template ID {template_id}").into());
+        }
+        if field_count == 0 {
+            return Err(format!(
+                "template withdrawal/zero-field template {template_id} is outside the HFT profile"
+            )
+            .into());
+        }
+        // Validate field storage before reserving from an untrusted count.
+        if field_count > (set.len() - offset) / 4 {
+            return Err(format!("template {template_id} has a truncated field list").into());
+        }
+        let mut counters = Vec::with_capacity(field_count);
+        let mut raw_nanos_offset = None;
+        let mut seconds_offset = None;
+        let mut nanos_offset = None;
+        let mut field_keys = HashSet::with_capacity(field_count);
+        let mut record_len = 0usize;
+        for _ in 0..field_count {
+            if set.len() - offset < 4 {
+                return Err(format!("template {template_id} has a truncated field").into());
+            }
+            let raw_id = NetworkEndian::read_u16(&set[offset..offset + 2]);
+            let field_len = NetworkEndian::read_u16(&set[offset + 2..offset + 4]);
+            offset += 4;
+            let enterprise = raw_id & 0x8000 != 0;
+            let field_id = raw_id & 0x7fff;
+            let field_offset = record_len;
+            record_len = record_len
+                .checked_add(usize::from(field_len))
+                .ok_or("template record length overflow")?;
+            if enterprise {
+                if !(1..=8).contains(&field_len) {
+                    return Err(format!("template {template_id} counter field {field_id} has unsupported length {field_len}; expected 1..=8 bytes").into());
+                }
+                if set.len() - offset < 4 {
+                    return Err(format!(
+                        "template {template_id} has a truncated enterprise number"
+                    )
+                    .into());
+                }
+                let enterprise_number = NetworkEndian::read_u32(&set[offset..offset + 4]);
+                offset += 4;
+                // Hardware placeholders occupy record bytes but are not counters.
+                if field_id == 0 && enterprise_number == 0 {
+                    continue;
+                }
+                if enterprise_number == 0 {
+                    return Err(format!(
+                        "template {template_id} uses reserved enterprise number zero"
+                    )
+                    .into());
+                }
+                let object_name = object_names.get(&field_id).ok_or_else(|| {
+                    format!("template {template_id} references unmapped object ID {field_id}")
+                })?;
+                let (type_id, stat_id) = decode_sai_ids(enterprise_number);
+                if !field_keys.insert((field_id, enterprise_number)) {
+                    return Err(format!(
+                        "template {template_id} contains a duplicate counter field"
+                    )
+                    .into());
+                }
+                counters.push(CompiledCounter {
+                    offset: field_offset,
+                    len: u8::try_from(field_len).expect("counter length is at most 8"),
+                    object_name: Arc::clone(object_name),
+                    type_id,
+                    stat_id,
+                });
+            } else if matches!(
+                field_id,
+                OBSERVATION_TIME_SECONDS | OBSERVATION_TIME_NANOSECONDS
+            ) {
+                let time_offset = match (field_id, field_len) {
+                    (OBSERVATION_TIME_NANOSECONDS, OBSERVATION_TIME_LEN) => &mut raw_nanos_offset,
+                    (OBSERVATION_TIME_SECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut seconds_offset,
+                    (OBSERVATION_TIME_NANOSECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut nanos_offset,
+                    _ => return Err(format!("template {template_id} observation time IE {field_id} has unsupported length {field_len}").into()),
+                };
+                if time_offset.replace(field_offset).is_some() {
+                    return Err(format!(
+                        "template {template_id} contains duplicate observation time fields"
+                    )
+                    .into());
+                }
+            } else {
+                return Err(format!(
+                    "template {template_id} contains unsupported standard IE {field_id}"
+                )
+                .into());
+            }
+        }
+        if counters.is_empty() {
+            return Err(format!("template {template_id} requires at least one counter").into());
+        }
+        let observation_time = if let Some(offset) = raw_nanos_offset {
+            ObservationTime::RawNanoseconds { offset }
+        } else if let (Some(seconds_offset), Some(nanos_offset)) = (seconds_offset, nanos_offset) {
+            ObservationTime::Split {
+                seconds_offset,
+                nanos_offset,
+            }
+        } else {
+            ObservationTime::Missing
+        };
+        let key = TemplateKey {
+            observation_domain_id: domain,
+            template_id,
+        };
+        let template = Arc::new(CompiledTemplate {
+            key,
+            owner: Arc::clone(owner),
+            observation_time,
+            counters: counters.into(),
+            record_len,
+        });
+        if output.insert(key, template).is_some() {
+            return Err(
+                format!("duplicate template ({domain}, {template_id}) in one update").into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
-    use log::LevelFilter::Debug;
-    use std::io::Write;
-    use std::sync::{Arc, Mutex, Once, OnceLock};
     use tokio::sync::mpsc::channel;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-    static LOG_BUFFER: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
-
-    fn get_log_buffer() -> &'static Arc<Mutex<Vec<u8>>> {
-        LOG_BUFFER.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
-    }
-
-    pub fn capture_logs() -> String {
-        INIT_ENV_LOGGER.call_once(|| {
-            // Try to initialize env_logger, but ignore if already initialized
-            let _ = env_logger::builder()
-                .is_test(true)
-                .filter_level(Debug)
-                .format({
-                    let buffer = get_log_buffer().clone();
-                    move |_, record| {
-                        let mut buffer = buffer.lock().unwrap();
-                        writeln!(buffer, "[{}] {}", record.level(), record.args()).unwrap();
-                        Ok(())
-                    }
-                })
-                .try_init();
-        });
-
-        let buffer = get_log_buffer().lock().unwrap();
-        String::from_utf8(buffer.clone()).expect("Log buffer should be valid UTF-8")
-    }
-
-    pub fn clear_logs() {
-        let mut buffer = get_log_buffer().lock().unwrap();
-        buffer.clear();
-    }
-
-    #[allow(dead_code)]
-    pub fn assert_logs(expected: Vec<&str>) {
-        let logs_string = capture_logs();
-        let mut logs = logs_string.lines().collect::<Vec<_>>();
-        let mut reverse_expected = expected.clone();
-        reverse_expected.reverse();
-        logs.reverse();
-
-        let mut match_count = 0;
-        for line in logs {
-            if reverse_expected.is_empty() {
-                break;
-            }
-            if line.contains(reverse_expected[match_count]) {
-                match_count += 1;
-            }
-
-            if match_count == reverse_expected.len() {
-                break;
+    // Field specifiers preserve the E bit independently of the IE number.
+    fn hardware_template(id: u16, fields: &[(u16, u16, Option<u32>)]) -> IPFixTemplatesMessage {
+        let mut bytes = vec![0; IPFIX_HEADER_LEN + SET_HEADER_LEN];
+        bytes[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes[16..18].copy_from_slice(&TEMPLATE_SET_ID.to_be_bytes());
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&u16::try_from(fields.len()).unwrap().to_be_bytes());
+        let mut objects = std::collections::BTreeSet::new();
+        for &(ie, len, pen) in fields {
+            bytes.extend_from_slice(&(ie | if pen.is_some() { 0x8000 } else { 0 }).to_be_bytes());
+            bytes.extend_from_slice(&len.to_be_bytes());
+            if let Some(pen) = pen {
+                bytes.extend_from_slice(&pen.to_be_bytes());
+                if pen != 0 {
+                    objects.insert(ie);
+                }
             }
         }
-        assert_eq!(
-            match_count,
-            expected.len(),
-            "\nexpected logs \n{}\n, got logs \n{}\n",
-            expected.join("\n"),
-            logs_string
-        );
+        let len = u16::try_from(bytes.len()).unwrap();
+        bytes[2..4].copy_from_slice(&len.to_be_bytes());
+        bytes[18..20].copy_from_slice(&(len - 16).to_be_bytes());
+        IPFixTemplatesMessage::new(
+            "hardware".into(),
+            Arc::new(bytes),
+            Some(objects.iter().map(|id| format!("Ethernet{id}")).collect()),
+            Some(objects.into_iter().collect()),
+        )
+    }
+
+    fn hardware_data(id: u16, records: &[&[u8]]) -> Vec<u8> {
+        let mut bytes = vec![0; IPFIX_HEADER_LEN + SET_HEADER_LEN];
+        bytes[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes[16..18].copy_from_slice(&id.to_be_bytes());
+        for record in records {
+            bytes.extend_from_slice(record);
+        }
+        let len = u16::try_from(bytes.len()).unwrap();
+        bytes[2..4].copy_from_slice(&len.to_be_bytes());
+        bytes[18..20].copy_from_slice(&(len - 16).to_be_bytes());
+        bytes
+    }
+
+    fn utc_nanos() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+    }
+
+    fn timestamp_actor() -> IpfixActor {
+        let mut actor = actor();
+        let mut update = hardware_template(256, &[(325, 8, None), (1, 8, Some(1))]);
+        let continuation = hardware_template(257, &[(1, 8, Some(1))]);
+        Arc::make_mut(update.templates.as_mut().unwrap())
+            .extend_from_slice(continuation.templates.as_ref().unwrap());
+        actor.handle_template(update).unwrap();
+        actor
+    }
+
+    fn append_hardware_set(message: &mut Vec<u8>, next: &[u8]) {
+        message.extend_from_slice(&next[IPFIX_HEADER_LEN..]);
+        let len = u16::try_from(message.len()).unwrap();
+        message[2..4].copy_from_slice(&len.to_be_bytes());
     }
 
     #[test]
-    fn test_object_names_follow_template_id() {
-        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
-        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-
-        let template_256_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        let template_257_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x01, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_256_bytes)),
-            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-            Some(vec![1, 2]),
-        ));
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_b"),
-            Arc::new(Vec::from(template_257_bytes)),
-            Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
-            Some(vec![1, 2]),
-        ));
-
-        let valid_records_bytes: [u8; 144] = [
-            0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-            0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x01, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x03, 0x00, 0x0A, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x04, 0x01, 0x01, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x07,
-        ];
-
-        let stats = actor.handle_record(Arc::new(Vec::from(valid_records_bytes)));
-        let stats: Vec<_> = stats
-            .into_iter()
-            .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
-            .collect();
-
-        let session_a_names = ["Ethernet0", "Ethernet1"];
-        let session_b_names = ["Ethernet8", "Ethernet12"];
-        let mut saw_session_a = false;
-        let mut saw_session_b = false;
-
-        for msg in &stats {
-            let names: Vec<&str> = msg.stats.iter().map(|s| s.object_name.as_str()).collect();
-
-            let only_session_a = names.iter().all(|name| session_a_names.contains(name));
-            let only_session_b = names.iter().all(|name| session_b_names.contains(name));
-
-            assert!(
-                only_session_a || only_session_b,
-                "record mixes object names from multiple templates: {:?}",
-                names
-            );
-
-            saw_session_a |= only_session_a;
-            saw_session_b |= only_session_b;
+    fn timestamp_history_follows_processing_order_across_buffers() {
+        for separate_buffers in [false, true] {
+            let mut actor = timestamp_actor();
+            for time in [100u64, 42, 0] {
+                let mut record = time.to_be_bytes().to_vec();
+                record.extend_from_slice(&7u64.to_be_bytes());
+                let mut input = hardware_data(256, &[&record]);
+                let continuation = hardware_data(257, &[&8u64.to_be_bytes()]);
+                let batch = if separate_buffers {
+                    let batch = actor.handle_record(&input).unwrap();
+                    assert_eq!(batch.iter().next().unwrap().observation_time, time);
+                    actor.handle_record(&continuation).unwrap()
+                } else {
+                    input.extend_from_slice(&continuation);
+                    actor.handle_record(&input).unwrap()
+                };
+                assert!(batch.iter().all(|r| r.observation_time == time));
+                assert_eq!(actor.last_observation_time, Some(time));
+            }
         }
-
-        assert!(
-            saw_session_a,
-            "did not observe any stats for session A/template 256"
-        );
-        assert!(
-            saw_session_b,
-            "did not observe any stats for session B/template 257"
-        );
     }
 
     #[test]
-    fn test_template_update_without_object_names_clears_stale_mapping() {
-        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
-        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-
-        let template_bytes: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
-            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
-            0x80, 0x04,
-        ];
-
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_bytes)),
-            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-            Some(vec![1, 2]),
-        ));
-        let mut expected = HashMap::new();
-        expected.insert(1u16, "Ethernet0".to_string());
-        expected.insert(2u16, "Ethernet1".to_string());
+    fn message_local_time_overrides_history_but_explicit_records_keep_their_own() {
+        let mut actor = timestamp_actor();
+        actor
+            .handle_record(&data_message(0, &[(256, vec![(999, vec![1])])]))
+            .unwrap();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        let mut input = continuation.clone();
+        append_hardware_set(
+            &mut input,
+            &data_message(0, &[(256, vec![(100, vec![2]), (42, vec![3])])]),
+        );
+        append_hardware_set(&mut input, &continuation);
+        append_hardware_set(&mut input, &data_message(0, &[(256, vec![(0, vec![4])])]));
+        append_hardware_set(&mut input, &continuation);
+        input.extend_from_slice(&continuation);
+        let batch = actor.handle_record(&input).unwrap();
         assert_eq!(
-            actor.object_id_name_map.get("session_a"),
-            Some(&expected)
+            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>(),
+            vec![0, 100, 42, 0, 0, 0, 0]
         );
+        assert_eq!(actor.last_observation_time, Some(0));
+    }
 
-        actor.handle_template(IPFixTemplatesMessage::new(
-            String::from("session_a"),
-            Arc::new(Vec::from(template_bytes)),
-            None,
-            None,
-        ));
+    #[test]
+    fn startup_fallback_never_seeds_history_or_looks_into_a_later_message() {
+        let mut actor = timestamp_actor();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        for _ in 0..2 {
+            let before = utc_nanos();
+            let batch = actor.handle_record(&continuation).unwrap();
+            assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+            assert_eq!(actor.last_observation_time, None);
+        }
+        let mut input = continuation;
+        input.extend_from_slice(&data_message(0, &[(256, vec![(42, vec![1])])]));
+        let before = utc_nanos();
+        let batch = actor.handle_record(&input).unwrap();
+        assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+        assert_eq!(batch.iter().nth(1).unwrap().observation_time, 42);
+        assert_eq!(actor.last_observation_time, Some(42));
+    }
 
-        assert!(
-            actor.object_id_name_map.get("session_a").is_none(),
-            "stale object_id_name_map entries should be cleared when a template update omits object metadata"
-        );
+    #[test]
+    fn partial_split_time_uses_message_or_history_fallback() {
+        for ie in [322, 325] {
+            let mut actor = timestamp_actor();
+            let mut update = hardware_template(258, &[(ie, 4, None), (1, 8, Some(1))]);
+            update.key = "partial".into();
+            actor.handle_template(update).unwrap();
+            let record = [0xff; 12];
+            let partial = hardware_data(258, &[&record]);
+            let before = utc_nanos();
+            let batch = actor.handle_record(&partial).unwrap();
+            assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+            assert_eq!(actor.last_observation_time, None);
+            let mut input = partial.clone();
+            append_hardware_set(&mut input, &data_message(0, &[(256, vec![(42, vec![1])])]));
+            assert!(actor
+                .handle_record(&input)
+                .unwrap()
+                .iter()
+                .all(|r| r.observation_time == 42));
+            let batch = actor.handle_record(&partial).unwrap();
+            assert_eq!(batch.iter().next().unwrap().observation_time, 42);
+            assert_eq!(actor.last_observation_time, Some(42));
+        }
+    }
+
+    #[test]
+    fn timestamp_inference_excludes_descriptors_retired_by_earlier_sets() {
+        for same_message in [false, true] {
+            for old_first in [false, true] {
+                let mut actor = timestamp_actor();
+                actor
+                    .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
+                    .unwrap();
+                actor
+                    .handle_template(hardware_template(258, &[(1, 8, Some(1))]))
+                    .unwrap();
+                let old = data_message(0, &[(256, vec![(99, vec![2])])]);
+                let new = hardware_data(258, &[&3u64.to_be_bytes()]);
+                let mut input = if old_first { old.clone() } else { new.clone() };
+                let next = if old_first { &new } else { &old };
+                if same_message {
+                    append_hardware_set(&mut input, next);
+                } else {
+                    input.extend_from_slice(next);
+                }
+                let batch = actor.handle_record(&input).unwrap();
+                let expected = if old_first { 99 } else { 42 };
+                assert_eq!(batch.record_count(), if old_first { 2 } else { 1 });
+                assert!(batch.iter().all(|r| r.observation_time == expected));
+                assert_eq!(actor.last_observation_time, Some(expected));
+                assert_eq!(keys(&actor), vec![(0, 258)]);
+                assert!(actor.handle_record(&old).unwrap().is_empty());
+                assert_eq!(actor.last_observation_time, Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_history_is_actor_wide_but_instances_are_isolated() {
+        let mut first = timestamp_actor();
+        let mut second = timestamp_actor();
+        first
+            .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
+            .unwrap();
+        let continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+        let before = utc_nanos();
+        let batch = second.handle_record(&continuation).unwrap();
+        assert!((before..=utc_nanos()).contains(&batch.iter().next().unwrap().observation_time));
+        assert_eq!(second.last_observation_time, None);
+        second
+            .handle_record(&data_message(0, &[(256, vec![(99, vec![1])])]))
+            .unwrap();
+        assert_eq!(first.last_observation_time, Some(42));
+
+        first
+            .handle_template(IPFixTemplatesMessage::delete("hardware".into()))
+            .unwrap();
+        let mut update = hardware_template(257, &[(1, 8, Some(1))]);
+        update.key = "other".into();
+        Arc::make_mut(update.templates.as_mut().unwrap())[12..16]
+            .copy_from_slice(&1u32.to_be_bytes());
+        first.handle_template(update).unwrap();
+        let mut continuation = continuation;
+        continuation[12..16].copy_from_slice(&1u32.to_be_bytes());
+        let batch = first.handle_record(&continuation).unwrap();
+        assert_eq!(batch.iter().next().unwrap().observation_time, 42);
+    }
+
+    #[test]
+    fn invalid_unknown_and_padding_only_inputs_never_update_time() {
+        for seed in [None, Some(42)] {
+            let mut actor = timestamp_actor();
+            if let Some(time) = seed {
+                actor
+                    .handle_record(&data_message(0, &[(256, vec![(time, vec![1])])]))
+                    .unwrap();
+            }
+            assert_eq!(actor.last_observation_time, seed);
+            let good = data_message(0, &[(256, vec![(99, vec![1])])]);
+            let padding_only = hardware_data(256, &[&[0; 8]]);
+            let mut bad_later_message = good.clone();
+            bad_later_message.extend_from_slice(&padding_only);
+            let mut bad_later_set = good.clone();
+            append_hardware_set(&mut bad_later_set, &padding_only);
+            let mut bad_trailer = good;
+            bad_trailer.extend_from_slice(&[1, 2, 3]);
+            for input in [bad_later_message, bad_later_set, bad_trailer, padding_only] {
+                assert!(actor.handle_record(&input).is_err());
+                assert_eq!(actor.last_observation_time, seed);
+            }
+            let unknown = data_message(0, &[(999, vec![(123, vec![1])])]);
+            assert!(actor.handle_record(&unknown).unwrap().is_empty());
+            assert_eq!(actor.last_observation_time, seed);
+            let mut continuation = hardware_data(257, &[&7u64.to_be_bytes()]);
+            append_hardware_set(&mut continuation, &unknown);
+            let before = utc_nanos();
+            let batch = actor.handle_record(&continuation).unwrap();
+            let time = batch.iter().next().unwrap().observation_time;
+            match seed {
+                Some(expected) => assert_eq!(time, expected),
+                None => assert!((before..=utc_nanos()).contains(&time)),
+            }
+            assert_eq!(actor.last_observation_time, seed);
+        }
     }
 
     #[tokio::test]
-    async fn test_ipfix() {
-        clear_logs(); // Clear any previous logs to ensure clean test state
-        capture_logs();
-        let (buffer_sender, buffer_receiver) = channel(1);
-        let (template_sender, template_receiver) = channel(1);
-        let (saistats_sender, mut saistats_receiver) = channel(100);
-        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
-        actor.add_recipient(saistats_sender);
-
-        let actor_handle = tokio::task::spawn_blocking(move || {
-            // Create a new runtime for the IPFIX actor to ensure thread-local variables work correctly
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create runtime for IPFIX actor test");
-            rt.block_on(async move {
-                IpfixActor::run(actor).await;
-            });
-        });
-
-        let template_bytes: [u8; 88] = [
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x01, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x00, 0x02, 0x00, 0x1C, // line 4
-            0x01, 0x00, 0x00, 0x03, // line 5 Template ID 256, 3 fields
-            0x01, 0x45, 0x00, 0x08, // line 6 Field ID 325, 4 bytes
-            0x80, 0x01, 0x00, 0x08, // line 7 Field ID 128, 8 bytes
-            0x00, 0x01, 0x00, 0x02, // line 8 Enterprise Number 1, Field ID 1
-            0x80, 0x02, 0x00, 0x08, // line 9 Field ID 129, 8 bytes
-            0x80, 0x03, 0x80, 0x04, // line 10 Enterprise Number 128, Field ID 2
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 2
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x01, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x00, 0x02, 0x00, 0x1C, // line 4
-            0x01, 0x01, 0x00, 0x03, // line 5 Template ID 257, 3 fields
-            0x01, 0x45, 0x00, 0x08, // line 6 Field ID 325, 4 bytes
-            0x80, 0x01, 0x00, 0x08, // line 7 Field ID 128, 8 bytes
-            0x00, 0x01, 0x00, 0x02, // line 8 Enterprise Number 1, Field ID 1
-            0x80, 0x02, 0x00, 0x08, // line 9 Field ID 129, 8 bytes
-            0x80, 0x03, 0x80, 0x04, // line 10 Enterprise Number 128, Field ID 2
-        ];
-
-        template_sender
-            .send(IPFixTemplatesMessage::new(
-                String::from("test_key"),
-                Arc::new(Vec::from(template_bytes)),
-                Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-                Some(vec![1, 2]),
-            ))
-            .await
+    async fn slow_sink_preflush_keeps_inherited_time_without_future_message_leakage() {
+        let mut actor = timestamp_actor();
+        actor
+            .handle_record(&data_message(0, &[(256, vec![(42, vec![1])])]))
             .unwrap();
+        let (tx, mut rx) = channel(1);
+        tx.send(Arc::new(SAIStatsBatch::default())).await.unwrap();
+        actor.add_recipient(tx);
+        let mut batch = SAIStatsBatch::default();
+        batch.push_record(
+            7,
+            (0..TARGET_COUNTERS_PER_BATCH).map(|_| SAIStat::new("x", 1, 1, 1)),
+        );
+        let mut input = hardware_data(257, &[&7u64.to_be_bytes()]);
+        input.extend_from_slice(&data_message(0, &[(256, vec![(99, vec![1])])]));
+        {
+            let processing = actor.process_record_input(&input, &mut batch);
+            tokio::pin!(processing);
+            tokio::select! {
+                _ = &mut processing => panic!("preflush must wait for the full sink"),
+                _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+            }
+            assert!(rx.recv().await.unwrap().is_empty());
+            processing.await;
+        }
+        assert_eq!(
+            rx.recv().await.unwrap().counter_count(),
+            TARGET_COUNTERS_PER_BATCH
+        );
+        assert_eq!(
+            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>(),
+            vec![42, 99]
+        );
+        assert_eq!(actor.last_observation_time, Some(99));
+    }
 
-        // Wait for the template to be processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    #[test]
+    fn sn5640_split_timestamp_and_placeholder_layout_decodes_both_templates() {
+        // Minimized from the SN5640 capture: standard322/4 +325/4,
+        // enterprise325 is a counter, repeated zero-PEN slots, continuation
+        // without timestamp. Placeholder payload is deliberately nonzero.
+        let mut first = hardware_template(
+            256,
+            &[
+                (322, 4, None),
+                (325, 4, None),
+                (325, 8, Some(0x0015_0001)),
+                (0, 8, Some(0)),
+                (0, 4, Some(0)),
+                (0, 8, Some(0)),
+                (326, 4, Some(0x0015_0029)),
+            ],
+        );
+        let second = hardware_template(
+            257,
+            &[
+                (0, 8, Some(0)),
+                (0, 4, Some(0)),
+                (0, 8, Some(0)),
+                (325, 4, Some(0x0015_0029)),
+            ],
+        );
+        Arc::make_mut(first.templates.as_mut().unwrap())
+            .extend_from_slice(second.templates.as_ref().unwrap());
+        let mut actor = actor();
+        actor.handle_template(first).unwrap();
+        assert_eq!(actor.installed.len(), 2);
+        let one = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 256,
+        }];
+        assert_eq!(one.record_len, 40);
+        assert_eq!(
+            one.counters.iter().map(|c| c.offset).collect::<Vec<_>>(),
+            vec![8, 36]
+        );
+        assert_eq!(
+            one.observation_time,
+            ObservationTime::Split {
+                seconds_offset: 0,
+                nanos_offset: 4
+            }
+        );
+        let two = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 257,
+        }];
+        assert_eq!(two.record_len, 24);
+        assert_eq!(two.observation_time, ObservationTime::Missing);
+        let mut record = Vec::new();
+        record.extend_from_slice(&1_788_655_919u32.to_be_bytes());
+        record.extend_from_slice(&123_456_789u32.to_be_bytes());
+        record.extend_from_slice(&0xfedc_ba98_7654_3210u64.to_be_bytes());
+        record.extend_from_slice(&[0xaa; 20]);
+        record.extend_from_slice(&0xf123_4567u32.to_be_bytes());
+        let mut next_record = record.clone();
+        next_record[4..8].copy_from_slice(&123_456_790u32.to_be_bytes());
+        let mut continuation = vec![0xbb; 20];
+        continuation.extend_from_slice(&0x8765_4321u32.to_be_bytes());
+        let mut data = hardware_data(256, &[&record, &next_record]);
+        data.extend_from_slice(&hardware_data(257, &[&continuation]));
+        let output = actor.handle_record(&data).unwrap();
+        let records = output.iter().collect::<Vec<_>>();
+        assert_eq!(output.counter_count(), 5); // No unknown_0 placeholder metrics.
+        assert_eq!(records[0].observation_time, 1_788_655_919_123_456_789);
+        assert_eq!(records[1].observation_time, 1_788_655_919_123_456_790);
+        assert_eq!(records[2].observation_time, 1_788_655_919_123_456_790);
+        assert_eq!(records[0].stats[0].counter, 0xfedc_ba98_7654_3210);
+        assert_eq!(records[0].stats[0].object_name.as_ref(), "Ethernet325");
+        assert_eq!(
+            (records[0].stats[0].type_id, records[0].stats[0].stat_id),
+            (21, 1)
+        );
+        assert_eq!(records[0].stats[1].counter, 0xf123_4567);
+        assert_eq!(records[2].stats[0].counter, 0x8765_4321);
+    }
 
-        let invalid_len_record: [u8; 20] = [
-            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(invalid_len_record)))
-            .await
-            .unwrap();
+    #[test]
+    fn sn5640_capture_sized_concatenated_templates_decode_all_real_counters() {
+        // Same field counts, widths, placeholder counts and message sizes as
+        // the captured SN5640 Queue snapshot; object IDs are normalized here.
+        let mut snapshot = None;
+        let mut input = Vec::new();
+        for (id, objects, placeholder8, placeholder4, wire_len, record_len) in [
+            (256, 472u16, 4704, 1568, 65312, 57128),
+            (257, 400u16, 3864, 1288, 54040, 47264),
+        ] {
+            let mut fields = Vec::new();
+            let mut record = Vec::new();
+            if id == 256 {
+                fields.extend([(322, 4, None), (325, 4, None)]);
+                record.extend_from_slice(&100u32.to_be_bytes());
+                record.extend_from_slice(&200u32.to_be_bytes());
+            }
+            for object in 1..=objects {
+                for (stat, width) in [(1u32, 8u16), (34, 8), (42, 8), (41, 4)] {
+                    fields.push((object, width, Some(0x0015_0000 | stat)));
+                    let value = u64::from(object) * 100 + u64::from(stat);
+                    record.extend_from_slice(&value.to_be_bytes()[8 - usize::from(width)..]);
+                }
+            }
+            for _ in 0..placeholder8 {
+                fields.push((0, 8, Some(0)));
+                record.extend_from_slice(&[0xfe; 8]);
+            }
+            for _ in 0..placeholder4 {
+                fields.push((0, 4, Some(0)));
+                record.extend_from_slice(&[0xfd; 4]);
+            }
+            let update = hardware_template(id, &fields);
+            assert_eq!(update.templates.as_ref().unwrap().len(), wire_len);
+            assert_eq!(record.len(), record_len);
+            if let Some(previous) = &mut snapshot {
+                let previous: &mut IPFixTemplatesMessage = previous;
+                Arc::make_mut(previous.templates.as_mut().unwrap())
+                    .extend_from_slice(update.templates.as_ref().unwrap());
+            } else {
+                snapshot = Some(update);
+            }
+            input.extend_from_slice(&hardware_data(id, &[&record]));
+        }
+        let mut actor = actor();
+        actor.handle_template(snapshot.unwrap()).unwrap();
+        let batch = actor.handle_record(&input).unwrap();
+        assert_eq!(batch.counter_count(), 3488);
+        assert_eq!(batch.record_count(), 2);
+        for (index, record) in batch.iter().enumerate() {
+            assert_eq!(record.stats.len(), if index == 0 { 1888 } else { 1600 });
+            assert_eq!(record.observation_time, 100_000_000_200);
+            for (counter_index, stat) in record.stats.iter().enumerate() {
+                let object = (counter_index / 4 + 1) as u64;
+                let expected_stat = [1, 34, 42, 41][counter_index % 4];
+                assert_eq!((stat.type_id, stat.stat_id), (21, expected_stat));
+                assert_eq!(stat.counter, object * 100 + u64::from(expected_stat));
+                assert_eq!(stat.object_name.as_ref(), format!("Ethernet{object}"));
+            }
+        }
+    }
 
-        let unknown_record: [u8; 44] = [
-            0x00, 0x0A, 0x00, 0x2C, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x03, 0x00, 0x00, 0x1C, // line 4 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 5
-            0x00, 0x00, 0x00, 0x01, // line 6
-            0x00, 0x00, 0x00, 0x00, // line 7
-            0x00, 0x00, 0x00, 0x01, // line 8
-            0x00, 0x00, 0x00, 0x00, // line 9
-            0x00, 0x00, 0x00, 0x01, // line 10
-        ];
-        buffer_sender
-            .send(Arc::new(Vec::from(unknown_record)))
-            .await
-            .unwrap();
+    #[test]
+    fn scale_2048_ports_eight_queues_sixty_stats_compiles_and_decodes() {
+        const OBJECTS: usize = 2048 * 8;
+        const OBJECTS_PER_TEMPLATE: usize = 128;
+        const STATS: usize = 60;
+        const COUNTERS_PER_TEMPLATE: usize = OBJECTS_PER_TEMPLATE * STATS;
+        const TEMPLATES: usize = OBJECTS / OBJECTS_PER_TEMPLATE;
+        const MESSAGE_BYTES: usize = 61_472;
+        const RECORD_BYTES: usize = 61_448;
 
-        // contains data sets for templates 999, 500, 999
-        let valid_records_bytes: [u8; 144] = [
-            0x00, 0x0A, 0x00, 0x48, // line 0 Packet 1
-            0x00, 0x00, 0x00, 0x00, // line 1
-            0x00, 0x00, 0x00, 0x02, // line 2
-            0x00, 0x00, 0x00, 0x00, // line 3
-            0x01, 0x00, 0x00, 0x1C, // line 4 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 5
-            0x00, 0x00, 0x00, 0x01, // line 6
-            0x00, 0x00, 0x00, 0x00, // line 7
-            0x00, 0x00, 0x00, 0x01, // line 8
-            0x00, 0x00, 0x00, 0x00, // line 9
-            0x00, 0x00, 0x00, 0x01, // line 10
-            0x01, 0x00, 0x00, 0x1C, // line 11 Record 2
-            0x00, 0x00, 0x00, 0x00, // line 12
-            0x00, 0x00, 0x00, 0x02, // line 13
-            0x00, 0x00, 0x00, 0x00, // line 14
-            0x00, 0x00, 0x00, 0x02, // line 15
-            0x00, 0x00, 0x00, 0x00, // line 16
-            0x00, 0x00, 0x00, 0x03, // line 17
-            0x00, 0x0A, 0x00, 0x48, // line 18 Packet 2
-            0x00, 0x00, 0x00, 0x00, // line 19
-            0x00, 0x00, 0x00, 0x02, // line 20
-            0x00, 0x00, 0x00, 0x00, // line 21
-            0x01, 0x00, 0x00, 0x1C, // line 22 Record 1
-            0x00, 0x00, 0x00, 0x00, // line 23
-            0x00, 0x00, 0x00, 0x01, // line 24
-            0x00, 0x00, 0x00, 0x00, // line 25
-            0x00, 0x00, 0x00, 0x01, // line 26
-            0x00, 0x00, 0x00, 0x00, // line 27
-            0x00, 0x00, 0x00, 0x04, // line 28
-            0x01, 0x01, 0x00, 0x1C, // line 29 Record 2
-            0x00, 0x00, 0x00, 0x00, // line 30
-            0x00, 0x00, 0x00, 0x02, // line 31
-            0x00, 0x00, 0x00, 0x00, // line 32
-            0x00, 0x00, 0x00, 0x02, // line 33
-            0x00, 0x00, 0x00, 0x00, // line 34
-            0x00, 0x00, 0x00, 0x07, // line 35
-        ];
-
-        buffer_sender
-            .send(Arc::new(Vec::from(valid_records_bytes)))
-            .await
-            .unwrap();
-
-        let expected_stats = vec![
-            SAIStats {
-                observation_time: 1,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 1,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 1,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 2,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 3,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 2,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 1,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 4,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 1,
-                    },
-                ],
-            },
-            SAIStats {
-                observation_time: 2,
-                stats: vec![
-                    SAIStat {
-                        object_name: "Ethernet1".to_string(), // label 2 -> index 1 (1-based)
-                        type_id: 536870915,
-                        stat_id: 536870916,
-                        counter: 7,
-                    },
-                    SAIStat {
-                        object_name: "Ethernet0".to_string(), // label 1 -> index 0 (1-based)
-                        type_id: 1,
-                        stat_id: 2,
-                        counter: 2,
-                    },
-                ],
-            },
-        ];
-
-        let mut received_stats = Vec::new();
-        while let Some(stats) = saistats_receiver.recv().await {
-            // The actor keeps its own Arc clone of each message until it finishes
-            // the current send batch, so the strong count can still be > 1 when we
-            // receive here. Clone the inner value instead of requiring exclusive
-            // ownership (Arc::try_unwrap), which races on slow/emulated runners
-            // such as armhf under QEMU.
-            let unwrapped_stats = (*stats).clone();
-            received_stats.push(unwrapped_stats);
-            if received_stats.len() == expected_stats.len() {
-                break;
+        // Build one wire message at a time, not a million-element field-spec vector.
+        let mut snapshot = Vec::with_capacity(TEMPLATES * MESSAGE_BYTES);
+        let mut fields = Vec::with_capacity(COUNTERS_PER_TEMPLATE + 2);
+        for index in 0..TEMPLATES {
+            fields.clear();
+            fields.extend([(322, 4, None), (325, 4, None)]);
+            for object in index * OBJECTS_PER_TEMPLATE + 1..=(index + 1) * OBJECTS_PER_TEMPLATE {
+                for stat in 1..=STATS {
+                    fields.push((
+                        u16::try_from(object).unwrap(),
+                        8,
+                        Some(0x0015_0000 | u32::try_from(stat).unwrap()),
+                    ));
+                }
+            }
+            let update = hardware_template(256 + u16::try_from(index).unwrap(), &fields);
+            let bytes = update.templates.as_ref().unwrap();
+            assert_eq!(bytes.len(), MESSAGE_BYTES);
+            assert_eq!(
+                usize::from(NetworkEndian::read_u16(&bytes[2..4])),
+                bytes.len()
+            );
+            assert_eq!(NetworkEndian::read_u16(&bytes[22..24]), 7682);
+            snapshot.extend_from_slice(bytes);
+        }
+        drop(fields);
+        assert_eq!(snapshot.len(), 7_868_416);
+        assert!(snapshot.len() > 4 * 1024 * 1024);
+        // Four hardware placeholder slots per counter still fit the config budget.
+        assert_eq!(5 * snapshot.len(), 39_342_080);
+        assert!(5 * snapshot.len() <= MAX_TEMPLATE_CONFIG_BYTES);
+        let update = IPFixTemplatesMessage::new(
+            "scale".into(),
+            Arc::new(snapshot),
+            Some(
+                (0..OBJECTS)
+                    .map(|i| format!("Ethernet{}|{}", i / 8, i % 8))
+                    .collect(),
+            ),
+            Some((1..=OBJECTS).map(|id| u16::try_from(id).unwrap()).collect()),
+        );
+        let mut actor = actor();
+        // Exercise admission, whole-candidate compilation and installation once.
+        actor.handle_template(update).unwrap();
+        assert_eq!(actor.installed.len(), TEMPLATES);
+        assert_eq!(actor.sessions["scale"].active.templates.len(), TEMPLATES);
+        assert_eq!(
+            actor
+                .installed
+                .values()
+                .map(|t| t.counters.len())
+                .sum::<usize>(),
+            983_040
+        );
+        for index in 0..TEMPLATES {
+            let template = &actor.installed[&TemplateKey {
+                observation_domain_id: 0,
+                template_id: 256 + u16::try_from(index).unwrap(),
+            }];
+            assert_eq!(template.record_len, RECORD_BYTES);
+            assert_eq!(template.counters.len(), COUNTERS_PER_TEMPLATE);
+            assert_eq!(
+                template.observation_time,
+                ObservationTime::Split {
+                    seconds_offset: 0,
+                    nanos_offset: 4,
+                }
+            );
+            for counter_index in [0, COUNTERS_PER_TEMPLATE - 1] {
+                let counter = &template.counters[counter_index];
+                let object = index * OBJECTS_PER_TEMPLATE + counter_index / STATS;
+                assert_eq!(
+                    counter.object_name.as_ref(),
+                    format!("Ethernet{}|{}", object / 8, object % 8)
+                );
+                assert_eq!(
+                    (counter.type_id, counter.stat_id),
+                    (21, (counter_index % STATS + 1) as u32)
+                );
+                assert_eq!(counter.offset, 8 + counter_index * 8);
+                assert_eq!(counter.len, 8);
             }
         }
 
-        assert_eq!(received_stats, expected_stats);
+        // Decode only the boundary templates; do not allocate a million samples.
+        for (index, last_name) in [(0, "Ethernet15|7"), (TEMPLATES - 1, "Ethernet2047|7")] {
+            let mut record = Vec::with_capacity(RECORD_BYTES);
+            record.extend_from_slice(&1_788_655_919u32.to_be_bytes());
+            record.extend_from_slice(&123_456_789u32.to_be_bytes());
+            for counter in 0..COUNTERS_PER_TEMPLATE {
+                let value = (index * COUNTERS_PER_TEMPLATE + counter + 1) as u64;
+                record.extend_from_slice(&value.to_be_bytes());
+            }
+            assert_eq!(record.len(), RECORD_BYTES);
+            let data = hardware_data(256 + u16::try_from(index).unwrap(), &[&record]);
+            assert_eq!(data.len(), 61_468);
+            let batch = actor.handle_record(&data).unwrap();
+            assert_eq!(batch.record_count(), 1);
+            assert_eq!(batch.counter_count(), COUNTERS_PER_TEMPLATE);
+            let decoded = batch.iter().next().unwrap();
+            assert_eq!(decoded.observation_time, 1_788_655_919_123_456_789);
+            let last = decoded.stats.last().unwrap();
+            assert_eq!(last.object_name.as_ref(), last_name);
+            assert_eq!((last.type_id, last.stat_id), (21, 60));
+            assert_eq!(last.counter, ((index + 1) * COUNTERS_PER_TEMPLATE) as u64);
+        }
+    }
 
-        drop(buffer_sender);
-        drop(template_sender);
-        drop(saistats_receiver);
+    #[tokio::test]
+    async fn future_queue_scale_with_one_set_per_queue_is_not_rejected() {
+        const OBJECTS: usize = 2048 * 8;
+        const STATS: usize = 60;
+        let mut templates = Vec::with_capacity(OBJECTS * 512);
+        let mut input = Vec::with_capacity(OBJECTS * 508);
+        let mut fields = Vec::with_capacity(STATS + 2);
+        let mut record = Vec::with_capacity(488);
+        for index in 0..OBJECTS {
+            let id = u16::try_from(index + 256).unwrap();
+            fields.clear();
+            fields.extend([(322, 4, None), (325, 4, None)]);
+            record.clear();
+            record.extend_from_slice(&100u32.to_be_bytes());
+            record.extend_from_slice(&(index as u32).to_be_bytes());
+            for stat in 1..=STATS {
+                fields.push(((index + 1) as u16, 8, Some(0x0015_0000 | stat as u32)));
+                record.extend_from_slice(&((index * STATS + stat) as u64).to_be_bytes());
+            }
+            let template = hardware_template(id, &fields);
+            templates.extend_from_slice(template.templates.as_ref().unwrap());
+            input.extend_from_slice(&hardware_data(id, &[&record]));
+        }
+        assert_eq!(templates.len(), 8_388_608);
+        assert_eq!(input.len(), 8_323_072);
+        let mut actor = actor();
+        actor
+            .handle_template(IPFixTemplatesMessage::new(
+                "queue-scale".into(),
+                Arc::new(templates),
+                Some(
+                    (0..OBJECTS)
+                        .map(|index| format!("Ethernet{}|{}", index / 8, index % 8))
+                        .collect(),
+                ),
+                Some((1..=OBJECTS).map(|id| id as u16).collect()),
+            ))
+            .unwrap();
+        assert_eq!(actor.installed.len(), OBJECTS);
+        let (tx, mut rx) = channel(1);
+        actor.add_recipient(tx);
+        let producer = async {
+            let mut batch = SAIStatsBatch::default();
+            actor.process_record_input(&input, &mut batch).await;
+            actor.send_batch(batch).await;
+            drop(actor);
+        };
+        let consumer = async {
+            let mut records = 0usize;
+            let mut counters = 0usize;
+            while let Some(batch) = rx.recv().await {
+                assert!(batch.counter_count() <= TARGET_COUNTERS_PER_BATCH);
+                for record in batch.iter() {
+                    assert_eq!(record.observation_time, 100_000_000_000 + records as u64);
+                    assert_eq!(record.stats.len(), STATS);
+                    for (index, stat) in record.stats.iter().enumerate() {
+                        assert_eq!(
+                            stat.object_name.as_ref(),
+                            format!("Ethernet{}|{}", records / 8, records % 8)
+                        );
+                        assert_eq!((stat.type_id, stat.stat_id), (21, index as u32 + 1));
+                        assert_eq!(stat.counter, (counters + index + 1) as u64);
+                    }
+                    records += 1;
+                    counters += STATS;
+                }
+            }
+            assert_eq!(records, OBJECTS);
+            assert_eq!(counters, 983_040);
+        };
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(producer, consumer);
+        })
+        .await
+        .unwrap();
+    }
 
-        actor_handle
-            .await
-            .expect("Actor task should complete successfully");
-        // Note: Log assertions removed due to env_logger initialization conflicts in test suite
+    #[test]
+    fn set_count_limit_accepts_boundary_and_rejects_next_set_atomically() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("boundary", &[(0, 300, 1)]))
+            .unwrap();
+        let mut input = Vec::new();
+        // Stay within each IPFIX message's independent 16-bit length bound.
+        let per_message = (u16::MAX as usize - IPFIX_HEADER_LEN) / 20;
+        let mut remaining = MAX_DATA_SETS_PER_RECORD_INPUT;
+        while remaining > 0 {
+            let count = remaining.min(per_message);
+            let sets = vec![(300, vec![(1, vec![10])]); count];
+            input.extend_from_slice(&data_message(0, &sets));
+            remaining -= count;
+        }
+        let output = actor.handle_record(&input).unwrap();
+        assert_eq!(output.record_count(), MAX_DATA_SETS_PER_RECORD_INPUT);
+        assert_eq!(output.counter_count(), MAX_DATA_SETS_PER_RECORD_INPUT);
+        let prior_time = actor.last_observation_time;
+        input.extend_from_slice(&data_message(0, &[(300, vec![(2, vec![20])])]));
+        assert!(actor
+            .handle_record(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("data Sets"));
+        assert_eq!(actor.last_observation_time, prior_time);
+    }
+
+    #[test]
+    fn scale_placeholder_layout_decodes_and_projects_above_32_mib() {
+        const COUNTERS: usize = 1536;
+        const PADDED_TEMPLATES: usize = 640;
+        let mut fields = Vec::with_capacity(COUNTERS * 5 + 2);
+        let mut record = Vec::with_capacity(61_448);
+        fields.extend([(322, 4, None), (325, 4, None)]);
+        record.extend_from_slice(&100u32.to_be_bytes());
+        record.extend_from_slice(&200u32.to_be_bytes());
+        for counter in 0..COUNTERS {
+            // Interleave nonzero placeholder payload before every real counter.
+            fields.extend([(0, 8, Some(0)); 4]);
+            record.extend_from_slice(&[0xfe; 32]);
+            fields.push((
+                (counter / 60 + 1) as u16,
+                8,
+                Some(0x0015_0000 | (counter % 60 + 1) as u32),
+            ));
+            record.extend_from_slice(&(counter as u64 + 1).to_be_bytes());
+        }
+        let update = hardware_template(256, &fields);
+        let message_bytes = update.templates.as_ref().unwrap().len();
+        assert_eq!(message_bytes, 61_472);
+        assert_eq!(PADDED_TEMPLATES * COUNTERS, 2048 * 8 * 60);
+        // Size projection only: parse one representative padded template, not 5M fields.
+        let projected_bytes = PADDED_TEMPLATES * message_bytes;
+        assert_eq!(projected_bytes, 39_342_080);
+        assert!(projected_bytes > 32 * 1024 * 1024);
+        assert!(projected_bytes <= MAX_TEMPLATE_CONFIG_BYTES);
+
+        let mut actor = actor();
+        actor.handle_template(update).unwrap();
+        assert_eq!(actor.installed.len(), 1);
+        let template = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 256,
+        }];
+        assert_eq!(template.record_len, 61_448);
+        assert_eq!(template.counters.len(), COUNTERS);
+        for (index, counter) in template.counters.iter().enumerate() {
+            assert_eq!(counter.offset, 40 + index * 40);
+        }
+        assert_eq!(record.len(), template.record_len);
+        let batch = actor
+            .handle_record(&hardware_data(256, &[&record]))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.counter_count(), COUNTERS);
+        let decoded = batch.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 100_000_000_200);
+        for (index, stat) in decoded.stats.iter().enumerate() {
+            assert_eq!(
+                stat.object_name.as_ref(),
+                format!("Ethernet{}", index / 60 + 1)
+            );
+            assert_eq!((stat.type_id, stat.stat_id), (21, (index % 60 + 1) as u32));
+            assert_eq!(stat.counter, index as u64 + 1);
+        }
+    }
+
+    #[test]
+    fn timestamp_priority_offsets_and_incomplete_fallback_match_legacy() {
+        for fields in [
+            vec![(322, 4, None), (325, 4, None)],
+            vec![(325, 4, None), (322, 4, None)],
+            vec![(322, 4, None), (325, 4, None), (325, 8, None)],
+            vec![(325, 8, None), (325, 4, None), (322, 4, None)],
+            vec![(322, 4, None)],
+            vec![(325, 4, None)],
+            vec![],
+        ] {
+            let mut specs = vec![(322, 3, Some(0x0001_0001))];
+            specs.extend(fields.iter().copied());
+            specs.push((325, 6, Some(0x0001_0002)));
+            let mut record = vec![0xff; 3];
+            for &(ie, len, _) in &fields {
+                match (ie, len) {
+                    (322, 4) => record.extend_from_slice(&u32::MAX.to_be_bytes()),
+                    (325, 4) => record.extend_from_slice(&u32::MAX.to_be_bytes()),
+                    (325, 8) => record.extend_from_slice(&42u64.to_be_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+            record.extend_from_slice(&[0xff; 6]);
+            let mut actor = actor();
+            actor
+                .handle_template(hardware_template(300, &specs))
+                .unwrap();
+            let before = utc_nanos();
+            let batch = actor
+                .handle_record(&hardware_data(300, &[&record]))
+                .unwrap();
+            let after = utc_nanos();
+            let output = batch.iter().next().unwrap();
+            if fields.iter().any(|&(id, len, _)| id == 325 && len == 8) {
+                assert_eq!(output.observation_time, 42);
+            } else if fields.len() == 2 {
+                assert_eq!(
+                    output.observation_time,
+                    u64::from(u32::MAX) * 1_000_000_000 + u64::from(u32::MAX)
+                );
+            } else {
+                assert!((before..=after).contains(&output.observation_time));
+            }
+            assert_eq!(output.stats[0].counter, 0xff_ffff);
+            assert_eq!(output.stats[1].counter, 0xffff_ffff_ffff);
+        }
+    }
+
+    #[test]
+    fn hardware_layout_keeps_strict_malformed_field_validation() {
+        let counter = (1, 8, Some(0x0001_0001));
+        for fields in [
+            vec![(322, 8, None), counter],
+            vec![(325, 3, None), counter],
+            vec![(322, 4, None), (322, 4, None), counter],
+            vec![(325, 4, None), (325, 4, None), counter],
+            vec![(325, 8, None), (325, 8, None), counter],
+            vec![(0, 0, Some(0)), counter],
+            vec![(0, 9, Some(0)), counter],
+            vec![(0, u16::MAX, Some(0)), counter],
+            vec![(1, 8, Some(0)), counter],
+            vec![counter, counter],
+            vec![(0, 8, Some(0))],
+            vec![(322, 4, None), (325, 4, None)],
+            vec![],
+        ] {
+            let mut update = hardware_template(300, &fields);
+            // Exercise template validation rather than empty-metadata rejection.
+            update.object_names = Some(vec!["Ethernet1".into()]);
+            update.object_ids = Some(vec![1]);
+            assert!(
+                IpfixActor::compile_generation(&update).is_err(),
+                "{fields:?}"
+            );
+        }
+        let valid = hardware_template(
+            300,
+            &[(322, 4, None), (325, 4, None), (0, 8, Some(0)), counter],
+        );
+        let bytes = valid.templates.as_ref().unwrap();
+        for end in 20..bytes.len() {
+            let mut truncated = valid.clone();
+            let mut data = bytes[..end].to_vec();
+            data[2..4].copy_from_slice(&(end as u16).to_be_bytes());
+            data[18..20].copy_from_slice(&((end - 16) as u16).to_be_bytes());
+            truncated.templates = Some(Arc::new(data));
+            assert!(
+                IpfixActor::compile_generation(&truncated).is_err(),
+                "end={end}"
+            );
+        }
+    }
+
+    #[test]
+    fn continuation_without_time_accepts_one_counter_and_repeated_placeholders() {
+        for width in 1u16..=8 {
+            let specs = [
+                (0, width, Some(0)),
+                (1, width, Some(0x0001_0001)),
+                (0, width, Some(0)),
+            ];
+            let update = hardware_template(300, &specs);
+            let mut actor = actor();
+            actor.handle_template(update).unwrap();
+            let bytes = vec![0xff; 3 * usize::from(width)];
+            let output = actor.handle_record(&hardware_data(300, &[&bytes])).unwrap();
+            assert_eq!(output.counter_count(), 1);
+            assert_eq!(
+                output.iter().next().unwrap().stats[0].counter,
+                u64::MAX >> (64 - width * 8)
+            );
+            actor
+                .handle_template(IPFixTemplatesMessage::delete("hardware".into()))
+                .unwrap();
+            actor
+                .handle_template(hardware_template(300, &[(1, width, Some(0x0001_0001))]))
+                .unwrap();
+            let batch = actor
+                .handle_record(&hardware_data(300, &[&vec![0xff; usize::from(width)]]))
+                .unwrap();
+            assert_eq!(batch.counter_count(), 1);
+        }
+    }
+
+    #[test]
+    fn hardware_timestamp_change_respects_snapshot_validation_and_cutover() {
+        let mut actor = actor();
+        let old = hardware_template(300, &[(325, 8, None), (1, 8, Some(0x0001_0001))]);
+        let candidate = hardware_template(
+            301,
+            &[
+                (322, 4, None),
+                (325, 4, None),
+                (0, 4, Some(0)),
+                (1, 8, Some(0x0001_0001)),
+            ],
+        );
+        actor.handle_template(old.clone()).unwrap();
+        // Width/layout changes on an in-use ID remain conflicts, not silent reinterpretation.
+        let mut collision = candidate.clone();
+        Arc::make_mut(collision.templates.as_mut().unwrap())[20..22]
+            .copy_from_slice(&300u16.to_be_bytes());
+        assert!(actor.handle_template(collision).is_err());
+        actor.handle_template(candidate).unwrap();
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&2u32.to_be_bytes());
+        bytes.extend_from_slice(&3u32.to_be_bytes());
+        bytes.extend_from_slice(&[0xff; 4]);
+        bytes.extend_from_slice(&100u64.to_be_bytes());
+        let good = hardware_data(301, &[&bytes]);
+        let mut malformed = good.clone();
+        malformed.extend_from_slice(&[1, 2, 3]);
+        assert!(actor.handle_record(&malformed).is_err());
+        assert!(actor.sessions["hardware"].pending.is_some());
+        let output = actor.handle_record(&good).unwrap();
+        assert_eq!(
+            output.iter().next().unwrap().observation_time,
+            2_000_000_003
+        );
+        assert!(actor.sessions["hardware"].pending.is_none());
+        assert_eq!(keys(&actor), vec![(0, 301)]);
+    }
+
+    fn template_message(
+        owner: &str,
+        domain: u32,
+        id: u16,
+        fields: &[(u16, u32)],
+    ) -> IPFixTemplatesMessage {
+        let len = IPFIX_HEADER_LEN + 12 + fields.len() * 8;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes.extend_from_slice(&(len as u16).to_be_bytes());
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(&domain.to_be_bytes());
+        bytes.extend_from_slice(&TEMPLATE_SET_ID.to_be_bytes());
+        bytes.extend_from_slice(&((len - IPFIX_HEADER_LEN) as u16).to_be_bytes());
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&((fields.len() + 1) as u16).to_be_bytes());
+        bytes.extend_from_slice(&OBSERVATION_TIME_NANOSECONDS.to_be_bytes());
+        bytes.extend_from_slice(&OBSERVATION_TIME_LEN.to_be_bytes());
+        for (label, enterprise) in fields {
+            bytes.extend_from_slice(&(0x8000 | label).to_be_bytes());
+            bytes.extend_from_slice(&8u16.to_be_bytes());
+            bytes.extend_from_slice(&enterprise.to_be_bytes());
+        }
+        let objects: HashMap<_, _> = fields
+            .iter()
+            .map(|(id, _)| (*id, format!("Ethernet{id}")))
+            .collect();
+        let (ids, names) = objects.into_iter().unzip();
+        IPFixTemplatesMessage::new(owner.into(), Arc::new(bytes), Some(names), Some(ids))
+    }
+
+    fn snapshot(owner: &str, templates: &[(u32, u16, u32)]) -> IPFixTemplatesMessage {
+        let mut message = template_message(
+            owner,
+            templates[0].0,
+            templates[0].1,
+            &[(1, templates[0].2)],
+        );
+        for (domain, id, stat) in &templates[1..] {
+            let next = template_message(owner, *domain, *id, &[(1, *stat)]);
+            Arc::make_mut(message.templates.as_mut().unwrap())
+                .extend_from_slice(next.templates.as_ref().unwrap());
+        }
+        message
+    }
+
+    fn data_message(domain: u32, sets: &[(u16, Vec<(u64, Vec<u64>)>)]) -> Vec<u8> {
+        let len = IPFIX_HEADER_LEN
+            + sets
+                .iter()
+                .map(|(_, records)| {
+                    SET_HEADER_LEN
+                        + records
+                            .iter()
+                            .map(|(_, values)| 8 + values.len() * 8)
+                            .sum::<usize>()
+                })
+                .sum::<usize>();
+        assert!(len <= u16::MAX as usize);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        bytes.extend_from_slice(&(len as u16).to_be_bytes());
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(&domain.to_be_bytes());
+        for (id, records) in sets {
+            let len = SET_HEADER_LEN
+                + records
+                    .iter()
+                    .map(|(_, values)| 8 + values.len() * 8)
+                    .sum::<usize>();
+            bytes.extend_from_slice(&id.to_be_bytes());
+            bytes.extend_from_slice(&(len as u16).to_be_bytes());
+            for (time, values) in records {
+                bytes.extend_from_slice(&time.to_be_bytes());
+                for value in values {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                }
+            }
+        }
+        bytes
+    }
+
+    fn actor() -> IpfixActor {
+        let (_, templates) = channel(4);
+        let (_, records) = channel(4);
+        IpfixActor::new(templates, records)
+    }
+
+    fn keys(actor: &IpfixActor) -> Vec<(u32, u16)> {
+        let mut keys: Vec<_> = actor
+            .installed
+            .keys()
+            .map(|key| (key.observation_domain_id, key.template_id))
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    #[test]
+    fn changed_stats_promote_whole_snapshot_on_first_new_key() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("peer", &[(1, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("peer", &[(1, 400, 2)]))
+            .unwrap();
+        let peer = actor.sessions["peer"].clone();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 3), (0, 401, 4)]))
+            .unwrap();
+        assert_eq!(
+            keys(&actor),
+            vec![(0, 300), (0, 301), (0, 400), (0, 401), (1, 300), (1, 400)]
+        );
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[
+                    (300, vec![(1, vec![10])]),
+                    (400, vec![(2, vec![20])]),
+                    (300, vec![(3, vec![30])]),
+                    (301, vec![(4, vec![40])]),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            batch
+                .iter()
+                .map(|record| record.observation_time)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(batch.iter().nth(1).unwrap().stats[0].stat_id, 3);
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (1, 300), (1, 400)]);
+        assert_eq!(actor.sessions["peer"], peer);
+        assert!(actor.sessions["s"].pending.is_none());
+        actor
+            .handle_record(&data_message(0, &[(401, vec![(5, vec![50])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (1, 300), (1, 400)]);
+        assert!(actor.sessions["s"].pending.is_none());
+    }
+
+    #[test]
+    fn snapshots_coexist_across_additions_removals_and_domains() {
+        for (old, new) in [
+            (vec![(0, 300, 1)], vec![(0, 400, 2)]),
+            (vec![(0, 300, 1)], vec![(1, 400, 1)]),
+            (vec![(0, 300, 1), (0, 301, 1)], vec![(0, 400, 1)]),
+            (vec![(0, 300, 1)], vec![(0, 400, 1), (0, 401, 1)]),
+            (
+                vec![(0, 300, 1), (0, 301, 1)],
+                vec![(0, 301, 1), (0, 400, 1)],
+            ),
+        ] {
+            let mut actor = actor();
+            actor.handle_template(snapshot("s", &old)).unwrap();
+            actor.handle_template(snapshot("s", &new)).unwrap();
+            let active = actor.sessions["s"].active.clone();
+            assert_eq!(
+                active,
+                IpfixActor::compile_generation(&snapshot("s", &old)).unwrap()
+            );
+            let mut expected = new
+                .iter()
+                .map(|(domain, id, _)| (*domain, *id))
+                .collect::<Vec<_>>();
+            expected.sort_unstable();
+            let mut coexist = expected.clone();
+            coexist.extend(old.iter().map(|(domain, id, _)| (*domain, *id)));
+            coexist.sort_unstable();
+            coexist.dedup();
+            assert_eq!(keys(&actor), coexist);
+            for (domain, id, _) in &old {
+                assert_eq!(
+                    actor
+                        .handle_record(&data_message(*domain, &[(*id, vec![(1, vec![1])])]))
+                        .unwrap()
+                        .record_count(),
+                    1
+                );
+                assert_eq!(actor.sessions["s"].active, active);
+                assert!(actor.sessions["s"].pending.is_some());
+            }
+            let (domain, id, _) = new
+                .iter()
+                .find(|(domain, id, _)| {
+                    !old.iter()
+                        .any(|(old_domain, old_id, _)| (old_domain, old_id) == (domain, id))
+                })
+                .unwrap();
+            actor
+                .handle_record(&data_message(*domain, &[(*id, vec![(2, vec![2])])]))
+                .unwrap();
+            assert_eq!(keys(&actor), expected);
+            assert!(actor.sessions["s"].pending.is_none());
+        }
+    }
+
+    #[test]
+    fn counter_additions_removals_and_reordering_do_not_prevent_handover() {
+        let original = template_message("s", 0, 300, &[(1, 0x0001_0001), (2, 0x0001_0002)]);
+        for fields in [
+            vec![(1, 0x0001_0001)],
+            vec![(1, 0x0001_0001), (2, 0x0001_0002), (3, 0x0001_0003)],
+            vec![(2, 0x0001_0002), (1, 0x0001_0001)],
+            vec![(3, 0x0001_0001), (2, 0x0001_0002)],
+            vec![(1, 0x0002_0001), (2, 0x0001_0002)],
+            vec![(1, 0x0001_0003), (2, 0x0001_0002)],
+        ] {
+            let mut actor = actor();
+            actor.handle_template(original.clone()).unwrap();
+            actor
+                .handle_template(template_message("s", 0, 400, &fields))
+                .unwrap();
+            assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
+            assert_eq!(
+                actor
+                    .handle_record(&data_message(0, &[(300, vec![(1, vec![10, 20])])]))
+                    .unwrap()
+                    .counter_count(),
+                2
+            );
+            let batch = actor
+                .handle_record(&data_message(
+                    0,
+                    &[(400, vec![(2, vec![30; fields.len()])])],
+                ))
+                .unwrap();
+            let record = batch.iter().next().unwrap();
+            assert_eq!(record.stats.len(), fields.len());
+            for (counter, (object, enterprise)) in record.stats.iter().zip(&fields) {
+                assert_eq!(counter.object_name.as_ref(), format!("Ethernet{object}"));
+                assert_eq!(
+                    (counter.type_id, counter.stat_id),
+                    decode_sai_ids(*enterprise)
+                );
+                assert_eq!(counter.counter, 30);
+            }
+            assert_eq!(keys(&actor), vec![(0, 400)]);
+            assert!(actor.sessions["s"].pending.is_none());
+        }
+    }
+
+    #[test]
+    fn width_change_with_new_id_can_cut_over() {
+        let mut actor = actor();
+        actor
+            .handle_template(template_message("s", 0, 300, &[(1, 1)]))
+            .unwrap();
+        let mut update = template_message("s", 0, 400, &[(1, 1)]);
+        Arc::make_mut(update.templates.as_mut().unwrap())[30..32]
+            .copy_from_slice(&1u16.to_be_bytes());
+        actor.handle_template(update).unwrap();
+        let mut data = data_message(0, &[(400, vec![(9, vec![0])])]);
+        data.truncate(29);
+        data[2..4].copy_from_slice(&29u16.to_be_bytes());
+        data[18..20].copy_from_slice(&13u16.to_be_bytes());
+        data[28] = 255;
+        let batch = actor.handle_record(&data).unwrap();
+        assert_eq!(batch.iter().next().unwrap().stats[0].counter, 255);
+        assert_eq!(keys(&actor), vec![(0, 400)]);
+    }
+
+    #[test]
+    fn malformed_whole_input_never_emits_or_promotes() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1)]))
+            .unwrap();
+        let valid = data_message(0, &[(400, vec![(1, vec![1])])]);
+        let mut bad_trailer = valid.clone();
+        bad_trailer.extend_from_slice(&[0, 10, 0]);
+        let bad_later_set = data_message(0, &[(400, vec![(1, vec![1])]), (300, vec![(2, vec![])])]);
+        let mut bad_later_message = valid;
+        bad_later_message.extend_from_slice(&data_message(0, &[(300, vec![(2, vec![])])]));
+        let padding_only = data_message(0, &[(400, vec![(0, vec![])])]);
+        for input in [bad_trailer, bad_later_set, bad_later_message, padding_only] {
+            assert!(actor.handle_record(&input).is_err());
+            assert_eq!(actor.last_observation_time, None);
+            assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
+            assert!(actor.sessions["s"].pending.is_some());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_input_warning_budget_reports_exact_suppressed_count() {
+        let mut actor = actor();
+        assert_eq!(actor.record_invalid_input_warning(), Some(0));
+        let deadline = actor.next_invalid_warning;
+        for _ in 0..1_000 {
+            assert_eq!(actor.record_invalid_input_warning(), None);
+        }
+        assert_eq!(actor.suppressed_invalid_warnings, 1_000);
+        assert_eq!(actor.next_invalid_warning, deadline);
+        tokio::time::advance(DROP_WARNING_INTERVAL - Duration::from_millis(1)).await;
+        assert_eq!(actor.record_invalid_input_warning(), None);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(actor.record_invalid_input_warning(), Some(1_001));
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+        assert_eq!(actor.record_invalid_input_warning(), None);
+        tokio::time::advance(3 * DROP_WARNING_INTERVAL).await;
+        assert_eq!(actor.record_invalid_input_warning(), Some(1));
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_input_flood_does_not_change_decoding_or_other_warning_budget() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 301, 2)]))
+            .unwrap();
+        let mut batch = SAIStatsBatch::default();
+        let mut invalid_version = data_message(0, &[(300, vec![(1, vec![1])])]);
+        invalid_version[0..2].copy_from_slice(&9u16.to_be_bytes());
+        let mut invalid_tail = data_message(0, &[(301, vec![(2, vec![2])])]);
+        invalid_tail.extend_from_slice(&[1, 2, 3]);
+        let layout_error = data_message(0, &[(300, vec![(3, vec![])])]);
+        let bad_inputs = [vec![], invalid_version, invalid_tail, layout_error];
+        let unknown_deadline = actor.next_drop_warning;
+        for input in bad_inputs.iter().cycle().take(1_000) {
+            actor.process_record_input(input, &mut batch).await;
+        }
+        assert!(batch.is_empty());
+        assert_eq!(actor.suppressed_invalid_warnings, 999);
+        assert_eq!(actor.next_drop_warning, unknown_deadline);
+        assert_eq!(actor.dropped_sets, 0);
+        assert_eq!(actor.last_observation_time, None);
+        assert!(actor.sessions["s"].pending.is_some());
+        let invalid_deadline = actor.next_invalid_warning;
+
+        // Unknown-template warnings remain independent; valid data and template
+        // cutover are not delayed by exhausted invalid-input logging budget.
+        let good = data_message(0, &[(400, vec![(4, vec![4])]), (301, vec![(5, vec![50])])]);
+        actor.process_record_input(&good, &mut batch).await;
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 5);
+        assert_eq!(batch.iter().next().unwrap().stats[0].counter, 50);
+        assert!(actor.sessions["s"].pending.is_none());
+        assert_eq!(actor.dropped_sets, 1);
+        assert!(actor.next_drop_warning > unknown_deadline);
+        assert_eq!(actor.next_invalid_warning, invalid_deadline);
+        assert_eq!(actor.suppressed_invalid_warnings, 999);
+
+        tokio::time::advance(DROP_WARNING_INTERVAL).await;
+        actor.process_record_input(&[], &mut batch).await;
+        assert_eq!(actor.suppressed_invalid_warnings, 0);
+        assert!(actor.next_invalid_warning > invalid_deadline);
+        assert_eq!(batch.record_count(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_warning_state_is_actor_local_and_saturating() {
+        let mut first = actor();
+        let mut second = actor();
+        assert_eq!(first.record_invalid_input_warning(), Some(0));
+        first.suppressed_invalid_warnings = u64::MAX;
+        assert_eq!(first.record_invalid_input_warning(), None);
+        assert_eq!(first.suppressed_invalid_warnings, u64::MAX);
+        assert_eq!(second.record_invalid_input_warning(), Some(0));
+        tokio::time::advance(DROP_WARNING_INTERVAL).await;
+        assert_eq!(first.record_invalid_input_warning(), Some(u64::MAX));
+        assert_eq!(first.suppressed_invalid_warnings, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unknown_sets_drop_without_blocking_and_warnings_are_rate_limited() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("known", &[(0, 300, 1)]))
+            .unwrap();
+        let input = data_message(0, &[(400, vec![(1, vec![10])]), (300, vec![(2, vec![20])])]);
+        let batch = actor.handle_record(&input).unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 2);
+        assert_eq!(actor.dropped_sets, 1);
+        let warning = actor.next_drop_warning;
+        actor.handle_record(&input).unwrap();
+        assert_eq!(actor.dropped_sets, 2);
+        assert_eq!(actor.next_drop_warning, warning);
+        tokio::time::advance(DROP_WARNING_INTERVAL).await;
+        actor.handle_record(&input).unwrap();
+        assert_eq!(actor.dropped_sets, 3);
+        assert!(actor.next_drop_warning > warning);
+        actor
+            .handle_template(snapshot("late", &[(0, 400, 2)]))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(0, &[(400, vec![(3, vec![30])])]))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(batch.iter().next().unwrap().observation_time, 3);
+    }
+
+    #[test]
+    fn cancellation_supersession_and_identical_refresh_are_bounded() {
+        let mut actor = actor();
+        let active = snapshot("s", &[(0, 300, 1), (0, 301, 2)]);
+        actor.handle_template(active.clone()).unwrap();
+        let original = actor.sessions["s"].clone();
+        actor
+            .handle_template(snapshot("s", &[(0, 301, 2), (0, 300, 1)]))
+            .unwrap();
+        assert_eq!(actor.sessions["s"], original);
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
+            .unwrap();
+        let before = keys(&actor);
+        let pending = actor.sessions["s"].clone();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
+            .unwrap();
+        assert_eq!(keys(&actor), before);
+        assert_eq!(actor.sessions["s"], pending);
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1), (0, 402, 2)]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 400), (0, 402)]);
+        actor.handle_template(active).unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
+        assert_eq!(
+            actor
+                .handle_record(&data_message(0, &[(400, vec![(2, vec![2])])]))
+                .unwrap()
+                .record_count(),
+            0
+        );
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(3, vec![3])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
+        assert!(actor.sessions["s"].pending.is_none());
+    }
+
+    #[test]
+    fn promoted_snapshot_remains_active_during_subsequent_handover() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1), (0, 401, 2)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(400, vec![(1, vec![1])])]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 500, 1), (0, 401, 2)]))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[(400, vec![(2, vec![2])]), (301, vec![(3, vec![3])])],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 1);
+        assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (0, 500)]);
+        actor
+            .handle_record(&data_message(0, &[(500, vec![(4, vec![4])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 401), (0, 500)]);
+        actor
+            .handle_record(&data_message(0, &[(401, vec![(5, vec![5])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 401), (0, 500)]);
+    }
+
+    #[test]
+    fn shared_keys_do_not_promote_but_additions_promote_the_whole_snapshot() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 401, 2), (0, 402, 3)]))
+            .unwrap();
+        let c = TemplateKey {
+            observation_domain_id: 0,
+            template_id: 402,
+        };
+        let shared = TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        };
+        assert!(Arc::ptr_eq(
+            &actor.sessions["s"].active.templates[&shared],
+            &actor.sessions["s"].pending.as_ref().unwrap().templates[&shared]
+        ));
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![1])])]))
+            .unwrap();
+        assert!(actor.sessions["s"].pending.is_some());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 401), (0, 402)]);
+        let mut malformed = data_message(0, &[(402, vec![(1, vec![1])])]);
+        malformed.extend_from_slice(&[1]);
+        assert!(actor.handle_record(&malformed).is_err());
+        assert!(!actor.sessions["s"].active.templates.contains_key(&c));
+        actor
+            .handle_record(&data_message(0, &[(402, vec![(2, vec![2])])]))
+            .unwrap();
+        assert!(actor.sessions["s"].active.templates.contains_key(&c));
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 402)]);
+        assert!(actor.sessions["s"].pending.is_none());
+
+        let next = snapshot("s", &[(0, 300, 1), (0, 401, 2), (0, 502, 3)]);
+        actor.handle_template(next.clone()).unwrap();
+        actor.handle_template(next).unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 402), (0, 502)]);
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[
+                    (300, vec![(3, vec![3])]),
+                    (301, vec![(4, vec![4])]),
+                    (402, vec![(5, vec![5])]),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 2);
+        assert!(actor.sessions["s"].pending.is_some());
+        actor
+            .handle_record(&data_message(0, &[(502, vec![(6, vec![6])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 502)]);
+        assert!(actor.sessions["s"].pending.is_none());
+        actor
+            .handle_record(&data_message(0, &[(401, vec![(7, vec![7])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 401), (0, 502)]);
+        assert!(actor.sessions["s"].pending.is_none());
+    }
+
+    #[test]
+    fn removal_only_snapshot_waits_for_a_new_key_or_cancellation() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 301, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(300, vec![(1, vec![1])])]))
+            .unwrap();
+        assert_eq!(actor.sessions["s"].active.templates.len(), 2);
+        assert!(actor.sessions["s"].pending.is_some());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1), (0, 500, 4)]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 301), (0, 500)]);
+        assert_eq!(actor.sessions["s"].active.templates.len(), 2);
+        actor
+            .handle_record(&data_message(0, &[(500, vec![(2, vec![2])])]))
+            .unwrap();
+        assert_eq!(actor.sessions["s"].active.templates.len(), 2);
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 500)]);
+        assert!(actor.sessions["s"].pending.is_none());
+    }
+
+    #[test]
+    fn repeated_snapshots_retain_only_active_and_latest_pending() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        let mut active_id = 300;
+        for id in 400..1500 {
+            actor
+                .handle_template(snapshot("s", &[(0, id, u32::from(id))]))
+                .unwrap();
+            assert_eq!(keys(&actor), vec![(0, active_id), (0, id)]);
+            assert_eq!(actor.sessions["s"].active.templates.len(), 1);
+            if id % 2 == 0 {
+                actor
+                    .handle_record(&data_message(0, &[(id, vec![(1, vec![1])])]))
+                    .unwrap();
+                assert_eq!(actor.sessions["s"].active.templates.len(), 1);
+                assert!(actor.sessions["s"].pending.is_none());
+                active_id = id;
+            }
+        }
+        actor
+            .handle_template(snapshot("s", &[(0, 1500, 1)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(1500, vec![(1, vec![1])])]))
+            .unwrap();
+        assert_eq!(keys(&actor), vec![(0, 1500)]);
+        assert!(actor.sessions["s"].pending.is_none());
+    }
+
+    #[test]
+    fn malformed_updates_remove_only_incoming_owner_and_valid_updates_recover() {
+        for malformed_suffix in [false, true] {
+            let mut actor = actor();
+            actor
+                .handle_template(snapshot("a", &[(0, 300, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("b", &[(0, 301, 2)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("a", &[(0, 400, 3)]))
+                .unwrap();
+            let mut bad = snapshot("a", &[(0, 500, 4)]);
+            if malformed_suffix {
+                Arc::make_mut(bad.templates.as_mut().unwrap()).extend_from_slice(&[0, 10, 0]);
+            } else {
+                bad.templates = Some(Arc::new(vec![0, 10, 0, 0]));
+            }
+            assert!(actor.handle_template(bad).is_err());
+            assert_eq!(keys(&actor), vec![(0, 301)]);
+            assert!(!actor.sessions.contains_key("a"));
+            actor
+                .handle_template(snapshot("a", &[(0, 300, 3)]))
+                .unwrap();
+            assert_eq!(keys(&actor), vec![(0, 300), (0, 301)]);
+            let batch = actor
+                .handle_record(&data_message(0, &[(301, vec![(1, vec![1])])]))
+                .unwrap();
+            assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 2);
+        }
+    }
+
+    #[test]
+    fn collisions_preserve_all_owners_active_pending_and_installed_state() {
+        let mut actor = actor();
+        for (owner, active, pending) in [("a", 300, 400), ("b", 301, 401)] {
+            actor
+                .handle_template(snapshot(owner, &[(7, active, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot(owner, &[(7, pending, 2)]))
+                .unwrap();
+        }
+        let sessions = actor.sessions.clone();
+        let installed = actor.installed.clone();
+        for (owner, id, stat, incumbent) in [
+            ("a", 300, 3, "a"),
+            ("a", 400, 3, "a"),
+            ("a", 301, 1, "b"),
+            ("a", 401, 3, "b"),
+            ("new", 301, 1, "b"),
+        ] {
+            let error = actor
+                .handle_template(snapshot(owner, &[(7, 500, 4), (7, id, stat)]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("collision"));
+            assert!(error.contains(&format!("incoming owner {owner:?}")));
+            assert!(error.contains(&format!("existing owner {incumbent:?}")));
+            assert!(error.contains(&format!("template_id: {id}")));
+            assert!(error.contains("observation_domain_id: 7"));
+            assert_eq!(actor.sessions, sessions);
+            assert_eq!(actor.installed, installed);
+            for (key, template) in &installed {
+                assert!(Arc::ptr_eq(&actor.installed[key], template));
+            }
+        }
+        let batch = actor
+            .handle_record(&data_message(
+                7,
+                &[(300, vec![(1, vec![10])]), (301, vec![(2, vec![20])])],
+            ))
+            .unwrap();
+        assert_eq!(batch.record_count(), 2);
+        assert_eq!(actor.sessions, sessions);
+    }
+
+    #[test]
+    fn retired_and_superseded_keys_allow_different_owner_and_schema_reuse() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("a", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("a", &[(0, 400, 2)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("a", &[(0, 500, 3)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("b", &[(0, 400, 4)]))
+            .unwrap();
+        actor
+            .handle_record(&data_message(0, &[(500, vec![(1, vec![1])])]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("c", &[(0, 300, 5)]))
+            .unwrap();
+        let batch = actor
+            .handle_record(&data_message(
+                0,
+                &[(300, vec![(2, vec![2])]), (400, vec![(3, vec![3])])],
+            ))
+            .unwrap();
+        assert_eq!(
+            batch.iter().map(|r| r.stats[0].stat_id).collect::<Vec<_>>(),
+            vec![5, 4]
+        );
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 400), (0, 500)]);
+    }
+
+    #[test]
+    fn delete_and_deactivate_remove_only_owner_and_allow_same_id_late_reuse() {
+        for delete in [false, true] {
+            let mut actor = actor();
+            actor
+                .handle_template(snapshot("a", &[(0, 300, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("a", &[(0, 400, 1)]))
+                .unwrap();
+            actor
+                .handle_template(snapshot("b", &[(0, 301, 2)]))
+                .unwrap();
+            let update = if delete {
+                IPFixTemplatesMessage::delete("a".into())
+            } else {
+                IPFixTemplatesMessage::deactivate("a".into())
+            };
+            actor.handle_template(update).unwrap();
+            assert_eq!(keys(&actor), vec![(0, 301)]);
+            assert!(actor
+                .handle_record(&data_message(0, &[(300, vec![(1, vec![1])])]))
+                .unwrap()
+                .is_empty());
+            actor
+                .handle_template(snapshot("a", &[(0, 300, 3)]))
+                .unwrap();
+            let batch = actor
+                .handle_record(&data_message(0, &[(300, vec![(2, vec![2])])]))
+                .unwrap();
+            assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 3);
+        }
+    }
+
+    #[test]
+    fn same_id_is_scoped_by_domain_and_unknown_deletes_leave_no_state() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("a", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("b", &[(1, 300, 2)]))
+            .unwrap();
+        actor
+            .handle_template(IPFixTemplatesMessage::delete("unknown".into()))
+            .unwrap();
+        assert_eq!(actor.sessions.len(), 2);
+        let mut input = data_message(0, &[(300, vec![(1, vec![1])])]);
+        input.extend_from_slice(&data_message(1, &[(300, vec![(2, vec![2])])]));
+        assert_eq!(
+            actor
+                .handle_record(&input)
+                .unwrap()
+                .iter()
+                .map(|r| r.stats[0].stat_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn widths_one_through_eight_and_timestamp_offsets_decode_exactly() {
+        for width in 1u16..=8 {
+            for timestamp_first in [false, true] {
+                let mut update = template_message("s", 0, 300, &[(1, 0x9234_8567)]);
+                let bytes = Arc::make_mut(update.templates.as_mut().unwrap());
+                bytes[30..32].copy_from_slice(&width.to_be_bytes());
+                if !timestamp_first {
+                    bytes[24..36].rotate_left(4);
+                }
+                let mut actor = actor();
+                actor.handle_template(update).unwrap();
+                for high_only in [false, true] {
+                    let mut payload = vec![0xff; width as usize];
+                    if high_only {
+                        payload.fill(0);
+                        payload[0] = 0x80;
+                    }
+                    let expected = if high_only {
+                        1u64 << (width * 8 - 1)
+                    } else {
+                        u64::MAX >> (64 - width * 8)
+                    };
+                    if timestamp_first {
+                        payload.splice(0..0, 42u64.to_be_bytes());
+                    } else {
+                        payload.extend_from_slice(&42u64.to_be_bytes());
+                    }
+                    let mut data = data_message(0, &[(300, vec![(0, vec![0])])]);
+                    data.truncate(20);
+                    data.extend_from_slice(&payload);
+                    let len = data.len() as u16;
+                    data[2..4].copy_from_slice(&len.to_be_bytes());
+                    data[18..20].copy_from_slice(&(len - 16).to_be_bytes());
+                    let batch = actor.handle_record(&data).unwrap();
+                    let record = batch.iter().next().unwrap();
+                    assert_eq!(record.observation_time, 42);
+                    assert_eq!(record.stats[0].counter, expected);
+                    assert_eq!(
+                        (record.stats[0].type_id, record.stats[0].stat_id),
+                        decode_sai_ids(0x9234_8567)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_width_counters_keep_template_order() {
+        let mut update = template_message("s", 0, 300, &[(2, 0x1234_0567), (1, 0x0001_0002)]);
+        let bytes = Arc::make_mut(update.templates.as_mut().unwrap());
+        let original = bytes.clone();
+        bytes[24..32].copy_from_slice(&original[28..36]);
+        bytes[26..28].copy_from_slice(&3u16.to_be_bytes());
+        bytes[32..40].copy_from_slice(&original[36..44]);
+        bytes[34..36].copy_from_slice(&6u16.to_be_bytes());
+        bytes[40..44].copy_from_slice(&original[24..28]);
+        let generation = IpfixActor::compile_generation(&update).unwrap();
+        let template = generation.templates.values().next().unwrap();
+        assert_eq!(template.counters[0].offset, 0);
+        assert_eq!(template.counters[1].offset, 3);
+        assert_eq!(
+            template.observation_time,
+            ObservationTime::RawNanoseconds { offset: 9 }
+        );
+        assert_eq!(template.record_len, 17);
+        assert_eq!(template.counters[0].object_name.as_ref(), "Ethernet2");
+        assert_eq!(
+            (template.counters[0].type_id, template.counters[0].stat_id),
+            (0x1234, 0x567)
+        );
+    }
+
+    #[test]
+    fn framing_padding_and_invalid_widths_are_checked() {
+        for len in 0u16..IPFIX_HEADER_LEN as u16 {
+            let mut input = [0; IPFIX_HEADER_LEN];
+            input[0..2].copy_from_slice(&IPFIX_VERSION.to_be_bytes());
+            input[2..4].copy_from_slice(&len.to_be_bytes());
+            assert!(IpfixMessages::new(&input).next().unwrap().is_err());
+        }
+        for width in [0u16, 9, u16::MAX] {
+            let mut update = template_message("s", 0, 300, &[(1, 1)]);
+            Arc::make_mut(update.templates.as_mut().unwrap())[30..32]
+                .copy_from_slice(&width.to_be_bytes());
+            assert!(IpfixActor::compile_generation(&update).is_err());
+        }
+        let mut actor = actor();
+        let mut update = template_message("s", 0, 300, &[(1, 1)]);
+        let bytes = Arc::make_mut(update.templates.as_mut().unwrap());
+        bytes.extend_from_slice(&[0; 4]);
+        bytes[2..4].copy_from_slice(&40u16.to_be_bytes());
+        bytes[18..20].copy_from_slice(&24u16.to_be_bytes());
+        actor.handle_template(update).unwrap();
+        let mut data = data_message(0, &[(300, vec![(42, vec![100])])]);
+        data.extend_from_slice(&[0; 7]);
+        data[2..4].copy_from_slice(&43u16.to_be_bytes());
+        data[18..20].copy_from_slice(&27u16.to_be_bytes());
+        assert_eq!(actor.handle_record(&data).unwrap().record_count(), 1);
+        data[42] = 1;
+        assert!(actor.handle_record(&data).is_err());
+        data[18..20].copy_from_slice(&4u16.to_be_bytes());
+        assert!(actor.handle_record(&data).is_err());
+    }
+
+    #[test]
+    fn template_and_data_input_limits_are_atomic() {
+        let mut update = snapshot("s", &[(0, 300, 1)]);
+        update.templates = Some(Arc::new(vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1]));
+        assert!(IpfixActor::compile_generation(&update).is_err());
+        update = snapshot("s", &[(0, 300, 1)]);
+        update.object_names = Some(vec!["x".repeat(MAX_OBJECT_METADATA_BYTES + 1)]);
+        assert!(IpfixActor::compile_generation(&update).is_err());
+        update.object_names = Some(vec!["x".into(); MAX_OBJECTS_PER_UPDATE + 1]);
+        assert!(IpfixActor::compile_generation(&update).is_err());
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1)]))
+            .unwrap();
+        let mut input = data_message(0, &[(400, vec![(1, vec![1])])]);
+        for _ in 0..MAX_DATA_SETS_PER_RECORD_INPUT {
+            input.extend_from_slice(&data_message(0, &[(500, vec![(0, vec![])])]));
+        }
+        assert!(actor.handle_record(&input).is_err());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
+        assert_eq!(actor.dropped_sets, 0);
+    }
+
+    #[test]
+    fn template_counts_are_not_subject_to_artificial_quotas() {
+        let mut actor = actor();
+        for domain in 0..2 {
+            let templates = (300..3300).map(|id| (domain, id, 1)).collect::<Vec<_>>();
+            actor
+                .handle_template(snapshot(&format!("s{domain}"), &templates))
+                .unwrap();
+        }
+        assert_eq!(actor.installed.len(), 6000);
+        let replacement = (3300..6300).map(|id| (0, id, 2)).collect::<Vec<_>>();
+        actor.handle_template(snapshot("s0", &replacement)).unwrap();
+        assert_eq!(actor.installed.len(), 9000);
+        actor
+            .handle_record(&data_message(0, &[(3300, vec![(1, vec![1])])]))
+            .unwrap();
+        assert_eq!(actor.installed.len(), 6000);
+        assert!(actor.sessions["s0"].pending.is_none());
+        assert_eq!(actor.sessions["s1"].active.templates.len(), 3000);
+    }
+
+    #[test]
+    fn aggregate_template_storage_has_no_artificial_byte_quota() {
+        let mut actor = actor();
+        for domain in 0..65 {
+            let mut update = snapshot(&format!("s{domain}"), &[(domain, 300, 1)]);
+            update.object_names = Some(vec!["x".repeat(1024 * 1024)]);
+            actor.handle_template(update).unwrap();
+        }
+        assert_eq!(actor.sessions.len(), 65);
+        assert_eq!(actor.installed.len(), 65);
+        assert_eq!(
+            actor
+                .handle_record(&data_message(64, &[(300, vec![(1, vec![1])])]))
+                .unwrap()
+                .record_count(),
+            1
+        );
+    }
+
+    #[test]
+    fn structured_truncations_and_arbitrary_inputs_never_panic() {
+        let update = template_message("s", 0, 300, &[(1, 1)]);
+        let bytes = update.templates.as_ref().unwrap();
+        for len in 0..bytes.len() {
+            let mut mutated = update.clone();
+            let mut bytes = bytes[..len].to_vec();
+            if len >= 20 {
+                bytes[2..4].copy_from_slice(&(len as u16).to_be_bytes());
+                bytes[18..20].copy_from_slice(&((len - 16) as u16).to_be_bytes());
+            }
+            mutated.templates = Some(Arc::new(bytes));
+            assert!(std::panic::catch_unwind(|| IpfixActor::compile_generation(&mutated)).is_ok());
+        }
+        let mut actor = actor();
+        actor.handle_template(update.clone()).unwrap();
+        let mut seed = 7u64;
+        for len in 0..256 {
+            let bytes = (0..len)
+                .map(|_| {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    (seed >> 32) as u8
+                })
+                .collect::<Vec<_>>();
+            let mut mutated = update.clone();
+            mutated.templates = Some(Arc::new(bytes.clone()));
+            assert!(std::panic::catch_unwind(|| IpfixActor::compile_generation(&mutated)).is_ok());
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || actor.handle_record(&bytes)
+            ))
+            .is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn batches_preserve_whole_records_including_oversized_records_and_fanout() {
+        let mut actor = actor();
+        let (first_tx, mut first_rx) = channel(8);
+        let (second_tx, mut second_rx) = channel(8);
+        actor.add_recipient(first_tx);
+        actor.add_recipient(second_tx);
+        let mut batch = SAIStatsBatch::default();
+        for (time, count) in [
+            (1, 5000),
+            (2, 5000),
+            (3, TARGET_COUNTERS_PER_BATCH + 1),
+            (4, 3),
+        ] {
+            batch.push_record(time, (0..count).map(|i| SAIStat::new("x", 1, 2, i as u64)));
+        }
+        actor.send_batch(batch).await;
+        for (time, count) in [
+            (1, 5000),
+            (2, 5000),
+            (3, TARGET_COUNTERS_PER_BATCH + 1),
+            (4, 3),
+        ] {
+            let first = first_rx.recv().await.unwrap();
+            let second = second_rx.recv().await.unwrap();
+            assert!(Arc::ptr_eq(&first, &second));
+            assert_eq!(first.record_count(), 1);
+            assert_eq!(first.counter_count(), count);
+            assert_eq!(first.iter().next().unwrap().observation_time, time);
+        }
+    }
+
+    #[tokio::test]
+    async fn process_input_groups_small_messages_and_flushes_at_soft_target() {
+        let mut actor = actor();
+        let fields = (1..=4000).map(|id| (id, 1)).collect::<Vec<_>>();
+        actor
+            .handle_template(template_message("s", 0, 300, &fields))
+            .unwrap();
+        let (tx, mut rx) = channel(4);
+        actor.add_recipient(tx);
+        let mut input = Vec::new();
+        for time in 1..=3 {
+            input.extend_from_slice(&data_message(0, &[(300, vec![(time, vec![time; 4000])])]));
+        }
+        let mut batch = SAIStatsBatch::default();
+        actor.process_record_input(&input, &mut batch).await;
+        actor.send_batch(batch).await;
+        let first = rx.recv().await.unwrap();
+        let second = rx.recv().await.unwrap();
+        assert_eq!(
+            (first.counter_count(), second.counter_count()),
+            (8000, 4000)
+        );
+        assert_eq!(
+            first.iter().map(|r| r.observation_time).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(second.iter().next().unwrap().observation_time, 3);
+    }
+
+    #[tokio::test]
+    async fn malformed_later_message_never_sends_valid_prefix() {
+        let mut actor = actor();
+        actor
+            .handle_template(snapshot("s", &[(0, 300, 1)]))
+            .unwrap();
+        actor
+            .handle_template(snapshot("s", &[(0, 400, 1)]))
+            .unwrap();
+        let (tx, mut rx) = channel(1);
+        actor.add_recipient(tx);
+        let mut input = data_message(0, &[(400, vec![(1, vec![1])])]);
+        input.extend_from_slice(&[1, 2, 3]);
+        let mut batch = SAIStatsBatch::default();
+        actor.process_record_input(&input, &mut batch).await;
+        assert!(batch.is_empty());
+        assert_eq!(actor.last_observation_time, None);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(keys(&actor), vec![(0, 300), (0, 400)]);
+    }
+
+    #[tokio::test]
+    async fn closed_recipient_does_not_stop_healthy_delivery_or_later_inputs() {
+        for queued in [false, true] {
+            let (_template_tx, template_rx) = channel(1);
+            let (record_tx, record_rx) = channel(2);
+            let (healthy_tx, mut healthy_rx) = channel(2);
+            let (closed_tx, closed_rx) = channel(1);
+            drop(closed_rx);
+            let mut actor = IpfixActor::new(template_rx, record_rx);
+            let fields = (1..=4000).map(|id| (id, 1)).collect::<Vec<_>>();
+            actor
+                .handle_template(template_message("s", 0, 300, &fields))
+                .unwrap();
+            actor.add_recipient(closed_tx);
+            actor.add_recipient(healthy_tx);
+            if queued {
+                record_tx.send(Arc::new(vec![1, 2, 3])).await.unwrap();
+            }
+            let mut input = data_message(0, &[(300, vec![(1, vec![10; 4000])])]);
+            input.extend_from_slice(&data_message(
+                0,
+                &[(300, vec![(2, vec![20; 4000]), (3, vec![30; 4000])])],
+            ));
+            record_tx.send(Arc::new(input)).await.unwrap();
+            let task = tokio::spawn(IpfixActor::run(actor));
+            let first = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let second = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                first
+                    .iter()
+                    .map(|record| record.observation_time)
+                    .collect::<Vec<_>>(),
+                vec![1]
+            );
+            assert_eq!(
+                second
+                    .iter()
+                    .map(|record| record.observation_time)
+                    .collect::<Vec<_>>(),
+                vec![2, 3]
+            );
+            assert!(!task.is_finished());
+            record_tx
+                .send(Arc::new(data_message(
+                    0,
+                    &[(300, vec![(4, vec![40; 4000])])],
+                )))
+                .await
+                .unwrap();
+            let later = tokio::time::timeout(Duration::from_secs(1), healthy_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(later.iter().next().unwrap().observation_time, 4);
+            drop(record_tx);
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }

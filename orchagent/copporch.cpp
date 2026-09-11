@@ -16,6 +16,7 @@ extern "C" {
 #include "directory.h"
 #include "flow_counter_handler.h"
 #include "timer.h"
+#include "p4orch/p4orch.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -35,6 +36,8 @@ extern SwitchOrch*          gSwitchOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
 extern bool                 gTraditionalFlexCounter;
+
+extern P4Orch *gP4Orch;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -878,6 +881,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             {
                 return task_process_status::task_failed;
             }
+            if (gP4Orch &&
+                !gP4Orch->getAclRuleManager()->updateUserDefinedTrap(trap_group_name, /*is_delete=*/false).ok())
+            {
+                return task_process_status::task_failed;
+            }
         }
         if (!trapGroupProcessTrapIdChange(trap_group_name, add_trap_ids, rem_trap_ids))
         {
@@ -893,6 +901,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             return task_process_status::task_ignore;
         }
 
+        if (gP4Orch &&
+            !gP4Orch->getAclRuleManager()->updateUserDefinedTrap(trap_group_name, /*is_delete=*/true).ok())
+        {
+            return task_process_status::task_failed;
+        }
         if (!processTrapGroupDel(trap_group_name))
         {
             return task_process_status::task_failed;

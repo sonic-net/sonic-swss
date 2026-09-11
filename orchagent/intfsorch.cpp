@@ -1083,7 +1083,10 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             if (!mac)
             {
-                mac = gMacAddress;
+                // Prefer the port's own MAC (e.g. a VLAN SVI's gateway MAC populated
+                // from VLAN_TABLE) and only fall back to the switch MAC when the port
+                // has none.
+                mac = port.m_mac ? port.m_mac : gMacAddress;
             }
 
             // update mac if it is changed

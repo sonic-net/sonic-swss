@@ -1,15 +1,19 @@
-use super::super::message::ipfix::IPFixTemplatesMessage;
+use super::super::message::ipfix::{
+    IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE, MAX_OBJECT_METADATA_BYTES,
+    MAX_TEMPLATE_CONFIG_BYTES,
+};
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
-use log::{debug, error, info, warn};
-use std::{collections::HashMap, sync::Arc, thread};
+use log::{debug, error, info};
 use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
+const SWSS_SELECT_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -32,8 +36,13 @@ pub struct SwssActor {
 
 #[derive(Debug)]
 enum SwssEvent {
-    Update { key: String, session_data: SessionData },
-    Delete { key: String },
+    Update {
+        key: String,
+        session_data: SessionData,
+    },
+    Delete {
+        key: String,
+    },
 }
 
 impl SwssActor {
@@ -78,7 +87,9 @@ impl SwssActor {
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
 
-        let _reader_thread = match thread::Builder::new()
+        // Dropping the receiver on cancellation releases blocking_send and stops
+        // polling. Do not join: synchronous Redis calls may block indefinitely.
+        match thread::Builder::new()
             .name("countersyncd-swss".to_string())
             .spawn(move || {
                 #[cfg(test)]
@@ -102,12 +113,7 @@ impl SwssActor {
                         }
                     }
 
-                    #[cfg(test)]
-                    let timeout = Duration::from_millis(50);
-                    #[cfg(not(test))]
-                    let timeout = Duration::from_secs(10);
-
-                    match Self::blocking_collect_events(&mut session_table, timeout) {
+                    match Self::blocking_collect_events(&mut session_table, SWSS_SELECT_TIMEOUT) {
                         Ok(events) => {
                             for event in events {
                                 if event_sender.blocking_send(event).is_err() {
@@ -118,7 +124,7 @@ impl SwssActor {
                         }
                         Err(e) => {
                             error!("Error reading from session table: {}", e);
-                            std::thread::sleep(Duration::from_millis(100));
+                            thread::sleep(Duration::from_millis(100));
                         }
                     }
                 }
@@ -126,7 +132,7 @@ impl SwssActor {
                 #[cfg(test)]
                 debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
             }) {
-                Ok(handle) => handle,
+                Ok(_) => {},
                 Err(e) => {
                     error!("Failed to spawn SwssActor reader thread: {}", e);
                     return;
@@ -134,14 +140,7 @@ impl SwssActor {
             };
 
         while let Some(event) = event_receiver.recv().await {
-            match event {
-                SwssEvent::Update { key, session_data } => {
-                    Self::process_session_update(&template_recipient, &key, &session_data).await;
-                }
-                SwssEvent::Delete { key } => {
-                    Self::process_session_delete(&template_recipient, &key).await;
-                }
-            }
+            Self::process_event(&template_recipient, event).await;
         }
 
         debug!("SwssActor terminated");
@@ -158,28 +157,31 @@ impl SwssActor {
                 swss_common::SelectResult::Data => match session_table.pops() {
                     Ok(items) => {
                         for item in items {
+                            if item.key.len() > MAX_OBJECT_METADATA_BYTES {
+                                error!("Ignoring session key exceeding metadata byte limit");
+                                continue;
+                            }
                             debug!(
                                 "SwssActor received: key={}, op={:?}",
                                 item.key, item.operation
                             );
 
-                            let session_key = Self::extract_session_key(&item.key);
+                            // SubscriberStateTable already returns table-relative keys.
                             match item.operation {
-                                KeyOperation::Set => events.push(SwssEvent::Update {
-                                    key: session_key,
-                                    session_data: Self::parse_session_data(&item.field_values),
-                                }),
+                                KeyOperation::Set => {
+                                    events.push(SwssEvent::Update {
+                                        key: item.key,
+                                        session_data: Self::parse_session_data(&item.field_values),
+                                    });
+                                }
                                 KeyOperation::Del => {
-                                    events.push(SwssEvent::Delete { key: session_key })
+                                    events.push(SwssEvent::Delete { key: item.key })
                                 }
                             }
                         }
                         Ok(events)
                     }
-                    Err(e) => {
-                        error!("Error popping items from session table: {}", e);
-                        Ok(events)
-                    }
+                    Err(e) => Err(format!("Error popping items from session table: {}", e)),
                 },
                 swss_common::SelectResult::Timeout => {
                     debug!("Timeout waiting for session table updates");
@@ -194,44 +196,51 @@ impl SwssActor {
         }
     }
 
-    fn parse_session_data(
-        field_values: &HashMap<String, swss_common::CxxString>,
-    ) -> SessionData {
+    fn parse_session_data(field_values: &HashMap<String, swss_common::CxxString>) -> SessionData {
+        // Apply the shared admission limits before copying/tokenizing Redis values.
+        // CxxString::len borrows the raw value without lossy UTF-8 allocation.
+        let mut metadata_bytes = 0usize;
+        let mut validation_error = None;
+        for (field, value) in field_values {
+            metadata_bytes = metadata_bytes.saturating_add(field.len());
+            if field == "session_config" {
+                if value.len() > MAX_TEMPLATE_CONFIG_BYTES {
+                    validation_error = Some("Session config exceeds byte limit");
+                }
+            } else {
+                metadata_bytes = metadata_bytes.saturating_add(value.len());
+            }
+            if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+                validation_error = Some("Session metadata exceeds byte limit");
+                break;
+            }
+        }
+        if validation_error.is_some() {
+            return SessionData {
+                validation_error,
+                ..SessionData::default()
+            };
+        }
         let mut session_data = SessionData::default();
 
         for (field, value) in field_values {
             match field.as_str() {
-                "stream_status" => session_data.stream_status = value.to_string_lossy().to_string(),
-                "session_type" => session_data.session_type = value.to_string_lossy().to_string(),
-                "object_names" => session_data.object_names = value.to_string_lossy().to_string(),
-                "object_ids" => session_data.object_ids = value.to_string_lossy().to_string(),
+                "stream_status" => {
+                    session_data.stream_status = value.to_string_lossy().into_owned()
+                }
+                "session_type" => session_data.session_type = value.to_string_lossy().into_owned(),
+                "object_names" => session_data.object_names = value.to_string_lossy().into_owned(),
+                "object_ids" => session_data.object_ids = value.to_string_lossy().into_owned(),
                 "session_config" => {
                     session_data.session_config = value.as_bytes().to_vec();
                 }
                 _ => {
-                    debug!("Unknown field in session data: {} = {:?}", field, value);
+                    debug!("Ignoring unknown session field ({} bytes)", field.len());
                 }
             }
         }
 
         session_data
-    }
-
-    /// Extracts the session key from the full Redis key by removing the table name prefix
-    ///
-    /// # Arguments
-    /// * `full_key` - Full Redis key (e.g., "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|session_name|PORT")
-    ///
-    /// # Returns
-    /// Session key without table prefix (e.g., "session_name|PORT")
-    fn extract_session_key(full_key: &str) -> String {
-        if let Some(pos) = full_key.find('|') {
-            if full_key.starts_with(STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE) {
-                return full_key[pos + 1..].to_string();
-            }
-        }
-        // If no table prefix found, return as-is
-        full_key.to_string()
     }
 
     /// Processes session update messages from the state database
@@ -245,8 +254,6 @@ impl SwssActor {
         key: &str,
         field_values: &std::collections::HashMap<String, swss_common::CxxString>,
     ) {
-        debug!("Processing session update for key: {}", key);
-
         let session_data = Self::parse_session_data(field_values);
 
         // Validate and process the session
@@ -255,34 +262,21 @@ impl SwssActor {
         }
     }
 
-    async fn process_session_update(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-        session_data: &SessionData,
-    ) {
-        if let Err(e) = Self::validate_and_send_session(template_recipient, key, session_data).await {
-            error!("Failed to process session {}: {}", key, e);
-        }
-    }
-
-    async fn process_session_delete(
-        template_recipient: &Sender<IPFixTemplatesMessage>,
-        key: &str,
-    ) {
-        info!("Session deleted: {}", key);
-
-        let delete_message = IPFixTemplatesMessage::delete(key.to_string());
-
-        match template_recipient.send(delete_message).await {
-            Ok(_) => {
-                info!("Successfully sent session deletion message for: {}", key);
+    async fn process_event(template_recipient: &Sender<IPFixTemplatesMessage>, event: SwssEvent) {
+        let message = match event {
+            SwssEvent::Update { key, session_data } => {
+                if let Err(e) =
+                    Self::validate_and_send_session(template_recipient, &key, &session_data).await
+                {
+                    error!("Failed to process session {}: {}", key, e);
+                }
+                return;
             }
-            Err(e) => {
-                error!("Failed to send session deletion message for {}: {}", key, e);
-            }
+            SwssEvent::Delete { key } => IPFixTemplatesMessage::delete(key),
+        };
+        if let Err(e) = template_recipient.send(message).await {
+            error!("Failed to forward IPFIX session event: {e}");
         }
-
-        debug!("Session cleanup for {} completed", key);
     }
 
     /// Validates session data and processes enabled IPFIX sessions
@@ -309,90 +303,19 @@ impl SwssActor {
         key: &str,
         session_data: &SessionData,
     ) -> Result<(), String> {
-        // Only process enabled sessions with ipfix type
-        if session_data.stream_status != "enabled" {
-            debug!("Skipping disabled session: {}", key);
-            return Ok(());
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
         }
-
-        if session_data.session_type != "ipfix" {
-            debug!(
-                "Skipping non-IPFIX session: {} (type: {})",
-                key, session_data.session_type
-            );
-            return Ok(());
-        }
-
-        if session_data.session_config.is_empty() {
-            return Err("Session config is empty".to_string());
-        }
-
-        info!(
-            "Processing enabled IPFIX session: key={}, object_names={}, object_ids={}",
-            key, session_data.object_names, session_data.object_ids
-        );
-
-        let templates = Arc::new(session_data.session_config.clone());
-
-        // Parse object_names if present
-        let object_names: Option<Vec<String>> = if session_data.object_names.is_empty() {
-            None
-        } else {
-            Some(
-                session_data
-                    .object_names
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            )
-        };
-
-        let object_ids = if session_data.object_ids.is_empty() {
-            None
-        } else {
-            let mut parsed_object_ids = Vec::new();
-            for token in session_data.object_ids.split(',') {
-                let trimmed = token.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                match trimmed.parse::<u16>() {
-                    Ok(object_id) => parsed_object_ids.push(object_id),
-                    Err(e) => {
-                        warn!(
-                            "Invalid object_ids entry '{}' for session {}: {}. Ignoring object_ids for this update",
-                            trimmed,
-                            key,
-                            e
-                        );
-                        parsed_object_ids.clear();
-                        break;
-                    }
-                }
-            }
-
-            if parsed_object_ids.is_empty() {
-                None
-            } else if let Some(names) = object_names.as_ref() {
-                if names.len() != parsed_object_ids.len() {
-                    warn!(
-                        "object_ids/object_names length mismatch for session {}: {} ids vs {} names. Ignoring object_ids for this update",
-                        key,
-                        parsed_object_ids.len(),
-                        names.len()
-                    );
-                    None
-                } else {
-                    Some(parsed_object_ids)
-                }
-            } else {
-                Some(parsed_object_ids)
+        let message = match Self::validated_session(key, session_data) {
+            Ok(message) => message,
+            Err(err) => {
+                template_recipient
+                    .send(IPFixTemplatesMessage::delete(key.to_string()))
+                    .await
+                    .map_err(|e| format!("{err}; failed to delete IPFIX session {key}: {e}"))?;
+                return Err(err);
             }
         };
-
-        let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
 
         template_recipient
             .send(message)
@@ -403,13 +326,94 @@ impl SwssActor {
         Ok(())
     }
 
-    /// Handles session deletion events
-    ///
-    /// # Arguments
-    /// * `key` - Session key that was deleted
-    #[cfg(test)]
-    async fn handle_session_delete(&mut self, key: &str) {
-        Self::process_session_delete(&self.template_recipient, key).await;
+    fn validated_session(
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<IPFixTemplatesMessage, String> {
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
+        }
+        session_data.validate_sizes()?;
+        // A disabled or repurposed row deactivates any previously installed IPFIX session.
+        if session_data.stream_status != "enabled" || session_data.session_type != "ipfix" {
+            if session_data.stream_status != "enabled" {
+                debug!("Deactivating disabled session: {}", key);
+            } else {
+                debug!(
+                    "Deactivating non-IPFIX session: {} (type: {})",
+                    key, session_data.session_type
+                );
+            }
+            return Ok(IPFixTemplatesMessage::deactivate(key.to_string()));
+        }
+        Self::validated_update(key, session_data)
+    }
+
+    fn validated_update(
+        key: &str,
+        session_data: &SessionData,
+    ) -> Result<IPFixTemplatesMessage, String> {
+        session_data.validate_sizes()?;
+        if key.len() > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session key exceeds metadata byte limit".into());
+        }
+        if session_data.session_config.is_empty() {
+            return Err("Session config is empty".to_string());
+        }
+
+        info!("Processing enabled IPFIX session: key={}", key);
+
+        let mut object_names = Vec::new();
+        for token in session_data.object_names.split(',') {
+            let name = token.trim();
+            if name.is_empty() {
+                return Err("object_names must contain non-empty names".to_string());
+            }
+            if object_names.len() >= MAX_OBJECTS_PER_UPDATE {
+                return Err("object_names exceeds entry limit".into());
+            }
+            object_names.push(name.to_string());
+        }
+
+        let mut object_ids = Vec::new();
+        let mut unique_ids = std::collections::HashSet::new();
+        for token in session_data.object_ids.split(',') {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                return Err("object_ids must contain non-empty IDs".into());
+            }
+            if object_ids.len() >= MAX_OBJECTS_PER_UPDATE {
+                return Err("object_ids exceeds entry limit".into());
+            }
+            let object_id = trimmed
+                .parse::<u16>()
+                .map_err(|e| format!("Invalid object ID '{}' for {}: {}", trimmed, key, e))?;
+            if !(1..=0x7fff).contains(&object_id) {
+                return Err(format!(
+                    "Object ID {} for {} is outside the IPFIX 15-bit IE range",
+                    object_id, key
+                ));
+            }
+            if !unique_ids.insert(object_id) {
+                return Err(format!("Duplicate object ID {} for {}", object_id, key));
+            }
+            object_ids.push(object_id);
+        }
+        if object_ids.len() != object_names.len() {
+            return Err(format!(
+                "object_ids/object_names length mismatch for {}: {} ids vs {} names",
+                key,
+                object_ids.len(),
+                object_names.len()
+            ));
+        }
+
+        Ok(IPFixTemplatesMessage::new(
+            key.to_string(),
+            Arc::new(session_data.session_config.clone()),
+            Some(object_names),
+            Some(object_ids),
+        ))
     }
 }
 
@@ -423,6 +427,7 @@ impl SwssActor {
 /// - session_config: Binary data containing the session configuration (IPFIX templates)
 #[derive(Default, Debug)]
 struct SessionData {
+    validation_error: Option<&'static str>,
     stream_status: String,
     session_type: String,
     object_names: String,
@@ -430,12 +435,440 @@ struct SessionData {
     session_config: Vec<u8>,
 }
 
+impl SessionData {
+    fn validate_sizes(&self) -> Result<(), &'static str> {
+        if let Some(error) = self.validation_error {
+            return Err(error);
+        }
+        if self.session_config.len() > MAX_TEMPLATE_CONFIG_BYTES {
+            return Err("Session config exceeds byte limit");
+        }
+        let metadata_bytes = self
+            .stream_status
+            .len()
+            .saturating_add(self.session_type.len())
+            .saturating_add(self.object_names.len())
+            .saturating_add(self.object_ids.len());
+        if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+            return Err("Session metadata exceeds byte limit");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::message::ipfix::IPFixTemplateOperation;
+    use std::collections::{HashMap, HashSet};
     use swss_common::CxxString;
     use tokio::sync::mpsc::channel;
+
+    // Domain 0: observationTimeNanoseconds and one 64-bit enterprise counter
+    // (object label 1, SAI type/stat 1). Only the template ID varies across owners.
+    fn template(id: u16) -> Vec<u8> {
+        let mut bytes = vec![
+            0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 20,
+        ];
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&[0, 2, 1, 69, 0, 8, 128, 1, 0, 8, 0, 1, 0, 1]);
+        bytes
+    }
+
+    fn fields(name: &str, id: u16) -> [(&'static str, CxxString); 5] {
+        [
+            ("stream_status", CxxString::from("enabled")),
+            ("session_type", CxxString::from("ipfix")),
+            ("object_names", CxxString::from(name)),
+            ("object_ids", CxxString::from("1")),
+            ("session_config", CxxString::from(template(id))),
+        ]
+    }
+
+    fn record(id: u16) -> Arc<Vec<u8>> {
+        let mut bytes = vec![0, 10, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&20u16.to_be_bytes());
+        bytes.extend_from_slice(&7u64.to_be_bytes());
+        bytes.extend_from_slice(&42u64.to_be_bytes());
+        Arc::new(bytes)
+    }
+
+    async fn probe(
+        sender: &Sender<crate::message::buffer::SocketBufferMessage>,
+        receiver: &mut mpsc::Receiver<crate::message::saistats::SAIStatsBatchMessage>,
+        id: u16,
+        expected_name: &str,
+    ) {
+        sender.send(record(id)).await.unwrap();
+        let batch = receiver.recv().await.expect("expected decoded output");
+        assert_eq!(batch.record_count(), 1);
+        let record = batch.iter().next().unwrap();
+        assert_eq!(record.observation_time, 7);
+        assert_eq!(record.stats.len(), 1);
+        assert_eq!(record.stats[0].object_name.as_ref(), expected_name);
+        assert_eq!(record.stats[0].counter, 42);
+        assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+    }
+
+    async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {
+        for event in events {
+            SwssActor::process_event(sender, event).await;
+            // Capacity one: the actor handles each update synchronously before
+            // it can process our next data probe.
+            drop(sender.reserve().await.unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_pop_returns_error_without_forwarding_an_event() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_pop_error_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        table.set("owner", fields("Ethernet0", 300)).unwrap();
+        let mut subscriber =
+            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
+        let (sender, mut receiver) = channel(1);
+        let events = SwssActor::blocking_collect_events(&mut subscriber, Duration::ZERO).unwrap();
+        assert_eq!(events.len(), 1);
+        SwssActor::process_event(&sender, events.into_iter().next().unwrap()).await;
+        let message = receiver.try_recv().unwrap();
+        assert_eq!(message.key, "owner");
+        assert_eq!(message.operation, IPFixTemplateOperation::Update);
+
+        db.set(&format!("{name}|owner"), &CxxString::from("not a hash"))
+            .unwrap();
+        let result = SwssActor::blocking_collect_events(&mut subscriber, Duration::from_secs(1));
+        table.del("owner").unwrap();
+        assert!(result.unwrap_err().contains("Error popping items"));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn reader_transport_errors_retry_with_delay_instead_of_exiting() {
+        use std::os::fd::AsRawFd;
+
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_reader_retry_{}", std::process::id());
+        let mut session_table = SubscriberStateTable::new(db, &name, None, None).unwrap();
+        let subscription = session_table
+            .get_fd()
+            .unwrap()
+            .try_clone_to_owned()
+            .unwrap();
+        // Shut down only this actor's subscription, not the shared Redis server.
+        assert_eq!(
+            unsafe { libc::shutdown(subscription.as_raw_fd(), libc::SHUT_RDWR) },
+            0
+        );
+        assert!(SwssActor::blocking_collect_events(&mut session_table, Duration::ZERO,).is_err());
+        let (template_recipient, mut receiver) = channel(1);
+        let started = std::time::Instant::now();
+        let task = tokio::spawn(SwssActor::run(SwssActor {
+            session_table,
+            template_recipient,
+        }));
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        // The test-only reader limit is 20 iterations, each failed read sleeps 100 ms.
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn table_like_active_profiles_isolate_promotion_and_removal() {
+        use crate::actor::ipfix::IpfixActor;
+
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_active_profiles_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        let a = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_A|PORT");
+        let b = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT");
+        let (templates, template_rx) = channel(1);
+        let (records, record_rx) = channel(1);
+        let (stats, mut stats_rx) = channel(1);
+        let mut actor = IpfixActor::new(template_rx, record_rx);
+        actor.add_recipient(stats);
+        let mut task = tokio::spawn(IpfixActor::run(actor));
+
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            table.set(&a, fields("Ethernet0", 300)).unwrap();
+            table.set(&b, fields("Ethernet8", 700)).unwrap();
+            let mut subscriber = SubscriberStateTable::new(db, &name, Some(1), None).unwrap();
+            let mut collect = || {
+                SwssActor::blocking_collect_events(&mut subscriber, Duration::from_secs(1)).unwrap()
+            };
+            let initial = collect();
+            assert_eq!(initial.len(), 2);
+            forward(initial, &templates).await;
+            probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+
+            table.set(&a, fields("Ethernet4", 400)).unwrap();
+            forward(collect(), &templates).await;
+            // Old A remains active until data on its new ID promotes the snapshot.
+            probe(&records, &mut stats_rx, 300, "Ethernet0").await;
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+            probe(&records, &mut stats_rx, 400, "Ethernet4").await;
+            // FIFO B output fences the retired-ID probe, including batched output.
+            records.send(record(300)).await.unwrap();
+            probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+            assert!(stats_rx.try_recv().is_err());
+
+            for removal in ["disabled", "delete", "malformed"] {
+                table.set(&a, fields("Ethernet4", 400)).unwrap();
+                forward(collect(), &templates).await;
+                probe(&records, &mut stats_rx, 400, "Ethernet4").await;
+                match removal {
+                    "disabled" => table
+                        .hset(&a, "stream_status", &CxxString::from("disabled"))
+                        .unwrap(),
+                    "delete" => table.del(&a).unwrap(),
+                    "malformed" => table
+                        .hset(&a, "session_config", &CxxString::from("not IPFIX"))
+                        .unwrap(),
+                    _ => unreachable!(),
+                }
+                forward(collect(), &templates).await;
+                records.send(record(300)).await.unwrap();
+                records.send(record(400)).await.unwrap();
+                probe(&records, &mut stats_rx, 700, "Ethernet8").await;
+                assert!(stats_rx.try_recv().is_err(), "{removal}");
+            }
+            drop(templates);
+            (&mut task).await.unwrap();
+        })
+        .await;
+        task.abort();
+        for key in [&a, &b] {
+            table.del(key).unwrap();
+        }
+        result.expect("active table-looking profiles must remain independent");
+    }
+
+    #[test]
+    fn swss_relative_keys_are_opaque_in_startup_and_runtime_notifications() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let table_name = format!("test_swss_relative_keys_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &table_name).unwrap();
+        let prefix = STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE;
+        let keys = [
+            "profile|PORT".to_string(),
+            "profile|QUEUE".to_string(),
+            format!("{prefix}|PORT"),
+            format!("{prefix}_A|PORT"),
+            format!("{prefix}_B|PORT"),
+            format!("{prefix}|profile|PORT"),
+            format!("{prefix}|{prefix}|PORT"),
+            format!("X{prefix}|PORT"),
+            format!("{}|PORT", prefix.to_lowercase()),
+            prefix.to_string(),
+        ];
+        for key in &keys {
+            table.set(key, [("stream_status", "disabled")]).unwrap();
+        }
+        assert_eq!(
+            table
+                .get_keys()
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            keys.iter().cloned().collect()
+        );
+        let mut subscriber =
+            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &table_name, None, None)
+                .unwrap();
+        let initial = SwssActor::blocking_collect_events(&mut subscriber, Duration::ZERO).unwrap();
+        let observed = initial
+            .into_iter()
+            .map(|event| match event {
+                SwssEvent::Update { key, .. } => key,
+                _ => panic!("expected startup update"),
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(observed, keys.iter().cloned().collect());
+        for key in &keys {
+            table
+                .hset(key, "stream_status", &CxxString::from("enabled"))
+                .unwrap();
+            let events =
+                SwssActor::blocking_collect_events(&mut subscriber, Duration::from_secs(1))
+                    .unwrap();
+            assert!(matches!(events.as_slice(),[SwssEvent::Update{key:k,..}] if k==key));
+        }
+        for key in &keys {
+            table.del(key).unwrap();
+            let events =
+                SwssActor::blocking_collect_events(&mut subscriber, Duration::from_secs(1))
+                    .unwrap();
+            assert!(matches!(events.as_slice(),[SwssEvent::Delete{key:k}] if k==key));
+        }
+    }
+
+    #[tokio::test]
+    async fn redis_fixture_helpers_use_exact_relative_keys() {
+        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
+        let name = format!("test_swss_fixture_keys_{}", std::process::id());
+        let table = swss_common::Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
+        let first = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_A|PORT");
+        let second = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}_B|PORT");
+        for key in [&first, &second] {
+            insert_test_session(&table, key, "Ethernet0", "1", "config").await;
+        }
+        assert_eq!(
+            table
+                .get_keys()
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([first.clone(), second.clone()])
+        );
+        assert!(db
+            .get(&format!(
+                "{name}|{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}|{first}"
+            ))
+            .unwrap()
+            .is_none());
+        cleanup_test_session(&table, &first);
+        assert!(table.get(&first).unwrap().is_none());
+        assert!(table.get(&second).unwrap().is_some());
+        cleanup_test_session(&table, &second);
+        assert!(table.get_keys().unwrap().is_empty());
+    }
+
+    #[test]
+    fn raw_session_limits_reject_before_copying_metadata_or_oversized_config() {
+        for field in [
+            "object_names",
+            "object_ids",
+            "stream_status",
+            "session_type",
+            "unknown",
+            "session_config",
+        ] {
+            let limit = if field == "session_config" {
+                MAX_TEMPLATE_CONFIG_BYTES
+            } else {
+                MAX_OBJECT_METADATA_BYTES
+            };
+            let fields = HashMap::from([(field.into(), CxxString::from(vec![b','; limit + 1]))]);
+            let session = SwssActor::parse_session_data(&fields);
+            assert!(session.validate_sizes().is_err(), "{field}");
+            assert!(session.object_names.is_empty());
+            assert!(session.object_ids.is_empty());
+            assert!(session.stream_status.is_empty());
+            assert!(session.session_type.is_empty());
+            assert!(session.session_config.is_empty());
+        }
+        let fields = HashMap::from([
+            (
+                "object_names".into(),
+                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES / 2]),
+            ),
+            (
+                "object_ids".into(),
+                CxxString::from(vec![b','; MAX_OBJECT_METADATA_BYTES / 2]),
+            ),
+            ("session_config".into(), CxxString::from("bounded config")),
+        ]);
+        let session = SwssActor::parse_session_data(&fields);
+        assert!(session.validate_sizes().is_err());
+        assert!(session.object_names.is_empty());
+        assert!(session.session_config.is_empty());
+    }
+
+    #[tokio::test]
+    async fn oversized_session_is_deleted_without_copying_config() {
+        let (sender, mut receiver) = channel(1);
+        let session = SessionData {
+            session_config: vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1],
+            ..SessionData::default()
+        };
+        assert!(
+            SwssActor::validate_and_send_session(&sender, "test", &session)
+                .await
+                .is_err()
+        );
+        let message = receiver.try_recv().unwrap();
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+        assert_eq!(message.key, "test");
+        assert!(message.templates.is_none());
+    }
+
+    #[test]
+    fn future_queue_scale_metadata_passes_raw_and_token_validation() {
+        let names = (0..2048)
+            .flat_map(|port| (0..8).map(move |queue| format!("Ethernet{port}|{queue}")))
+            .collect::<Vec<_>>();
+        let names_csv = names.join(",");
+        let ids_csv = (1..=16_384)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(names_csv.len() + ids_csv.len(), 324_076);
+        // Metadata validation is independent of template decoding, which has
+        // full 983,040-counter coverage in the IPFIX tests.
+        let fields = HashMap::from([
+            ("stream_status".into(), CxxString::from("enabled")),
+            ("session_type".into(), CxxString::from("ipfix")),
+            ("object_names".into(), CxxString::from(names_csv)),
+            ("object_ids".into(), CxxString::from(ids_csv)),
+            (
+                "session_config".into(),
+                CxxString::from("template validated by IPFIX actor"),
+            ),
+        ]);
+        let session = SwssActor::parse_session_data(&fields);
+        let message = SwssActor::validated_update("scale|QUEUE", &session).unwrap();
+        assert_eq!(message.object_names.unwrap(), names);
+        let ids = message.object_ids.unwrap();
+        assert_eq!(ids.len(), 16_384);
+        assert_eq!(ids[0], 1);
+        assert_eq!(ids[16_383], 16_384);
+    }
+
+    #[test]
+    fn metadata_tokens_are_validated_incrementally_and_entry_capped() {
+        let mut session = SessionData {
+            stream_status: "enabled".into(),
+            session_type: "ipfix".into(),
+            object_names: ",".repeat(MAX_OBJECTS_PER_UPDATE + 1),
+            object_ids: "1".into(),
+            session_config: vec![1],
+            ..SessionData::default()
+        };
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("non-empty names"));
+        session.object_names = std::iter::repeat("x")
+            .take(MAX_OBJECTS_PER_UPDATE)
+            .collect::<Vec<_>>()
+            .join(",");
+        session.object_ids = (1..=MAX_OBJECTS_PER_UPDATE)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(SwssActor::validated_update("test", &session).is_ok());
+        session.object_ids.push_str(",1");
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("object_ids exceeds entry limit"));
+        session.object_names.push_str(",x");
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("object_names exceeds entry limit"));
+        session.object_names = "x".into();
+        session.object_ids = "1,".into();
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("non-empty IDs"));
+        session.object_names = "x".repeat(MAX_OBJECT_METADATA_BYTES + 1);
+        assert!(SwssActor::validated_update("test", &session)
+            .unwrap_err()
+            .contains("metadata exceeds byte limit"));
+    }
 
     // Helper function to create a SwssActor for testing
     fn create_test_actor(template_sender: Sender<IPFixTemplatesMessage>) -> SwssActor {
@@ -488,7 +921,7 @@ mod tests {
             .try_recv()
             .expect("Should have received a message");
         assert_eq!(received_message.key, "test_session|PORT");
-        assert!(!received_message.is_delete);
+        assert_eq!(received_message.operation, IPFixTemplateOperation::Update);
         assert!(received_message.templates.is_some());
 
         // Verify object_names parsing
@@ -519,36 +952,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify the message was sent
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a message");
-        assert_eq!(received_message.key, "test_session|PORT");
-        assert!(!received_message.is_delete);
-        assert!(received_message.templates.is_some());
-        assert!(received_message.object_names.is_none());
-        assert_eq!(received_message.object_ids, Some(vec![1]));
-    }
-
-    #[tokio::test]
-    async fn test_session_deletion() {
-        let (template_sender, mut template_receiver) = channel(1);
-        let mut actor = create_test_actor(template_sender);
-
-        let key = "test_session|PORT";
-
-        // Process session deletion
-        actor.handle_session_delete(key).await;
-
-        // Verify the deletion message was sent
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a deletion message");
-        assert_eq!(received_message.key, "test_session|PORT");
-        assert!(received_message.is_delete);
-        assert!(received_message.templates.is_none());
-        assert!(received_message.object_names.is_none());
-        assert!(received_message.object_ids.is_none());
+        let message = template_receiver.try_recv().expect("delete message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -567,8 +973,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("deactivation message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -587,8 +994,9 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify no message was sent
-        assert!(template_receiver.try_recv().is_err());
+        let message = template_receiver.try_recv().expect("deactivation message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Deactivate);
+        assert_eq!(message.key, key);
     }
 
     #[tokio::test]
@@ -611,15 +1019,41 @@ mod tests {
         // Process the session update
         actor.handle_session_update(key, &field_values).await;
 
-        // Verify the message was sent with None object_names
-        let received_message = template_receiver
-            .try_recv()
-            .expect("Should have received a message");
-        assert_eq!(received_message.key, "empty_names_session|PORT");
-        assert!(!received_message.is_delete);
-        assert!(received_message.templates.is_some());
-        assert!(received_message.object_names.is_none());
-        assert_eq!(received_message.object_ids, Some(vec![1]));
+        let message = template_receiver.try_recv().expect("delete message");
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+        assert_eq!(message.key, key);
+    }
+
+    #[tokio::test]
+    async fn invalid_hft_metadata_is_not_forwarded() {
+        async fn rejects(names: &str, ids: &str) {
+            let (template_sender, mut template_receiver) = channel(1);
+            let session = SessionData {
+                stream_status: "enabled".to_string(),
+                session_type: "ipfix".to_string(),
+                object_names: names.to_string(),
+                object_ids: ids.to_string(),
+                session_config: vec![1],
+                ..SessionData::default()
+            };
+            assert!(
+                SwssActor::validate_and_send_session(&template_sender, "test|PORT", &session)
+                    .await
+                    .is_err()
+            );
+            let message = template_receiver.try_recv().expect("delete message");
+            assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+            assert_eq!(message.key, "test|PORT");
+            assert!(message.templates.is_none());
+            assert!(template_receiver.try_recv().is_err());
+        }
+
+        rejects("Ethernet0", "0").await;
+        rejects("Ethernet0", "32768").await;
+        rejects("Ethernet0,Ethernet4", "1,1").await;
+        rejects("Ethernet0,Ethernet4", "1").await;
+        rejects("Ethernet0,,Ethernet4", "1,2,3").await;
+        rejects("Ethernet0", "not-a-number").await;
     }
 
     #[test]
@@ -650,7 +1084,7 @@ mod tests {
         assert_eq!(message.templates, Some(templates));
         assert_eq!(message.object_names, object_names);
         assert_eq!(message.object_ids, object_ids);
-        assert!(!message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Update);
     }
 
     #[test]
@@ -661,7 +1095,7 @@ mod tests {
         assert!(message.templates.is_none());
         assert!(message.object_names.is_none());
         assert!(message.object_ids.is_none());
-        assert!(message.is_delete);
+        assert_eq!(message.operation, IPFixTemplateOperation::Delete);
     }
 
     // Helper function to create a test session entry in Redis
@@ -674,12 +1108,6 @@ mod tests {
     ) {
         use swss_common::CxxString;
 
-        // The full Redis key includes the table name prefix
-        let full_redis_key = format!(
-            "{}|{}",
-            STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE, session_key
-        );
-
         // Use table.set to set all field-value pairs at once
         let field_values = vec![
             ("stream_status", CxxString::from("enabled")),
@@ -690,7 +1118,7 @@ mod tests {
         ];
 
         table
-            .set(&full_redis_key, field_values)
+            .set(session_key, field_values)
             .expect("Should be able to insert session data using table.set");
     }
 
@@ -703,31 +1131,14 @@ mod tests {
         let table = Table::new(table_conn, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE)
             .expect("Should be able to create table");
 
-        // More aggressive cleanup: try to delete all possible test patterns
-        let test_patterns = [
-            "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|test*",
-            "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE|*test*",
-            "test*",
-            "*test*",
-        ];
-        for pattern in &test_patterns {
-            table.del(pattern).ok();
-        }
-
-        // Also try FLUSHDB to completely clear the test database
-        // Note: This is aggressive but necessary for test isolation
-        // table.flushdb().ok();  // Uncomment if needed
-
         table
     }
 
     // Helper function to cleanup test data
     fn cleanup_test_session(table: &swss_common::Table, session_key: &str) {
-        let full_redis_key = format!(
-            "{}|{}",
-            STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE, session_key
-        );
-        table.del(&full_redis_key).ok();
+        table
+            .del(session_key)
+            .expect("Should delete the exact relative fixture key");
     }
 
     #[tokio::test]
@@ -782,7 +1193,7 @@ mod tests {
             .iter()
             .find(|msg| msg.key == test_key)
             .unwrap();
-        assert!(!our_message.is_delete);
+        assert_eq!(our_message.operation, IPFixTemplateOperation::Update);
         assert!(our_message.templates.is_some());
 
         let object_names = our_message
@@ -790,6 +1201,73 @@ mod tests {
             .as_ref()
             .expect("Should have object_names");
         assert_eq!(object_names, &vec!["Ethernet0"]);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn runtime_delete_then_valid_update_keeps_swss_loop_alive() {
+        let table = setup_test_table();
+        let key = "test_delete_then_update";
+        insert_test_session(&table, key, "Ethernet0", "1", "template").await;
+        let (template_sender, mut template_receiver) = channel(10);
+        let actor = create_test_actor(template_sender);
+        let task = tokio::spawn(SwssActor::run(actor));
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("startup update");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        cleanup_test_session(&table, key);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("runtime delete");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Delete);
+                    assert!(message.templates.is_none());
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "Delete must not terminate the SWSS loop"
+        );
+
+        insert_test_session(&table, key, "Ethernet4", "2", "updated_template").await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = template_receiver.recv().await.expect("update after delete");
+                if message.key == key {
+                    assert_eq!(message.operation, IPFixTemplateOperation::Update);
+                    assert_eq!(message.templates.as_deref().unwrap(), b"updated_template");
+                    assert_eq!(message.object_names, Some(vec!["Ethernet4".into()]));
+                    assert_eq!(message.object_ids, Some(vec![2]));
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "SWSS must keep processing after Delete"
+        );
+        task.abort();
+        assert!(tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .is_cancelled());
+        cleanup_test_session(&table, key);
     }
 
     #[tokio::test]
@@ -842,7 +1320,7 @@ mod tests {
                 .find(|msg| msg.key == test_key)
                 .unwrap();
             assert_eq!(received_message.key, test_key);
-            assert!(!received_message.is_delete);
+            assert_eq!(received_message.operation, IPFixTemplateOperation::Update);
             assert!(received_message.templates.is_some());
 
             let object_names = received_message
@@ -922,7 +1400,7 @@ mod tests {
             .iter()
             .find(|msg| msg.key == existing_key)
             .unwrap();
-        assert!(!existing_message.is_delete);
+        assert_eq!(existing_message.operation, IPFixTemplateOperation::Update);
         assert!(existing_message.templates.is_some());
 
         let existing_object_names = existing_message
@@ -941,7 +1419,7 @@ mod tests {
                 .find(|msg| msg.key == runtime_key)
                 .unwrap();
             assert_eq!(runtime_message.key, runtime_key);
-            assert!(!runtime_message.is_delete);
+            assert_eq!(runtime_message.operation, IPFixTemplateOperation::Update);
             assert!(runtime_message.templates.is_some());
 
             let runtime_object_names = runtime_message

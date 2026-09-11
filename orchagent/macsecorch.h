@@ -62,7 +62,7 @@ private:
     DBConnector * m_state_db;
     shared_ptr<DBConnector> m_notificationsDb;
     NotificationConsumer* m_postCompletionNotificationConsumer;
-    bool m_enable_post;
+    bool m_enable_post = false;
 
     PortsOrch * m_port_orch;
 
