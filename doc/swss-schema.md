@@ -606,6 +606,11 @@ Stores information about ACL tables on the switch.  Port names are defined in [p
     ports         = [0-max_ports]*port_name ; the ports to which this ACL
                                             ; table is applied, can be emtry
                                             ; value annotations
+    priority      = 1*10DIGIT               ; optional ACL table group-member priority
+                                            ; within a bind point; higher value takes
+                                            ; precedence. Valid range is platform-dependent
+                                            ; (queried from SAI). Ignored for table types
+                                            ; that are not bound as group members.
     port_name     = 1*64VCHAR               ; name of the port, must be unique
     max_ports     = 1*5DIGIT                ; number of ports supported on the chip
 

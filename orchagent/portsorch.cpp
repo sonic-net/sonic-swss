@@ -2975,7 +2975,8 @@ bool PortsOrch::unbindAclTable(sai_object_id_t  port_oid,
 bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
                              sai_object_id_t  table_oid,
                              sai_object_id_t  &group_member_oid,
-                             acl_stage_type_t acl_stage)
+                             acl_stage_type_t acl_stage,
+                             sai_uint32_t     group_member_priority)
 {
     SWSS_LOG_ENTER();
     /*
@@ -3014,7 +3015,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    member_attr.value.u32 = 100;
+    member_attr.value.u32 = group_member_priority;
     member_attrs.push_back(member_attr);
 
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
