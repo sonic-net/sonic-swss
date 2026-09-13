@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--cpus", default="2-15")
     parser.add_argument("--gomaxprocs", type=int, default=12)
     parser.add_argument("--gogc", default="100")
+    parser.add_argument("--client-cpus", default="0", help="comma-separated CPUs for multithread binary")
     parser.add_argument("--profile-seconds", type=int, default=0)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -84,7 +85,7 @@ def main():
                         ["/usr/bin/time", "-f", "wall=%e user=%U sys=%S maxrss_KiB=%M",
                          str(args.client.resolve()), str(args.batch), str(args.points), str(args.repeats)],
                         env=dict(os.environ, OTEL_EXTERNAL_ENDPOINT="http://127.0.0.1:24317",
-                                 OTEL_MAX_IN_FLIGHT=str(inflight)), text=True, capture_output=True, timeout=600)
+                                 OTEL_MAX_IN_FLIGHT=str(inflight), OTEL_CLIENT_CPUS=args.client_cpus), text=True, capture_output=True, timeout=600)
                     print(run.stdout, end="", flush=True)
                     run.check_returncode()
                     after = metrics()

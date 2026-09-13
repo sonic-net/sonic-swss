@@ -3,6 +3,7 @@ name = "countersyncd-otel-bench"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "otel-throughput"
 
 # Compile the actual actor without the daemon's Linux/SONiC dependencies.
 [workspace]
@@ -28,3 +29,7 @@ mimalloc = ["dep:mimalloc"]
 [[bin]]
 name = "otel-throughput"
 path = "src/main.rs"
+
+[[bin]]
+name = "otel-multithread"
+path = "src/multithread.rs"
