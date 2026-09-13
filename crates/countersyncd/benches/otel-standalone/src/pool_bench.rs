@@ -63,7 +63,7 @@ fn main() {
                             SAIStat::new(
                                 objects[i].clone(),
                                 1,
-                                i as u32,
+                                (i % 100) as u32,
                                 record as u64 * 1_000_003 + i as u64,
                             )
                         }),
@@ -91,5 +91,28 @@ fn main() {
             println!("trial={trial} threads={} in_flight_per_worker={} max_total_inflight={} batch={} points={} elapsed_s={elapsed:.6} acked_Mpoints_s={:.3} live_routing=true",args.threads,args.in_flight_per_worker,workers.lanes(),args.batch,args.points,args.points as f64/elapsed/1e6);
         })).join().expect("router completed");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pool_workload_has_500_series_and_100_known_stat_names() {
+        use countersyncd_otel_bench::message::otel::sai_metric_names;
+        use std::collections::HashSet;
+        let series: HashSet<_> = (0..500)
+            .map(|i| (format!("Ethernet{i}"), 1u32, (i % 100) as u32))
+            .collect();
+        assert_eq!(series.len(), 500);
+        let names: HashSet<_> = series
+            .iter()
+            .map(|(_, t, s)| {
+                let (object, name) = sai_metric_names(*t, *s);
+                assert_eq!(object, "SAI_OBJECT_TYPE_PORT");
+                assert!(name.starts_with("SAI_PORT_STAT_"));
+                name.into_owned()
+            })
+            .collect();
+        assert_eq!(names.len(), 100);
     }
 }

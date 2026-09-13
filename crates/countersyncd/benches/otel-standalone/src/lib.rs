@@ -1,5 +1,7 @@
 #[path = "../../../src/message/otel.rs"]
 pub mod otel_message;
+#[path = "../../../src/sai/mod.rs"]
+pub mod sai;
 #[path = "../../../src/message/saistats.rs"]
 pub mod saistats;
 pub mod message {

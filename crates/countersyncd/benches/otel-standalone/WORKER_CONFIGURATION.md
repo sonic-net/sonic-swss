@@ -1,5 +1,9 @@
 # Configurable ordered worker pool
 
+Export schema and current throughput were subsequently updated to canonical SAI
+names; see [NAMED_METRICS.md](NAMED_METRICS.md). Results below used numeric-ID
+attributes and are retained as historical measurements.
+
 The daemon now exposes explicit startup parameters (no automatic resizing):
 
 | Parameter | Default | Meaning |

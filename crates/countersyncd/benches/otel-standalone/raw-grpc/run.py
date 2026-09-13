@@ -22,6 +22,7 @@ p.add_argument('--multithread',action='store_true')
 p.add_argument('--lanes',type=int,default=1)
 p.add_argument('--pool',action='store_true')
 p.add_argument('--router-cpu',type=int,default=0)
+p.add_argument('--named-schema',action='store_true',help='canonical type/stat names (pool workload uses 100 known port stats across 500 series)')
 a=p.parse_args()
 assert a.points%a.batch==0
 a.output.mkdir(parents=True,exist_ok=True)
@@ -51,7 +52,8 @@ for n in a.inflight:
                 workers=len(a.client_cpus.split(','))*(n if a.pool else a.lanes);counts=[0]*workers
                 for i in range(500):
                     h=0xcbf29ce484222325
-                    for byte in f'Ethernet{i}'.encode()+(1).to_bytes(4,'little')+i.to_bytes(4,'little'):
+                    stat_id=i%100 if a.named_schema else i
+                    for byte in f'Ethernet{i}'.encode()+(1).to_bytes(4,'little')+stat_id.to_bytes(4,'little'):
                         h=((h^byte)*0x100000001b3)&0xffffffffffffffff
                     counts[h%workers]+=1
                 expected_requests=sum((c*(a.points//500)+a.batch-1)//a.batch for c in counts)*a.repeats
@@ -59,7 +61,7 @@ for n in a.inflight:
             # Independent byte-length comparison against prior FULLY DECODING
             # Collector runs of the exact same 500-series tagged workload.
             batch_bytes={10000:960333,100000:9201735,1000000:91605735}
-            if not a.multithread and not a.pool and a.batch in batch_bytes:assert after['bytes']==batch_bytes[a.batch]*expected_requests,(after,batch_bytes[a.batch]*expected_requests)
+            if not a.named_schema and not a.multithread and not a.pool and a.batch in batch_bytes:assert after['bytes']==batch_bytes[a.batch]*expected_requests,(after,batch_bytes[a.batch]*expected_requests)
             row={**vars(a),'output':str(a.output),'inflight':n,'stdout':result.stdout,'counters':after,'whole_run_wall_s':time.monotonic()-start}
             print(result.stdout,end='',flush=True);print(json.dumps(row),flush=True)
             (a.output/(name+'.json')).write_text(json.dumps(row,indent=2))

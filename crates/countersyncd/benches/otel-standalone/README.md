@@ -2,6 +2,12 @@
 
 ## Current configurable implementation
 
+**Current export uses canonical SAI type/stat names.** See
+[`NAMED_METRICS.md`](NAMED_METRICS.md) for the schema migration, supported enum
+families, unknown-ID fallback and refreshed thread/in-flight performance matrix.
+Performance tables elsewhere in this directory predate this name change unless
+explicitly marked; their numeric-ID payload sizes are historical.
+
 The daemon now uses an ordered, explicitly configured worker pool. See
 [`WORKER_CONFIGURATION.md`](WORKER_CONFIGURATION.md) for thread/CPU, per-worker
 in-flight lane and queue parameters, correctness tests, and benchmarks that

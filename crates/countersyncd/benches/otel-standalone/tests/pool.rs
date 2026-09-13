@@ -66,8 +66,16 @@ impl MetricsService for Sink {
                             };
                             v.clone()
                         };
-                        let id = attr("sai_stat_id").parse::<u32>().unwrap();
-                        assert_eq!(attr("sai_type_id"), "1");
+                        let id = attr("object_name")
+                            .strip_prefix("Ethernet")
+                            .unwrap()
+                            .parse::<u32>()
+                            .unwrap();
+                        assert_eq!(attr("sai_type"), "SAI_OBJECT_TYPE_PORT");
+                        assert_eq!(
+                            attr("sai_stat"),
+                            countersyncd_otel_bench::message::otel::sai_metric_names(1, id).1
+                        );
                         assert_eq!(attr("object_name"), format!("Ethernet{id}"));
                         let Some(Value::AsInt(value)) = dp.value else {
                             panic!()
@@ -79,7 +87,10 @@ impl MetricsService for Sink {
                             owner,
                             "each export belongs to one lane"
                         );
-                        assert_eq!(metric.name, format!("sai_counter_type_1_stat_{id}"));
+                        assert_eq!(
+                            metric.name,
+                            countersyncd_otel_bench::message::otel::sai_metric_names(1, id).1
+                        );
                         samples.push((id, dp.time_unix_nano, value as u64));
                     }
                 }

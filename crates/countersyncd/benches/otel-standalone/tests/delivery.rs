@@ -137,7 +137,7 @@ async fn scenario(fail_first: bool, partial: bool, timeout_flush: bool) {
         );
         let mut batch_points = 0;
         for metric in &resource.scope_metrics[0].metrics {
-            assert_eq!(metric.name, "sai_counter_type_1_stat_2");
+            assert_eq!(metric.name, "SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS");
             let Some(Data::Gauge(gauge)) = &metric.data else {
                 panic!()
             };
@@ -151,8 +151,8 @@ async fn scenario(fail_first: bool, partial: bool, timeout_flush: bool) {
                     };
                     s.clone()
                 };
-                assert_eq!(attr("sai_type_id"), "1");
-                assert_eq!(attr("sai_stat_id"), "2");
+                assert_eq!(attr("sai_type"), "SAI_OBJECT_TYPE_PORT");
+                assert_eq!(attr("sai_stat"), "SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS");
                 let Some(Value::AsInt(v)) = dp.value else {
                     panic!()
                 };

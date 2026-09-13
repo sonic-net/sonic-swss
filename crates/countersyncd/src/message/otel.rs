@@ -4,10 +4,38 @@
 //! to OpenTelemetry gauge format for export to observability systems.
 
 use crate::message::saistats::{SAIStatRef, SAIStatsRef};
+use crate::sai::{
+    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
+};
 use opentelemetry_proto::tonic::{
     common::v1::{any_value::Value, AnyValue, KeyValue as ProtoKeyValue},
     metrics::v1::{number_data_point, NumberDataPoint},
 };
+use std::borrow::Cow;
+
+/// Canonical SAI C names for the object/stat tables shipped with countersyncd.
+/// Unknown pairs retain both numeric IDs to remain unique and lossless. Resolve
+/// only when populating a series cache, never for each sample in the fast path.
+pub fn sai_metric_names(type_id: u32, stat_id: u32) -> (Cow<'static, str>, Cow<'static, str>) {
+    let object_type = SaiObjectType::from_u32(type_id);
+    let type_name = object_type
+        .map(|t| Cow::Borrowed(t.to_c_name()))
+        .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_OBJECT_TYPE_{type_id}")));
+    let stat_name = match object_type {
+        Some(SaiObjectType::Port) => SaiPortStat::from_u32(stat_id).map(|s| s.to_c_name()),
+        Some(SaiObjectType::Queue) => SaiQueueStat::from_u32(stat_id).map(|s| s.to_c_name()),
+        Some(SaiObjectType::BufferPool) => {
+            SaiBufferPoolStat::from_u32(stat_id).map(|s| s.to_c_name())
+        }
+        Some(SaiObjectType::IngressPriorityGroup) => {
+            SaiIngressPriorityGroupStat::from_u32(stat_id).map(|s| s.to_c_name())
+        }
+        _ => None,
+    }
+    .map(Cow::Borrowed)
+    .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_STAT_TYPE_{type_id}_ID_{stat_id}")));
+    (type_name, stat_name)
+}
 
 /// OpenTelemetry Gauge representation for SAI statistics
 ///
@@ -189,6 +217,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+<<<<<<< HEAD
     fn shared_input_uses_precomputed_names_without_owned_projection() {
         use crate::message::saistats::{SAIStatMetadata, SAIStatsBatch};
         let mut batch = SAIStatsBatch::default();
@@ -206,6 +235,35 @@ mod tests {
         assert_eq!(point.attributes[1].value, "SAI_OBJECT_TYPE_PORT");
         assert_eq!(point.attributes[2].key, "sai_stat");
         assert_eq!(point.attributes[2].value, "SAI_PORT_STAT_IF_IN_OCTETS");
+=======
+    fn canonical_names_are_object_specific_and_unknown_pairs_stay_unique() {
+        for (type_id, stat_name) in [
+            (1, "SAI_PORT_STAT_IF_IN_OCTETS"),
+            (21, "SAI_QUEUE_STAT_PACKETS"),
+            (24, "SAI_BUFFER_POOL_STAT_CURR_OCCUPANCY_BYTES"),
+            (26, "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS"),
+        ] {
+            let (object, stat) = sai_metric_names(type_id, 0);
+            assert!(object.starts_with("SAI_OBJECT_TYPE_"));
+            assert_eq!(stat, stat_name);
+            let point = OtelDataPoint::from_sai_stat(&SAIStat::new("object", type_id, 0, 42), 99);
+            assert_eq!(point.attributes[1].key, "sai_type");
+            assert_eq!(point.attributes[1].value, object);
+            assert_eq!(point.attributes[2].key, "sai_stat");
+            assert_eq!(point.attributes[2].value, stat);
+        }
+        assert_eq!(
+            sai_metric_names(u32::MAX, u32::MAX).0,
+            "UNKNOWN_SAI_OBJECT_TYPE_4294967295"
+        );
+        assert_ne!(
+            sai_metric_names(1, u32::MAX).1,
+            sai_metric_names(21, u32::MAX).1
+        );
+        assert!(sai_metric_names(0x20000001, 0x20000001)
+            .1
+            .starts_with("UNKNOWN_SAI_STAT_TYPE_"));
+>>>>>>> 7a28d92 ([countersyncd]: Export canonical SAI type and statistic names)
     }
 
     /// Helper function to create test SAI statistics (similar to saistats.rs pattern)
@@ -235,9 +293,9 @@ mod tests {
         assert_eq!(attr.key, "object_name");
         assert_eq!(attr.value, "Ethernet0");
 
-        let attr2 = OtelAttribute::new("sai_type_id", "100");
-        assert_eq!(attr2.key, "sai_type_id");
-        assert_eq!(attr2.value, "100");
+        let attr2 = OtelAttribute::new("sai_type", "SAI_OBJECT_TYPE_PORT");
+        assert_eq!(attr2.key, "sai_type");
+        assert_eq!(attr2.value, "SAI_OBJECT_TYPE_PORT");
     }
 
     #[test]

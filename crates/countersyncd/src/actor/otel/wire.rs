@@ -1,6 +1,7 @@
 //! Encode the fixed SAI Gauge schema without constructing a protobuf object tree.
 //! All field numbers/types are from opentelemetry-proto 0.25. Decode-equivalence
 //! tests below guard this wire-compatible optimization. No sample is aggregated.
+use crate::message::otel::sai_metric_names;
 use crate::message::saistats::SAIStat;
 use ahash::AHashMap;
 use opentelemetry_proto::tonic::collector::metrics::v1::{
@@ -68,25 +69,22 @@ impl GaugeBuffer {
             stat_id: stat.stat_id,
         };
         let slot = *self.index.entry(key).or_insert_with(|| {
+            let (type_name, stat_name) = sai_metric_names(stat.type_id, stat.stat_id);
             let mut metadata = Vec::new();
-            string(
-                &mut metadata,
-                10,
-                &format!("sai_counter_type_{}_stat_{}", stat.type_id, stat.stat_id),
-            );
+            string(&mut metadata, 10, &stat_name);
             string(
                 &mut metadata,
                 18,
                 &format!(
                     "SAI counter for object {} (type:{}, stat:{})",
-                    stat.object_name, stat.type_id, stat.stat_id
+                    stat.object_name, type_name, stat_name
                 ),
             );
             let mut attributes = Vec::new();
             for (key, value) in [
                 ("object_name", stat.object_name.to_string()),
-                ("sai_type_id", stat.type_id.to_string()),
-                ("sai_stat_id", stat.stat_id.to_string()),
+                ("sai_type", type_name.into_owned()),
+                ("sai_stat", stat_name.into_owned()),
             ] {
                 let mut kv = Vec::new();
                 string(&mut kv, 10, key);
@@ -213,15 +211,14 @@ mod tests {
             for (point, time) in g.data_points.iter().zip(times) {
                 assert_eq!(point, &OtelDataPoint::from_sai_stat(stat, time).to_proto());
             }
-            assert_eq!(
-                metric.name,
-                format!("sai_counter_type_{}_stat_{}", stat.type_id, stat.stat_id)
-            );
+            assert_eq!(metric.name, sai_metric_names(stat.type_id, stat.stat_id).1);
             assert_eq!(
                 metric.description,
                 format!(
                     "SAI counter for object {} (type:{}, stat:{})",
-                    stat.object_name, stat.type_id, stat.stat_id
+                    stat.object_name,
+                    sai_metric_names(stat.type_id, stat.stat_id).0,
+                    sai_metric_names(stat.type_id, stat.stat_id).1
                 )
             );
         }
@@ -261,6 +258,40 @@ mod tests {
         buffer.clear();
         assert!(buffer.index.is_empty());
         assert!(buffer.series.is_empty());
+    }
+
+    #[test]
+    fn canonical_stat_names_and_cached_attributes_match_message_conversion() {
+        use crate::message::otel::OtelGauge;
+        let mut buffer = GaugeBuffer::new();
+        for type_id in [1, 21, 24, 26, u32::MAX] {
+            let stat = SAIStat::new("object", type_id, 0, 123);
+            for time in [10, 20] {
+                buffer.push(&stat, time);
+            }
+        }
+        let decoded = ExportMetricsServiceRequest::decode(buffer.encode(&[], &[])).unwrap();
+        for (metric, type_id) in decoded.resource_metrics[0].scope_metrics[0]
+            .metrics
+            .iter()
+            .zip([1, 21, 24, 26, u32::MAX])
+        {
+            let stat = SAIStat::new("object", type_id, 0, 123);
+            let reference = OtelGauge::from_sai_stat(&stat, 10);
+            assert_eq!(metric.name, reference.name);
+            assert_eq!(metric.description, reference.description);
+            let Some(Data::Gauge(gauge)) = &metric.data else {
+                panic!()
+            };
+            assert_eq!(gauge.data_points.len(), 2);
+            for (point, time) in gauge.data_points.iter().zip([10, 20]) {
+                assert_eq!(*point, OtelDataPoint::from_sai_stat(&stat, time).to_proto());
+            }
+            assert!(gauge.data_points[0]
+                .attributes
+                .iter()
+                .all(|a| a.key != "sai_type_id" && a.key != "sai_stat_id"));
+        }
     }
 
     #[test]

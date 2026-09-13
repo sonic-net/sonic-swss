@@ -72,16 +72,29 @@ impl MetricsService for Sink {
         for resource in request.get_ref().resource_metrics.iter() {
             for scope in &resource.scope_metrics {
                 for metric in &scope.metrics {
-                    let id: u64 = metric
-                        .name
-                        .strip_prefix("sai_counter_type_1_stat_")
-                        .expect("metric name preserved")
-                        .parse()
-                        .unwrap();
                     let Some(Data::Gauge(gauge)) = &metric.data else {
                         return Err(Status::invalid_argument("expected Gauge"));
                     };
                     for point in &gauge.data_points {
+                        let attr = point
+                            .attributes
+                            .iter()
+                            .find(|a| a.key == "object_name")
+                            .unwrap();
+                        let Some(
+                            opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                                object,
+                            ),
+                        ) = &attr.value.as_ref().unwrap().value
+                        else {
+                            panic!("object name")
+                        };
+                        let id: u64 = object.strip_prefix("Ethernet").unwrap().parse().unwrap();
+                        assert_eq!(
+                            metric.name,
+                            countersyncd_otel_bench::message::otel::sai_metric_names(1, id as u32)
+                                .1
+                        );
                         let Some(Value::AsInt(value)) = point.value else {
                             return Err(Status::invalid_argument("expected integer"));
                         };
@@ -131,8 +144,14 @@ fn main() {
             .map(|i| {
                 let stat = SAIStat::new(format!("Ethernet{i}"), 1, i, 7);
                 Metric {
-                    name: format!("sai_counter_type_1_stat_{i}"),
-                    description: format!("SAI counter for object Ethernet{i} (type:1, stat:{i})"),
+                    name: countersyncd_otel_bench::message::otel::OtelGauge::from_sai_stat(
+                        &stat, 0,
+                    )
+                    .name,
+                    description: countersyncd_otel_bench::message::otel::OtelGauge::from_sai_stat(
+                        &stat, 0,
+                    )
+                    .description,
                     data: Some(Data::Gauge(Gauge {
                         data_points: (0..batch / 500)
                             .map(|j| {
