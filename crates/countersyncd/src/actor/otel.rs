@@ -6,7 +6,7 @@ use opentelemetry_proto::tonic::{
     common::v1::{any_value::Value, AnyValue, InstrumentationScope, KeyValue as ProtoKeyValue},
     resource::v1::Resource as ProtoResource,
 };
-use prost::{bytes::Bytes, Message};
+use prost::Message;
 use std::{
     fmt::{Display, Formatter},
     pin::Pin,
@@ -20,7 +20,7 @@ use tokio::{
 use tonic::transport::{Channel, Endpoint};
 #[path = "otel/wire.rs"]
 mod wire;
-use wire::{EncodedMetricsCodec, GaugeBuffer};
+use wire::{EncodedMetricsCodec, GaugeBuffer, WireRequest};
 #[path = "otel/pool.rs"]
 pub mod pool;
 pub use pool::{OtelWorkerConfig, OtelWorkerPool};
@@ -331,7 +331,7 @@ impl OtelActor {
         self.client.as_mut()
     }
 
-    async fn send_request(&mut self, request: Bytes) -> Result<(), Box<dyn ExportError>> {
+    async fn send_request(&mut self, request: WireRequest) -> Result<(), Box<dyn ExportError>> {
         for attempt in 1..=MAX_EXPORT_RETRIES {
             // Ensure we have a client
             let client = match self.get_client() {
@@ -357,7 +357,7 @@ impl OtelActor {
                     .unary(
                         tonic::Request::new(request.clone()),
                         path,
-                        EncodedMetricsCodec,
+                        EncodedMetricsCodec::for_request(&request),
                     )
                     .await
             }
@@ -399,17 +399,17 @@ impl OtelActor {
         }
         let request = self
             .buffer
-            .encode(&self.resource, &self.instrumentation_scope);
+            .prepare(&self.resource, &self.instrumentation_scope);
 
         // Send the export request
         #[cfg(feature = "benchmark")]
         let result = if self.max_in_flight > 1 {
-            self.queue_export(request).await
+            self.queue_export(request.clone()).await
         } else {
-            self.send_request(request).await
+            self.send_request(request.clone()).await
         };
         #[cfg(not(feature = "benchmark"))]
-        let result = self.send_request(request).await;
+        let result = self.send_request(request.clone()).await;
 
         if let Err(e) = &result {
             self.export_failures += 1;
@@ -419,6 +419,7 @@ impl OtelActor {
             );
         }
 
+        self.buffer.reclaim(request);
         self.buffer.clear();
         self.buffered_counters = 0;
 
@@ -444,7 +445,7 @@ impl OtelActor {
     }
 
     #[cfg(feature = "benchmark")]
-    async fn queue_export(&mut self, request: Bytes) -> Result<(), Box<dyn ExportError>> {
+    async fn queue_export(&mut self, request: WireRequest) -> Result<(), Box<dyn ExportError>> {
         if self.in_flight.len() >= self.max_in_flight {
             self.finish_export().await?;
         }
@@ -465,8 +466,9 @@ impl OtelActor {
             let path = tonic::codegen::http::uri::PathAndQuery::from_static(
                 "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
             );
+            let codec = EncodedMetricsCodec::for_request(&request);
             let response = client
-                .unary(tonic::Request::new(request), path, EncodedMetricsCodec)
+                .unary(tonic::Request::new(request), path, codec)
                 .await?;
             if let Some(partial) = response.into_inner().partial_success {
                 if partial.rejected_data_points > 0 {

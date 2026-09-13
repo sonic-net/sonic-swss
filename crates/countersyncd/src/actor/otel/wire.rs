@@ -7,15 +7,22 @@ use ahash::AHashMap;
 use opentelemetry_proto::tonic::collector::metrics::v1::{
     ExportMetricsServiceRequest, ExportMetricsServiceResponse,
 };
-use prost::bytes::{BufMut, Bytes, BytesMut};
+use prost::bytes::BufMut;
+#[cfg(test)]
+use prost::bytes::{Bytes, BytesMut};
 use std::sync::Arc;
-use tonic::codec::{Codec, EncodeBuf, Encoder, ProstCodec};
+use tonic::codec::{BufferSettings, Codec, EncodeBuf, Encoder, ProstCodec};
 
 // Bound retained series metadata; active requests are bounded by the actor's
 // counter threshold. Clear the cache after a flush when this limit is exceeded.
 const MAX_CACHED_SERIES: usize = 4096;
 const MAX_RETAINED_BYTES: usize = 32 * 1024 * 1024;
 
+#[derive(Clone, Copy)]
+struct Sample {
+    timestamp: u64,
+    value: i64,
+}
 #[derive(Hash, PartialEq, Eq)]
 struct SeriesKey {
     object: Arc<str>,
@@ -25,7 +32,9 @@ struct SeriesKey {
 struct Series {
     metadata: Vec<u8>,
     attributes: Vec<u8>,
-    points: Vec<u8>,
+    // Shared immutable metadata plus a compact contiguous timestamp/value list.
+    // Point attributes are expanded once, only at the OTLP encoding boundary.
+    points: Vec<Sample>,
 }
 pub(super) struct GaugeBuffer {
     index: AHashMap<SeriesKey, usize>,
@@ -104,39 +113,15 @@ impl GaugeBuffer {
         if series.points.is_empty() {
             self.active.push(slot);
         }
-        header(&mut series.points, 10, 18 + series.attributes.len());
-        // NumberDataPoint.time_unix_nano (fixed64), value.as_int (sfixed64).
-        series.points.put_u8(25);
-        series.points.put_u64_le(timestamp);
-        series.points.put_u8(49);
-        series.points.put_i64_le(stat.counter as i64);
-        series.points.extend_from_slice(&series.attributes);
+        series.points.push(Sample {
+            timestamp,
+            value: stat.counter as i64,
+        });
     }
+    #[cfg(test)]
     pub(super) fn encode(&self, resource: &[u8], scope: &[u8]) -> Bytes {
-        let scope_len = field_len(scope.len())
-            + self
-                .active
-                .iter()
-                .map(|&i| {
-                    let s = &self.series[i];
-                    field_len(s.metadata.len() + field_len(s.points.len()))
-                })
-                .sum::<usize>();
-        let resource_len = field_len(resource.len()) + field_len(scope_len);
-        let mut out = BytesMut::with_capacity(field_len(resource_len));
-        header(&mut out, 10, resource_len);
-        header(&mut out, 10, resource.len());
-        out.extend_from_slice(resource);
-        header(&mut out, 18, scope_len);
-        header(&mut out, 10, scope.len());
-        out.extend_from_slice(scope);
-        for &i in &self.active {
-            let s = &self.series[i];
-            header(&mut out, 18, s.metadata.len() + field_len(s.points.len()));
-            out.extend_from_slice(&s.metadata);
-            header(&mut out, 42, s.points.len());
-            out.extend_from_slice(&s.points);
-        }
+        let mut out = BytesMut::with_capacity(field_len(self.encoded_lengths(resource, scope).1));
+        self.encode_into(resource, scope, &mut out);
         out.freeze()
     }
     pub(super) fn clear(&mut self) {
@@ -147,7 +132,11 @@ impl GaugeBuffer {
             || self
                 .series
                 .iter()
-                .map(|s| s.points.capacity() + s.metadata.capacity() + s.attributes.capacity())
+                .map(|s| {
+                    s.points.capacity() * std::mem::size_of::<Sample>()
+                        + s.metadata.capacity()
+                        + s.attributes.capacity()
+                })
                 .sum::<usize>()
                 > MAX_RETAINED_BYTES
         {
@@ -155,28 +144,112 @@ impl GaugeBuffer {
             self.series.clear();
         }
     }
+
+    fn encoded_lengths(&self, resource: &[u8], scope: &[u8]) -> (usize, usize) {
+        let scope_len = field_len(scope.len())
+            + self
+                .active
+                .iter()
+                .map(|&i| {
+                    let s = &self.series[i];
+                    field_len(
+                        s.metadata.len()
+                            + field_len(field_len(18 + s.attributes.len()) * s.points.len()),
+                    )
+                })
+                .sum::<usize>();
+        (scope_len, field_len(resource.len()) + field_len(scope_len))
+    }
+
+    fn encode_into(&self, resource: &[u8], scope: &[u8], out: &mut impl BufMut) {
+        let (scope_len, resource_len) = self.encoded_lengths(resource, scope);
+        header(out, 10, resource_len);
+        header(out, 10, resource.len());
+        out.put_slice(resource);
+        header(out, 18, scope_len);
+        header(out, 10, scope.len());
+        out.put_slice(scope);
+        for &i in &self.active {
+            let s = &self.series[i];
+            let point_len = 18 + s.attributes.len();
+            let gauge_len = field_len(point_len) * s.points.len();
+            header(out, 18, s.metadata.len() + field_len(gauge_len));
+            out.put_slice(&s.metadata);
+            header(out, 42, gauge_len);
+            for sample in &s.points {
+                header(out, 10, point_len);
+                out.put_u8(25);
+                out.put_u64_le(sample.timestamp);
+                out.put_u8(49);
+                out.put_i64_le(sample.value);
+                out.put_slice(&s.attributes);
+            }
+        }
+    }
+
+    pub(super) fn prepare(&mut self, resource: &[u8], scope: &[u8]) -> WireRequest {
+        let buffer = std::mem::replace(self, Self::new());
+        WireRequest(Arc::new(DirectRequest {
+            buffer,
+            resource: resource.to_vec(),
+            scope: scope.to_vec(),
+        }))
+    }
+
+    pub(super) fn reclaim(&mut self, request: WireRequest) {
+        if let Ok(request) = Arc::try_unwrap(request.0) {
+            *self = request.buffer;
+        }
+        // A transport may retain a clone after returning. In that case keep
+        // the fresh buffer; never mutate outstanding sample data.
+    }
 }
 
+pub(super) struct DirectRequest {
+    buffer: GaugeBuffer,
+    resource: Vec<u8>,
+    scope: Vec<u8>,
+}
+#[derive(Clone)]
+pub(super) struct WireRequest(Arc<DirectRequest>);
+
 // Tonic still supplies standard unary gRPC framing, transport and flow control.
-// Bytes clones used for retries share one immutable, already encoded request.
-pub(super) struct EncodedMetricsCodec;
-pub(super) struct EncodedMetricsEncoder;
+// Retries share immutable samples and re-encode exactly the same payload.
+pub(super) struct EncodedMetricsCodec {
+    size: usize,
+}
+impl EncodedMetricsCodec {
+    pub(super) fn for_request(request: &WireRequest) -> Self {
+        let r = &request.0;
+        let size = field_len(r.buffer.encoded_lengths(&r.resource, &r.scope).1) + 5;
+        Self { size }
+    }
+}
+pub(super) struct EncodedMetricsEncoder {
+    size: usize,
+}
 impl Encoder for EncodedMetricsEncoder {
-    type Item = Bytes;
+    type Item = WireRequest;
     type Error = tonic::Status;
-    fn encode(&mut self, item: Bytes, dst: &mut EncodeBuf<'_>) -> Result<(), Self::Error> {
-        dst.put_slice(&item);
+    fn buffer_settings(&self) -> BufferSettings {
+        BufferSettings::new(self.size, 32 * 1024)
+    }
+    fn encode(&mut self, item: WireRequest, dst: &mut EncodeBuf<'_>) -> Result<(), Self::Error> {
+        let request = item.0;
+        request
+            .buffer
+            .encode_into(&request.resource, &request.scope, dst);
         Ok(())
     }
 }
 impl Codec for EncodedMetricsCodec {
-    type Encode = Bytes;
+    type Encode = WireRequest;
     type Decode = ExportMetricsServiceResponse;
     type Encoder = EncodedMetricsEncoder;
     type Decoder =
         <ProstCodec<ExportMetricsServiceRequest, ExportMetricsServiceResponse> as Codec>::Decoder;
     fn encoder(&mut self) -> Self::Encoder {
-        EncodedMetricsEncoder
+        EncodedMetricsEncoder { size: self.size }
     }
     fn decoder(&mut self) -> Self::Decoder {
         ProstCodec::<ExportMetricsServiceRequest, ExportMetricsServiceResponse>::default().decoder()
@@ -189,6 +262,113 @@ mod tests {
     use crate::message::otel::OtelDataPoint;
     use opentelemetry_proto::tonic::metrics::v1::metric::Data;
     use prost::Message;
+
+    #[test]
+    fn direct_request_retains_immutable_samples_and_exact_encoding_size() {
+        let mut buffer = GaugeBuffer::new();
+        let mut stat = SAIStat::new("Ethernet0", 1, 0, u64::MAX);
+        buffer.push(&stat, 10);
+        let request = buffer.prepare(&[], &[]);
+        let held = request.clone();
+        buffer.reclaim(request);
+        buffer.clear();
+        stat.counter = 42;
+        buffer.push(&stat, 20);
+        let old = &held.0;
+        let mut bytes = BytesMut::new();
+        old.buffer
+            .encode_into(&old.resource, &old.scope, &mut bytes);
+        assert_eq!(
+            EncodedMetricsCodec::for_request(&held).size,
+            bytes.len() + 5
+        );
+        let decoded = ExportMetricsServiceRequest::decode(bytes.freeze()).unwrap();
+        let Some(Data::Gauge(g)) = &decoded.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!()
+        };
+        assert_eq!(g.data_points[0].time_unix_nano, 10);
+        assert_eq!(
+            g.data_points[0].value,
+            Some(opentelemetry_proto::tonic::metrics::v1::number_data_point::Value::AsInt(-1))
+        );
+    }
+
+    #[test]
+    fn direct_encoding_matches_reference_across_shape_and_metadata_changes() {
+        let mut buffer = GaugeBuffer::new();
+        let stat = SAIStat::new("Ethernet0", 1, 0, u64::MAX);
+        let other = SAIStat::new("Ethernet4", 21, 1, 7);
+        for (count, reverse, resource) in [
+            (3, false, vec![]),
+            (3, false, vec![]),
+            (3, true, vec![]),
+            (1, false, vec![]),
+            (3, false, vec![0x10, 0x01]),
+        ] {
+            let mut reference = GaugeBuffer::new();
+            for round in 0..count {
+                for s in if reverse {
+                    [&other, &stat]
+                } else {
+                    [&stat, &other]
+                } {
+                    buffer.push(s, round + 100);
+                    reference.push(s, round + 100);
+                }
+            }
+            let expected = reference.encode(&resource, &[]);
+            let request = buffer.prepare(&resource, &[]);
+            let actual = {
+                let r = &request.0;
+                let mut out = BytesMut::new();
+                r.buffer.encode_into(&r.resource, &r.scope, &mut out);
+                out.freeze()
+            };
+            assert_eq!(actual, expected);
+            ExportMetricsServiceRequest::decode(actual).unwrap();
+            buffer.reclaim(request);
+            buffer.clear();
+        }
+    }
+
+    #[test]
+    fn direct_request_returns_sample_capacity_after_ack() {
+        assert_eq!(std::mem::size_of::<Sample>(), 16);
+        let mut buffer = GaugeBuffer::new();
+        let stat = SAIStat::new("Ethernet0", 1, 0, 123);
+        buffer.push(&stat, 10);
+        let pointer = buffer.series[0].points.as_ptr();
+        let first = buffer.prepare(&[], &[]);
+        buffer.reclaim(first);
+        buffer.clear();
+        buffer.push(&stat, 20);
+        assert_eq!(buffer.series[0].points.as_ptr(), pointer);
+        let decoded = ExportMetricsServiceRequest::decode(buffer.encode(&[], &[])).unwrap();
+        let Some(Data::Gauge(g)) = &decoded.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!()
+        };
+        assert_eq!(g.data_points[0].time_unix_nano, 20);
+    }
+
+    #[test]
+    fn metadata_changes_create_distinct_cached_identities() {
+        let mut buffer = GaugeBuffer::new();
+        for stat in [
+            SAIStat::new("Ethernet0", 1, 0, 1),
+            SAIStat::new("Ethernet4", 1, 0, 2),
+            SAIStat::new("Ethernet0", 1, 1, 3),
+        ] {
+            buffer.push(&stat, 100);
+        }
+        let decoded = ExportMetricsServiceRequest::decode(buffer.encode(&[], &[])).unwrap();
+        assert_eq!(
+            decoded.resource_metrics[0].scope_metrics[0].metrics.len(),
+            3
+        );
+        assert_eq!(buffer.index.len(), 3);
+    }
     #[test]
     fn preserves_attributes_values_timestamps_duplicates_and_series_order() {
         let mut buffer = GaugeBuffer::new();
