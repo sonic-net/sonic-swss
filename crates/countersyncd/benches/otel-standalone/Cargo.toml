@@ -21,6 +21,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.12"
 
 [features]
+benchmark = []
 mimalloc = ["dep:mimalloc"]
 
 [[bin]]

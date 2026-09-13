@@ -91,6 +91,11 @@ pub struct OtelActor {
 
     // Shutdown flag
     should_shutdown: bool,
+    // Benchmark-only bounded concurrency experiment. Production stays single-flight.
+    #[cfg(feature = "benchmark")]
+    in_flight: tokio::task::JoinSet<Result<(), tonic::Status>>,
+    #[cfg(feature = "benchmark")]
+    max_in_flight: usize,
 }
 
 impl OtelActor {
@@ -148,6 +153,14 @@ impl OtelActor {
             console_reports: 0,
             consecutive_failures: 0,
             should_shutdown: false,
+            #[cfg(feature = "benchmark")]
+            in_flight: tokio::task::JoinSet::new(),
+            #[cfg(feature = "benchmark")]
+            max_in_flight: std::env::var("OTEL_MAX_IN_FLIGHT")
+                .ok()
+                .map(|s| s.parse::<usize>().expect("positive request concurrency"))
+                .unwrap_or(1)
+                .max(1),
         })
     }
 
@@ -199,6 +212,15 @@ impl OtelActor {
         if run_error.is_none() {
             if let Err(e) = self.flush_buffer().await {
                 run_error = Some(e);
+            }
+        }
+        #[cfg(feature = "benchmark")]
+        if run_error.is_none() {
+            while !self.in_flight.is_empty() {
+                if let Err(error) = self.finish_export().await {
+                    run_error = Some(error);
+                    break;
+                }
             }
         }
         self.shutdown().await;
@@ -377,6 +399,13 @@ impl OtelActor {
             .encode(&self.resource, &self.instrumentation_scope);
 
         // Send the export request
+        #[cfg(feature = "benchmark")]
+        let result = if self.max_in_flight > 1 {
+            self.queue_export(request).await
+        } else {
+            self.send_request(request).await
+        };
+        #[cfg(not(feature = "benchmark"))]
         let result = self.send_request(request).await;
 
         if let Err(e) = &result {
@@ -391,6 +420,62 @@ impl OtelActor {
         self.buffered_counters = 0;
 
         result
+    }
+
+    #[cfg(feature = "benchmark")]
+    async fn finish_export(&mut self) -> Result<(), Box<dyn ExportError>> {
+        match self
+            .in_flight
+            .join_next()
+            .await
+            .expect("an export is in flight")
+        {
+            Ok(Ok(())) => {
+                self.exports_performed += 1;
+                Ok(())
+            }
+            other => Err(Box::new(OtelActorExportError(format!(
+                "concurrent benchmark export failed: {other:?}"
+            )))),
+        }
+    }
+
+    #[cfg(feature = "benchmark")]
+    async fn queue_export(&mut self, request: Bytes) -> Result<(), Box<dyn ExportError>> {
+        if self.in_flight.len() >= self.max_in_flight {
+            self.finish_export().await?;
+        }
+        let mut client = self
+            .get_client()
+            .ok_or_else(|| {
+                Box::new(OtelActorExportError("invalid endpoint".into())) as Box<dyn ExportError>
+            })?
+            .clone();
+        // On a current-thread runtime all these tasks and the channel driver
+        // execute on the same CPU. The queue is bounded and every ACK is joined.
+        // Fail fast instead of hiding failures with retries in this experiment.
+        self.in_flight.spawn(async move {
+            client
+                .ready()
+                .await
+                .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+            let path = tonic::codegen::http::uri::PathAndQuery::from_static(
+                "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
+            );
+            let response = client
+                .unary(tonic::Request::new(request), path, EncodedMetricsCodec)
+                .await?;
+            if let Some(partial) = response.into_inner().partial_success {
+                if partial.rejected_data_points > 0 {
+                    return Err(tonic::Status::data_loss(format!(
+                        "{} rejected points",
+                        partial.rejected_data_points
+                    )));
+                }
+            }
+            Ok(())
+        });
+        Ok(())
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {

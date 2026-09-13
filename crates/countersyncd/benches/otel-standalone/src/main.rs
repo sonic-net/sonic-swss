@@ -185,6 +185,22 @@ fn main() {
             }
             input.push(Arc::new(msg));
         }
+        if let Ok(endpoint) = std::env::var("OTEL_EXTERNAL_ENDPOINT") {
+            assert!(core_affinity::set_for_current(cores[0]));
+            Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+                let (tx,rx)=mpsc::channel(8);
+                let (shutdown_tx,_)=oneshot::channel();
+                let actor=OtelActor::new(rx,OtelActorConfig {collector_endpoint:endpoint.clone(),max_counters_per_export:batch,flush_timeout:Duration::from_secs(1)},shutdown_tx).await.unwrap();
+                let producer=async move {for message in input {tx.send(message).await.map_err(|e|e.to_string())?;}drop(tx);Ok::<_,String>(())};
+                let start=Instant::now();
+                tokio::time::timeout(Duration::from_secs(180),async {
+                    tokio::try_join!(producer,async {actor.run().await.map_err(|e|e.to_string())})
+                }).await.expect("benchmark timed out").expect("all exports must succeed");
+                let elapsed=start.elapsed();
+                println!("trial={trial} external={endpoint} batch={batch} points={points} elapsed_s={:.6} acked_Mpoints_s={:.3}",elapsed.as_secs_f64(),points as f64/elapsed.as_secs_f64()/1e6);
+            });
+            continue;
+        }
         let state = Arc::new(Mutex::new(Received::default()));
         let server_state = state.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();

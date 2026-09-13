@@ -106,7 +106,22 @@ async fn scenario(fail_first: bool, partial: bool, timeout_flush: bool) {
         assert_eq!(requests[0].encode_to_vec(), requests[1].encode_to_vec());
     }
     if partial {
-        assert_eq!(requests.len(), 1, "partial success must not be retried");
+        let concurrent = cfg!(feature = "benchmark")
+            && std::env::var("OTEL_MAX_IN_FLIGHT")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+                > 1;
+        if concurrent {
+            // The tail may already be sent when the first rejection arrives.
+            // Distinct already-in-flight requests are not retries.
+            assert!(requests.len() <= 2);
+            if requests.len() == 2 {
+                assert_ne!(requests[0].encode_to_vec(), requests[1].encode_to_vec());
+            }
+        } else {
+            assert_eq!(requests.len(), 1, "partial success must not be retried");
+        }
         return;
     }
     let mut points = Vec::new();

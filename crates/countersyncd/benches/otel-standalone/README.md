@@ -1,5 +1,40 @@
 # Single-flight OtelActor experiment (draft: throughput target not met)
 
+## Follow-up: bounded concurrency against an actual Go Collector
+
+The original **single-flight** target remains unmet. A benchmark-only concurrent
+path now demonstrates **5.665 / 5.781M ACKed points/s** (two 200M-point runs) with
+eight in-flight requests, 10K points/request and one pinned client runtime thread.
+Sixteen in-flight requests reached 5.984 / 6.152 / 6.109M/s in three 40M-point runs.
+Go Collector core v0.123.0 ran on CPUs 2-15 with GOMAXPROCS=12, default GC and a
+nop exporter on zegan-dev-vm (Ubuntu, Xeon 8370C). All accepted-point deltas matched
+the generated input and refused points were zero. These are receive/ACK rates,
+not persistence. The Go runs check counts, not every decoded value; the real
+Tonic tests and encoder tests separately cover decoded field correctness.
+
+Build with `--features benchmark,mimalloc` (and optionally
+`RUSTFLAGS='-C target-cpu=native'`). Set `OTEL_MAX_IN_FLIGHT=8` and
+`OTEL_EXTERNAL_ENDPOINT=http://127.0.0.1:24317`. Without the `benchmark` feature
+the production actor remains single-flight. The external endpoint mode expects
+the runner to verify receiver counters independently. `collector_bench.py` and
+`collector.yaml` provide that runner for Linux and optionally capture Go pprof.
+
+The concurrent experiment uses cloned clients sharing one Tonic Channel/HTTP2
+connection. All tasks run on the pinned current-thread runtime. At most N tasks
+are outstanding, with one additional assembled batch possible while waiting for
+a slot. Final completion drains all ACKs. Errors/partial rejections fail the test;
+the concurrent path deliberately does not retry, so it is NOT production-ready.
+Already dispatched requests can finish after another request fails. Cross-request
+arrival order is not guaranteed. Production adoption requires retry/cancellation
+and per-series ordering policy, and tests for those semantics.
+
+Linux 40M-point, three-trial throughput ranges (10K batch): N=1 1.361-1.381M/s,
+N=4 3.928-3.941M/s, N=8 5.547-5.694M/s. At 100K batch, shorter 4M-point tests were
+slower: N=4 2.591-2.930, N=8 3.434-3.670, N=16 3.000-3.312M/s. Input data generation
+is outside timed ACK intervals, but `/usr/bin/time` includes it and must not be
+treated as exact steady-state sender CPU utilization. Prebuilt 200M-point input
+uses approximately 6.4 GiB; that is NOT the bounded in-flight request memory.
+
 This standalone package imports the **actual** actor, SAI message, OTel message,
 and communication-statistics source files. It avoids the unrelated netlink and
 SONiC native-library dependencies of the daemon. It is not a replacement actor.
