@@ -164,6 +164,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "core_affinity",
+ "libc",
  "log",
  "mimalloc",
  "once_cell",

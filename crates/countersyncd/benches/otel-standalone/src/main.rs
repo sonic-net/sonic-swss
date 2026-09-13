@@ -28,6 +28,25 @@ use tonic::{transport::Server, Request, Response, Status};
 #[cfg(feature = "mimalloc")]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// External-Collector mode has no receiver threads in this process. Sampling
+// process CPU inside the timed interval excludes input generation/setup.
+#[cfg(target_os = "linux")]
+fn process_cpu_seconds() -> f64 {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) },
+        0
+    );
+    time.tv_sec as f64 + time.tv_nsec as f64 / 1e9
+}
+#[cfg(not(target_os = "linux"))]
+fn process_cpu_seconds() -> f64 {
+    f64::NAN
+}
+
 #[derive(Default, Debug)]
 struct Received {
     points: u64,
@@ -192,12 +211,14 @@ fn main() {
                 let (shutdown_tx,_)=oneshot::channel();
                 let actor=OtelActor::new(rx,OtelActorConfig {collector_endpoint:endpoint.clone(),max_counters_per_export:batch,flush_timeout:Duration::from_secs(1)},shutdown_tx).await.unwrap();
                 let producer=async move {for message in input {tx.send(message).await.map_err(|e|e.to_string())?;}drop(tx);Ok::<_,String>(())};
+                let cpu_start=process_cpu_seconds();
                 let start=Instant::now();
                 tokio::time::timeout(Duration::from_secs(180),async {
                     tokio::try_join!(producer,async {actor.run().await.map_err(|e|e.to_string())})
                 }).await.expect("benchmark timed out").expect("all exports must succeed");
                 let elapsed=start.elapsed();
-                println!("trial={trial} external={endpoint} batch={batch} points={points} elapsed_s={:.6} acked_Mpoints_s={:.3}",elapsed.as_secs_f64(),points as f64/elapsed.as_secs_f64()/1e6);
+                let cpu=process_cpu_seconds()-cpu_start;
+                println!("trial={trial} external={endpoint} batch={batch} points={points} elapsed_s={:.6} acked_Mpoints_s={:.3} client_cpu_s={cpu:.6} client_cpu_cores={:.3}",elapsed.as_secs_f64(),points as f64/elapsed.as_secs_f64()/1e6,cpu/elapsed.as_secs_f64());
             });
             continue;
         }

@@ -19,7 +19,8 @@ def metrics():
     text = urllib.request.urlopen("http://127.0.0.1:28888/metrics", timeout=5).read().decode()
     result = {}
     for key in ("otelcol_receiver_accepted_metric_points", "otelcol_receiver_refused_metric_points",
-                "otelcol_process_cpu_seconds"):
+                "otelcol_process_cpu_seconds", "otelcol_process_runtime_total_alloc_bytes",
+                "otelcol_process_memory_rss_bytes"):
         result[key] = sum(float(line.split()[-1]) for line in text.splitlines()
                           if not line.startswith("#") and line.split("{")[0].split()[0]
                           in (key, key + "_total"))
@@ -36,8 +37,9 @@ def profile(output, seconds):
     with urllib.request.urlopen(f"http://127.0.0.1:21777/debug/pprof/profile?seconds={seconds}",
                                 timeout=seconds + 15) as response:
         output.with_suffix(".cpu.pprof").write_bytes(response.read())
-    with urllib.request.urlopen("http://127.0.0.1:21777/debug/pprof/allocs", timeout=15) as response:
-        output.with_suffix(".allocs.pprof").write_bytes(response.read())
+    for kind in ("allocs", "heap"):
+        with urllib.request.urlopen(f"http://127.0.0.1:21777/debug/pprof/{kind}", timeout=15) as response:
+            output.with_suffix(f".{kind}.pprof").write_bytes(response.read())
 
 
 def main():
@@ -86,12 +88,15 @@ def main():
                     print(run.stdout, end="", flush=True)
                     run.check_returncode()
                     after = metrics()
+                    raw_metrics=urllib.request.urlopen("http://127.0.0.1:28888/metrics",timeout=5).read()
+                    output.with_suffix(".metrics.txt").write_bytes(raw_metrics)
                     if task:
                         task.result()
                 delta = {key: after[key] - before[key] for key in before}
                 assert delta["otelcol_receiver_accepted_metric_points"] == args.points * args.repeats, delta
                 assert delta["otelcol_receiver_refused_metric_points"] == 0, delta
                 result = {**vars(args), "inflight": inflight, "stdout": run.stdout,
+                          "collector_after": after,
                           "process_time": run.stderr, "collector_delta": delta}
                 output.with_suffix(".json").write_text(json.dumps(result, default=str, indent=2))
                 print(json.dumps(result, default=str), flush=True)
