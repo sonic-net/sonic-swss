@@ -21,6 +21,9 @@ use tonic::transport::{Channel, Endpoint};
 #[path = "otel/wire.rs"]
 mod wire;
 use wire::{EncodedMetricsCodec, GaugeBuffer};
+#[path = "otel/pool.rs"]
+pub mod pool;
+pub use pool::{OtelWorkerConfig, OtelWorkerPool};
 
 const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;

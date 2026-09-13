@@ -17,7 +17,7 @@ use crate::actor::{
     counter_db::{CounterDBActor, CounterDBConfig},
     data_netlink::{get_genl_family_group, DataNetlinkActor},
     ipfix::IpfixActor,
-    otel::{OtelActor, OtelActorConfig},
+    otel::{OtelActorConfig, OtelWorkerConfig, OtelWorkerPool},
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
 };
@@ -313,6 +313,22 @@ struct Args {
         help = "Flush timeout (ms) for OTLP export batch"
     )]
     otel_flush_timeout_ms: u64,
+
+    /// Number of dedicated OTLP worker threads (fixed at startup)
+    #[arg(long, default_value = "1", value_parser = parse_positive_capacity)]
+    otel_worker_threads: usize,
+
+    /// Independent ordered single-flight lanes per worker
+    #[arg(long, default_value = "1", value_parser = parse_positive_capacity)]
+    otel_in_flight_per_worker: usize,
+
+    /// Optional CPU IDs, one per worker; omit to let the OS schedule workers
+    #[arg(long, value_delimiter = ',')]
+    otel_worker_cpus: Vec<usize>,
+
+    /// Maximum queued input batches per ordered OTLP lane
+    #[arg(long, default_value = "8", value_parser = parse_positive_capacity)]
+    otel_worker_queue_capacity: usize,
 }
 
 impl Args {
@@ -332,6 +348,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
     args.normalize_capacities();
+    if args.enable_otel {
+        OtelWorkerConfig {
+            threads: args.otel_worker_threads,
+            in_flight_per_worker: args.otel_in_flight_per_worker,
+            cpu_ids: args.otel_worker_cpus.clone(),
+            queue_capacity: args.otel_worker_queue_capacity,
+        }
+        .validate()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        if args.otel_max_counters_per_export == 0 || args.otel_flush_timeout_ms == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "OTel batch size and timeout must be positive",
+            )
+            .into());
+        }
+    }
 
     if let Some(value) = args.socket_readiness_timeout_ms {
         warn!(
@@ -481,7 +514,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Add OTEL to ipfix recipients only when enabled
         ipfix.add_recipient(otel_sender.clone());
-        match OtelActor::new(otel_receiver, otel_config, otel_shutdown_sender).await {
+        let workers = OtelWorkerConfig {
+            threads: args.otel_worker_threads,
+            in_flight_per_worker: args.otel_in_flight_per_worker,
+            cpu_ids: args.otel_worker_cpus.clone(),
+            queue_capacity: args.otel_worker_queue_capacity,
+        };
+        info!("OpenTelemetry workers: {:?}", workers);
+        match OtelWorkerPool::new(otel_receiver, otel_config, workers, otel_shutdown_sender) {
             Ok(actor) => Some(actor),
             Err(e) => {
                 error!("Failed to initialize OtelActor: {}", e);
@@ -550,7 +590,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut otel_handle = if let Some(otel_actor) = otel_actor {
         Some(spawn(async move {
             info!("OpenTelemetry actor started");
-            let result = OtelActor::run(otel_actor).await;
+            let result = otel_actor.run().await;
             info!("OpenTelemetry actor terminated");
             result
         }))
@@ -711,5 +751,37 @@ mod tests {
     #[test]
     fn test_unknown_flag_rejected() {
         assert!(parse(&["countersyncd", "--unknown-flag"]).is_err());
+    }
+
+    #[test]
+    fn test_otel_worker_options() {
+        let defaults = parse(&["countersyncd"]).unwrap();
+        assert_eq!(defaults.otel_worker_threads, 1);
+        assert_eq!(defaults.otel_in_flight_per_worker, 1);
+        assert_eq!(defaults.otel_worker_queue_capacity, 8);
+        assert!(defaults.otel_worker_cpus.is_empty());
+        let args = parse(&[
+            "countersyncd",
+            "--otel-worker-threads",
+            "2",
+            "--otel-in-flight-per-worker",
+            "4",
+            "--otel-worker-cpus",
+            "0,2",
+            "--otel-worker-queue-capacity",
+            "3",
+        ])
+        .unwrap();
+        assert_eq!(args.otel_worker_threads, 2);
+        assert_eq!(args.otel_in_flight_per_worker, 4);
+        assert_eq!(args.otel_worker_cpus, vec![0, 2]);
+        assert_eq!(args.otel_worker_queue_capacity, 3);
+        for flag in [
+            "--otel-worker-threads",
+            "--otel-in-flight-per-worker",
+            "--otel-worker-queue-capacity",
+        ] {
+            assert!(parse(&["countersyncd", flag, "0"]).is_err());
+        }
     }
 }

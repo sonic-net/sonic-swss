@@ -1,5 +1,19 @@
 # Single-flight OtelActor experiment (draft: throughput target not met)
 
+## Current configurable implementation
+
+The daemon now uses an ordered, explicitly configured worker pool. See
+[`WORKER_CONFIGURATION.md`](WORKER_CONFIGURATION.md) for thread/CPU, per-worker
+in-flight lane and queue parameters, correctness tests, and benchmarks that
+include live routing. Defaults are one worker and one single-flight lane.
+The unordered benchmark-only concurrency experiment described below remains a
+separate historical diagnostic path; it is not used by the production pool.
+
+[`raw-grpc/README.md`](raw-grpc/README.md) documents the non-decoding receive-only
+test server. [`raw-grpc/ORDERED_SCALING.md`](raw-grpc/ORDERED_SCALING.md) records
+pre-sharded sender scaling; its timing excludes routing and should not be
+confused with the new pool benchmark.
+
 ## Follow-up: bounded concurrency against an actual Go Collector
 
 The original **single-flight** target remains unmet. A benchmark-only concurrent

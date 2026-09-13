@@ -56,6 +56,8 @@ def main():
     parser.add_argument("--gomaxprocs", type=int, default=12)
     parser.add_argument("--gogc", default="100")
     parser.add_argument("--client-cpus", default="0", help="comma-separated CPUs for multithread binary")
+    parser.add_argument("--pool", action="store_true", help="use production ordered pool including routing cost")
+    parser.add_argument("--router-cpu", type=int, default=0)
     parser.add_argument("--profile-seconds", type=int, default=0)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -81,9 +83,14 @@ def main():
                 assert before["otelcol_receiver_accepted_metric_points"] == 0, "use dedicated test ports"
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     task = pool.submit(profile, output, args.profile_seconds) if args.profile_seconds else None
+                    client_args=[str(args.batch),str(args.points),str(args.repeats)]
+                    if args.pool:
+                        client_args=["--endpoint","http://127.0.0.1:24317","--threads",str(len(args.client_cpus.split(','))),"--cpus",args.client_cpus,
+                                     "--in-flight-per-worker",str(inflight),"--router-cpu",str(args.router_cpu),
+                                     "--batch",str(args.batch),"--points",str(args.points),"--repeats",str(args.repeats)]
                     run = subprocess.run(
                         ["/usr/bin/time", "-f", "wall=%e user=%U sys=%S maxrss_KiB=%M",
-                         str(args.client.resolve()), str(args.batch), str(args.points), str(args.repeats)],
+                         str(args.client.resolve()), *client_args],
                         env=dict(os.environ, OTEL_EXTERNAL_ENDPOINT="http://127.0.0.1:24317",
                                  OTEL_MAX_IN_FLIGHT=str(inflight), OTEL_CLIENT_CPUS=args.client_cpus), text=True, capture_output=True, timeout=600)
                     print(run.stdout, end="", flush=True)

@@ -67,12 +67,24 @@ fn main() {
     let endpoint = std::env::var("OTEL_EXTERNAL_ENDPOINT")
         .expect("requires external Collector and independent count verification");
     let workers = worker_cpus.len();
+    let lanes: usize = std::env::var("OTEL_LANES_PER_WORKER")
+        .ok()
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
+    assert!(lanes > 0 && workers * lanes <= 500);
+    if lanes > 1 {
+        assert_eq!(
+            std::env::var("OTEL_MAX_IN_FLIGHT").unwrap_or("1".into()),
+            "1",
+            "ordered lanes require single-flight actors"
+        );
+    }
     let objects: Vec<Arc<str>> = (0..500)
         .map(|i| Arc::from(format!("Ethernet{i}")))
         .collect();
-    let mut ids = vec![Vec::new(); workers];
+    let mut ids = vec![Vec::new(); workers * lanes];
     for (i, object) in objects.iter().enumerate() {
-        ids[shard(object, 1, i as u32, workers)].push(i);
+        ids[shard(object, 1, i as u32, workers * lanes)].push(i);
     }
     assert!(ids.iter().all(|s| !s.is_empty()));
     for trial in 0..repeats {
@@ -109,7 +121,11 @@ fn main() {
         // Runtime and actor setup complete before all threads start together.
         let ready = Arc::new(Barrier::new(workers + 1));
         let start_gate = Arc::new(Barrier::new(workers + 1));
-        let handles: Vec<_> = inputs
+        let mut inputs = inputs.into_iter();
+        let grouped: Vec<_> = (0..workers)
+            .map(|_| inputs.by_ref().take(lanes).collect::<Vec<_>>())
+            .collect();
+        let handles: Vec<_> = grouped
             .into_iter()
             .zip(&worker_cpus)
             .enumerate()
@@ -117,7 +133,9 @@ fn main() {
                 let endpoint = endpoint.clone();
                 let ready = ready.clone();
                 let start_gate = start_gate.clone();
-                let worker_points = expected[worker];
+                let worker_points = expected[worker * lanes..(worker + 1) * lanes]
+                    .iter()
+                    .sum::<usize>();
                 thread::spawn(move || {
                     assert!(core_affinity::set_for_current(core_affinity::CoreId {
                         id: cpu
@@ -127,34 +145,45 @@ fn main() {
                         .build()
                         .unwrap()
                         .block_on(async {
-                            let (tx, rx) = mpsc::channel(8);
-                            let (shutdown_tx, _) = oneshot::channel();
-                            let actor = OtelActor::new(
-                                rx,
-                                OtelActorConfig {
-                                    collector_endpoint: endpoint,
-                                    max_counters_per_export: batch,
-                                    flush_timeout: Duration::from_secs(1),
-                                },
-                                shutdown_tx,
-                            )
-                            .await
-                            .unwrap();
+                            let mut prepared = Vec::new();
+                            for lane_input in input {
+                                let (tx, rx) = mpsc::channel(8);
+                                let (shutdown_tx, _) = oneshot::channel();
+                                let actor = OtelActor::new(
+                                    rx,
+                                    OtelActorConfig {
+                                        collector_endpoint: endpoint.clone(),
+                                        max_counters_per_export: batch,
+                                        flush_timeout: Duration::from_secs(1),
+                                    },
+                                    shutdown_tx,
+                                )
+                                .await
+                                .unwrap();
+                                prepared.push((lane_input, tx, actor));
+                            }
                             ready.wait();
                             start_gate.wait();
                             let cpu_start = thread_cpu();
                             let start = Instant::now();
-                            let producer = async move {
-                                for message in input {
-                                    tx.send(message).await.map_err(|e| e.to_string())?;
-                                }
-                                drop(tx);
-                                Ok::<_, String>(())
-                            };
+                            let mut tasks = Vec::new();
+                            for (input, tx, actor) in prepared {
+                                tasks.push(async move {
+                                    let producer = async move {
+                                        for message in input {
+                                            tx.send(message).await.map_err(|e| e.to_string())?;
+                                        }
+                                        Ok::<_, String>(())
+                                    };
+                                    tokio::try_join!(producer, async {
+                                        actor.run().await.map_err(|e| e.to_string())
+                                    })?;
+                                    Ok::<_, String>(())
+                                });
+                            }
                             tokio::time::timeout(Duration::from_secs(180), async {
-                                tokio::try_join!(producer, async {
-                                    actor.run().await.map_err(|e| e.to_string())
-                                })
+                                futures_util::future::try_join_all(tasks).await?;
+                                Ok::<_, String>(())
                             })
                             .await
                             .expect("worker timeout")
@@ -178,7 +207,7 @@ fn main() {
             .collect();
         let elapsed = start.elapsed().as_secs_f64();
         let cpu = results.iter().map(|r| r.3).sum::<f64>();
-        println!("trial={trial} workers={workers} batch={batch} points={points} elapsed_s={elapsed:.6} acked_Mpoints_s={:.3} client_cpu_s={cpu:.6} client_cpu_cores={:.3} worker_details={results:?}",points as f64/elapsed/1e6,cpu/elapsed);
+        println!("trial={trial} workers={workers} lanes_per_worker={lanes} batch={batch} points={points} elapsed_s={elapsed:.6} acked_Mpoints_s={:.3} client_cpu_s={cpu:.6} client_cpu_cores={:.3} worker_details={results:?}",points as f64/elapsed/1e6,cpu/elapsed);
     }
 }
 

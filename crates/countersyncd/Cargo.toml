@@ -38,6 +38,8 @@ chrono = { workspace = true }
 
 # Utilities
 once_cell = { workspace = true }
+core_affinity = "0.8"
+futures-util = "0.3"
 
 # Command line utilities
 clap = { workspace = true }
