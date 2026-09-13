@@ -3,13 +3,10 @@ use crate::utilities::{record_comm_stats, ChannelLabel};
 use log::{debug, error, info, warn};
 use opentelemetry::ExportError;
 use opentelemetry_proto::tonic::{
-    collector::metrics::v1::{
-        metrics_service_client::MetricsServiceClient, ExportMetricsServiceRequest,
-    },
     common::v1::{any_value::Value, AnyValue, InstrumentationScope, KeyValue as ProtoKeyValue},
-    metrics::v1::{Gauge as ProtoGauge, Metric, ResourceMetrics, ScopeMetrics},
     resource::v1::Resource as ProtoResource,
 };
+use prost::{bytes::Bytes, Message};
 use std::{
     fmt::{Display, Formatter},
     pin::Pin,
@@ -21,6 +18,9 @@ use tokio::{
     time::{sleep_until, Instant as TokioInstant, Sleep},
 };
 use tonic::transport::{Channel, Endpoint};
+#[path = "otel/wire.rs"]
+mod wire;
+use wire::{EncodedMetricsCodec, GaugeBuffer};
 
 const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;
@@ -69,14 +69,14 @@ pub struct OtelActor {
     stats_receiver: Receiver<SAIStatsBatchMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
-    client: Option<MetricsServiceClient<Channel>>,
+    client: Option<tonic::client::Grpc<Channel>>,
 
     // Pre-allocated reusable structures
-    resource: ProtoResource,
-    instrumentation_scope: InstrumentationScope,
+    resource: Vec<u8>,
+    instrumentation_scope: Vec<u8>,
 
     // Batching
-    buffer: Vec<OtelMetrics>,
+    buffer: GaugeBuffer,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
 
@@ -126,6 +126,10 @@ impl OtelActor {
             config.collector_endpoint
         );
 
+        if config.max_counters_per_export == 0 || config.flush_timeout.is_zero() {
+            return Err("OTel batch size and flush timeout must be positive".into());
+        }
+
         let flush_deadline = TokioInstant::now() + config.flush_timeout;
 
         Ok(OtelActor {
@@ -133,9 +137,9 @@ impl OtelActor {
             config,
             shutdown_notifier: Some(shutdown_notifier),
             client,
-            resource,
-            instrumentation_scope,
-            buffer: Vec::new(),
+            resource: resource.encode_to_vec(),
+            instrumentation_scope: instrumentation_scope.encode_to_vec(),
+            buffer: GaugeBuffer::new(),
             buffered_counters: 0,
             flush_deadline,
             messages_received: 0,
@@ -218,28 +222,19 @@ impl OtelActor {
                 stats.observation_time
             );
 
-            let was_empty = self.buffer.is_empty();
-
-            // Convert to OTel format using message types and buffer
-            let otel_metrics = OtelMetrics::from_sai_stats(stats);
-            let counters_in_message = stats.stats.len();
-
             if log::log_enabled!(log::Level::Debug) {
+                let otel_metrics = OtelMetrics::from_sai_stats(stats);
                 self.print_otel_metrics(&otel_metrics).await;
             }
-
-            self.buffer.push(otel_metrics);
-            self.buffered_counters += counters_in_message;
-
-            // Start timeout when buffer transitions from empty to non-empty
-            if was_empty {
-                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
-            }
-
-            // Force flush when counter threshold is reached
-            if self.buffered_counters >= self.config.max_counters_per_export {
-                self.flush_buffer().await?;
-                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+            for stat in stats.stats {
+                if self.buffered_counters == 0 {
+                    self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+                }
+                self.buffer.push(stat, stats.observation_time);
+                self.buffered_counters += 1;
+                if self.buffered_counters >= self.config.max_counters_per_export {
+                    self.flush_buffer().await?;
+                }
             }
         }
 
@@ -294,7 +289,7 @@ impl OtelActor {
     }
 
     // Get or create the Otel MetricsServiceClient
-    fn get_client(&mut self) -> Option<&mut MetricsServiceClient<Channel>> {
+    fn get_client(&mut self) -> Option<&mut tonic::client::Grpc<Channel>> {
         if self.client.is_none() {
             let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
                 Ok(e) => e,
@@ -305,16 +300,13 @@ impl OtelActor {
             };
 
             let channel = endpoint.connect_lazy();
-            self.client = Some(MetricsServiceClient::new(channel));
+            self.client = Some(tonic::client::Grpc::new(channel));
         }
 
         self.client.as_mut()
     }
 
-    async fn send_request(
-        &mut self,
-        request: ExportMetricsServiceRequest,
-    ) -> Result<(), Box<dyn ExportError>> {
+    async fn send_request(&mut self, request: Bytes) -> Result<(), Box<dyn ExportError>> {
         for attempt in 1..=MAX_EXPORT_RETRIES {
             // Ensure we have a client
             let client = match self.get_client() {
@@ -328,8 +320,33 @@ impl OtelActor {
             };
 
             // Attempt to send the request
-            match client.export(request.clone()).await {
-                Ok(_) => {
+            let result = async {
+                client
+                    .ready()
+                    .await
+                    .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+                let path = tonic::codegen::http::uri::PathAndQuery::from_static(
+                    "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
+                );
+                client
+                    .unary(
+                        tonic::Request::new(request.clone()),
+                        path,
+                        EncodedMetricsCodec,
+                    )
+                    .await
+            }
+            .await;
+            match result {
+                Ok(response) => {
+                    if let Some(partial) = response.into_inner().partial_success {
+                        if partial.rejected_data_points > 0 {
+                            return Err(Box::new(OtelActorExportError(format!(
+                                "Collector rejected {} data points: {}",
+                                partial.rejected_data_points, partial.error_message
+                            ))));
+                        }
+                    }
                     // Successful export
                     self.exports_performed += 1;
                     self.consecutive_failures = 0;
@@ -352,51 +369,12 @@ impl OtelActor {
 
     // Export buffered metrics to OpenTelemetry collector
     async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
-        if self.buffer.is_empty() {
+        if self.buffered_counters == 0 {
             return Ok(());
         }
-
-        let mut proto_metrics: Vec<Metric> = Vec::new();
-
-        for otel_metrics in &self.buffer {
-            for gauge in &otel_metrics.gauges {
-                let proto_data_points = gauge.data_points.iter().map(|dp| dp.to_proto()).collect();
-
-                let proto_gauge = ProtoGauge {
-                    data_points: proto_data_points,
-                };
-
-                proto_metrics.push(Metric {
-                    name: gauge.name.clone(),
-                    description: gauge.description.clone(),
-                    metadata: vec![],
-                    data: Some(
-                        opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge),
-                    ),
-                    ..Default::default()
-                });
-            }
-        }
-
-        if proto_metrics.is_empty() {
-            self.buffer.clear();
-            self.buffered_counters = 0;
-            return Ok(());
-        }
-
-        let resource_metrics = ResourceMetrics {
-            resource: Some(self.resource.clone()),
-            scope_metrics: vec![ScopeMetrics {
-                scope: Some(self.instrumentation_scope.clone()),
-                schema_url: String::new(),
-                metrics: proto_metrics,
-            }],
-            schema_url: String::new(),
-        };
-
-        let request = ExportMetricsServiceRequest {
-            resource_metrics: vec![resource_metrics],
-        };
+        let request = self
+            .buffer
+            .encode(&self.resource, &self.instrumentation_scope);
 
         // Send the export request
         let result = self.send_request(request).await;
@@ -431,8 +409,8 @@ impl OtelActor {
     async fn shutdown(self) {
         info!("Shutting down OtelActor...");
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
+        // run() has already awaited the final export response. No grace sleep
+        // is necessary: there are no background exports to drain.
         if let Some(notifier) = self.shutdown_notifier {
             let _ = notifier.send(());
         }
@@ -480,10 +458,24 @@ mod tests {
 
         assert_eq!(actor.messages_received, 2);
         assert_eq!(actor.buffered_counters, 3);
-        assert_eq!(actor.buffer.len(), 2);
-        assert_eq!(actor.buffer[0].gauges[0].data_points[0].value, 3);
-        assert_eq!(actor.buffer[0].gauges[1].data_points[0].value, 4);
-        assert_eq!(actor.buffer[1].gauges[0].data_points[0].value, 5);
-        assert_eq!(actor.buffer[1].gauges[0].data_points[0].time_unix_nano, 20);
+        use opentelemetry_proto::tonic::{
+            collector::metrics::v1::ExportMetricsServiceRequest,
+            metrics::v1::{metric::Data, number_data_point::Value},
+        };
+        let request = ExportMetricsServiceRequest::decode(
+            actor
+                .buffer
+                .encode(&actor.resource, &actor.instrumentation_scope),
+        )
+        .unwrap();
+        let metrics = &request.resource_metrics[0].scope_metrics[0].metrics;
+        assert_eq!(metrics.len(), 3);
+        for (metric, (value, time)) in metrics.iter().zip([(3, 10), (4, 10), (5, 20)]) {
+            let Some(Data::Gauge(g)) = &metric.data else {
+                panic!("expected Gauge")
+            };
+            assert_eq!(g.data_points[0].value, Some(Value::AsInt(value)));
+            assert_eq!(g.data_points[0].time_unix_nano, time);
+        }
     }
 }

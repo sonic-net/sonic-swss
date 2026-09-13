@@ -21,6 +21,7 @@ use ipfix_bench_data::{datasets, PreparedDataset};
 /// Simple mock collector service that just counts exports.
 struct MockMetricsService {
     exports: Arc<AtomicU64>,
+    points: Arc<AtomicU64>,
 }
 
 #[tonic::async_trait]
@@ -29,13 +30,26 @@ impl opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server:
 {
     async fn export(
         &self,
-        _request: Request<
+        request: Request<
             opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest,
         >,
     ) -> Result<
         Response<opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceResponse>,
         Status,
     > {
+        use opentelemetry_proto::tonic::metrics::v1::metric::Data;
+        let points = request
+            .get_ref()
+            .resource_metrics
+            .iter()
+            .flat_map(|r| &r.scope_metrics)
+            .flat_map(|s| &s.metrics)
+            .map(|m| match &m.data {
+                Some(Data::Gauge(g)) => g.data_points.len() as u64,
+                _ => panic!("expected gauge"),
+            })
+            .sum::<u64>();
+        self.points.fetch_add(points, Ordering::Relaxed);
         self.exports.fetch_add(1, Ordering::Relaxed);
         Ok(Response::new(Default::default()))
     }
@@ -47,11 +61,14 @@ fn start_mock_collector() -> (
     oneshot::Sender<()>,
     thread::JoinHandle<()>,
     Arc<AtomicU64>,
+    Arc<AtomicU64>,
 ) {
     let (addr_tx, addr_rx) = std::sync::mpsc::channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let exports = Arc::new(AtomicU64::new(0));
     let exports_clone = exports.clone();
+    let points = Arc::new(AtomicU64::new(0));
+    let server_points = points.clone();
 
     let handle = thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("mock collector runtime");
@@ -62,14 +79,14 @@ fn start_mock_collector() -> (
             let addr = listener.local_addr().expect("collector addr");
             addr_tx.send(addr).expect("send collector addr");
 
-            let svc = MockMetricsService { exports: exports_clone };
+            let svc = MockMetricsService { exports: exports_clone,points:server_points };
             let incoming = TcpListenerStream::new(listener);
 
             Server::builder()
                 .add_service(
                     opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_server::MetricsServiceServer::new(
                         svc,
-                    ),
+                    ).max_decoding_message_size(128 * 1024 * 1024),
                 )
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = shutdown_rx.await;
@@ -80,7 +97,13 @@ fn start_mock_collector() -> (
     });
 
     let addr: SocketAddr = addr_rx.recv().expect("collector addr recv");
-    (format!("http://{}", addr), shutdown_tx, handle, exports)
+    (
+        format!("http://{}", addr),
+        shutdown_tx,
+        handle,
+        exports,
+        points,
+    )
 }
 
 fn build_stats_message(counters: usize, seed: u64) -> Arc<SAIStatsBatch> {
@@ -96,7 +119,21 @@ fn build_stats_message(counters: usize, seed: u64) -> Arc<SAIStatsBatch> {
     Arc::new(SAIStats::new(seed, stats).into())
 }
 
-async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::Duration, usize) {
+fn prepare_stats(prepared: PreparedDataset) -> (Vec<Arc<SAIStatsBatch>>, usize) {
+    let mut input = Vec::new();
+    for tmpl in prepared.templates.iter() {
+        for msg_idx in 0..tmpl.records {
+            input.push(build_stats_message(tmpl.spec.counters, msg_idx as u64));
+        }
+    }
+    (input, prepared.expected_counters)
+}
+
+async fn run_stream(
+    input: Vec<Arc<SAIStatsBatch>>,
+    total_counters: usize,
+    endpoint: String,
+) -> (std::time::Duration, usize) {
     let (tx, rx) = mpsc::channel(1024);
     let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 
@@ -112,19 +149,17 @@ async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::
 
     let handle = tokio::spawn(async move { actor.run().await });
 
-    let total_counters = prepared.expected_counters;
     let start = std::time::Instant::now();
-
-    for tmpl in prepared.templates.iter() {
-        for msg_idx in 0..tmpl.records {
-            let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            tx.send(msg).await.expect("send stats");
-        }
+    for msg in input {
+        tx.send(msg).await.expect("send stats");
     }
 
     drop(tx); // close channel so actor exits after processing
 
-    let _ = handle.await;
+    handle
+        .await
+        .expect("actor joined")
+        .expect("all exports succeeded");
     let elapsed = start.elapsed();
 
     (elapsed, total_counters)
@@ -139,7 +174,8 @@ fn counters_per_second(elapsed: std::time::Duration, counters: usize) -> f64 {
 }
 
 fn bench_otel_actor(c: &mut Criterion) {
-    let (endpoint, collector_shutdown, collector_handle, exports_counter) = start_mock_collector();
+    let (endpoint, collector_shutdown, collector_handle, exports_counter, points_counter) =
+        start_mock_collector();
     let mut group = c.benchmark_group("otel_actor_perf");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(30));
@@ -155,6 +191,7 @@ fn bench_otel_actor(c: &mut Criterion) {
 
         let endpoint = endpoint_clone.clone();
         let exports_counter = exports_counter.clone();
+        let points_counter = points_counter.clone();
 
         group.bench_function(bench_id, move |b| {
             let rt = Builder::new_current_thread()
@@ -165,22 +202,30 @@ fn bench_otel_actor(c: &mut Criterion) {
             let spec = spec.clone();
             let endpoint = endpoint.clone();
             let exports_counter = exports_counter.clone();
+            let points_counter = points_counter.clone();
 
             b.to_async(&rt).iter_batched(
                 {
                     let spec = spec.clone();
-                    move || PreparedDataset::new(spec.clone())
+                    move || prepare_stats(PreparedDataset::new(spec.clone()))
                 },
-                move |prepared| {
+                move |(input, total_counters)| {
                     let endpoint = endpoint.clone();
                     let exports_counter = exports_counter.clone();
                     let spec = spec.clone();
+                    let points_counter = points_counter.clone();
                     async move {
                         let exports_before = exports_counter.load(Ordering::Relaxed);
+                        let points_before = points_counter.load(Ordering::Relaxed);
 
-                        let (elapsed, counters) = run_stream(prepared, endpoint.clone()).await;
+                        let (elapsed, counters) =
+                            run_stream(input, total_counters, endpoint.clone()).await;
 
                         let exports_after = exports_counter.load(Ordering::Relaxed);
+                        assert_eq!(
+                            points_counter.load(Ordering::Relaxed) - points_before,
+                            counters as u64
+                        );
                         let exported = exports_after.saturating_sub(exports_before);
                         let cps = counters_per_second(elapsed, counters);
                         println!(
