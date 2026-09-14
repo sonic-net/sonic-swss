@@ -238,7 +238,7 @@ impl OtelActor {
         &mut self,
         batch: SAIStatsBatchMessage,
     ) -> Result<(), Box<dyn ExportError>> {
-        for stats in batch.iter() {
+        for stats in batch.records() {
             self.messages_received += 1;
 
             debug!(
@@ -248,14 +248,43 @@ impl OtelActor {
             );
 
             if log::log_enabled!(log::Level::Debug) {
-                let otel_metrics = OtelMetrics::from_sai_stats(stats);
+                let owned: Vec<_> = stats.stats.iter().map(|s| s.to_owned()).collect();
+                let otel_metrics =
+                    OtelMetrics::from_sai_stats(crate::message::saistats::SAIStatsRef {
+                        observation_time: stats.observation_time,
+                        stats: &owned,
+                    });
                 self.print_otel_metrics(&otel_metrics).await;
+            }
+            if let crate::message::saistats::SAIStatsView::Shared { metadata, values } = stats.stats
+            {
+                // Resolve one template-generation plan per segment, not per
+                // sample. Re-resolve after flush, which can evict the slot cache.
+                let mut offset = 0;
+                while offset < values.len() {
+                    let slots = self.buffer.shared_slots(metadata);
+                    let take = (self.config.max_counters_per_export - self.buffered_counters)
+                        .min(values.len() - offset);
+                    if self.buffered_counters == 0 {
+                        self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+                    }
+                    for i in offset..offset + take {
+                        self.buffer
+                            .push_slot(slots[i], stats.observation_time, values[i]);
+                    }
+                    offset += take;
+                    self.buffered_counters += take;
+                    if self.buffered_counters >= self.config.max_counters_per_export {
+                        self.flush_buffer().await?;
+                    }
+                }
+                continue;
             }
             for stat in stats.stats {
                 if self.buffered_counters == 0 {
                     self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
                 }
-                self.buffer.push(stat, stats.observation_time);
+                self.buffer.push_ref(stat, stats.observation_time);
                 self.buffered_counters += 1;
                 if self.buffered_counters >= self.config.max_counters_per_export {
                     self.flush_buffer().await?;

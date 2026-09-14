@@ -2,7 +2,7 @@
 //! All field numbers/types are from opentelemetry-proto 0.25. Decode-equivalence
 //! tests below guard this wire-compatible optimization. No sample is aggregated.
 use crate::message::otel::sai_metric_names;
-use crate::message::saistats::SAIStat;
+use crate::message::saistats::{SAIStat, SAIStatMetadata, SAIStatRef};
 use ahash::AHashMap;
 use opentelemetry_proto::tonic::collector::metrics::v1::{
     ExportMetricsServiceRequest, ExportMetricsServiceResponse,
@@ -19,9 +19,9 @@ const MAX_CACHED_SERIES: usize = 4096;
 const MAX_RETAINED_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
-struct Sample {
-    timestamp: u64,
-    value: i64,
+pub(super) struct Sample {
+    pub(super) timestamp: u64,
+    pub(super) value: i64,
 }
 #[derive(Hash, PartialEq, Eq)]
 struct SeriesKey {
@@ -40,6 +40,7 @@ pub(super) struct GaugeBuffer {
     index: AHashMap<SeriesKey, usize>,
     series: Vec<Series>,
     active: Vec<usize>,
+    plans: Vec<(Arc<[SAIStatMetadata]>, Arc<[usize]>)>,
 }
 fn varint_len(n: usize) -> usize {
     ((usize::BITS - n.leading_zeros()).max(1) as usize + 6) / 7
@@ -64,14 +65,66 @@ fn string(out: &mut Vec<u8>, tag: u8, s: &str) {
 }
 
 impl GaugeBuffer {
+    pub(super) fn shared_slots(&mut self, metadata: &Arc<[SAIStatMetadata]>) -> Arc<[usize]> {
+        if let Some((_, slots)) = self.plans.iter().find(|(m, _)| Arc::ptr_eq(m, metadata)) {
+            return slots.clone();
+        }
+        if self.plans.len() >= 64 {
+            self.plans.clear();
+        }
+        let slots: Arc<[usize]> = metadata
+            .iter()
+            .map(|m| {
+                let key = SeriesKey {
+                    object: m.object_name.clone(),
+                    type_id: m.type_id,
+                    stat_id: m.stat_id,
+                };
+                if let Some(&slot) = self.index.get(&key) {
+                    return slot;
+                }
+                self.push_ref(
+                    SAIStatRef {
+                        object_name: &m.object_name,
+                        type_id: m.type_id,
+                        stat_id: m.stat_id,
+                        counter: 0,
+                    },
+                    0,
+                );
+                let slot = *self.index.get(&key).unwrap();
+                self.series[slot].points.pop();
+                self.active.pop();
+                slot
+            })
+            .collect::<Vec<_>>()
+            .into();
+        self.plans.push((metadata.clone(), slots.clone()));
+        slots
+    }
+    pub(super) fn push_slot(&mut self, slot: usize, timestamp: u64, value: u64) {
+        let series = &mut self.series[slot];
+        if series.points.is_empty() {
+            self.active.push(slot);
+        }
+        series.points.push(Sample {
+            timestamp,
+            value: value as i64,
+        });
+    }
     pub(super) fn new() -> Self {
         Self {
             index: AHashMap::new(),
             series: Vec::new(),
             active: Vec::new(),
+            plans: Vec::new(),
         }
     }
+    #[allow(dead_code)]
     pub(super) fn push(&mut self, stat: &SAIStat, timestamp: u64) {
+        self.push_ref(stat.into(), timestamp);
+    }
+    pub(super) fn push_ref(&mut self, stat: SAIStatRef<'_>, timestamp: u64) {
         let key = SeriesKey {
             object: stat.object_name.clone(),
             type_id: stat.type_id,
@@ -142,6 +195,7 @@ impl GaugeBuffer {
         {
             self.index.clear();
             self.series.clear();
+            self.plans.clear();
         }
     }
 
@@ -472,6 +526,59 @@ mod tests {
                 .iter()
                 .all(|a| a.key != "sai_type_id" && a.key != "sai_stat_id"));
         }
+    }
+
+    #[test]
+    fn shared_plan_slots_preserve_pending_values_and_invalidate_on_eviction() {
+        let mut buffer = GaugeBuffer::new();
+        let stat = SAIStat::new("Ethernet0", 1, 0, 11);
+        buffer.push(&stat, 1);
+        let metadata: Arc<[SAIStatMetadata]> = vec![
+            SAIStatMetadata {
+                object_name: Arc::from("Ethernet0"),
+                type_id: 1,
+                stat_id: 0,
+            },
+            SAIStatMetadata {
+                object_name: Arc::from("Ethernet4"),
+                type_id: 1,
+                stat_id: 1,
+            },
+        ]
+        .into();
+        let slots = buffer.shared_slots(&metadata);
+        assert!(Arc::ptr_eq(&slots, &buffer.shared_slots(&metadata)));
+        buffer.push_slot(slots[0], 2, 22);
+        buffer.push_slot(slots[1], 3, 33);
+        let decoded = ExportMetricsServiceRequest::decode(buffer.encode(&[], &[])).unwrap();
+        let Some(Data::Gauge(g)) = &decoded.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!()
+        };
+        assert_eq!(
+            g.data_points
+                .iter()
+                .map(|p| p.time_unix_nano)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        buffer.clear();
+        for id in 0..=MAX_CACHED_SERIES {
+            buffer.push(&SAIStat::new("many", 1, id as u32, 0), 1);
+        }
+        buffer.clear();
+        assert!(buffer.plans.is_empty());
+        let rebuilt = buffer.shared_slots(&metadata);
+        buffer.push_slot(rebuilt[0], 99, 44);
+        let decoded = ExportMetricsServiceRequest::decode(buffer.encode(&[], &[])).unwrap();
+        let Some(Data::Gauge(g)) = &decoded.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!()
+        };
+        assert_eq!(
+            g.data_points[0],
+            OtelDataPoint::from_sai_stat(&SAIStat::new("Ethernet0", 1, 0, 44), 99).to_proto()
+        );
     }
 
     #[test]

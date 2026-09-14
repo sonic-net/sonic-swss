@@ -1,7 +1,9 @@
 //! Configurable ordered OTLP sender workers. Each lane is a disjoint series
 //! shard with one awaited export; lanes overlap I/O on current-thread runtimes.
 use super::{OtelActor, OtelActorConfig, OtelActorExportError};
-use crate::message::saistats::{SAIStat, SAIStatsBatch, SAIStatsBatchMessage};
+use crate::message::saistats::{
+    SAIStat, SAIStatMetadata, SAIStatRef, SAIStatsBatch, SAIStatsBatchMessage, SAIStatsView,
+};
 use opentelemetry::ExportError;
 use std::{sync::Arc, thread};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -70,6 +72,9 @@ impl OtelWorkerConfig {
 
 /// Stable routing independent of timestamp/value. Only call with lanes > 0.
 pub fn series_shard(stat: &SAIStat, lanes: usize) -> usize {
+    shard_ref(stat.into(), lanes)
+}
+fn shard_ref(stat: SAIStatRef<'_>, lanes: usize) -> usize {
     assert!(lanes > 0);
     let mut hash = 0xcbf29ce484222325u64;
     for byte in stat
@@ -171,6 +176,7 @@ impl OtelWorkerPool {
         let mut senders = Vec::new();
         let mut handles = Vec::new();
         let mut error = None;
+        let mut plans = Vec::new();
         for worker in 0..self.workers.threads {
             let mut receivers = Vec::new();
             for _ in 0..self.workers.in_flight_per_worker {
@@ -212,7 +218,7 @@ impl OtelWorkerPool {
                     batch=self.input.recv() => {
                         let Some(batch)=batch else {break};
                         let result=tokio::select! {
-                            result=route_batch(&batch,&senders,self.actor_config.max_counters_per_export)=>result,
+                            result=route_batch(&batch,&senders,self.actor_config.max_counters_per_export,&mut plans)=>result,
                             result=done_rx.recv()=>{
                                 completed+=1;
                                 Err(result.and_then(Result::err).unwrap_or_else(||"OTel worker stopped during routing".into()))
@@ -268,6 +274,7 @@ async fn route_batch(
     batch: &SAIStatsBatchMessage,
     senders: &[mpsc::Sender<SAIStatsBatchMessage>],
     limit: usize,
+    plans: &mut Vec<RoutePlan>,
 ) -> Result<(), String> {
     if senders.len() == 1 {
         // Already bounded production upstream batches need no cloning of stats.
@@ -282,10 +289,90 @@ async fn route_batch(
     let mut pending: Vec<SAIStatsBatch> = (0..senders.len())
         .map(|_| SAIStatsBatch::default())
         .collect();
-    for record in batch.iter() {
+    for record in batch.records() {
+        if let SAIStatsView::Shared { metadata, values } = record.stats {
+            // Pin the complete generation in the plan: pointer reuse cannot alias
+            // a retired template. Bound cached plans; queued batches own metadata.
+            let index = match plans.iter().position(|p| Arc::ptr_eq(&p.source, metadata)) {
+                Some(i) => i,
+                None => {
+                    if plans.len() >= 64 {
+                        plans.clear();
+                    }
+                    let mut indices = vec![Vec::new(); senders.len()];
+                    for (i, m) in metadata.iter().enumerate() {
+                        indices[shard_ref(
+                            SAIStatRef {
+                                object_name: &m.object_name,
+                                type_id: m.type_id,
+                                stat_id: m.stat_id,
+                                counter: 0,
+                            },
+                            senders.len(),
+                        )]
+                        .push(i);
+                    }
+                    let lanes = indices
+                        .into_iter()
+                        .map(|indices| {
+                            let meta: Arc<[SAIStatMetadata]> = indices
+                                .iter()
+                                .map(|&i| metadata[i].clone())
+                                .collect::<Vec<_>>()
+                                .into();
+                            (indices, meta)
+                        })
+                        .collect();
+                    plans.push(RoutePlan {
+                        source: metadata.clone(),
+                        lanes,
+                    });
+                    plans.len() - 1
+                }
+            };
+            for (lane, (indices, meta)) in plans[index].lanes.iter().enumerate() {
+                if indices.is_empty() {
+                    continue;
+                }
+                if pending[lane].counter_count() + indices.len() > limit
+                    && pending[lane].counter_count() > 0
+                {
+                    senders[lane]
+                        .send(Arc::new(std::mem::take(&mut pending[lane])))
+                        .await
+                        .map_err(|_| "OTel lane closed".to_string())?;
+                }
+                // Keep record descriptors intact. Large individual records are
+                // split into bounded metadata slices, only when required.
+                if indices.len() > limit {
+                    for (idx, metadata) in indices.chunks(limit).zip(meta.chunks(limit)) {
+                        let mut out = SAIStatsBatch::default();
+                        out.push_shared_record(
+                            record.observation_time,
+                            Arc::from(metadata),
+                            idx.iter().map(|&i| values[i]),
+                        );
+                        senders[lane]
+                            .send(Arc::new(out))
+                            .await
+                            .map_err(|_| "OTel lane closed".to_string())?;
+                    }
+                } else {
+                    pending[lane].push_shared_record(
+                        record.observation_time,
+                        meta.clone(),
+                        indices.iter().map(|&i| values[i]),
+                    );
+                }
+            }
+            continue;
+        }
+        let SAIStatsView::Owned(stats) = record.stats else {
+            unreachable!()
+        };
         // Bound routing buffers to one export-sized batch per lane, plus this
         // chunk, even if an incoming record is larger than the threshold.
-        for chunk in record.stats.chunks(limit) {
+        for chunk in stats.chunks(limit) {
             for stat in chunk {
                 buckets[series_shard(stat, senders.len())].push(stat.clone());
             }
@@ -313,4 +400,9 @@ async fn route_batch(
         }
     }
     Ok(())
+}
+
+struct RoutePlan {
+    source: Arc<[SAIStatMetadata]>,
+    lanes: Vec<(Vec<usize>, Arc<[SAIStatMetadata]>)>,
 }

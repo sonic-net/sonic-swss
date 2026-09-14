@@ -1,5 +1,13 @@
 # Single-flight OtelActor experiment (draft: throughput target not met)
 
+## Shared IPFIX metadata integration
+
+See [SHARED_BATCHES.md](SHARED_BATCHES.md) for the shared SAI batch representation,
+allocation-free record iterator, legacy adapter, and real IPFIX old/new A/B.
+Wide-record IPFIX output improved ~3.2-3.9x; two-counter records were essentially
+unchanged. Actual IPFIX->OTel->raw-gRPC measured ~20.4-21.2M/s (not a 50M/s or
+database claim). CounterDB's native integration still needs target-platform CI.
+
 ## Current configurable implementation
 
 **Current export uses canonical SAI type/stat names.** See

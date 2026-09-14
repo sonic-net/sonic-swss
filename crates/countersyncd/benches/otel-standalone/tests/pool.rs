@@ -250,7 +250,21 @@ async fn ordered_pool_preserves_samples_limits_concurrency_and_retries() {
                 stats.push(SAIStat::new("Ethernet0", 1, id, value));
             }
         }
-        batch.push_record(time, stats);
+        if record % 2 == 0 {
+            use countersyncd_otel_bench::message::saistats::SAIStatMetadata;
+            let metadata = stats
+                .iter()
+                .map(|s| SAIStatMetadata {
+                    object_name: s.object_name.clone(),
+                    type_id: s.type_id,
+                    stat_id: s.stat_id,
+                })
+                .collect::<Vec<_>>()
+                .into();
+            batch.push_shared_record(time, metadata, stats.iter().map(|s| s.counter));
+        } else {
+            batch.push_record(time, stats);
+        }
         inputs.push(Arc::new(batch));
     }
     let producer = async move {
