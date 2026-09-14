@@ -257,6 +257,10 @@ pub struct SAIStatsRef<'a> {
 ///
 /// IPFIX records share immutable template metadata and append only u64 values.
 /// `iter()` borrows either representation without materializing owned stats.
+///
+/// Allocate owned-record capacity with [`Self::with_capacity`]. Shared-record
+/// producers use [`Self::reserve_shared`] to reserve record and value storage.
+/// The former owned-only `reserve` method has been removed.
 #[derive(Debug, Clone, Default)]
 pub struct SAIStatsBatch {
     records: Vec<SAIStatsRecord>,

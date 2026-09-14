@@ -16,7 +16,8 @@ use opentelemetry_proto::tonic::{
 /// from SAI statistics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelGauge {
-    /// Metric name (e.g., "sai_counter_type_100_stat_200")
+    /// Canonical SAI stat name (e.g., "SAI_PORT_STAT_IF_IN_OCTETS").
+    /// Unsupported IDs use "UNKNOWN_SAI_STAT_TYPE_<type_id>_ID_<stat_id>".
     pub name: String,
     /// Description of the metric
     pub description: String,
