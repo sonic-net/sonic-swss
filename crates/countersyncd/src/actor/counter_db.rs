@@ -208,7 +208,7 @@ impl CounterDBActor {
     ///
     /// Updates the local counter cache with new values and marks them as updated.
     async fn handle_stats_message(&mut self, batch: SAIStatsBatchMessage) {
-        for msg in batch.iter() {
+        for msg in batch.records() {
             self.total_messages_received += 1;
 
             debug!(
@@ -714,6 +714,11 @@ mod tests {
                 let cached_value = actor.counter_cache.get(&key).unwrap();
                 assert!(cached_value.has_changed()); // Value changed
                 assert_eq!(cached_value.counter, 3000);
+                let mut shared=SAIStatsBatch::default();
+                shared.push_shared_record(12348,Arc::from(vec![crate::message::saistats::SAIStatMetadata{object_name:Arc::from("Ethernet0"),type_id:1,stat_id:0}]),[4000]);
+                actor.handle_stats_message(Arc::new(shared)).await;
+                assert_eq!(actor.total_messages_received,6);
+                assert_eq!(actor.counter_cache[&key].counter,4000);
             }
             Err(e) => {
                 // This is acceptable in CI environments where Redis might not be running

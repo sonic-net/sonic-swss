@@ -289,7 +289,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     ///
     /// * `stats_batch` - New batch of SAI statistics records to process
     fn update_stats(&mut self, stats_batch: SAIStatsBatchMessage) {
-        for stats in stats_batch.iter() {
+        for stats in stats_batch.records() {
             self.total_messages_received += 1;
 
             debug!(
@@ -564,6 +564,23 @@ mod tests {
         let latest = actor.latest_counters.get(&key).unwrap();
         assert_eq!(latest.counter, 200);
         assert_eq!(latest.last_observation_time, 20);
+    }
+
+    #[tokio::test]
+    async fn shared_metadata_batches_preserve_reporting_semantics() {
+        use crate::message::saistats::SAIStatMetadata;
+        let (_,rx)=channel(1);
+        let mut actor=StatsReporterActor::new(rx,StatsReporterConfig::default(),TestWriter::new());
+        let metadata=Arc::from(vec![SAIStatMetadata{object_name:Arc::from("Ethernet0"),type_id:1,stat_id:0}]);
+        let mut batch=SAIStatsBatch::default();
+        batch.push_shared_record(10,Arc::clone(&metadata),[123]);
+        batch.push_shared_record(20,metadata,[456]);
+        actor.update_stats(Arc::new(batch));
+        let key=CounterKey::new(Arc::from("Ethernet0"),1,0);
+        assert_eq!(actor.total_messages_received,2);
+        assert_eq!(actor.messages_per_counter.get(&key),Some(&2));
+        assert_eq!(actor.latest_counters[&key].counter,456);
+        assert_eq!(actor.latest_counters[&key].last_observation_time,20);
     }
 
     #[tokio::test]

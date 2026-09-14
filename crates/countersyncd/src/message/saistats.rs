@@ -1,6 +1,9 @@
 //! SAI statistics exchanged between countersyncd actors.
 
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{Arc, OnceLock},
+};
 
 /// Base of the SAI extension identifier range.
 pub const EXTENSIONS_RANGE_BASE: u32 = 0x2000_0000;
@@ -42,6 +45,112 @@ impl SAIStat {
             counter,
         }
     }
+}
+
+/// Immutable identity owned by a template generation, shared across all samples.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SAIStatMetadata {
+    pub object_name: Arc<str>,
+    pub type_id: u32,
+    pub stat_id: u32,
+}
+
+/// Borrowed adapter: no per-point Arc clone or allocation on iteration.
+#[derive(Debug, Clone, Copy)]
+pub struct SAIStatRef<'a> {
+    pub object_name: &'a Arc<str>,
+    pub type_id: u32,
+    pub stat_id: u32,
+    pub counter: u64,
+}
+impl SAIStatRef<'_> {
+    pub fn to_owned(self) -> SAIStat {
+        SAIStat::new(
+            self.object_name.clone(),
+            self.type_id,
+            self.stat_id,
+            self.counter,
+        )
+    }
+}
+impl<'a> From<&'a SAIStat> for SAIStatRef<'a> {
+    fn from(stat: &'a SAIStat) -> Self {
+        Self {
+            object_name: &stat.object_name,
+            type_id: stat.type_id,
+            stat_id: stat.stat_id,
+            counter: stat.counter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SAIStatsView<'a> {
+    Owned(&'a [SAIStat]),
+    Shared {
+        metadata: &'a Arc<[SAIStatMetadata]>,
+        values: &'a [u64],
+    },
+}
+impl<'a> SAIStatsView<'a> {
+    pub fn len(self) -> usize {
+        match self {
+            Self::Owned(s) => s.len(),
+            Self::Shared { values, .. } => values.len(),
+        }
+    }
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+    pub fn get(self, index: usize) -> Option<SAIStatRef<'a>> {
+        match self {
+            Self::Owned(stats) => stats.get(index).map(SAIStatRef::from),
+            Self::Shared { metadata, values } => values.get(index).map(|&counter| {
+                let m = &metadata[index];
+                SAIStatRef {
+                    object_name: &m.object_name,
+                    type_id: m.type_id,
+                    stat_id: m.stat_id,
+                    counter,
+                }
+            }),
+        }
+    }
+    pub fn iter(self) -> SAIStatsIter<'a> {
+        SAIStatsIter {
+            stats: self,
+            index: 0,
+        }
+    }
+}
+pub struct SAIStatsIter<'a> {
+    stats: SAIStatsView<'a>,
+    index: usize,
+}
+impl<'a> Iterator for SAIStatsIter<'a> {
+    type Item = SAIStatRef<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.stats.get(self.index)?;
+        self.index += 1;
+        Some(value)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.stats.len() - self.index;
+        (n, Some(n))
+    }
+}
+impl ExactSizeIterator for SAIStatsIter<'_> {}
+impl<'a> IntoIterator for SAIStatsView<'a> {
+    type Item = SAIStatRef<'a>;
+    type IntoIter = SAIStatsIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct SAIRecordView<'a> {
+    pub observation_time: u64,
+    pub stats: SAIStatsView<'a>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +198,7 @@ impl SAIStats {
 struct SAIStatsRecord {
     observation_time: u64,
     stats: Range<usize>,
+    metadata: Option<usize>,
 }
 
 /// A borrowed record in a [`SAIStatsBatch`].
@@ -98,19 +208,44 @@ pub struct SAIStatsRef<'a> {
     pub stats: &'a [SAIStat],
 }
 
-/// Flat representation of many samples.
+/// Mixed owned/shared representation of many samples.
 ///
-/// Keeping one stat vector per channel item avoids a vector and Arc allocation
-/// for every IPFIX record while preserving record boundaries and wire order.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// IPFIX records share immutable template metadata and append only u64 values.
+/// `records()` iterates either representation without per-point allocation;
+/// `iter()` is a lazy compatibility adapter for callers requiring stat slices.
+#[derive(Debug, Clone, Default)]
 pub struct SAIStatsBatch {
     records: Vec<SAIStatsRecord>,
     stats: Vec<SAIStat>,
+    values: Vec<u64>,
+    metadata: Vec<Arc<[SAIStatMetadata]>>,
+    // Compatibility for old callers requiring &[SAIStat]. Migrated consumers
+    // use records(); legacy consumers materialize this projection only on demand.
+    materialized: OnceLock<Vec<SAIStat>>,
 }
+
+impl PartialEq for SAIStatsBatch {
+    fn eq(&self, other: &Self) -> bool {
+        self.record_count() == other.record_count()
+            && self.records().zip(other.records()).all(|(a, b)| {
+                a.observation_time == b.observation_time
+                    && a.stats.len() == b.stats.len()
+                    && a.stats.iter().zip(b.stats).all(|(a, b)| {
+                        a.object_name == b.object_name
+                            && a.type_id == b.type_id
+                            && a.stat_id == b.stat_id
+                            && a.counter == b.counter
+                    })
+            })
+    }
+}
+impl Eq for SAIStatsBatch {}
 
 pub struct SAIStatsBatchChunks {
     records: std::iter::Peekable<std::vec::IntoIter<SAIStatsRecord>>,
     stats: std::vec::IntoIter<SAIStat>,
+    values: std::vec::IntoIter<u64>,
+    metadata: Vec<Arc<[SAIStatMetadata]>>,
     target_counters: usize,
 }
 
@@ -127,10 +262,18 @@ impl Iterator for SAIStatsBatchChunks {
                 break;
             }
             let record = self.records.next().expect("record was peeked");
-            batch.push_record(
-                record.observation_time,
-                self.stats.by_ref().take(record_len),
-            );
+            if let Some(index) = record.metadata {
+                batch.push_shared_record(
+                    record.observation_time,
+                    self.metadata[index].clone(),
+                    self.values.by_ref().take(record_len),
+                );
+            } else {
+                batch.push_record(
+                    record.observation_time,
+                    self.stats.by_ref().take(record_len),
+                );
+            }
         }
         (!batch.is_empty()).then_some(batch)
     }
@@ -141,6 +284,7 @@ impl SAIStatsBatch {
         Self {
             records: Vec::with_capacity(records),
             stats: Vec::with_capacity(stats),
+            ..Default::default()
         }
     }
 
@@ -151,13 +295,59 @@ impl SAIStatsBatch {
     }
 
     pub fn push_record(&mut self, observation_time: u64, stats: impl IntoIterator<Item = SAIStat>) {
+        self.materialized.take();
         let start = self.stats.len();
         self.stats.extend(stats);
         let end = self.stats.len();
         self.records.push(SAIStatsRecord {
             observation_time,
             stats: start..end,
+            metadata: None,
         });
+    }
+
+    pub fn push_shared_record(
+        &mut self,
+        observation_time: u64,
+        metadata: Arc<[SAIStatMetadata]>,
+        values: impl IntoIterator<Item = u64>,
+    ) {
+        self.materialized.take();
+        let start = self.values.len();
+        self.values.extend(values);
+        let end = self.values.len();
+        assert_eq!(end - start, metadata.len(), "one value per metadata field");
+        let index = self
+            .metadata
+            .iter()
+            .position(|m| Arc::ptr_eq(m, &metadata))
+            .unwrap_or_else(|| {
+                self.metadata.push(metadata);
+                self.metadata.len() - 1
+            });
+        self.records.push(SAIStatsRecord {
+            observation_time,
+            stats: start..end,
+            metadata: Some(index),
+        });
+    }
+
+    pub fn reserve_shared(&mut self, records: usize, counters: usize) {
+        self.records.reserve(records);
+        self.values.reserve(counters);
+    }
+
+    pub fn records(&self) -> impl ExactSizeIterator<Item = SAIRecordView<'_>> {
+        self.records.iter().map(|r| SAIRecordView {
+            observation_time: r.observation_time,
+            stats: match r.metadata {
+                Some(index) => SAIStatsView::Shared {
+                    metadata: &self.metadata[index],
+                    values: &self.values[r.stats.clone()],
+                },
+                None => SAIStatsView::Owned(&self.stats[r.stats.clone()]),
+            },
+        })
     }
 
     pub fn reserve(&mut self, records: usize, counters: usize) {
@@ -170,27 +360,56 @@ impl SAIStatsBatch {
     }
 
     pub fn counter_count(&self) -> usize {
-        self.stats.len()
+        self.stats.len() + self.values.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
+    /// Compatibility adapter for old slice-based callers. Shared batches allocate
+    /// a full owned projection once; hot paths should use `records()` instead.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = SAIStatsRef<'_>> {
-        self.records.iter().map(|record| SAIStatsRef {
-            observation_time: record.observation_time,
-            stats: &self.stats[record.stats.clone()],
+        let flat = if self.metadata.is_empty() {
+            &self.stats
+        } else {
+            self.materialized.get_or_init(|| {
+                self.records()
+                    .flat_map(|r| r.stats.iter().map(SAIStatRef::to_owned))
+                    .collect()
+            })
+        };
+        let mut offset = 0;
+        self.records.iter().map(move |record| {
+            let len = record.stats.len();
+            let start = if self.metadata.is_empty() {
+                record.stats.start
+            } else {
+                offset
+            };
+            offset += len;
+            SAIStatsRef {
+                observation_time: record.observation_time,
+                stats: &flat[start..start + len],
+            }
         })
     }
 
     /// Group whole records toward a target size. A larger record is emitted alone.
     pub fn into_record_batches(self, target_counters: usize) -> SAIStatsBatchChunks {
         assert!(target_counters > 0);
-        let Self { records, stats } = self;
+        let Self {
+            records,
+            stats,
+            values,
+            metadata,
+            ..
+        } = self;
         SAIStatsBatchChunks {
             records: records.into_iter().peekable(),
             stats: stats.into_iter(),
+            values: values.into_iter(),
+            metadata,
             target_counters,
         }
     }
@@ -207,6 +426,89 @@ pub type SAIStatsBatchMessage = Arc<SAIStatsBatch>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_views_and_legacy_adapter_match_without_eager_materialization() {
+        let metadata: Arc<[SAIStatMetadata]> = vec![
+            SAIStatMetadata {
+                object_name: Arc::from("Ethernet0"),
+                type_id: 1,
+                stat_id: 0,
+            },
+            SAIStatMetadata {
+                object_name: Arc::from("Ethernet4"),
+                type_id: 1,
+                stat_id: 1,
+            },
+        ]
+        .into();
+        let mut shared = SAIStatsBatch::default();
+        let mut owned = SAIStatsBatch::default();
+        for time in [1, 2, 2] {
+            shared.push_shared_record(time, metadata.clone(), [time, u64::MAX]);
+            owned.push_record(
+                time,
+                [
+                    SAIStat::new("Ethernet0", 1, 0, time),
+                    SAIStat::new("Ethernet4", 1, 1, u64::MAX),
+                ],
+            );
+        }
+        shared.push_record(3, [SAIStat::new("other", 21, 0, 99)]);
+        owned.push_record(3, [SAIStat::new("other", 21, 0, 99)]);
+        assert_eq!(shared, owned);
+        assert!(shared.materialized.get().is_none());
+        assert_eq!(shared.stats.len(), 1);
+        assert_eq!(shared.values.len(), 6);
+        assert_eq!(shared.metadata.len(), 1);
+        let flat: Vec<_> = shared
+            .iter()
+            .map(|r| (r.observation_time, r.stats.to_vec()))
+            .collect();
+        let old: Vec<_> = owned
+            .iter()
+            .map(|r| (r.observation_time, r.stats.to_vec()))
+            .collect();
+        assert_eq!(flat, old);
+        shared.push_shared_record(4, metadata.clone(), [7, 8]);
+        assert!(shared.materialized.get().is_none());
+        let chunks: Vec<_> = shared.into_record_batches(3).collect();
+        assert_eq!(chunks.iter().map(|b| b.counter_count()).sum::<usize>(), 9);
+        assert!(chunks.iter().all(|b| b.materialized.get().is_none()));
+        assert_eq!(
+            chunks
+                .iter()
+                .flat_map(|b| b.records().map(|r| r.observation_time))
+                .collect::<Vec<_>>(),
+            vec![1, 2, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn held_template_generations_do_not_alias_replacements() {
+        let old: Arc<[SAIStatMetadata]> = vec![SAIStatMetadata {
+            object_name: Arc::from("old"),
+            type_id: 1,
+            stat_id: 0,
+        }]
+        .into();
+        let new: Arc<[SAIStatMetadata]> = vec![SAIStatMetadata {
+            object_name: Arc::from("new"),
+            type_id: 21,
+            stat_id: 1,
+        }]
+        .into();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(1, old.clone(), [10]);
+        batch.push_shared_record(2, new.clone(), [20]);
+        drop(old);
+        drop(new);
+        let names: Vec<_> = batch
+            .records()
+            .map(|r| r.stats.get(0).unwrap().object_name.as_ref())
+            .collect();
+        assert_eq!(names, vec!["old", "new"]);
+    }
 
     #[test]
     fn decodes_sai_ids_with_distinct_halves() {

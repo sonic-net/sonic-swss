@@ -20,9 +20,11 @@ use super::super::message::{
         IPFixTemplateOperation, IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE,
         MAX_OBJECT_METADATA_BYTES, MAX_TEMPLATE_CONFIG_BYTES,
     },
-    saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
+    saistats::{decode_sai_ids, SAIStatMetadata, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
+#[cfg(test)]
+use crate::message::saistats::SAIStat;
 
 const IPFIX_VERSION: u16 = 10;
 const IPFIX_HEADER_LEN: usize = 16;
@@ -100,6 +102,7 @@ struct CompiledTemplate {
     owner: Arc<str>,
     observation_time: ObservationTime,
     counters: Arc<[CompiledCounter]>,
+    metadata: Arc<[SAIStatMetadata]>,
     record_len: usize,
 }
 
@@ -518,7 +521,7 @@ impl IpfixActor {
         batch: &mut SAIStatsBatch,
     ) {
         let payload = &set[SET_HEADER_LEN..];
-        batch.reserve(layout.record_count, layout.counter_count);
+        batch.reserve_shared(layout.record_count, layout.counter_count);
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
             let observation_time = template
                 .observation_time
@@ -530,16 +533,12 @@ impl IpfixActor {
                         .expect("System time should be after Unix epoch")
                         .as_nanos() as u64
                 });
-            batch.push_record(
+            batch.push_shared_record(
                 observation_time,
-                template.counters.iter().map(|counter| SAIStat {
-                    object_name: Arc::clone(&counter.object_name),
-                    type_id: counter.type_id,
-                    stat_id: counter.stat_id,
-                    counter: read_be_u64(
+                template.metadata.clone(),
+                template.counters.iter().map(|counter| read_be_u64(
                         &record[counter.offset..counter.offset + counter.len as usize],
-                    ),
-                }),
+                    )),
             );
         }
     }
@@ -940,6 +939,7 @@ fn compile_template_set(
             key,
             owner: Arc::clone(owner),
             observation_time,
+            metadata: counters.iter().map(|counter|SAIStatMetadata{object_name:counter.object_name.clone(),type_id:counter.type_id,stat_id:counter.stat_id}).collect::<Vec<_>>().into(),
             counters: counters.into(),
             record_len,
         });

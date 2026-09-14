@@ -98,7 +98,7 @@ async fn run_prepared_dataset(
                 received_batches += 1;
                 let batch_counters = stats_msg.counter_count();
                 let counters_before = received_counters;
-                for record in stats_msg.iter() {
+                for record in stats_msg.records() {
                     received_messages += 1;
                     received_counters += record.stats.len();
                 }
