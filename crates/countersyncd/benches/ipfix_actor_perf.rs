@@ -98,7 +98,7 @@ async fn run_prepared_dataset(
                 received_batches += 1;
                 let batch_counters = stats_msg.counter_count();
                 let counters_before = received_counters;
-                for record in stats_msg.records() {
+                for record in stats_msg.iter() {
                     received_messages += 1;
                     received_counters += record.stats.len();
                 }
@@ -234,5 +234,34 @@ fn bench_ipfix_actor_datasets(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_ipfix_actor_datasets);
+/// Isolate the one-time identity/name preparation from steady-state decoding.
+/// Uses the normal project benchmark; no separate standalone package required.
+fn bench_metadata_registration(c: &mut Criterion) {
+    use countersyncd::message::saistats::SAIStatMetadata;
+    let mut group = c.benchmark_group("ipfix_metadata_registration");
+    for fields in [2usize, 500, 8000] {
+        let names: Vec<Arc<str>> = (0..fields)
+            .map(|i| Arc::from(format!("Ethernet{}", i % 64)))
+            .collect();
+        group.throughput(Throughput::Elements(fields as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(fields), &fields, |b, _| {
+            b.iter(|| {
+                let metadata: Arc<[SAIStatMetadata]> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| SAIStatMetadata::new(name.clone(), 1, (i % 100) as u32))
+                    .collect::<Vec<_>>()
+                    .into();
+                criterion::black_box(metadata)
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_ipfix_actor_datasets,
+    bench_metadata_registration
+);
 criterion_main!(benches);

@@ -40,6 +40,8 @@ impl CounterKey {
 pub struct CounterInfo {
     pub counter: u64,
     pub last_observation_time: u64,
+    pub type_name: Option<&'static str>,
+    pub stat_name: Option<&'static str>,
 }
 
 /// Trait for output writing to enable testing
@@ -289,7 +291,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
     ///
     /// * `stats_batch` - New batch of SAI statistics records to process
     fn update_stats(&mut self, stats_batch: SAIStatsBatchMessage) {
-        for stats in stats_batch.records() {
+        for stats in stats_batch.iter() {
             self.total_messages_received += 1;
 
             debug!(
@@ -307,6 +309,8 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                 let counter_info = CounterInfo {
                     counter: stat.counter,
                     last_observation_time: stats.observation_time,
+                    type_name:stat.type_name(),
+                    stat_name:stat.stat_name(),
                 };
                 self.latest_counters.insert(key.clone(), counter_info);
 
@@ -385,7 +389,9 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                         .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
                 });
 
-                let type_name = self.type_id_to_string(type_id);
+                let type_name = counters.first().and_then(|(_,info)|info.type_name)
+                    .map(std::borrow::Cow::Borrowed)
+                    .unwrap_or_else(||std::borrow::Cow::Owned(self.type_id_to_string(type_id)));
                 self.writer
                     .write_line(&format!("      Type: {} ({})", type_name, type_id));
 
@@ -400,7 +406,8 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                     let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
                     let messages_per_second =
                         *messages_in_period as f64 / self.config.interval.as_secs_f64();
-                    let stat_name = self.stat_id_to_string(key.type_id, key.stat_id);
+                    let stat_name = counter_info.stat_name.map(|name|self.remove_sai_prefix(name))
+                        .unwrap_or_else(||self.stat_id_to_string(key.type_id,key.stat_id));
                     let formatted_time = self.format_timestamp(counter_info.last_observation_time);
 
                     self.writer.write_line(&format!(
@@ -571,7 +578,7 @@ mod tests {
         use crate::message::saistats::SAIStatMetadata;
         let (_,rx)=channel(1);
         let mut actor=StatsReporterActor::new(rx,StatsReporterConfig::default(),TestWriter::new());
-        let metadata=Arc::from(vec![SAIStatMetadata{object_name:Arc::from("Ethernet0"),type_id:1,stat_id:0}]);
+        let metadata=Arc::from(vec![SAIStatMetadata::new("Ethernet0",1,0)]);
         let mut batch=SAIStatsBatch::default();
         batch.push_shared_record(10,Arc::clone(&metadata),[123]);
         batch.push_shared_record(20,metadata,[456]);
