@@ -1348,13 +1348,22 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     bool prefix_route = false;
     bool is_nbr_active = true;
 
-    if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+    if (ip_address.getAddrScope() == IpAddress::LINK_SCOPE)
     {
-        /* Check if this prefix is a configured ip, if not allow */
-        IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
-        if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+        if (ip_address.isV4())
         {
+            /* Check if this prefix is a configured ip, if not allow */
+            IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+            if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+            {
+                no_host_route = true;
+            }
+        }
+        else
+        {
+            /* IPv6 link-local: fe80:: */
             no_host_route = true;
+            
         }
     }
 
