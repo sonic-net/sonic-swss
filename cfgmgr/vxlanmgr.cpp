@@ -217,6 +217,7 @@ VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
         m_stateNeighSuppressVlanTable(stateDb, STATE_NEIGH_SUPPRESS_VLAN_TABLE_NAME),
         m_stateVxlanTunnelTable(stateDb, STATE_VXLAN_TUNNEL_TABLE_NAME)
 {
+    m_VxlanSwitchTableConfig.m_vxlanDstPort = VXLAN_DEFAULT_UDP_PORT;
     getAllVxlanNetDevices();
 
     if (!WarmStart::isWarmStart())
@@ -840,11 +841,6 @@ bool VxlanMgr::getSwitchTableVxlanConfig()
         }
 
         returnValue = m_VxlanSwitchTableConfig.m_routerMac.empty() ? false : true;
-
-        if (m_VxlanSwitchTableConfig.m_vxlanDstPort.empty())
-        {
-            m_VxlanSwitchTableConfig.m_vxlanDstPort = VXLAN_DEFAULT_UDP_PORT;
-        }
 
         if (!sport.empty() && !mask.empty())
         {
