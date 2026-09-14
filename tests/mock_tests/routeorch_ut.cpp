@@ -1739,4 +1739,51 @@ namespace routeorch_test
         (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
         ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
     }
+
+    TEST_F(RouteOrchTest, RemoveNhgAfterAllMembersInvalidatedWithoutReplacement)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Add ECMP route with 2 nexthops (both already resolved in SetUp)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // Verify the NHG was created
+        NextHopGroupKey nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_NE(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG not found after adding ECMP route";
+
+        // Invalidate both nexthops without calling validnexthop afterward.
+        // This is the exact sequence MuxPrefixBasedNbrHandler::disable() performs:
+        // it removes NHG members from SAI but does not add tunnel replacements.
+        NextHopKey nh1(IpAddress("10.0.0.2"), "Ethernet0");
+        NextHopKey nh2(IpAddress("10.0.0.3"), "Ethernet0");
+        uint32_t count = 0;
+
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh1, count));
+        ASSERT_EQ(count, 1u);
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh2, count));
+        ASSERT_EQ(count, 1u);
+
+        // Delete the route
+        auto fail_before = sai_fail_count;
+
+        entries.clear();
+        entries.push_back({"9.9.9.0/24", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_EQ(sai_fail_count, fail_before)
+            << "Route deletion should not trigger any SAI failures";
+
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG should be removed after route deletion";
+    }
 }
