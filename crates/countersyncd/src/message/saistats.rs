@@ -122,14 +122,6 @@ impl SAIStatRef<'_> {
             ))
         })
     }
-    pub fn to_owned(self) -> SAIStat {
-        SAIStat::new(
-            self.object_name.clone(),
-            self.type_id,
-            self.stat_id,
-            self.counter,
-        )
-    }
 }
 impl<'a> From<&'a SAIStat> for SAIStatRef<'a> {
     fn from(stat: &'a SAIStat) -> Self {
@@ -159,9 +151,6 @@ impl<'a> SAIStatsView<'a> {
             Self::Owned(s) => s.len(),
             Self::Shared { values, .. } => values.len(),
         }
-    }
-    pub fn is_empty(self) -> bool {
-        self.len() == 0
     }
     pub fn get(self, index: usize) -> Option<SAIStatRef<'a>> {
         match self {
@@ -367,14 +356,18 @@ impl SAIStatsBatch {
         self.values.extend(values);
         let end = self.values.len();
         assert_eq!(end - start, metadata.len(), "one value per metadata field");
-        let index = self
+        // Reuse consecutive template metadata in O(1). Searching all prior
+        // templates makes a message with N distinct one-counter Sets O(N^2).
+        // Nonconsecutive reuse may retain another Arc, but never copies fields;
+        // the number of retained references is bounded by the record count.
+        if !self
             .metadata
-            .iter()
-            .position(|m| Arc::ptr_eq(m, &metadata))
-            .unwrap_or_else(|| {
-                self.metadata.push(metadata);
-                self.metadata.len() - 1
-            });
+            .last()
+            .is_some_and(|previous| Arc::ptr_eq(previous, &metadata))
+        {
+            self.metadata.push(metadata);
+        }
+        let index = self.metadata.len() - 1;
         self.records.push(SAIStatsRecord {
             observation_time,
             stats: start..end,
@@ -399,11 +392,6 @@ impl SAIStatsBatch {
                 None => SAIStatsView::Owned(&self.stats[r.stats.clone()]),
             },
         })
-    }
-
-    pub fn reserve(&mut self, records: usize, counters: usize) {
-        self.records.reserve(records);
-        self.stats.reserve(counters);
     }
 
     pub fn record_count(&self) -> usize {
@@ -550,6 +538,46 @@ mod tests {
             .map(|r| r.stats.get(0).unwrap().object_name.as_ref())
             .collect();
         assert_eq!(names, vec!["old", "new"]);
+    }
+
+    #[test]
+    fn nonconsecutive_metadata_survives_clone_and_mixed_record_splitting() {
+        let a: Arc<[SAIStatMetadata]> = vec![SAIStatMetadata::new("a", 1, 0)].into();
+        let b: Arc<[SAIStatMetadata]> = vec![SAIStatMetadata::new("b", 21, 0)].into();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(1, a.clone(), [11]);
+        batch.push_shared_record(2, b.clone(), [22]);
+        batch.push_record(3, [SAIStat::new("owned", 1, 1, 33)]);
+        batch.push_shared_record(4, a.clone(), [44]);
+        batch.push_shared_record(5, a, [55]);
+        batch.push_shared_record(6, b, [66]);
+        let copy = batch.clone();
+        drop(batch);
+        let chunks: Vec<_> = copy.into_record_batches(2).collect();
+        let actual: Vec<_> = chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .map(|record| {
+                let stat = record.stats.get(0).unwrap();
+                (
+                    record.observation_time,
+                    stat.object_name.as_ref(),
+                    stat.type_id,
+                    stat.counter,
+                )
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (1, "a", 1, 11),
+                (2, "b", 21, 22),
+                (3, "owned", 1, 33),
+                (4, "a", 1, 44),
+                (5, "a", 1, 55),
+                (6, "b", 21, 66),
+            ]
+        );
     }
 
     #[test]

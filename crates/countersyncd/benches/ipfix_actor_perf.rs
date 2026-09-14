@@ -10,6 +10,7 @@ use countersyncd::message::{
     buffer::SocketBufferMessage, ipfix::IPFixTemplatesMessage, saistats::SAIStatsBatchMessage,
 };
 mod ipfix_bench_data;
+mod ipfix_many_templates;
 use ipfix_bench_data::{datasets, PreparedDataset, PAYLOAD_POOL_RECORDS};
 
 const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -259,9 +260,61 @@ fn bench_metadata_registration(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_many_templates_small_records(c: &mut Criterion) {
+    use ipfix_bench_data::{DatasetSpec, TemplateSpec};
+    let mut group = c.benchmark_group("ipfix_many_templates_small_records");
+    group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+    for count in [64, 256, 1024, 4096] {
+        // Reuse the normal actor runner/readiness barrier, but send all Sets
+        // together in one legal message so they share the output batch.
+        let mut prepared = PreparedDataset::new(DatasetSpec {
+            name: "many_templates_one_counter_per_set",
+            templates: vec![TemplateSpec {
+                key: "many".into(),
+                template_id: 256,
+                counters: 1,
+            }],
+        });
+        let (templates, _) = ipfix_many_templates::prepare(count, 0);
+        prepared.template_messages[0] = IPFixTemplatesMessage::new(
+            "many".into(),
+            Arc::new(templates),
+            Some(vec!["Ethernet0".into()]),
+            Some(vec![1]),
+        );
+        prepared.templates[0].payload_pool = (0..PAYLOAD_POOL_RECORDS)
+            .map(|sequence| Arc::new(ipfix_many_templates::prepare(count, sequence as u64).1))
+            .collect::<Vec<_>>()
+            .into();
+        prepared.templates[0].records = 1_048_576 / count;
+        prepared.expected_messages = prepared.templates[0].records * count;
+        prepared.expected_counters = prepared.expected_messages;
+        group.throughput(Throughput::Elements(prepared.expected_counters as u64));
+        group.bench_function(BenchmarkId::from_parameter(count), |b| {
+            let rt = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            b.to_async(&rt).iter_custom(|iterations| {
+                let prepared = &prepared;
+                async move {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        elapsed += run_prepared_dataset(prepared.clone()).await.0;
+                    }
+                    elapsed
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_ipfix_actor_datasets,
-    bench_metadata_registration
+    bench_metadata_registration,
+    bench_many_templates_small_records
 );
 criterion_main!(benches);

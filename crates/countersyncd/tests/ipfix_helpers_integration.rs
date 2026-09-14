@@ -1,4 +1,6 @@
 mod ipfix_test_helpers;
+#[path = "../benches/ipfix_many_templates.rs"]
+mod ipfix_many_templates;
 
 use std::sync::Arc;
 
@@ -15,6 +17,28 @@ use ipfix_test_helpers::{
 };
 
 type ReceivedRecord = (u64, Vec<(u32, u32, u64)>);
+
+#[tokio::test]
+async fn thousands_of_templates_in_one_message_preserve_every_record() {
+    let (bt, br) = channel(1);
+    let (tt, tr) = channel(1);
+    let (st, mut sr) = channel(4);
+    let mut actor = IpfixActor::new(tr, br);
+    actor.add_recipient(st);
+    let actor = tokio::spawn(IpfixActor::run(actor));
+    let (templates, payload) = ipfix_many_templates::prepare(4096, 7);
+    assert_eq!(payload.len(), 49_176);
+    apply_template(&tt, template_message("many", templates, 1)).await;
+    bt.send(Arc::new(payload)).await.unwrap();
+    let records = receive_records(&mut sr, 4096).await;
+    for (index, (time, stats)) in records.into_iter().enumerate() {
+        assert_eq!(time, 1_700_000_000_000_000_007);
+        assert_eq!(stats, vec![(1, 0, 7_000_021 + index as u64)]);
+    }
+    drop(bt);
+    actor.await.unwrap();
+    drop(tt);
+}
 
 fn template_message(key: &str, templates: Vec<u8>, counters: usize) -> IPFixTemplatesMessage {
     let (object_names, object_ids) = generate_object_metadata(counters);
