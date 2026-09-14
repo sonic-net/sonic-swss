@@ -117,6 +117,36 @@ if timestamp_last ~= false then
     time_since_last_poll = (timestamp_current - tonumber(timestamp_last))
 end
 
+-- ARGV[5]: monotonic start of this poll cycle, us.
+-- ARGV[6]: time spent collecting this cycle, us.
+-- Both nil on a syncd that does not pass them.
+local cycle_start_us = tonumber(ARGV[5])
+local collect_us = tonumber(ARGV[6])
+-- gates the elapsed-time charge below: true once a monotonic gap is available
+local have_mono = false
+
+if cycle_start_us ~= nil then
+    local cycle_last = redis.call('HGET', stats_key, 'cycle_start_last')
+    -- %.0f: lua 5.1 renders numbers as %.14g and would drop the low digits
+    redis.call('HSET', stats_key, 'cycle_start_last',
+               string.format('%.0f', cycle_start_us))
+    if cycle_last ~= false then
+        local mono_gap = cycle_start_us - tonumber(cycle_last)
+        if mono_gap > 0 then
+            time_since_last_poll = mono_gap
+            have_mono = true
+            stats_incr('monotonic_polls', 1)
+        end
+    end
+end
+
+if collect_us ~= nil then
+    redis.call('HSET', stats_key, 'collect_us_last', string.format('%.0f', collect_us))
+    stats_incr('collect_us_sum', collect_us)
+    stats_extreme('collect_us_max', collect_us, true)
+    stats_extreme('collect_us_min', collect_us, false)
+end
+
 -- How much elapsed time a single poll may charge to the detection timer,
 -- as a multiple of the configured interval.
 local MAX_DETECT_CHARGE_POLLS = 2
@@ -221,12 +251,17 @@ for i = n, 1, -1 do
             detection_time = tonumber(detection_time)
             -- A storm has to be visible in at least two samples, so one poll
             -- must never charge the whole detection time.
-            local charge_cap = detection_time - poll_time
+            -- leave at least 1us of budget so a storm needs two samples;
+            -- never charge less than the configured interval
+            local charge_cap = detection_time - 1
             if charge_cap < poll_time then
                 charge_cap = poll_time
             end
             local queue_charge = detect_charge
-            if queue_charge > charge_cap then
+            if not have_mono then
+                -- no monotonic clock: charge the configured interval, as before
+                queue_charge = poll_time
+            elseif queue_charge > charge_cap then
                 queue_charge = charge_cap
             end
 
