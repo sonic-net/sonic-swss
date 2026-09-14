@@ -238,7 +238,7 @@ impl OtelActor {
         &mut self,
         batch: SAIStatsBatchMessage,
     ) -> Result<(), Box<dyn ExportError>> {
-        for stats in batch.records() {
+        for stats in batch.iter() {
             self.messages_received += 1;
 
             debug!(
@@ -248,12 +248,7 @@ impl OtelActor {
             );
 
             if log::log_enabled!(log::Level::Debug) {
-                let owned: Vec<_> = stats.stats.iter().map(|s| s.to_owned()).collect();
-                let otel_metrics =
-                    OtelMetrics::from_sai_stats(crate::message::saistats::SAIStatsRef {
-                        observation_time: stats.observation_time,
-                        stats: &owned,
-                    });
+                let otel_metrics = OtelMetrics::from_sai_stats(stats);
                 self.print_otel_metrics(&otel_metrics).await;
             }
             if let crate::message::saistats::SAIStatsView::Shared { metadata, values } = stats.stats

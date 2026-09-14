@@ -80,14 +80,13 @@ async fn actual_ipfix_shared_fanout_and_otel_delivery() {
     bt.send(Arc::new(bytes.clone())).await.unwrap();
     let batch = fr.recv().await.unwrap();
     assert!(matches!(
-        batch.records().next().unwrap().stats,
+        batch.iter().next().unwrap().stats,
         SAIStatsView::Shared { .. }
     ));
-    // A legacy sibling may materialize its slice view without invalidating the
-    // immutable shared representation used by OTel.
-    assert_eq!(batch.iter().next().unwrap().stats[0].counter, 1);
+    // A sibling borrows the same immutable representation used by OTel.
+    assert_eq!(batch.iter().next().unwrap().stats.get(0).unwrap().counter, 1);
     assert!(matches!(
-        batch.records().next().unwrap().stats,
+        batch.iter().next().unwrap().stats,
         SAIStatsView::Shared { .. }
     ));
     drop(ready);

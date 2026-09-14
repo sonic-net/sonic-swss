@@ -254,11 +254,7 @@ async fn ordered_pool_preserves_samples_limits_concurrency_and_retries() {
             use countersyncd_otel_bench::message::saistats::SAIStatMetadata;
             let metadata = stats
                 .iter()
-                .map(|s| SAIStatMetadata {
-                    object_name: s.object_name.clone(),
-                    type_id: s.type_id,
-                    stat_id: s.stat_id,
-                })
+                .map(|s| SAIStatMetadata::new(s.object_name.clone(), s.type_id, s.stat_id))
                 .collect::<Vec<_>>()
                 .into();
             batch.push_shared_record(time, metadata, stats.iter().map(|s| s.counter));

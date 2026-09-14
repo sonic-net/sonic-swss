@@ -142,7 +142,7 @@ fn main() {
                             #[cfg(feature = "baseline-legacy")]
                             let views = batch.iter();
                             #[cfg(not(feature = "baseline-legacy"))]
-                            let views = batch.records();
+                            let views = batch.iter();
                             for record in views {
                                 record_count += 1;
                                 for stat in record.stats {

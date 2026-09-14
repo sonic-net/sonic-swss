@@ -1,5 +1,13 @@
 # Shared template metadata with unified consumer adapters
 
+Rebase update: the current implementation uses the base branch's borrowed
+`batch.iter()` / `SAIStatsRef` API throughout. The lazy owned projection and
+`records()` alias described in the original measurements below are removed.
+Metadata names are resolved at template construction, and consecutive metadata
+reuse requires at most one pointer comparison per record. OTel routing and slot
+plans use these borrowed views and cached names. Performance tables below are
+historical pre-rebase measurements and have not been rerun on the rebased code.
+
 ## Representation and compatibility
 
 IPFIX CompiledTemplate now owns an immutable Arc<[SAIStatMetadata]> of

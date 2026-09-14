@@ -7,7 +7,7 @@ use std::{borrow::Cow, ops::Range, sync::Arc};
 
 /// Resolve against the SAI tables shipped with this build. Known names are
 /// static strings, so template registration does not allocate strings per field.
-fn resolve_names(type_id: u32, stat_id: u32) -> (Option<&'static str>, Option<&'static str>) {
+pub(crate) fn resolve_names(type_id: u32, stat_id: u32) -> (Option<&'static str>, Option<&'static str>) {
     let object = SaiObjectType::from_u32(type_id);
     let stat = match object {
         Some(SaiObjectType::Port) => SaiPortStat::from_u32(stat_id).map(|s| s.to_c_name()),
@@ -133,6 +133,18 @@ impl<'a> From<&'a SAIStat> for SAIStatRef<'a> {
             stat_id: stat.stat_id,
             counter: stat.counter,
             metadata: None,
+        }
+    }
+}
+
+impl<'a> From<(&'a SAIStatMetadata, u64)> for SAIStatRef<'a> {
+    fn from((metadata, counter): (&'a SAIStatMetadata, u64)) -> Self {
+        Self {
+            object_name: &metadata.object_name,
+            type_id: metadata.type_id,
+            stat_id: metadata.stat_id,
+            counter,
+            metadata: Some(metadata),
         }
     }
 }

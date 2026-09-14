@@ -83,15 +83,7 @@ impl GaugeBuffer {
                 if let Some(&slot) = self.index.get(&key) {
                     return slot;
                 }
-                self.push_ref(
-                    SAIStatRef {
-                        object_name: &m.object_name,
-                        type_id: m.type_id,
-                        stat_id: m.stat_id,
-                        counter: 0,
-                    },
-                    0,
-                );
+                self.push_ref((m, 0).into(), 0);
                 let slot = *self.index.get(&key).unwrap();
                 self.series[slot].points.pop();
                 self.active.pop();
@@ -131,7 +123,13 @@ impl GaugeBuffer {
             stat_id: stat.stat_id,
         };
         let slot = *self.index.entry(key).or_insert_with(|| {
-            let (type_name, stat_name) = sai_metric_names(stat.type_id, stat.stat_id);
+            let (type_name, stat_name) = match (stat.type_name(), stat.stat_name()) {
+                (Some(type_name), Some(stat_name)) => (
+                    std::borrow::Cow::Borrowed(type_name),
+                    std::borrow::Cow::Borrowed(stat_name),
+                ),
+                _ => sai_metric_names(stat.type_id, stat.stat_id),
+            };
             let mut metadata = Vec::new();
             string(&mut metadata, 10, &stat_name);
             string(
@@ -534,16 +532,8 @@ mod tests {
         let stat = SAIStat::new("Ethernet0", 1, 0, 11);
         buffer.push(&stat, 1);
         let metadata: Arc<[SAIStatMetadata]> = vec![
-            SAIStatMetadata {
-                object_name: Arc::from("Ethernet0"),
-                type_id: 1,
-                stat_id: 0,
-            },
-            SAIStatMetadata {
-                object_name: Arc::from("Ethernet4"),
-                type_id: 1,
-                stat_id: 1,
-            },
+            SAIStatMetadata::new("Ethernet0", 1, 0),
+            SAIStatMetadata::new("Ethernet4", 1, 1),
         ]
         .into();
         let slots = buffer.shared_slots(&metadata);

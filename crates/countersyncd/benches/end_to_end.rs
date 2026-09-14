@@ -234,7 +234,7 @@ async fn run_end_to_end(
         let mut counters = 0usize;
         let mut workload_done_tx = Some(workload_done_tx);
         while let Some(batch) = readiness_rx.recv().await {
-            for record in batch.records() {
+            for record in batch.iter() {
                 records += 1;
                 counters += record.stats.len();
             }

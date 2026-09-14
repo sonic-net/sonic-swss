@@ -4,9 +4,7 @@
 //! to OpenTelemetry gauge format for export to observability systems.
 
 use crate::message::saistats::{SAIStatRef, SAIStatsRef};
-use crate::sai::{
-    SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
-};
+#[cfg(test)]
 use opentelemetry_proto::tonic::{
     common::v1::{any_value::Value, AnyValue, KeyValue as ProtoKeyValue},
     metrics::v1::{number_data_point, NumberDataPoint},
@@ -17,23 +15,13 @@ use std::borrow::Cow;
 /// Unknown pairs retain both numeric IDs to remain unique and lossless. Resolve
 /// only when populating a series cache, never for each sample in the fast path.
 pub fn sai_metric_names(type_id: u32, stat_id: u32) -> (Cow<'static, str>, Cow<'static, str>) {
-    let object_type = SaiObjectType::from_u32(type_id);
-    let type_name = object_type
-        .map(|t| Cow::Borrowed(t.to_c_name()))
+    let (type_name, stat_name) = crate::message::saistats::resolve_names(type_id, stat_id);
+    let type_name = type_name
+        .map(Cow::Borrowed)
         .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_OBJECT_TYPE_{type_id}")));
-    let stat_name = match object_type {
-        Some(SaiObjectType::Port) => SaiPortStat::from_u32(stat_id).map(|s| s.to_c_name()),
-        Some(SaiObjectType::Queue) => SaiQueueStat::from_u32(stat_id).map(|s| s.to_c_name()),
-        Some(SaiObjectType::BufferPool) => {
-            SaiBufferPoolStat::from_u32(stat_id).map(|s| s.to_c_name())
-        }
-        Some(SaiObjectType::IngressPriorityGroup) => {
-            SaiIngressPriorityGroupStat::from_u32(stat_id).map(|s| s.to_c_name())
-        }
-        _ => None,
-    }
-    .map(Cow::Borrowed)
-    .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_STAT_TYPE_{type_id}_ID_{stat_id}")));
+    let stat_name = stat_name
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_STAT_TYPE_{type_id}_ID_{stat_id}")));
     (type_name, stat_name)
 }
 
@@ -90,6 +78,7 @@ impl OtelAttribute {
     }
 
     /// Converts to OpenTelemetry protobuf KeyValue
+    #[cfg(test)]
     pub fn to_proto(&self) -> ProtoKeyValue {
         ProtoKeyValue {
             key: self.key.clone(),
@@ -121,6 +110,7 @@ impl OtelDataPoint {
     }
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
+    #[cfg(test)]
     pub fn to_proto(&self) -> NumberDataPoint {
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
@@ -217,7 +207,6 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-<<<<<<< HEAD
     fn shared_input_uses_precomputed_names_without_owned_projection() {
         use crate::message::saistats::{SAIStatMetadata, SAIStatsBatch};
         let mut batch = SAIStatsBatch::default();
@@ -235,7 +224,9 @@ mod tests {
         assert_eq!(point.attributes[1].value, "SAI_OBJECT_TYPE_PORT");
         assert_eq!(point.attributes[2].key, "sai_stat");
         assert_eq!(point.attributes[2].value, "SAI_PORT_STAT_IF_IN_OCTETS");
-=======
+    }
+
+    #[test]
     fn canonical_names_are_object_specific_and_unknown_pairs_stay_unique() {
         for (type_id, stat_name) in [
             (1, "SAI_PORT_STAT_IF_IN_OCTETS"),
@@ -263,7 +254,6 @@ mod tests {
         assert!(sai_metric_names(0x20000001, 0x20000001)
             .1
             .starts_with("UNKNOWN_SAI_STAT_TYPE_"));
->>>>>>> 7a28d92 ([countersyncd]: Export canonical SAI type and statistic names)
     }
 
     /// Helper function to create test SAI statistics (similar to saistats.rs pattern)

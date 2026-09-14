@@ -39,7 +39,7 @@ impl OtelWorkerConfig {
             return Err("OTel worker threads must be in 1..=64".into());
         }
         if !(1..=64).contains(&self.in_flight_per_worker)
-            || self.threads * self.in_flight_per_worker > 1024
+            || self.lanes() > 1024
         {
             return Err(
                 "OTel in-flight per worker must be in 1..=64, with at most 1024 total lanes".into(),
@@ -289,7 +289,7 @@ async fn route_batch(
     let mut pending: Vec<SAIStatsBatch> = (0..senders.len())
         .map(|_| SAIStatsBatch::default())
         .collect();
-    for record in batch.records() {
+    for record in batch.iter() {
         if let SAIStatsView::Shared { metadata, values } = record.stats {
             // Pin the complete generation in the plan: pointer reuse cannot alias
             // a retired template. Bound cached plans; queued batches own metadata.
@@ -302,12 +302,7 @@ async fn route_batch(
                     let mut indices = vec![Vec::new(); senders.len()];
                     for (i, m) in metadata.iter().enumerate() {
                         indices[shard_ref(
-                            SAIStatRef {
-                                object_name: &m.object_name,
-                                type_id: m.type_id,
-                                stat_id: m.stat_id,
-                                counter: 0,
-                            },
+                            (m, 0).into(),
                             senders.len(),
                         )]
                         .push(i);
