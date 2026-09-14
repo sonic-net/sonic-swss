@@ -1,0 +1,51 @@
+[package]
+name = "countersyncd-otel-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+default-run = "otel-throughput"
+
+# Compile the actual actor without the daemon's Linux/SONiC dependencies.
+[workspace]
+
+[dependencies]
+ahash = "0.8.11"
+core_affinity = "0.8"
+log = "0.4"
+libc = "0.2"
+futures-util = "0.3"
+byteorder = "1.5"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+mimalloc = { version = "0.1", default-features = false, optional = true }
+once_cell = "1"
+opentelemetry = { version = "0.25", features = ["metrics"] }
+opentelemetry-proto = { version = "0.25", features = ["gen-tonic", "metrics"] }
+prost = "0.13"
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = "0.12"
+
+[features]
+benchmark = []
+baseline-legacy = []
+mimalloc = ["dep:mimalloc"]
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["test-util"] }
+
+[[bin]]
+name = "otel-throughput"
+path = "src/main.rs"
+
+[[bin]]
+name = "otel-multithread"
+path = "src/multithread.rs"
+
+[[bin]]
+name = "otel-pool-bench"
+path = "src/pool_bench.rs"
+
+[[bin]]
+name = "ipfix-shared-bench"
+path = "src/ipfix_shared_bench.rs"

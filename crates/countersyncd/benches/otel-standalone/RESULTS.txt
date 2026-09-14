@@ -1,0 +1,38 @@
+Baseline source: bb6c96decdebdf9d2c75d52c126719f316d53d11
+Baseline measured before actor modifications with the same prebuilt SAI workload.
+Timing: final decoded receipt; full lifecycle additionally includes old 1s sleep.
+trial=0 batch=100000 points=4000000 requests=40 elapsed_s=30.819135 received_Mpoints_s=0.130 lifecycle_s=31.977834
+trial=1 batch=100000 points=4000000 requests=40 elapsed_s=30.226258 received_Mpoints_s=0.132 lifecycle_s=31.397889
+trial=2 batch=100000 points=4000000 requests=40 elapsed_s=30.685218 received_Mpoints_s=0.130 lifecycle_s=31.848747
+trial=0 batch=10000 points=4000000 requests=400 elapsed_s=26.770326 received_Mpoints_s=0.149 lifecycle_s=27.790282
+
+Optimized, system allocator, full ACK timing:
+trial=0 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=6.425793 acked_Mpoints_s=0.622 received_elapsed_s=6.422268
+trial=1 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=5.728168 acked_Mpoints_s=0.698 received_elapsed_s=5.724339
+trial=2 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=5.564068 acked_Mpoints_s=0.719 received_elapsed_s=5.559552
+trial=0 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=7.354668 acked_Mpoints_s=0.544 received_elapsed_s=7.320362
+trial=1 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=7.181665 acked_Mpoints_s=0.557 received_elapsed_s=7.149225
+trial=2 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=7.280610 acked_Mpoints_s=0.549 received_elapsed_s=7.248636
+
+Optimized, optional benchmark mimalloc + target-cpu=native, full ACK timing:
+trial=0 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=3.965912 acked_Mpoints_s=1.009 received_elapsed_s=3.965148
+trial=1 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=3.930562 acked_Mpoints_s=1.018 received_elapsed_s=3.929820
+trial=2 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=3.843380 acked_Mpoints_s=1.041 received_elapsed_s=3.842601
+trial=0 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=4.371476 acked_Mpoints_s=0.915 received_elapsed_s=4.365240
+trial=1 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=4.380156 acked_Mpoints_s=0.913 received_elapsed_s=4.374030
+trial=2 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=4.510291 acked_Mpoints_s=0.887 received_elapsed_s=4.504086
+trial=0 batch=1000000 points=4000000 requests=4 bytes=366422940 elapsed_s=4.887049 acked_Mpoints_s=0.818 received_elapsed_s=4.830294
+trial=1 batch=1000000 points=4000000 requests=4 bytes=366422940 elapsed_s=4.911491 acked_Mpoints_s=0.814 received_elapsed_s=4.853635
+
+Eight receiver workers, still single-flight sender, mimalloc + native CPU:
+trial=0 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=4.899047 acked_Mpoints_s=0.816 received_elapsed_s=4.892356
+trial=1 batch=100000 points=4000000 requests=40 bytes=368069400 elapsed_s=5.248094 acked_Mpoints_s=0.762 received_elapsed_s=5.227825
+
+Diagnostics only (not transport throughput):
+decode_drop_only batch=100000 bytes=9201680 Mpoints_s=2.207
+decode_drop_only batch=10000 bytes=960278 Mpoints_s=2.307
+actual_actor_encode_Mpoints_s=10.789
+
+Final system-allocator sanity run after moving the standalone entry point and
+adding timeout/error propagation (no encoding/transport changes):
+trial=0 batch=10000 points=4000000 requests=400 bytes=384133200 elapsed_s=6.018173 acked_Mpoints_s=0.665 received_elapsed_s=6.014765

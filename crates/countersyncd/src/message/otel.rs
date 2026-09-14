@@ -3,11 +3,27 @@
 //! This module defines data structures for converting SAI statistics
 //! to OpenTelemetry gauge format for export to observability systems.
 
-use crate::message::saistats::{SAIStat, SAIStatsRef};
+use crate::message::saistats::{SAIStatRef, SAIStatsRef};
+#[cfg(test)]
 use opentelemetry_proto::tonic::{
     common::v1::{any_value::Value, AnyValue, KeyValue as ProtoKeyValue},
     metrics::v1::{number_data_point, NumberDataPoint},
 };
+use std::borrow::Cow;
+
+/// Canonical SAI C names for the object/stat tables shipped with countersyncd.
+/// Unknown pairs retain both numeric IDs to remain unique and lossless. Resolve
+/// only when populating a series cache, never for each sample in the fast path.
+pub fn sai_metric_names(type_id: u32, stat_id: u32) -> (Cow<'static, str>, Cow<'static, str>) {
+    let (type_name, stat_name) = crate::message::saistats::resolve_names(type_id, stat_id);
+    let type_name = type_name
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_OBJECT_TYPE_{type_id}")));
+    let stat_name = stat_name
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(format!("UNKNOWN_SAI_STAT_TYPE_{type_id}_ID_{stat_id}")));
+    (type_name, stat_name)
+}
 
 /// OpenTelemetry Gauge representation for SAI statistics
 ///
@@ -16,7 +32,8 @@ use opentelemetry_proto::tonic::{
 /// from SAI statistics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelGauge {
-    /// Metric name (e.g., "sai_counter_type_100_stat_200")
+    /// Canonical SAI stat name (e.g., "SAI_PORT_STAT_IF_IN_OCTETS").
+    /// Unsupported IDs use "UNKNOWN_SAI_STAT_TYPE_<type_id>_ID_<stat_id>".
     pub name: String,
     /// Description of the metric
     pub description: String,
@@ -61,6 +78,7 @@ impl OtelAttribute {
     }
 
     /// Converts to OpenTelemetry protobuf KeyValue
+    #[cfg(test)]
     pub fn to_proto(&self) -> ProtoKeyValue {
         ProtoKeyValue {
             key: self.key.clone(),
@@ -73,11 +91,15 @@ impl OtelAttribute {
 
 impl OtelDataPoint {
     /// Creates a new OtelDataPoint from SAI statistic
-    pub fn from_sai_stat(sai_stat: &SAIStat, observation_time_nano: u64) -> Self {
+    pub fn from_sai_stat<'a>(
+        sai_stat: impl Into<SAIStatRef<'a>>,
+        observation_time_nano: u64,
+    ) -> Self {
+        let sai_stat = sai_stat.into();
         let attributes = vec![
             OtelAttribute::new("object_name", sai_stat.object_name.as_ref()),
-            OtelAttribute::new("sai_type_id", sai_stat.type_id.to_string()),
-            OtelAttribute::new("sai_stat_id", sai_stat.stat_id.to_string()),
+            OtelAttribute::new("sai_type", sai_stat.type_name_or_id().into_owned()),
+            OtelAttribute::new("sai_stat", sai_stat.stat_name_or_id().into_owned()),
         ];
 
         Self {
@@ -88,6 +110,7 @@ impl OtelDataPoint {
     }
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
+    #[cfg(test)]
     pub fn to_proto(&self) -> NumberDataPoint {
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
@@ -100,16 +123,17 @@ impl OtelDataPoint {
 
 impl OtelGauge {
     /// Creates a new OtelGauge from SAI statistic
-    pub fn from_sai_stat(sai_stat: &SAIStat, observation_time_nano: u64) -> Self {
-        let name = format!(
-            "sai_counter_type_{}_stat_{}",
-            sai_stat.type_id, sai_stat.stat_id
-        );
+    pub fn from_sai_stat<'a>(
+        sai_stat: impl Into<SAIStatRef<'a>>,
+        observation_time_nano: u64,
+    ) -> Self {
+        let sai_stat = sai_stat.into();
+        let name = sai_stat.stat_name_or_id().into_owned();
         let description = format!(
             "SAI counter for object {} (type:{}, stat:{})",
             sai_stat.object_name.as_ref(),
-            sai_stat.type_id,
-            sai_stat.stat_id
+            sai_stat.type_name_or_id(),
+            name
         );
 
         let data_point = OtelDataPoint::from_sai_stat(sai_stat, observation_time_nano);
@@ -182,6 +206,56 @@ mod tests {
     use log::{debug, info};
     use std::sync::Arc;
 
+    #[test]
+    fn shared_input_uses_precomputed_names_without_owned_projection() {
+        use crate::message::saistats::{SAIStatMetadata, SAIStatsBatch};
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(
+            99,
+            Arc::from(vec![SAIStatMetadata::new("Ethernet0", 1, 0)]),
+            [123],
+        );
+        let metrics = OtelMetrics::from_sai_stats(batch.iter().next().unwrap());
+        assert_eq!(metrics.gauges[0].name, "SAI_PORT_STAT_IF_IN_OCTETS");
+        let point = &metrics.gauges[0].data_points[0];
+        assert_eq!(point.time_unix_nano, 99);
+        assert_eq!(point.value, 123);
+        assert_eq!(point.attributes[1].key, "sai_type");
+        assert_eq!(point.attributes[1].value, "SAI_OBJECT_TYPE_PORT");
+        assert_eq!(point.attributes[2].key, "sai_stat");
+        assert_eq!(point.attributes[2].value, "SAI_PORT_STAT_IF_IN_OCTETS");
+    }
+
+    #[test]
+    fn canonical_names_are_object_specific_and_unknown_pairs_stay_unique() {
+        for (type_id, stat_name) in [
+            (1, "SAI_PORT_STAT_IF_IN_OCTETS"),
+            (21, "SAI_QUEUE_STAT_PACKETS"),
+            (24, "SAI_BUFFER_POOL_STAT_CURR_OCCUPANCY_BYTES"),
+            (26, "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS"),
+        ] {
+            let (object, stat) = sai_metric_names(type_id, 0);
+            assert!(object.starts_with("SAI_OBJECT_TYPE_"));
+            assert_eq!(stat, stat_name);
+            let point = OtelDataPoint::from_sai_stat(&SAIStat::new("object", type_id, 0, 42), 99);
+            assert_eq!(point.attributes[1].key, "sai_type");
+            assert_eq!(point.attributes[1].value, object);
+            assert_eq!(point.attributes[2].key, "sai_stat");
+            assert_eq!(point.attributes[2].value, stat);
+        }
+        assert_eq!(
+            sai_metric_names(u32::MAX, u32::MAX).0,
+            "UNKNOWN_SAI_OBJECT_TYPE_4294967295"
+        );
+        assert_ne!(
+            sai_metric_names(1, u32::MAX).1,
+            sai_metric_names(21, u32::MAX).1
+        );
+        assert!(sai_metric_names(0x20000001, 0x20000001)
+            .1
+            .starts_with("UNKNOWN_SAI_STAT_TYPE_"));
+    }
+
     /// Helper function to create test SAI statistics (similar to saistats.rs pattern)
     fn create_test_sai_stats(observation_time: u64, stat_count: usize) -> SAIStats {
         let stats = (0..stat_count)
@@ -199,7 +273,7 @@ mod tests {
     fn as_ref(sai_stats: &SAIStats) -> SAIStatsRef<'_> {
         SAIStatsRef {
             observation_time: sai_stats.observation_time,
-            stats: &sai_stats.stats,
+            stats: crate::message::saistats::SAIStatsView::Owned(&sai_stats.stats),
         }
     }
 
@@ -209,9 +283,9 @@ mod tests {
         assert_eq!(attr.key, "object_name");
         assert_eq!(attr.value, "Ethernet0");
 
-        let attr2 = OtelAttribute::new("sai_type_id", "100");
-        assert_eq!(attr2.key, "sai_type_id");
-        assert_eq!(attr2.value, "100");
+        let attr2 = OtelAttribute::new("sai_type", "SAI_OBJECT_TYPE_PORT");
+        assert_eq!(attr2.key, "sai_type");
+        assert_eq!(attr2.value, "SAI_OBJECT_TYPE_PORT");
     }
 
     #[test]
@@ -241,16 +315,16 @@ mod tests {
         let type_id_attr = data_point
             .attributes
             .iter()
-            .find(|attr| attr.key == "sai_type_id")
+            .find(|attr| attr.key == "sai_type")
             .unwrap();
-        assert_eq!(type_id_attr.value, "100");
+        assert_eq!(type_id_attr.value, "SAI_OBJECT_TYPE_IPSEC_PORT");
 
         let stat_id_attr = data_point
             .attributes
             .iter()
-            .find(|attr| attr.key == "sai_stat_id")
+            .find(|attr| attr.key == "sai_stat")
             .unwrap();
-        assert_eq!(stat_id_attr.value, "200");
+        assert_eq!(stat_id_attr.value, "UNKNOWN_SAI_STAT_TYPE_100_ID_200");
     }
 
     #[test]
@@ -265,10 +339,10 @@ mod tests {
         let observation_time_nano = 0u64; // 1970-01-01 00:00:00 UTC
         let gauge = OtelGauge::from_sai_stat(&sai_stat, observation_time_nano);
 
-        assert_eq!(gauge.name, "sai_counter_type_24_stat_2");
+        assert_eq!(gauge.name, "SAI_BUFFER_POOL_STAT_DROPPED_PACKETS");
         assert_eq!(
             gauge.description,
-            "SAI counter for object BufferPool1 (type:24, stat:2)"
+            "SAI counter for object BufferPool1 (type:SAI_OBJECT_TYPE_BUFFER_POOL, stat:SAI_BUFFER_POOL_STAT_DROPPED_PACKETS)"
         );
         assert_eq!(gauge.unit, "1");
         assert_eq!(gauge.data_points.len(), 1);
@@ -287,7 +361,7 @@ mod tests {
 
         // Check first gauge
         let first_gauge = &gauges[0];
-        assert_eq!(first_gauge.name, "sai_counter_type_1_stat_1");
+        assert_eq!(first_gauge.name, "SAI_PORT_STAT_IF_IN_UCAST_PKTS");
         assert!(first_gauge.description.contains("Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
@@ -329,14 +403,14 @@ mod tests {
         let port_gauge = otel_metrics
             .gauges
             .iter()
-            .find(|g| g.name == "sai_counter_type_1_stat_1")
+            .find(|g| g.name == "SAI_PORT_STAT_IF_IN_UCAST_PKTS")
             .unwrap();
         assert_eq!(port_gauge.data_points[0].value, 12345);
 
         let buffer_gauge = otel_metrics
             .gauges
             .iter()
-            .find(|g| g.name == "sai_counter_type_24_stat_2")
+            .find(|g| g.name == "SAI_BUFFER_POOL_STAT_DROPPED_PACKETS")
             .unwrap();
         assert_eq!(buffer_gauge.data_points[0].value, 67890);
     }
@@ -463,9 +537,11 @@ mod tests {
         let port_rx_metric = otel_metrics
             .gauges
             .iter()
-            .find(|g| g.name == "sai_counter_type_1_stat_1")
+            .find(|g| g.name == "SAI_PORT_STAT_IF_IN_UCAST_PKTS")
             .unwrap();
-        assert!(port_rx_metric.description.contains("type:1, stat:1"));
+        assert!(port_rx_metric
+            .description
+            .contains("type:SAI_OBJECT_TYPE_PORT, stat:SAI_PORT_STAT_IF_IN_UCAST_PKTS"));
     }
 
     #[test]

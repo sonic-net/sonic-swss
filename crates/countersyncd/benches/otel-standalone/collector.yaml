@@ -1,0 +1,25 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:24317
+        max_recv_msg_size_mib: 128
+exporters:
+  nop: {}
+extensions:
+  pprof:
+    endpoint: 127.0.0.1:21777
+service:
+  extensions: [pprof]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 28888
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [nop]
