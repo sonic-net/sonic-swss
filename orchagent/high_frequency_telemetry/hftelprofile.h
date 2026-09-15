@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <set>
 #include <string>
@@ -26,7 +27,8 @@ public:
         sai_object_id_t sai_tam_obj,
         sai_object_id_t sai_tam_collector_obj,
         const CounterNameCache &cache,
-        sai_tam_tel_type_mode_t tel_type_mode);
+        sai_tam_tel_type_mode_t tel_type_mode,
+        std::unordered_set<sai_object_type_t> tel_type_supported_categories = {});
     ~HFTelProfile();
     HFTelProfile(const HFTelProfile &) = delete;
     HFTelProfile &operator=(const HFTelProfile &) = delete;
@@ -37,6 +39,10 @@ public:
 
     const std::string& getProfileName() const;
     bool isMixedTypeMode() const { return m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE; }
+    bool isCategorySupported(sai_object_type_t object_type) const
+    {
+        return m_tel_type_supported_categories.count(object_type) != 0;
+    }
     void setStreamState(sai_tam_tel_type_state_t state);
     void setStreamState(sai_object_type_t object_type, sai_tam_tel_type_state_t state);
     sai_tam_tel_type_state_t getStreamState(sai_object_type_t object_type) const;
@@ -82,6 +88,10 @@ private:
         m_name_sai_map;
 
     const sai_tam_tel_type_mode_t m_tel_type_mode;
+
+    // Object types whose SWITCH_ENABLE_*_STATS attribute the vendor SAI implements
+    // (see HFTelOrch::querySupportedTelTypeModes).
+    const std::unordered_set<sai_object_type_t> m_tel_type_supported_categories;
 
     // Next IPFIX label to allocate in MIXED_TYPE mode. Unused in SINGLE_TYPE.
     // labels are monotonic and never reused within a profile.

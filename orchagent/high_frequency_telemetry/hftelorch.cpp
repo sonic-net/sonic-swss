@@ -76,7 +76,7 @@ HFTelOrch::HFTelOrch(
 
     bool single_supported = false;
     bool mixed_supported = false;
-    querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported);
+    querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported, m_tel_type_supported_categories);
 
     if (single_supported && !mixed_supported)
     {
@@ -291,7 +291,8 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
 
     bool single_supported = false;
     bool mixed_supported = false;
-    if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported))
+    std::unordered_set<sai_object_type_t> tel_type_supported_categories;
+    if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported, tel_type_supported_categories))
     {
         // The SAI capability query for SAI_TAM_TEL_TYPE_ATTR_MODE is optional;
         // older or simpler SAI implementations (e.g. saivs) return
@@ -317,12 +318,14 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
 bool HFTelOrch::querySupportedTelTypeModes(
     sai_object_id_t switch_id,
     bool &single_supported,
-    bool &mixed_supported)
+    bool &mixed_supported,
+    std::unordered_set<sai_object_type_t> &tel_type_supported_categories)
 {
     SWSS_LOG_ENTER();
 
     single_supported = false;
     mixed_supported = false;
+    tel_type_supported_categories.clear();
 
     const auto *meta = sai_metadata_get_attr_metadata(
         SAI_OBJECT_TYPE_TAM_TEL_TYPE,
@@ -369,6 +372,49 @@ bool HFTelOrch::querySupportedTelTypeModes(
         else if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
         {
             mixed_supported = true;
+        }
+    }
+
+    if (mixed_supported)
+    {
+        // Advertising MIXED_TYPE doesn't guarantee every SWITCH_ENABLE_*_STATS
+        // attribute is implemented, so probe each independently rather than
+        // requiring all three: stay usable for whichever categories are
+        // actually supported (see groupTableSet / getTAMTelTypeObjID).
+        struct { sai_attr_id_t attr; std::vector<sai_object_type_t> object_types; const char *name; } categoryChecks[] = {
+            {SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS,
+                {SAI_OBJECT_TYPE_PORT},
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS"},
+            {SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS,
+                {SAI_OBJECT_TYPE_BUFFER_POOL, SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP},
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS"},
+            {SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS,
+                {SAI_OBJECT_TYPE_QUEUE},
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS"},
+        };
+
+        for (const auto &chk : categoryChecks)
+        {
+            sai_attr_capability_t capability = {};
+            sai_status_t enable_status = sai_query_attribute_capability(
+                switch_id, SAI_OBJECT_TYPE_TAM_TEL_TYPE, chk.attr, &capability);
+            if (enable_status == SAI_STATUS_SUCCESS && capability.create_implemented)
+            {
+                tel_type_supported_categories.insert(chk.object_types.begin(), chk.object_types.end());
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("HFTel: %s not supported on SAI_OBJECT_TYPE_TAM_TEL_TYPE; "
+                                "MIXED_TYPE groups for this category will be rejected",
+                                chk.name);
+            }
+        }
+
+        if (tel_type_supported_categories.empty())
+        {
+            SWSS_LOG_NOTICE("HFTel: MIXED_TYPE advertised but no SWITCH_ENABLE_*_STATS attribute "
+                            "is supported on SAI_OBJECT_TYPE_TAM_TEL_TYPE; MIXED_TYPE is not usable");
+            mixed_supported = false;
         }
     }
 
@@ -474,6 +520,15 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
 
     auto type = HFTelUtils::group_name_to_sai_type(group_name);
 
+    if (profile->isMixedTypeMode() && !profile->isCategorySupported(type))
+    {
+        SWSS_LOG_ERROR(
+            "HFTel: group %s:%s uses object type %s, which the vendor SAI does not support; "
+            "group configuration rejected",
+            profile_name.c_str(), group_name.c_str(), sai_serialize_object_type(type).c_str());
+        return task_process_status::task_failed;
+    }
+
     if (!profile->canBeUpdated(type))
     {
         return task_process_status::task_need_retry;
@@ -559,7 +614,8 @@ shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
                 m_sai_tam_obj,
                 m_sai_tam_collector_obj,
                 m_counter_name_cache,
-                m_tel_type_mode));
+                m_tel_type_mode,
+                m_tel_type_supported_categories));
     }
 
     return m_name_profile_mapping.at(profile_name);

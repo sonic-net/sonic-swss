@@ -22,12 +22,14 @@ HFTelProfile::HFTelProfile(
     sai_object_id_t sai_tam_obj,
     sai_object_id_t sai_tam_collector_obj,
     const CounterNameCache &cache,
-    sai_tam_tel_type_mode_t tel_type_mode)
+    sai_tam_tel_type_mode_t tel_type_mode,
+    std::unordered_set<sai_object_type_t> tel_type_supported_categories)
     : m_profile_name(profile_name),
       m_setting_state(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM),
       m_poll_interval(0),
       m_counter_name_cache(cache),
       m_tel_type_mode(tel_type_mode),
+      m_tel_type_supported_categories(std::move(tel_type_supported_categories)),
       m_sai_tam_obj(sai_tam_obj),
       m_sai_tam_collector_obj(sai_tam_collector_obj)
 {
@@ -788,20 +790,34 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
 
     if (m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
     {
-        // The single tel_type for this profile must cover every counter
-        // category; individual sai_tam_counter_subscription objects scope
-        // what is actually streamed.
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
+        // The single tel_type for this profile must cover every supported
+        // counter category; individual sai_tam_counter_subscription objects
+        // scope what is actually streamed. Only enable the categories the
+        // vendor SAI actually implements (m_tel_type_supported_categories, set
+        // from HFTelOrch::querySupportedTelTypeModes) - groups for any other
+        // category are rejected before reaching here, in
+        // HFTelOrch::groupTableSet.
+        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_PORT))
+        {
+            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
+        }
 
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
+        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_BUFFER_POOL) ||
+            m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP))
+        {
+            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
+        }
 
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
+        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_QUEUE))
+        {
+            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
+        }
     }
     else if (object_type == SAI_OBJECT_TYPE_PORT)
     {
