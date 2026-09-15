@@ -1,6 +1,6 @@
 //! Correctness tests for the shared local-storage benchmark helpers, not performance runs.
 
-#![cfg(all(feature = "local-storage-benchmark", not(target_arch = "arm")))]
+#![cfg(not(target_arch = "arm"))]
 
 #[path = "../benchmark_support/mod.rs"]
 mod support;

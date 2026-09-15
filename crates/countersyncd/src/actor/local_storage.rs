@@ -90,7 +90,7 @@
 //! Capture is opt-in. The default `/tmp/hft` is created privately (0700), with
 //! service-owned files (0600), a single-writer lock, symlink/device checks and a
 //! 128 MiB quota including directory/staging allocation. Schema and batch admission
-//! require at least 64 MiB of headroom, so capture can stop before the 100 MB
+//! each reserve 64 MiB of headroom, so capture can stop before the 100 MB
 //! rotation target. Storage
 //! errors close this recipient; backpressure and upstream receive loss remain
 //! possible. There is no automatic upload, eviction or retention management.
@@ -107,8 +107,8 @@ use crate::message::{
 };
 use arrow_array::{RecordBatch, UInt64Array};
 use arrow_ipc::{
-    writer::{IpcWriteOptions, StreamWriter},
     CompressionType,
+    writer::{IpcWriteOptions, StreamWriter},
 };
 use log::{error, info};
 use std::{
@@ -125,10 +125,9 @@ use std::{
 };
 use tokio::{sync::mpsc::Receiver, time::MissedTickBehavior};
 
-#[path = "local_storage_codec.rs"]
 mod codec;
 #[allow(unused_imports)]
-pub use codec::{read_shard, series_names, DecodedSample};
+pub use codec::{DecodedSample, read_shard, series_names};
 
 const FORMAT_VERSION: &str = "sonic-hft-arrow-v5";
 const LOCK_FILE: &str = ".writer.lock";
@@ -137,6 +136,13 @@ const MAX_ROWS: usize = 4096;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
 const BATCH_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
+// Writer rows fit the raw target; even the conservative IPC bound fits
+// the fixed reservation. Keep reader limits independent of these writer bounds.
+const _: () = assert!((codec::MAX_COUNTERS + 1) * 8 <= BATCH_TARGET_BYTES);
+const _: () = assert!(
+    2 * BATCH_TARGET_BYTES as u64 + (codec::MAX_COUNTERS as u64 + 1) * 256 + 8 * 1024 * 1024
+        <= BATCH_RESERVE_BYTES
+);
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -420,14 +426,8 @@ impl Store {
             return Ok(());
         }
         let layout = self.layout.as_ref().ok_or("missing batch layout")?;
-        let raw_bytes = (self.columns[0].len() * layout.row_bytes) as u64;
-        let reserve = BATCH_RESERVE_BYTES.max(
-            raw_bytes
-                .saturating_mul(2)
-                .saturating_add((self.columns.len() as u64) * 256 + 8 * 1024 * 1024),
-        );
         let schema = Arc::clone(&layout.schema);
-        self.reserve(reserve)?;
+        self.reserve(BATCH_RESERVE_BYTES)?;
         for column in &mut self.columns[1..] {
             self.matrix.extend_from_slice(column);
             column.clear();
@@ -451,7 +451,7 @@ impl Store {
             .map_err(|e| e.to_string())?
             .blocks()
             * 512;
-        active.writer.get_mut().remaining = reserve;
+        active.writer.get_mut().remaining = BATCH_RESERVE_BYTES;
         active.writer.write(&batch).map_err(|e| e.to_string())?;
         active.writer.get_mut().flush().map_err(|e| e.to_string())?;
         active
@@ -817,11 +817,10 @@ fn tmpfs_available_bytes(free: u64, meminfo: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::saistats::{SAIStat, SAIStatsBatch};
+    use crate::message::saistats::{SAIStat, SAIStatMetadata, SAIStatsBatch, SAIStatsView};
     use arrow_array::{Array, ListArray};
     use arrow_ipc::reader::StreamReader;
     use std::{
-        io::Cursor,
         process::{Command, Stdio},
         sync::mpsc,
         thread,
@@ -895,7 +894,7 @@ mod tests {
                     let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
                     DecodedSample {
                         stat_index: i as u32,
-                        object_name: Arc::clone(&stat.object_name),
+                        object_name: Arc::clone(stat.object_name),
                         type_name: type_name.into(),
                         stat_name: stat_name.into(),
                         observation_time: record.observation_time,
@@ -910,12 +909,60 @@ mod tests {
         let temp = private_tempdir();
         let mut store = store(temp.path());
         for record in batch.iter() {
+            let stable_schema = store
+                .layout
+                .as_ref()
+                .filter(|layout| layout.matches(record))
+                .map(|layout| Arc::clone(&layout.schema));
             store.add_record(record).unwrap();
+            if let Some(schema) = stable_schema {
+                assert!(Arc::ptr_eq(&schema, &store.layout.as_ref().unwrap().schema));
+            }
         }
         store.finish_stream().unwrap();
         assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
         let paths = paths(temp.path(), "shards");
         (temp, paths)
+    }
+
+    fn representations(owned: SAIStatsBatch) -> [SAIStatsBatch; 3] {
+        let mut shared = SAIStatsBatch::default();
+        let mut mixed = SAIStatsBatch::default();
+        let mut metadata: Arc<[SAIStatMetadata]> = Arc::from([]);
+        for (index, record) in owned.iter().enumerate() {
+            let SAIStatsView::Owned(stats) = record.stats else {
+                panic!("fixture must start with owned stats");
+            };
+            if metadata.len() != stats.len()
+                || !metadata.iter().zip(stats).all(|(m, s)| {
+                    m.object_name == s.object_name
+                        && m.type_id == s.type_id
+                        && m.stat_id == s.stat_id
+                })
+            {
+                metadata = stats
+                    .iter()
+                    .map(|s| SAIStatMetadata::new(Arc::clone(&s.object_name), s.type_id, s.stat_id))
+                    .collect();
+            }
+            shared.push_shared_record(
+                record.observation_time,
+                Arc::clone(&metadata),
+                stats.iter().map(|s| s.counter),
+            );
+            if index % 2 == 0 {
+                mixed.push_record(record.observation_time, stats.iter().cloned());
+            } else {
+                mixed.push_shared_record(
+                    record.observation_time,
+                    Arc::clone(&metadata),
+                    stats.iter().map(|s| s.counter),
+                );
+            }
+        }
+        assert_eq!(owned, shared);
+        assert_eq!(owned, mixed);
+        [owned, shared, mixed]
     }
 
     #[test]
@@ -941,38 +988,40 @@ mod tests {
                 ],
             );
         }
-        let (_temp, files) = encode(&batch);
-        assert_eq!(files.len(), 1);
-        assert_eq!(decoded(&files[0]), expected(&batch));
-        let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
-        assert_eq!(
-            reader.schema().metadata()["format_version"],
-            "sonic-hft-arrow-v5"
-        );
-        assert_eq!(reader.schema().fields().len(), 2);
-        assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
-        assert_eq!(reader.schema().field(1).name(), "values");
-        for field in reader.schema().fields() {
-            assert!(!field.is_nullable());
+        for batch in representations(batch) {
+            let (_temp, files) = encode(&batch);
+            assert_eq!(files.len(), 1);
+            assert_eq!(decoded(&files[0]), expected(&batch));
+            let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
             assert_eq!(
-                field.data_type(),
-                &arrow_schema::DataType::List(Arc::new(arrow_schema::Field::new(
-                    "item",
-                    arrow_schema::DataType::UInt64,
-                    false
-                )))
+                reader.schema().metadata()["format_version"],
+                "sonic-hft-arrow-v5"
             );
-        }
-        let batches: Vec<_> = reader.map(Result::unwrap).collect();
-        assert_eq!(
-            batches.iter().map(|b| child(b, 0).len()).sum::<usize>(),
-            9000
-        );
-        for b in batches {
-            assert_eq!(b.num_rows(), 1);
-            for c in b.columns() {
-                assert!(matches!(c.data_type(), arrow_schema::DataType::List(_)));
-                assert_eq!(c.null_count(), 0);
+            assert_eq!(reader.schema().fields().len(), 2);
+            assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
+            assert_eq!(reader.schema().field(1).name(), "values");
+            for field in reader.schema().fields() {
+                assert!(!field.is_nullable());
+                assert_eq!(
+                    field.data_type(),
+                    &arrow_schema::DataType::List(Arc::new(arrow_schema::Field::new(
+                        "item",
+                        arrow_schema::DataType::UInt64,
+                        false
+                    )))
+                );
+            }
+            let batches: Vec<_> = reader.map(Result::unwrap).collect();
+            assert_eq!(
+                batches.iter().map(|b| child(b, 0).len()).sum::<usize>(),
+                9000
+            );
+            for b in batches {
+                assert_eq!(b.num_rows(), 1);
+                for c in b.columns() {
+                    assert!(matches!(c.data_type(), arrow_schema::DataType::List(_)));
+                    assert_eq!(c.null_count(), 0);
+                }
             }
         }
     }
@@ -986,36 +1035,38 @@ mod tests {
         batch.push_record(2, [stat("b", 3), stat("a", 4)]);
         batch.push_record(1, [stat("b", 5), stat("a", 6)]);
         batch.push_record(1, [stat("a", 0), stat("a", u64::MAX)]);
-        batch.push_record(0, [SAIStat::new("a", 21, 0, 42), stat("a", 2)]);
+        batch.push_record(0, [SAIStat::new("a", 21, 2, 42), stat("a", 2)]);
         batch.push_record(0, [SAIStat::new("a", 21, 1, 42), stat("a", 2)]);
         batch.push_record(0, [SAIStat::new("renamed", 21, 1, 42), stat("a", 2)]);
         batch.push_record(0, []);
-        let (_temp, files) = encode(&batch);
-        assert_eq!(files.len(), 8);
-        assert_eq!(
-            files.iter().flat_map(|p| decoded(p)).collect::<Vec<_>>(),
-            expected(&batch)
-        );
-        let rows: Vec<u64> = files
-            .iter()
-            .flat_map(|p| {
-                StreamReader::try_new(File::open(p).unwrap(), None)
-                    .unwrap()
-                    .flat_map(|b| {
-                        let b = b.unwrap();
-                        child(&b, 0).values().to_vec()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(
-            rows,
-            batch.iter().map(|r| r.observation_time).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            read_shard(&files[1], |_| Err("visitor stopped".into())),
-            Err("visitor stopped".into())
-        );
+        for batch in representations(batch) {
+            let (_temp, files) = encode(&batch);
+            assert_eq!(files.len(), 8);
+            assert_eq!(
+                files.iter().flat_map(|p| decoded(p)).collect::<Vec<_>>(),
+                expected(&batch)
+            );
+            let rows: Vec<u64> = files
+                .iter()
+                .flat_map(|p| {
+                    StreamReader::try_new(File::open(p).unwrap(), None)
+                        .unwrap()
+                        .flat_map(|b| {
+                            let b = b.unwrap();
+                            child(&b, 0).values().to_vec()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                batch.iter().map(|r| r.observation_time).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                read_shard(&files[1], |_| Err("visitor stopped".into())),
+                Err("visitor stopped".into())
+            );
+        }
     }
 
     #[test]
@@ -1031,7 +1082,7 @@ mod tests {
             let stats: Vec<_> = (0..width).map(|i| stat("port", i as u64)).collect();
             let record = SAIStatsRef {
                 observation_time: u64::MAX,
-                stats: &stats,
+                stats: SAIStatsView::Owned(&stats),
             };
             store.add_record(record).unwrap();
             let layout = store.layout.as_ref().unwrap();
@@ -1040,7 +1091,7 @@ mod tests {
                 (BATCH_TARGET_BYTES / ((width + 1) * 8)).min(MAX_ROWS)
             );
             assert_eq!(layout.batch_rows, expected_rows);
-            assert!(layout.batch_rows * layout.row_bytes <= BATCH_TARGET_BYTES);
+            assert!(layout.batch_rows * (width + 1) * 8 <= BATCH_TARGET_BYTES);
             let pointers: Vec<_> = store.columns.iter().map(|c| c.as_ptr()).collect();
             let matrix_pointer = store.matrix.as_ptr();
             store.flush_batch().unwrap();
@@ -1068,7 +1119,7 @@ mod tests {
     }
 
     fn small_stream() -> (Vec<u8>, Vec<(usize, u64)>, Vec<DecodedSample>) {
-        let layout = codec::Layout::new(&[stat("a", 0)]).unwrap();
+        let layout = codec::Layout::new(SAIStatsView::Owned(&[stat("a", 0)])).unwrap();
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .unwrap();
@@ -1145,7 +1196,7 @@ mod tests {
                 writer
                     .add_record(SAIStatsRef {
                         observation_time: 0,
-                        stats: &[],
+                        stats: SAIStatsView::Owned(&[]),
                     })
                     .unwrap();
                 assert_ne!(writer.active.as_ref().unwrap().path, partial);
@@ -1158,16 +1209,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_header_and_nullable_schema_without_removing_state() {
+    fn rejects_invalid_header_and_wrong_version_without_removing_state() {
         let temp = private_tempdir();
         drop(prepare_storage(&config(temp.path())).unwrap());
         let partial = temp.path().join(".staging/bad.arrow.partial");
         for bytes in [b"not an Arrow stream".to_vec(), {
-            let schema = arrow_schema::Schema::new(vec![arrow_schema::Field::new(
-                "timestamp_ns",
-                arrow_schema::DataType::UInt64,
-                true,
-            )]);
+            let layout = codec::Layout::new(SAIStatsView::Owned(&[stat("a", 0)])).unwrap();
+            let mut metadata = layout.schema.metadata().clone();
+            metadata.insert("format_version".into(), "sonic-hft-arrow-v4".into());
+            let schema =
+                arrow_schema::Schema::new_with_metadata(layout.schema.fields().clone(), metadata);
             let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
             writer.finish().unwrap();
             writer.into_inner().unwrap()
@@ -1198,12 +1249,14 @@ mod tests {
         let mut writer = store(temp.path());
         assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
         writer.config.max_bytes = writer.used_bytes + BATCH_RESERVE_BYTES - 1;
-        assert!(writer
-            .add_record(SAIStatsRef {
-                observation_time: 0,
-                stats: &[]
-            })
-            .is_err());
+        assert!(
+            writer
+                .add_record(SAIStatsRef {
+                    observation_time: 0,
+                    stats: SAIStatsView::Owned(&[])
+                })
+                .is_err()
+        );
         for (path, data) in files {
             assert_eq!(fs::read(temp.path().join(path)).unwrap(), data);
         }
@@ -1258,7 +1311,7 @@ mod tests {
             .store
             .add_record(SAIStatsRef {
                 observation_time: 42,
-                stats: &[stat("a", 7)],
+                stats: SAIStatsView::Owned(&[stat("a", 7)]),
             })
             .unwrap();
         let partial = actor.store.active.as_ref().unwrap().path.clone();
@@ -1290,9 +1343,11 @@ mod tests {
             0o755, 0o770, 0o707, 0o740, 0o720, 0o710, 0o704, 0o702, 0o701,
         ] {
             fs::set_permissions(root.path(), fs::Permissions::from_mode(mode)).unwrap();
-            assert!(prepare_storage(&config(root.path()))
-                .unwrap_err()
-                .contains("effective service user"));
+            assert!(
+                prepare_storage(&config(root.path()))
+                    .unwrap_err()
+                    .contains("effective service user")
+            );
             assert_eq!(fs::metadata(root.path()).unwrap().mode() & 0o777, mode);
             assert_eq!(fs::read(root.path().join("keep")).unwrap(), b"unchanged");
             assert!(!root.path().join(LOCK_FILE).exists());
@@ -1346,9 +1401,11 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         for suffix in ["", "/", "/.", "//./", "/../target", "/missing"] {
             let path = PathBuf::from(format!("{}{suffix}", link.display()));
-            assert!(prepare_storage(&config(&path))
-                .unwrap_err()
-                .contains("not a symbolic link"));
+            assert!(
+                prepare_storage(&config(&path))
+                    .unwrap_err()
+                    .contains("not a symbolic link")
+            );
             assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
         }
         // A symlink in an ancestor is rejected before creating the final root.
@@ -1379,9 +1436,11 @@ mod tests {
             assert!(error.contains(child));
             // Inject a mismatched root device to exercise the metadata check,
             // without requiring privileged mounts or a second host filesystem.
-            assert!(ensure_directory(&path, root_dev ^ 1)
-                .unwrap_err()
-                .contains("same filesystem"));
+            assert!(
+                ensure_directory(&path, root_dev ^ 1)
+                    .unwrap_err()
+                    .contains("same filesystem")
+            );
             assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
         }
     }
@@ -1393,7 +1452,7 @@ mod tests {
         let stats = [stat("a", u64::MAX)];
         let record = SAIStatsRef {
             observation_time: 42,
-            stats: &stats,
+            stats: SAIStatsView::Owned(&stats),
         };
         store.add_record(record).unwrap();
         store.finish_stream().unwrap();
@@ -1430,16 +1489,18 @@ mod tests {
             store
                 .add_record(SAIStatsRef {
                     observation_time: value,
-                    stats: &[stat("a", value)],
+                    stats: SAIStatsView::Owned(&[stat("a", value)]),
                 })
                 .unwrap();
         }
-        assert!(store
-            .add_record(SAIStatsRef {
-                observation_time: 0,
-                stats: &[stat(&"x".repeat(16 * 1024 * 1024), 0)]
-            })
-            .is_err());
+        assert!(
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: 0,
+                    stats: SAIStatsView::Owned(&[stat(&"x".repeat(16 * 1024 * 1024), 0)])
+                })
+                .is_err()
+        );
         let file = &paths(temp.path(), "shards")[0];
         assert_eq!(
             decoded(file)
@@ -1587,7 +1648,7 @@ mod tests {
             let stats = [stat(&"a".repeat(4096), u64::MAX)];
             let record = SAIStatsRef {
                 observation_time: 0,
-                stats: &stats,
+                stats: SAIStatsView::Owned(&stats),
             };
             for seq in 0..3 {
                 store.add_record(record).unwrap();
@@ -1631,7 +1692,7 @@ mod tests {
             store
                 .add_record(SAIStatsRef {
                     observation_time: 0,
-                    stats: &stats,
+                    stats: SAIStatsView::Owned(&stats),
                 })
                 .unwrap();
         }
@@ -1676,7 +1737,7 @@ mod tests {
             store
                 .add_record(SAIStatsRef {
                     observation_time: time,
-                    stats: &[],
+                    stats: SAIStatsView::Owned(&[]),
                 })
                 .unwrap();
         }
@@ -1694,7 +1755,7 @@ mod tests {
         store
             .add_record(SAIStatsRef {
                 observation_time: 0,
-                stats: &[],
+                stats: SAIStatsView::Owned(&[]),
             })
             .unwrap();
         assert!(store.active.is_some());
@@ -1702,7 +1763,7 @@ mod tests {
         store
             .add_record(SAIStatsRef {
                 observation_time: 0,
-                stats: &[],
+                stats: SAIStatsView::Owned(&[]),
             })
             .unwrap();
         store.finish_stream().unwrap();
@@ -1752,19 +1813,10 @@ mod tests {
         let status = LocalStorageStatus::default();
         assert!(LocalStorageActor::new(receiver, config, status.clone()).is_err());
         assert!(status.failed());
-        assert!(sender
-            .blocking_send(Arc::new(SAIStatsBatch::default()))
-            .is_err());
-    }
-
-    #[test]
-    fn standard_reader_accepts_embedded_schema_without_any_sidecars() {
-        let (bytes, _, expected) = small_stream();
-        let reader = StreamReader::try_new(Cursor::new(bytes), None).unwrap();
-        assert_eq!(reader.schema().metadata()["format_version"], FORMAT_VERSION);
-        assert_eq!(
-            reader.map(|b| b.unwrap().num_rows()).sum::<usize>(),
-            expected.len()
+        assert!(
+            sender
+                .blocking_send(Arc::new(SAIStatsBatch::default()))
+                .is_err()
         );
     }
 
@@ -1781,7 +1833,7 @@ mod tests {
                 store
                     .add_record(SAIStatsRef {
                         observation_time: u64::MAX - time,
-                        stats: &stats,
+                        stats: SAIStatsView::Owned(&stats),
                     })
                     .unwrap();
                 time += 1;
@@ -1825,7 +1877,7 @@ mod tests {
         store
             .add_record(SAIStatsRef {
                 observation_time: 42,
-                stats: &[stat("a", u64::MAX)],
+                stats: SAIStatsView::Owned(&[stat("a", u64::MAX)]),
             })
             .unwrap();
         store.flush_batch().unwrap();
@@ -1878,9 +1930,11 @@ mod tests {
         done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         producer.join().unwrap();
         assert!(status.failed());
-        assert!(sender
-            .blocking_send(Arc::new(SAIStatsBatch::default()))
-            .is_err());
+        assert!(
+            sender
+                .blocking_send(Arc::new(SAIStatsBatch::default()))
+                .is_err()
+        );
         assert!(paths(temp.path(), "shards").is_empty());
         assert!(paths(temp.path(), ".staging").is_empty());
     }
@@ -1896,7 +1950,7 @@ mod tests {
             store
                 .add_record(SAIStatsRef {
                     observation_time: value,
-                    stats: &[stat("a", value)],
+                    stats: SAIStatsView::Owned(&[stat("a", value)]),
                 })
                 .unwrap();
             store.flush_batch().unwrap();
@@ -1905,7 +1959,7 @@ mod tests {
         store
             .add_record(SAIStatsRef {
                 observation_time: 1,
-                stats: &[stat("a", 99)],
+                stats: SAIStatsView::Owned(&[stat("a", 99)]),
             })
             .unwrap();
         fs::write(root.join("child.ready"), b"three synced batches").unwrap();

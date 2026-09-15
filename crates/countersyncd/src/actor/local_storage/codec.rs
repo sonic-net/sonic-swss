@@ -5,7 +5,7 @@
 //! All integers are exact, timestamps are nanoseconds, and there is no app delta.
 use super::{BATCH_TARGET_BYTES, FORMAT_VERSION, MAX_RECORD_BYTES, MAX_ROWS};
 use crate::{
-    message::saistats::{SAIStat, SAIStatsRef},
+    message::saistats::{SAIStatsRef, SAIStatsView},
     sai::{
         saibuffer::{SaiBufferPoolStat, SaiIngressPriorityGroupStat},
         saiport::SaiPortStat,
@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use arrow_array::{Array, ArrayRef, Int32Array, ListArray, RecordBatch, UInt64Array};
-use arrow_ipc::{reader::StreamReader, MessageHeader};
+use arrow_ipc::{MessageHeader, reader::StreamReader};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -97,7 +97,6 @@ pub(super) struct Layout {
     // occurs on the stable-layout path; even duplicate identities retain position.
     identities: Vec<(Arc<str>, u32, u32)>,
     pub schema: SchemaRef,
-    pub row_bytes: usize,
     pub batch_rows: usize,
 }
 
@@ -111,11 +110,11 @@ impl Layout {
                 .all(|((name, ty, id), stat)| {
                     *ty == stat.type_id
                         && *id == stat.stat_id
-                        && (Arc::ptr_eq(name, &stat.object_name) || **name == *stat.object_name)
+                        && (Arc::ptr_eq(name, stat.object_name) || name == stat.object_name)
                 })
     }
 
-    pub fn new(stats: &[SAIStat]) -> Result<Self, String> {
+    pub fn new(stats: SAIStatsView<'_>) -> Result<Self, String> {
         if stats.len() > MAX_COUNTERS {
             return Err("record exceeds 65536 counter limit".into());
         }
@@ -139,11 +138,11 @@ impl Layout {
         for stat in stats {
             let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
             series.push(Series {
-                object_name: Arc::clone(&stat.object_name),
+                object_name: Arc::clone(stat.object_name),
                 type_name: type_name.into(),
                 stat_name: stat_name.into(),
             });
-            identities.push((Arc::clone(&stat.object_name), stat.type_id, stat.stat_id));
+            identities.push((Arc::clone(stat.object_name), stat.type_id, stat.stat_id));
         }
         struct JsonSize(usize);
         impl io::Write for JsonSize {
@@ -186,7 +185,6 @@ impl Layout {
                     ),
                 ]),
             )),
-            row_bytes,
             batch_rows: (BATCH_TARGET_BYTES / row_bytes).clamp(1, MAX_ROWS),
         })
     }
@@ -560,6 +558,7 @@ pub fn read_shard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::saistats::SAIStat;
     use arrow_ipc::writer::StreamWriter;
 
     struct ReadFailure {
@@ -589,7 +588,7 @@ mod tests {
 
     #[test]
     fn reader_io_errors_abort_scan_without_modifying_partial() {
-        let layout = Layout::new(&[]).unwrap();
+        let layout = Layout::new(SAIStatsView::Owned(&[])).unwrap();
         let mut writer = StreamWriter::try_new(Vec::new(), &layout.schema).unwrap();
         let mut boundaries = Vec::new();
         for _ in 0..2 {
@@ -664,11 +663,17 @@ mod tests {
     #[test]
     fn series_metadata_limits_use_actual_json_bytes_and_explicit_counter_limit() {
         let stats = vec![SAIStat::new("", 1, 0, 0); MAX_COUNTERS + 1];
-        assert!(Layout::new(&stats).err().unwrap().contains("65536"));
-        let empty = Layout::new(&stats[..1]).unwrap();
+        assert!(
+            Layout::new(SAIStatsView::Owned(&stats))
+                .err()
+                .unwrap()
+                .contains("65536")
+        );
+        let empty = Layout::new(SAIStatsView::Owned(&stats[..1])).unwrap();
         let overhead = empty.schema.metadata()["series"].len();
         let name = "x".repeat(MAX_SCHEMA_BYTES - overhead);
-        let layout = Layout::new(&[SAIStat::new(name.as_str(), 1, 0, 0)]).unwrap();
+        let layout =
+            Layout::new(SAIStatsView::Owned(&[SAIStat::new(name.as_str(), 1, 0, 0)])).unwrap();
         assert_eq!(layout.schema.metadata()["series"].len(), MAX_SCHEMA_BYTES);
         assert_eq!(
             validate_schema(&layout.schema).unwrap()[0]
@@ -677,15 +682,31 @@ mod tests {
             name
         );
         drop(layout);
-        assert!(Layout::new(&[SAIStat::new(format!("{name}x").as_str(), 1, 0, 0)]).is_err());
+        assert!(
+            Layout::new(SAIStatsView::Owned(&[SAIStat::new(
+                format!("{name}x").as_str(),
+                1,
+                0,
+                0
+            )]))
+            .is_err()
+        );
         // JSON escaping, rather than source string size, controls admission.
         let escaped = "\0".repeat(MAX_SCHEMA_BYTES / 6 + 1);
-        assert!(Layout::new(&[SAIStat::new(escaped.as_str(), 1, 0, 0)]).is_err());
+        assert!(
+            Layout::new(SAIStatsView::Owned(&[SAIStat::new(
+                escaped.as_str(),
+                1,
+                0,
+                0
+            )]))
+            .is_err()
+        );
     }
 
     #[test]
     fn v4_three_field_stream_is_explicitly_unsupported_and_unchanged() {
-        let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
+        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
         let mut metadata = layout.schema.metadata().clone();
         metadata.insert("format_version".into(), "sonic-hft-arrow-v4".into());
         let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
@@ -724,8 +745,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_old_versions_extra_fields_and_invalid_series() {
-        let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
+    fn rejects_old_versions_nullable_fields_extra_fields_and_invalid_series() {
+        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
+        assert!(validate_schema(&layout.schema).is_ok());
+        for (column, nullable_child) in [(0, false), (1, false), (0, true), (1, true)] {
+            let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
+            let field = fields[column].as_ref().clone();
+            fields[column] = Arc::new(if nullable_child {
+                let DataType::List(child) = field.data_type() else {
+                    unreachable!();
+                };
+                let data_type =
+                    DataType::List(Arc::new(child.as_ref().clone().with_nullable(true)));
+                field.with_data_type(data_type)
+            } else {
+                field.with_nullable(true)
+            });
+            let schema = Schema::new_with_metadata(fields, layout.schema.metadata().clone());
+            assert_eq!(
+                validate_schema(&schema).err().unwrap(),
+                "expected two non-null List<UInt64> fields",
+                "column={column}, nullable_child={nullable_child}",
+            );
+        }
         for (key, value) in [
             ("format_version", "sonic-hft-arrow-v3"),
             ("matrix_order", "time-major"),
@@ -744,38 +786,44 @@ mod tests {
             let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
             writer.finish().unwrap();
             let bytes = writer.into_inner().unwrap();
-            assert!(scan_readers(
-                io::Cursor::new(&bytes),
-                &bytes[..],
-                bytes.len() as u64,
-                |_, _| Ok(())
-            )
-            .is_err());
+            assert!(
+                scan_readers(
+                    io::Cursor::new(&bytes),
+                    &bytes[..],
+                    bytes.len() as u64,
+                    |_, _| Ok(())
+                )
+                .is_err()
+            );
         }
         let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
         fields.push(Arc::new(Field::new("extra", DataType::UInt64, false)));
-        assert!(validate_schema(&Schema::new_with_metadata(
-            fields,
-            layout.schema.metadata().clone()
-        ))
-        .is_err());
+        assert!(
+            validate_schema(&Schema::new_with_metadata(
+                fields,
+                layout.schema.metadata().clone()
+            ))
+            .is_err()
+        );
         let mut metadata = layout.schema.metadata().clone();
         metadata.insert(
             "series".into(),
             format!("[{}null]", "null,".repeat(MAX_COUNTERS)),
         );
-        assert!(validate_schema(&Schema::new_with_metadata(
-            layout.schema.fields().clone(),
-            metadata
-        ))
-        .err()
-        .unwrap()
-        .contains("65536"));
+        assert!(
+            validate_schema(&Schema::new_with_metadata(
+                layout.schema.fields().clone(),
+                metadata
+            ))
+            .err()
+            .unwrap()
+            .contains("65536")
+        );
     }
 
     #[test]
     fn matrix_validation_checks_dimensions_offsets_and_nulls() {
-        let layout = Layout::new(&[SAIStat::new("a", 1, 0, 0)]).unwrap();
+        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
         for (times, values) in [
             (vec![], vec![]),
             (vec![1, 2], vec![3]),
@@ -817,10 +865,14 @@ mod tests {
 
     #[test]
     fn compressed_raw_limit_block_keeps_valid_suffix() {
-        use arrow_ipc::{writer::IpcWriteOptions, CompressionType};
+        use arrow_ipc::{CompressionType, writer::IpcWriteOptions};
         let counters = 4095;
         assert_eq!((counters + 1) * MAX_ROWS * 8, MAX_RECORD_BYTES);
-        let layout = Layout::new(&vec![SAIStat::new("a", 1, 0, 0); counters]).unwrap();
+        let layout = Layout::new(SAIStatsView::Owned(&vec![
+            SAIStat::new("a", 1, 0, 0);
+            counters
+        ]))
+        .unwrap();
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .unwrap();
@@ -842,14 +894,16 @@ mod tests {
         writer.finish().unwrap();
         let mut bytes = writer.into_inner().unwrap();
         for &start in &starts {
-            assert!(complete_message(
-                &mut io::Cursor::new(&bytes),
-                bytes.len() as u64,
-                start as u64,
-                false,
-                counters,
-            )
-            .unwrap());
+            assert!(
+                complete_message(
+                    &mut io::Cursor::new(&bytes),
+                    bytes.len() as u64,
+                    start as u64,
+                    false,
+                    counters,
+                )
+                .unwrap()
+            );
         }
         let mut arrow_count = 0;
         let mut blocks = 0;
@@ -925,10 +979,10 @@ mod tests {
 
     #[test]
     fn standard_matrix_has_eight_buffers_and_rejects_oversized_expansion() {
-        use arrow_ipc::{writer::IpcWriteOptions, CompressionType};
+        use arrow_ipc::{CompressionType, writer::IpcWriteOptions};
         for width in [0, 500, 8000] {
             let stats = vec![SAIStat::new("a", 1, 0, 0); width];
-            let layout = Layout::new(&stats).unwrap();
+            let layout = Layout::new(SAIStatsView::Owned(&stats)).unwrap();
             let options = IpcWriteOptions::default()
                 .try_with_compression(Some(CompressionType::ZSTD))
                 .unwrap();
@@ -954,24 +1008,28 @@ mod tests {
             assert_eq!(header.buffers().unwrap().len(), 8);
             let timestamp_buffer =
                 start + 8 + size + header.buffers().unwrap().get(3).offset() as usize;
-            assert!(complete_message(
-                &mut io::Cursor::new(&bytes),
-                bytes.len() as u64,
-                start as u64,
-                false,
-                width
-            )
-            .unwrap());
+            assert!(
+                complete_message(
+                    &mut io::Cursor::new(&bytes),
+                    bytes.len() as u64,
+                    start as u64,
+                    false,
+                    width
+                )
+                .unwrap()
+            );
             bytes[timestamp_buffer..timestamp_buffer + 8]
                 .copy_from_slice(&(MAX_RECORD_BYTES as i64 + 1).to_le_bytes());
-            assert!(complete_message(
-                &mut io::Cursor::new(&bytes),
-                bytes.len() as u64,
-                start as u64,
-                false,
-                width
-            )
-            .is_err());
+            assert!(
+                complete_message(
+                    &mut io::Cursor::new(&bytes),
+                    bytes.len() as u64,
+                    start as u64,
+                    false,
+                    width
+                )
+                .is_err()
+            );
         }
     }
 }

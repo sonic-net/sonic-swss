@@ -20,9 +20,11 @@ use super::super::message::{
         IPFixTemplateOperation, IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE,
         MAX_OBJECT_METADATA_BYTES, MAX_TEMPLATE_CONFIG_BYTES,
     },
-    saistats::{decode_sai_ids, SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
+    saistats::{decode_sai_ids, SAIStatMetadata, SAIStatsBatch, SAIStatsBatchMessage},
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
+#[cfg(test)]
+use crate::message::saistats::SAIStat;
 
 const IPFIX_VERSION: u16 = 10;
 const IPFIX_HEADER_LEN: usize = 16;
@@ -100,6 +102,7 @@ struct CompiledTemplate {
     owner: Arc<str>,
     observation_time: ObservationTime,
     counters: Arc<[CompiledCounter]>,
+    metadata: Arc<[SAIStatMetadata]>,
     record_len: usize,
 }
 
@@ -518,7 +521,7 @@ impl IpfixActor {
         batch: &mut SAIStatsBatch,
     ) {
         let payload = &set[SET_HEADER_LEN..];
-        batch.reserve(layout.record_count, layout.counter_count);
+        batch.reserve_shared(layout.record_count, layout.counter_count);
         for record in payload[..layout.record_bytes].chunks_exact(template.record_len) {
             let observation_time = template
                 .observation_time
@@ -530,16 +533,12 @@ impl IpfixActor {
                         .expect("System time should be after Unix epoch")
                         .as_nanos() as u64
                 });
-            batch.push_record(
+            batch.push_shared_record(
                 observation_time,
-                template.counters.iter().map(|counter| SAIStat {
-                    object_name: Arc::clone(&counter.object_name),
-                    type_id: counter.type_id,
-                    stat_id: counter.stat_id,
-                    counter: read_be_u64(
+                template.metadata.clone(),
+                template.counters.iter().map(|counter| read_be_u64(
                         &record[counter.offset..counter.offset + counter.len as usize],
-                    ),
-                }),
+                    )),
             );
         }
     }
@@ -940,6 +939,7 @@ fn compile_template_set(
             key,
             owner: Arc::clone(owner),
             observation_time,
+            metadata: counters.iter().map(|counter|SAIStatMetadata::new(counter.object_name.clone(),counter.type_id,counter.stat_id)).collect::<Vec<_>>().into(),
             counters: counters.into(),
             record_len,
         });
@@ -977,7 +977,10 @@ mod tests {
                 .await
                 .is_err());
             let received = healthy_receiver.try_recv().unwrap();
-            assert_eq!(received.iter().next().unwrap().stats[0].counter, u64::MAX);
+            assert_eq!(
+                received.iter().next().unwrap().stats.get(0).unwrap().counter,
+                u64::MAX
+            );
             if close {
                 receiver.close();
             } else {
@@ -1358,14 +1361,14 @@ mod tests {
         assert_eq!(records[0].observation_time, 1_788_655_919_123_456_789);
         assert_eq!(records[1].observation_time, 1_788_655_919_123_456_790);
         assert_eq!(records[2].observation_time, 1_788_655_919_123_456_790);
-        assert_eq!(records[0].stats[0].counter, 0xfedc_ba98_7654_3210);
-        assert_eq!(records[0].stats[0].object_name.as_ref(), "Ethernet325");
+        assert_eq!(records[0].stats.get(0).unwrap().counter, 0xfedc_ba98_7654_3210);
+        assert_eq!(records[0].stats.get(0).unwrap().object_name.as_ref(), "Ethernet325");
         assert_eq!(
-            (records[0].stats[0].type_id, records[0].stats[0].stat_id),
+            (records[0].stats.get(0).unwrap().type_id, records[0].stats.get(0).unwrap().stat_id),
             (21, 1)
         );
-        assert_eq!(records[0].stats[1].counter, 0xf123_4567);
-        assert_eq!(records[2].stats[0].counter, 0x8765_4321);
+        assert_eq!(records[0].stats.get(1).unwrap().counter, 0xf123_4567);
+        assert_eq!(records[2].stats.get(0).unwrap().counter, 0x8765_4321);
     }
 
     #[test]
@@ -1541,7 +1544,7 @@ mod tests {
             assert_eq!(batch.counter_count(), COUNTERS_PER_TEMPLATE);
             let decoded = batch.iter().next().unwrap();
             assert_eq!(decoded.observation_time, 1_788_655_919_123_456_789);
-            let last = decoded.stats.last().unwrap();
+            let last = decoded.stats.iter().last().unwrap();
             assert_eq!(last.object_name.as_ref(), last_name);
             assert_eq!((last.type_id, last.stat_id), (21, 60));
             assert_eq!(last.counter, ((index + 1) * COUNTERS_PER_TEMPLATE) as u64);
@@ -1758,8 +1761,8 @@ mod tests {
             } else {
                 assert!((before..=after).contains(&output.observation_time));
             }
-            assert_eq!(output.stats[0].counter, 0xff_ffff);
-            assert_eq!(output.stats[1].counter, 0xffff_ffff_ffff);
+            assert_eq!(output.stats.get(0).unwrap().counter, 0xff_ffff);
+            assert_eq!(output.stats.get(1).unwrap().counter, 0xffff_ffff_ffff);
         }
     }
 
@@ -1823,7 +1826,7 @@ mod tests {
             let output = actor.handle_record(&hardware_data(300, &[&bytes])).unwrap();
             assert_eq!(output.counter_count(), 1);
             assert_eq!(
-                output.iter().next().unwrap().stats[0].counter,
+                output.iter().next().unwrap().stats.get(0).unwrap().counter,
                 u64::MAX >> (64 - width * 8)
             );
             actor
@@ -2014,7 +2017,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
-        assert_eq!(batch.iter().nth(1).unwrap().stats[0].stat_id, 3);
+        assert_eq!(batch.iter().nth(1).unwrap().stats.get(0).unwrap().stat_id, 3);
         assert_eq!(keys(&actor), vec![(0, 400), (0, 401), (1, 300), (1, 400)]);
         assert_eq!(actor.sessions["peer"], peer);
         assert!(actor.sessions["s"].pending.is_none());
@@ -2142,7 +2145,7 @@ mod tests {
         data[18..20].copy_from_slice(&13u16.to_be_bytes());
         data[28] = 255;
         let batch = actor.handle_record(&data).unwrap();
-        assert_eq!(batch.iter().next().unwrap().stats[0].counter, 255);
+        assert_eq!(batch.iter().next().unwrap().stats.get(0).unwrap().counter, 255);
         assert_eq!(keys(&actor), vec![(0, 400)]);
     }
 
@@ -2225,7 +2228,7 @@ mod tests {
         actor.process_record_input(&good, &mut batch).await;
         assert_eq!(batch.record_count(), 1);
         assert_eq!(batch.iter().next().unwrap().observation_time, 5);
-        assert_eq!(batch.iter().next().unwrap().stats[0].counter, 50);
+        assert_eq!(batch.iter().next().unwrap().stats.get(0).unwrap().counter, 50);
         assert!(actor.sessions["s"].pending.is_none());
         assert_eq!(actor.dropped_sets, 1);
         assert!(actor.next_drop_warning > unknown_deadline);
@@ -2509,7 +2512,7 @@ mod tests {
             let batch = actor
                 .handle_record(&data_message(0, &[(301, vec![(1, vec![1])])]))
                 .unwrap();
-            assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 2);
+            assert_eq!(batch.iter().next().unwrap().stats.get(0).unwrap().stat_id, 2);
         }
     }
 
@@ -2586,7 +2589,7 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(
-            batch.iter().map(|r| r.stats[0].stat_id).collect::<Vec<_>>(),
+            batch.iter().map(|r| r.stats.get(0).unwrap().stat_id).collect::<Vec<_>>(),
             vec![5, 4]
         );
         assert_eq!(keys(&actor), vec![(0, 300), (0, 400), (0, 500)]);
@@ -2622,7 +2625,7 @@ mod tests {
             let batch = actor
                 .handle_record(&data_message(0, &[(300, vec![(2, vec![2])])]))
                 .unwrap();
-            assert_eq!(batch.iter().next().unwrap().stats[0].stat_id, 3);
+        assert_eq!(batch.iter().next().unwrap().stats.get(0).unwrap().stat_id, 3);
         }
     }
 
@@ -2646,7 +2649,7 @@ mod tests {
                 .handle_record(&input)
                 .unwrap()
                 .iter()
-                .map(|r| r.stats[0].stat_id)
+                .map(|r| r.stats.get(0).unwrap().stat_id)
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
@@ -2689,9 +2692,9 @@ mod tests {
                     let batch = actor.handle_record(&data).unwrap();
                     let record = batch.iter().next().unwrap();
                     assert_eq!(record.observation_time, 42);
-                    assert_eq!(record.stats[0].counter, expected);
+                    assert_eq!(record.stats.get(0).unwrap().counter, expected);
                     assert_eq!(
-                        (record.stats[0].type_id, record.stats[0].stat_id),
+                        (record.stats.get(0).unwrap().type_id, record.stats.get(0).unwrap().stat_id),
                         decode_sai_ids(0x9234_8567)
                     );
                 }

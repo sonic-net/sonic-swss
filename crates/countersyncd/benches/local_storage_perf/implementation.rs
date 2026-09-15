@@ -123,7 +123,7 @@ use tokio::{
 
 use super::support::{
     audit_bytes, hash_value, is_disk_filesystem, max_bytes, metric_count, pacing_target,
-    shard_sequence, sort_shards, HardDeadline, Pattern, SamplerGuard, BPS_ASSUMPTION, ENVELOPE_NS,
+    sort_shards, HardDeadline, Pattern, SamplerGuard, BPS_ASSUMPTION, ENVELOPE_NS,
 };
 
 #[path = "../../tests/ipfix_test_helpers.rs"]
@@ -221,8 +221,6 @@ struct Args {
 // This bench has harness=false; opt-in assertions run in the actual smoke binary.
 fn generator_self_check() {
     super::support::generator_self_check();
-    assert_eq!(audit_bytes(STREAMING_RECORD_CAP, true), Some(AUDIT_BUDGET));
-    assert!(audit_bytes(usize::MAX, true).is_none());
     println!(
         "{}",
         json!({"event":"generator_self_check", "status":"passed", "generator_version":GENERATOR_VERSION})
@@ -233,42 +231,6 @@ fn self_check() {
     generator_self_check();
     assert!(Args::try_parse_from(["bench"]).is_err());
     assert!(Args::try_parse_from(["bench", "--self-check"]).is_ok());
-    assert_eq!(metric_count(600_000, 8000), 4_800_000_000);
-    assert_eq!(metric_count(6_000_000, 8000), 48_000_000_000);
-    let before = pacing_target(metric_count(536_870, 8000), 1_000_000);
-    let after = pacing_target(metric_count(536_871, 8000), 1_000_000);
-    assert!(after > before);
-    assert_eq!(after, Duration::from_millis(4_294_968));
-    let names = [
-        "00000000000000000030-0000000042-00000000000000000000.arrow",
-        "00000000000000000020-0000000042-00000000000000000001.arrow",
-        "00000000000000000010-0000000042-00000000000000000002.arrow",
-    ]
-    .map(PathBuf::from);
-    assert_eq!(
-        sort_shards(vec![names[2].clone(), names[0].clone(), names[1].clone()]).unwrap(),
-        names
-    );
-    assert_eq!(shard_sequence(Path::new("1-42-10.arrow")).unwrap(), 10);
-    assert_eq!(
-        sort_shards(vec![
-            PathBuf::from("1-42-10.arrow"),
-            PathBuf::from("1-42-2.arrow")
-        ])
-        .unwrap(),
-        [
-            PathBuf::from("1-42-2.arrow"),
-            PathBuf::from("1-42-10.arrow")
-        ]
-    );
-    for name in [
-        "unknown.arrow",
-        "1-42-bad.arrow",
-        "1-42-0.partial",
-        "1-42-18446744073709551616.arrow",
-    ] {
-        assert!(shard_sequence(Path::new(name)).is_err());
-    }
     println!(
         "{}",
         json!({"event":"benchmark_self_check", "status":"passed"})
