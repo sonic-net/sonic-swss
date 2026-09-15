@@ -216,14 +216,30 @@ namespace hftelorch_test
     }
 
     /*
-     * Same as above, but both modes are advertised: even though MIXED ends up
-     * fully unusable, SINGLE_TYPE keeps HFTel enabled.
+     * Same as above, but both modes are advertised. The SWITCH_ENABLE_*_STATS
+     * probe is not MIXED-specific - SINGLE mode needs the same attributes, one
+     * at a time, so with none implemented neither mode can bind any object
+     * type. HFTel must be disabled, not silently fall back to a SINGLE_TYPE
+     * that would fail on every category too.
      */
-    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_bothAdvertised_noCategoriesSupported_stillEnabledViaSingle)
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_bothAdvertised_noCategoriesSupported_disablesHft)
     {
         HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedBoth);
         hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
-        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises SINGLE only, but none of the three
+     * SWITCH_ENABLE_*_STATS attributes are implemented on TAM_TEL_TYPE. SINGLE
+     * can never bind any object type either, so it must be treated the same as
+     * "not advertised": with MIXED also unavailable, HFTel is disabled.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_singleOnly_noCategoriesSupported_disablesHft)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
     /*
@@ -235,6 +251,19 @@ namespace hftelorch_test
     TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mixedOnly_partialCategoriesSupported_staysEnabled)
     {
         HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsMmuUnsupported();
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same partial-support probe result, but with SINGLE_TYPE advertised
+     * instead of MIXED_TYPE: SINGLE only needs one attribute per object type,
+     * so PORT_STATS / OUTPUT_QUEUE_STATS being implemented is enough to stay
+     * enabled even with MMU_STATS unimplemented.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_singleOnly_partialCategoriesSupported_staysEnabled)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
         hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsMmuUnsupported();
         EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
