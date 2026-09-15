@@ -540,4 +540,80 @@ namespace mux_rollback_test
         m_MuxOrch->updateFdb(update);
         EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
     }
+
+    // Deleting a zero-MAC (FAILED) neighbor that has a standalone tunnel route
+    // must call remove_route_entry exactly once, not twice.
+    // Regression test for sonic-net/sonic-swss#2579.
+    TEST_F(MuxRollbackTest, StandaloneTunnelRouteDeleteNoDoubleRemove)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+
+        // SERVER_IP1 was added with valid MAC during ApplyInitialConfigs,
+        // so it is in MuxNbrHandler::neighbors_. In the real system,
+        // NeighOrch::doTask drops zero-MAC updates for neighbors already in
+        // m_syncdNeighbors, so a standalone route is only created after the
+        // neighbor is first deleted. Simulate that sequence here.
+        NeighborUpdate remove_valid;
+        remove_valid.entry = entry;
+        remove_valid.mac = MacAddress();
+        remove_valid.add = false;
+        m_MuxOrch->updateNeighbor(remove_valid);
+
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(SERVER_IP1)), 0);
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // Step 1: Zero-MAC add creates standalone tunnel route
+        NeighborUpdate add_update;
+        add_update.entry = entry;
+        add_update.mac = MacAddress();
+        add_update.add = true;
+        m_MuxOrch->updateNeighbor(add_update);
+
+        EXPECT_TRUE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(SERVER_IP1)), 0);
+
+        // Step 2: Delete the zero-MAC neighbor — must remove route exactly once
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry(_))
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        NeighborUpdate del_update;
+        del_update.entry = entry;
+        del_update.mac = MacAddress();
+        del_update.add = false;
+        m_MuxOrch->updateNeighbor(del_update);
+
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+    }
+
+    // Verify that NeighOrch::doTask silently drops a zero-MAC update when the
+    // neighbor already exists in m_syncdNeighbors with a valid MAC, preventing
+    // a standalone tunnel route from being created alongside the per-mux route.
+    TEST_F(MuxRollbackTest, ZeroMacUpdateDroppedForExistingNeighbor)
+    {
+        // SERVER_IP1 was added with valid MAC during ApplyInitialConfigs,
+        // so it should be in m_syncdNeighbors and MuxNbrHandler::neighbors_.
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+
+        EXPECT_NE(gNeighOrch->m_syncdNeighbors.find(entry),
+                  gNeighOrch->m_syncdNeighbors.end());
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // Push a zero-MAC update through NeighOrch::doTask (not MuxOrch directly)
+        Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        string key = VLAN_1000 + neigh_table.getTableNameSeparator() + SERVER_IP1;
+        neigh_table.set(key, { { "neigh", "00:00:00:00:00:00" }, { "family", "IPv4" } });
+        gNeighOrch->addExistingData(&neigh_table);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        neigh_table.del(key);
+
+        // Standalone tunnel route must NOT be created — NeighOrch should have
+        // silently dropped the zero-MAC update for an already-known neighbor.
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // The original neighbor should still be in m_syncdNeighbors with its valid MAC
+        auto it = gNeighOrch->m_syncdNeighbors.find(entry);
+        EXPECT_NE(it, gNeighOrch->m_syncdNeighbors.end());
+        EXPECT_NE(it->second.mac, MacAddress());
+    }
 }

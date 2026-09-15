@@ -2220,6 +2220,13 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     if (is_tunnel_route_installed)
     {
         removeStandaloneTunnelRoute(update.entry.ip_address);
+        // For deletions, standalone cleanup is complete. The neighbor was never
+        // registered with MuxNbrHandler, so skip the downstream isIpInSubnet path
+        // to avoid a double remove_route() on the already-removed SAI entry.
+        if (!update.add)
+        {
+            return;
+        }
     }
 
     // Suppress in-slice IPs whose FDB resolves to the slice cable's own port
