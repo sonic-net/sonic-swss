@@ -59,6 +59,8 @@ namespace
             CollectorCreateNotImplemented,
             SwitchNotifySetNotImplemented,
             AllSupported,
+            MixedEnableAttrsAllUnsupported,
+            MixedEnableAttrsMmuUnsupported,
         };
 
         thread_local Hook g_hook = Hook::None;
@@ -308,6 +310,32 @@ extern "C"
             return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
         }
 
+        if (hftel::g_hook == hftel::Hook::MixedEnableAttrsAllUnsupported ||
+            hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            // Everything but the TAM_TEL_TYPE enable attributes behaves as
+            // AllSupported, so isSupportedHFTel reaches the category probe.
+            if (object_type != SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->create_implemented = true;
+                attr_capability->set_implemented = true;
+                attr_capability->get_implemented = true;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
+            attr_capability->create_implemented =
+                (hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+                    && (attr_id != SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS);
+            return SAI_STATUS_SUCCESS;
+        }
+
         if (hftel::g_hook == hftel::Hook::SwitchNotifySetNotImplemented)
         {
             if (!attr_capability)
@@ -421,6 +449,16 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookAllSupported()
     {
         hftel::g_hook = hftel::Hook::AllSupported;
+    }
+
+    void setSaiHookMixedEnableAttrsAllUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsAllUnsupported;
+    }
+
+    void setSaiHookMixedEnableAttrsMmuUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsMmuUnsupported;
     }
 
     void setSaiHookModeAdvertisedSingleOnly()

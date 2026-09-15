@@ -200,6 +200,45 @@ namespace hftelorch_test
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only, but none of the three
+     * SWITCH_ENABLE_*_STATS attributes are implemented on TAM_TEL_TYPE. MIXED
+     * can never support any category, so it must be treated the same as "not
+     * advertised": with SINGLE also unavailable, HFTel is disabled.
+     * Covers: querySupportedTelTypeModes' mixed_supported downgrade when
+     * tel_type_supported_categories ends up empty.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mixedOnly_noCategoriesSupported_disablesHft)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same as above, but both modes are advertised: even though MIXED ends up
+     * fully unusable, SINGLE_TYPE keeps HFTel enabled.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_bothAdvertised_noCategoriesSupported_stillEnabledViaSingle)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedBoth);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only, and only the MMU_STATS
+     * enable attribute is unimplemented (PORT_STATS / OUTPUT_QUEUE_STATS are
+     * fine). MIXED must stay usable for the supported categories, so HFTel
+     * remains enabled.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mixedOnly_partialCategoriesSupported_staysEnabled)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsMmuUnsupported();
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
     class HFTelOrchConstructorTest : public ::testing::Test
     {
     protected:
