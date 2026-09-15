@@ -483,7 +483,7 @@ namespace hftelprofile_ut
         ASSERT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
         ASSERT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
 
-        s.p->setStatsIDs("queue", {"SAI_QUEUE_STAT_PACKETS"});
+        s.p->setStatsIDs("queue", {"PACKETS"});
 
         // QUEUE was the only group mutated, but PORT's queryable state moves
         // too: both map onto the same shared tel_type in MIXED mode.
@@ -542,7 +542,7 @@ namespace hftelprofile_ut
         s.p->m_sai_tam_tel_type_states[port_guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
         s.p->m_sai_tam_tel_type_states[queue_guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
 
-        s.p->setStatsIDs("queue", {"SAI_QUEUE_STAT_PACKETS"});
+        s.p->setStatsIDs("queue", {"PACKETS"});
 
         // Each object type owns its own tel_type in SINGLE mode, so mutating
         // QUEUE must not disturb PORT.
@@ -798,6 +798,8 @@ namespace hftelprofile_ut
             ut_api.remove_tam_report = mock_remove_tam_report;
             ut_api.get_tam_attribute = mock_get_tam_attribute;
             ut_api.set_tam_attribute = mock_set_tam_attribute;
+            ut_api.get_tam_telemetry_attribute = mock_get_tam_attribute;
+            ut_api.set_tam_telemetry_attribute = mock_set_tam_attribute;
             sai_tam_api = &ut_api;
             tel_type_attrs.clear();
         }
