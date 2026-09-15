@@ -2542,6 +2542,17 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    /* Keep kernel-only policy sentinels out of every APP_DB route table. */
+    if (rtnl_route_get_type(route_obj) == RTN_UNREACHABLE)
+    {
+        if (nlmsg_type == RTM_NEWROUTE && !isSuppressionEnabled())
+        {
+            sendOffloadReply(route_obj);
+        }
+        SWSS_LOG_INFO("Ignore unreachable route notification type %d", nlmsg_type);
+        return;
+    }
+
     /* Get the index of the master device */
     unsigned int master_index = rtnl_route_get_table(route_obj);
     char master_name[IFNAMSIZ] = {0};
