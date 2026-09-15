@@ -7756,8 +7756,9 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
 
-    /* Use untagged VLAN as pvid of the member port */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+    /* Use the VLAN as pvid for untagged and priority-tagged member ports */
+    if ((sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED ||
+         sai_tagging_mode == SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED) &&
         port.m_type != Port::TUNNEL)
     {
         if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
@@ -8093,8 +8094,9 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
-    /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
+    /* Restore to default pvid if this port joined this VLAN in untagged or priority-tagged mode previously */
+    if ((sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED ||
+         sai_tagging_mode == SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED) &&
         port.m_type != Port::TUNNEL)
     {
         if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
