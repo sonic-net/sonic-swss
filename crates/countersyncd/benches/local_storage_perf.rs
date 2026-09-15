@@ -3,6 +3,10 @@
 #![recursion_limit = "512"]
 
 #[cfg(not(target_arch = "arm"))]
+#[path = "../benchmark_support/mod.rs"]
+mod support;
+
+#[cfg(not(target_arch = "arm"))]
 #[path = "local_storage_perf/implementation.rs"]
 mod implementation;
 
