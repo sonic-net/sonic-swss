@@ -6,8 +6,6 @@
 #include <swss/redisutility.h>
 #include <sai_serialize.h>
 
-#include <limits>
-
 #include <boost/tokenizer.hpp>
 #include <boost/algorithm/string.hpp>
 
@@ -292,13 +290,13 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     if (isMixedTypeMode())
     {
         const auto next = static_cast<uint32_t>(m_next_label) + object_names.size();
-        if (next > std::numeric_limits<sai_uint16_t>::max())
+        if (next > MAX_LABEL)
         {
             SWSS_LOG_ERROR(
-                "HFTel: cannot add group %s (%zu objects); label allocator would wrap past %u. "
-                "Delete and recreate the profile to reset.",
+                "HFTel: cannot add group %s (%zu objects); label allocator would exceed the "
+                "15-bit IPFIX IE range (%u). Delete and recreate the profile to reset.",
                 group_name.c_str(), object_names.size(),
-                std::numeric_limits<sai_uint16_t>::max());
+                MAX_LABEL);
             return;
         }
     }
