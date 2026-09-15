@@ -41,7 +41,8 @@ private:
     static bool querySupportedTelTypeModes(
         sai_object_id_t switch_id,
         bool &single_supported,
-        bool &mixed_supported);
+        bool &mixed_supported,
+        std::unordered_set<sai_object_type_t> &tel_type_supported_categories);
 
     swss::Table m_state_telemetry_session;
     swss::DBConnector m_asic_db;
@@ -72,6 +73,10 @@ private:
     sai_object_id_t m_sai_tam_obj;
 
     sai_tam_tel_type_mode_t m_tel_type_mode;
+
+    // Object types whose SWITCH_ENABLE_*_STATS attribute the vendor SAI implements
+    // (see querySupportedTelTypeModes).
+    std::unordered_set<sai_object_type_t> m_tel_type_supported_categories;
 
     // SAI calls
     void createNetlinkChannel(const std::string &genl_family, const std::string &genl_group);
