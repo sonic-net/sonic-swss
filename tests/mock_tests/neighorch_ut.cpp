@@ -6,6 +6,7 @@
 #undef protected
 #define private public
 #include "routeorch.h"
+#include "intfsorch.h"
 #undef private
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
@@ -17,10 +18,14 @@ EXTERN_MOCK_FNS
 namespace neighorch_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
+    DEFINE_SAI_GENERIC_APIS_MOCK(next_hop, next_hop)
     using namespace std;
     using namespace mock_orch_test;
     using ::testing::Return;
     using ::testing::Throw;
+    using ::testing::DoAll;
+    using ::testing::SetArgPointee;
+    using ::testing::_;
 
     static const string TEST_IP = "10.10.10.10";
     static const string VRF_3000 = "Vrf3000";
@@ -28,6 +33,14 @@ namespace neighorch_test
     static const NeighborEntry VLAN2000_NEIGH = NeighborEntry(TEST_IP, VLAN_2000);
     static const NeighborEntry VLAN3000_NEIGH = NeighborEntry(TEST_IP, VLAN_3000);
     static const NeighborEntry VLAN4000_NEIGH = NeighborEntry(TEST_IP, VLAN_4000);
+
+    static const string REMOTE_PORT_A = "lc1|Asic0|Ethernet0";
+    static const string REMOTE_PORT_B = "lc2|Asic0|Ethernet0";
+    static const string INBAND_PORT = "Ethernet-IB0";
+    static const sai_object_id_t NH_OID_A = 0x2001;
+    static const sai_object_id_t NH_OID_B = 0x2002;
+    static const NeighborEntry NEIGH_A = NeighborEntry(TEST_IP, REMOTE_PORT_A);
+    static const NeighborEntry NEIGH_B = NeighborEntry(TEST_IP, REMOTE_PORT_B);
 
     class NeighOrchTest : public MockOrchTest
     {
@@ -177,15 +190,56 @@ namespace neighorch_test
             static_cast<Orch *>(gFdbOrch)->doTask();
         }
 
+        bool AddNeighbor(const string &alias, const string &ip, const string &mac)
+        {
+            NeighborEntry ne(ip, alias);
+            NeighborContext ctx(ne);
+            ctx.mac = MacAddress(mac);
+            return gNeighOrch->addNeighbor(ctx);
+        }
+
+        bool RemoveNeighbor(const string &alias, const string &ip)
+        {
+            NeighborEntry ne(ip, alias);
+            NeighborContext ctx(ne);
+            return gNeighOrch->removeNeighbor(ctx);
+        }
+
+        void AddRemotePort(const string &alias, sai_object_id_t rif_id)
+        {
+            Port p(alias, Port::PHY);
+            p.m_rif_id = rif_id;
+            p.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            p.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+            gPortsOrch->m_portList[alias] = p;
+            gIntfsOrch->m_syncdIntfses[alias] = { {}, 0, gVirtualRouterId, false };
+        }
+
+        void SetUpVoqPorts()
+        {
+            AddRemotePort(REMOTE_PORT_A, 0x1001);
+            AddRemotePort(REMOTE_PORT_B, 0x1002);
+
+            Port inb(INBAND_PORT, Port::PHY);
+            inb.m_rif_id = 0x1003;
+            inb.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            gPortsOrch->m_portList[INBAND_PORT] = inb;
+            gPortsOrch->m_inbandPortName = INBAND_PORT;
+            gIntfsOrch->m_syncdIntfses[INBAND_PORT] = { {}, 0, gVirtualRouterId, false };
+        }
+
         void PostSetUp() override
         {
             INIT_SAI_API_MOCK(neighbor);
+            INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
+            DEINIT_SAI_API_MOCK(neighbor);
         }
     };
 
@@ -473,5 +527,77 @@ namespace neighorch_test
         // Verify only VLAN_1000 neighbor is disabled, VLAN_2000 remains enabled
         EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
         EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN2000_NEIGH));
+    }
+
+    TEST_F(NeighOrchTest, VoqRemoteNeighborReplaceAndRemove)
+    {
+        SetUpVoqPorts();
+        // (ip, Ethernet-IB0) is shared across remote ports
+        NextHopKey inband_nh(TEST_IP, INBAND_PORT);
+
+        // create neighbor and nexthop on remote port A
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry(_, _, _))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(NH_OID_A), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_TRUE(AddNeighbor(REMOTE_PORT_A, TEST_IP, MAC1));
+
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NEIGH_A), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops[inband_nh].next_hop_id, NH_OID_A);
+
+        // simulate 3 routes referencing nexthop on A
+        // set NHFLAGS_IFDOWN, since mocking scenario where A is being taken down
+        gNeighOrch->m_syncdNextHops[inband_nh].ref_count = 3;
+        gNeighOrch->m_syncdNextHops[inband_nh].nh_flags = NHFLAGS_IFDOWN;
+
+        // now add neighbor and nexthop on remote port B
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop(NH_OID_A))
+            .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry(_, _, _))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(NH_OID_B), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_TRUE(AddNeighbor(REMOTE_PORT_B, TEST_IP, MAC2));
+
+        // nexthop replaces the nexthop originally made for A
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NEIGH_B), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops[inband_nh].next_hop_id, NH_OID_B);
+        // ref count will carry over but flags will be reset since port B is UP
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops[inband_nh].ref_count, 3);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops[inband_nh].nh_flags, 0u);
+        // Old SAI nexthop removal failed, so it is tracked as stale.
+        ASSERT_EQ(gNeighOrch->m_staleNextHops.count(NEIGH_A), 1);
+        ASSERT_EQ(gNeighOrch->m_staleNextHops[NEIGH_A].next_hop_id, NH_OID_A);
+
+        // simulate first attempt to remove neighbor on A but nexthop still in use
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop(NH_OID_A))
+            .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry(_)).Times(0);
+        ASSERT_FALSE(RemoveNeighbor(REMOTE_PORT_A, TEST_IP));
+
+        // Everything unchanged, neighbor A and stale entry still present
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NEIGH_A), 1);
+        ASSERT_EQ(gNeighOrch->m_staleNextHops.count(NEIGH_A), 1);
+
+        // Second attempt to remove neigh on A, routes have been reprogrammed on asic
+        // nexthop_still_valid is true
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop(NH_OID_A))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry(_))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        ASSERT_TRUE(RemoveNeighbor(REMOTE_PORT_A, TEST_IP));
+
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NEIGH_A), 0);
+        ASSERT_TRUE(gNeighOrch->m_staleNextHops.empty());
+        ASSERT_TRUE(gNeighOrch->hasNextHop(inband_nh));
+
+        // now remove neighbor on B, where nexthop_still_valid is false
+        gNeighOrch->m_syncdNextHops[inband_nh].ref_count = 0;
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop(NH_OID_B))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry(_))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        ASSERT_TRUE(RemoveNeighbor(REMOTE_PORT_B, TEST_IP));
+        ASSERT_FALSE(gNeighOrch->hasNextHop(inband_nh));
     }
 }

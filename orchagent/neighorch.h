@@ -134,6 +134,7 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+    NextHopTable m_staleNextHops;
 
     std::set<NextHopKey> m_neighborToResolve;
 
@@ -142,6 +143,7 @@ private:
 
     bool removeNextHop(const IpAddress&, const string&);
     bool processBulkAddNextHop(NeighborContext&);
+    void decCrmNextHopCounter(const IpAddress&);
 
     bool addNeighbor(NeighborContext& ctx);
     bool removeNeighbor(NeighborContext& ctx, bool disable = false);
