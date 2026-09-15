@@ -379,7 +379,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -457,7 +457,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -516,6 +516,15 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     }
 
     NextHopKey nexthop(nh);
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
+    {
+        Port inbp;
+        gPortsOrch->getInbandPort(inbp);
+        assert(inbp.m_alias.length());
+
+        nexthop.alias = inbp.m_alias;
+    }
+
     if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
     {
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
@@ -549,7 +558,7 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
     if (nexthop.isMplsNextHop())
     {
@@ -778,13 +787,13 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
 
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
-                       ipAddress.to_string().c_str(), alias.c_str());
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s requested on %s, tracked on %s",
+                       ipAddress.to_string().c_str(), alias.c_str(), nexthop.alias.c_str());
         return false;
     }
 
     m_syncdNextHops.erase(nexthop);
-    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+    m_intfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
     return true;
 }
 
