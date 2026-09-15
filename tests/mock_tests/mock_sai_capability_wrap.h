@@ -85,7 +85,8 @@ namespace hftelorch_sai_wrap_ut
     // report create_implemented. All other object types behave as AllSupported so
     // isSupportedHFTel reaches the mode/category probe. Combine with a
     // setSaiHookModeAdvertised* call to exercise HFTelOrch::querySupportedTelTypeModes'
-    // per-category downgrade of mixed_supported.
+    // per-category downgrade, which applies to single_supported and mixed_supported
+    // alike.
     void setSaiHookMixedEnableAttrsAllUnsupported();
     void setSaiHookMixedEnableAttrsMmuUnsupported();
 
