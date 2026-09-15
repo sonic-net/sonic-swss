@@ -1176,8 +1176,11 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
         auto vnet_routes = syncd_tunnel_routes_.find(vnet);
         bool route_exists = vnet_routes != syncd_tunnel_routes_.end() &&
                             vnet_routes->second.find(ipPrefix) != vnet_routes->second.end();
+        bool is_custom_monitoring = monitoring == VNET_MONITORING_TYPE_CUSTOM ||
+                                    monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD;
 
-        if (!next_hop_group_exists || !route_exists)
+        // Default BFD monitors are owned by the NHG; custom monitors are per route.
+        if (!next_hop_group_exists || (is_custom_monitoring && !route_exists))
         {
             setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
         }

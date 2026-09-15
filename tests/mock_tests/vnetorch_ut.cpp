@@ -2590,6 +2590,25 @@ namespace vnetorch_test
         checkStateDbRouteRemoved("Vnet15", "fd:8:10::32/128");
     }
 
+    TEST_F(VNetOrchTest, VnetDefaultBfdSharedNextHopGroupCleanup)
+    {
+        setVxlanTunnel("tunnel_shared_bfd", "9.9.9.9");
+        setVnet("VnetSharedBfd", "tunnel_shared_bfd", "10001", "");
+
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32", "9.1.0.1", "9.2.0.1");
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32", "9.1.0.1", "9.2.0.1");
+        ASSERT_TRUE(bfdSessionExists("9.2.0.1"));
+
+        // Default BFD is owned by the shared NHG, not by each route.
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32");
+        EXPECT_TRUE(bfdSessionExists("9.2.0.1"));
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.2.0.1"));
+
+        delVnet("VnetSharedBfd");
+        delVxlanTunnel("tunnel_shared_bfd");
+    }
+
     // BFD-monitored ECMP VNET route lifecycle -- the mock equivalent of
     // test_vnet_orch_9 (IPv4). With default BFD monitoring an endpoint only
     // joins the route's group while its monitor's BFD session is UP:
