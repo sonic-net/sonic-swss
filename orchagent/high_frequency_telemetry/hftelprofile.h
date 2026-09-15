@@ -97,6 +97,12 @@ private:
     // labels are monotonic and never reused within a profile.
     sai_uint16_t m_next_label = 1;
 
+    // Highest label value CounterSyncd's IPFIX template compiler accepts: it
+    // validates each field's Information Element ID against the 15-bit IPFIX
+    // IE range (1..=0x7fff), not the full 16-bit range sai_uint16_t allows.
+    // A label above this is rejected outright, tearing down the session.
+    static constexpr sai_uint16_t MAX_LABEL = 0x7fff;
+
     // SAI objects
     const sai_object_id_t m_sai_tam_obj;
     const sai_object_id_t m_sai_tam_collector_obj;
