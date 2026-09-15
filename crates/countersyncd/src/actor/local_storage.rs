@@ -1,5 +1,9 @@
 //! Bounded capture of exact raw observations in Arrow IPC streams.
 //!
+//! Supported SONiC targets are amd64 and arm64. Local storage is unavailable on
+//! armhf (32-bit ARM): upstream Arrow IPC compression uses a platform-sized
+//! length prefix that does not produce valid compressed IPC on 32-bit targets.
+//!
 //! # File format and interpretation
 //!
 //! Each file is a self-contained **Arrow IPC stream**, compressed with ZSTD, not
