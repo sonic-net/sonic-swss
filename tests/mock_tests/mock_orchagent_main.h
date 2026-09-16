@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "switchorch.h"
 #include "crmorch.h"
+#include "namelabelmapper.h"
 #include "portsorch.h"
 #include "debugcounterorch.h"
 #include "routeorch.h"
@@ -21,6 +22,7 @@
 #include "qosorch.h"
 #define protected public
 #include "pfcwdorch.h"
+#include "pfcwdsworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"
@@ -97,6 +99,7 @@ extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_srv6_api_t *sai_srv6_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
+extern sai_bfd_api_t *sai_bfd_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_policer_api_t *sai_policer_api;
 extern sai_buffer_api_t *sai_buffer_api;

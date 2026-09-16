@@ -117,3 +117,8 @@
 #define PORT_MEDIA_TYPE            "media_type"
 #define PORT_SI_SYNC_SETTINGS      "si_settings_notification"
 #define PORT_FAST_LINKUP           "fast_linkup"
+#define PORT_MACSEC                "macsec"
+#define PORT_ASIC_PORT_NAME        "asic_port_name"
+#define PORT_CORE_ID               "core_id"
+#define PORT_CORE_PORT_ID          "core_port_id"
+#define PORT_NUM_VOQ               "num_voq"

@@ -26,8 +26,8 @@ swssplayer_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-swssconfig_SOURCES += $(top_srcdir)/lib/asan.cpp
-swssplayer_SOURCES += $(top_srcdir)/lib/asan.cpp
+swssconfig_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+swssplayer_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 
 swssconfig_SOURCES += $(top_srcdir)/lib/orch_zmq_config.cpp
