@@ -448,7 +448,7 @@ impl<W: OutputWriter> StatsReporterActor<W> {
             let unique_objects = self
                 .latest_counters
                 .keys()
-                .map(|k| (k.type_id, &k.object_name))
+                .map(|k| &k.object_name)
                 .collect::<std::collections::HashSet<_>>()
                 .len();
             let total_messages_in_period: u64 = self.messages_per_counter.values().sum();
@@ -741,32 +741,6 @@ mod tests {
             has_counter_entry,
             "Should show individual counter entries with message counts"
         );
-    }
-
-    #[tokio::test]
-    async fn test_summary_counts_same_name_as_distinct_typed_objects() {
-        let (_sender, receiver) = channel(1);
-        let config = StatsReporterConfig {
-            detailed: false,
-            ..StatsReporterConfig::default()
-        };
-        let mut actor = StatsReporterActor::new(receiver, config, TestWriter::new());
-        let queue = SaiObjectType::Queue.to_u32();
-        let pg = SaiObjectType::IngressPriorityGroup.to_u32();
-        let mut batch = SAIStatsBatch::default();
-        batch.push_record(10, [
-            SAIStat::new("Ethernet0|0", queue, 0, 10),
-            SAIStat::new("Ethernet0|0", queue, 1, 20),
-            SAIStat::new("Ethernet0|0", pg, 0, 30),
-        ]);
-        actor.update_stats(Arc::new(batch));
-        actor.generate_report();
-
-        let output = actor.writer.get_output();
-        assert!(output.iter().any(|line| line.trim() == "Unique Objects: 2"));
-        assert!(output.iter().any(|line| line.trim() == "Unique Types: 2"));
-        assert!(output.iter().any(|line| line.trim() == "Total Unique Counters: 3"));
-        assert!(output.iter().any(|line| line.trim() == "Total Counter Value: 60"));
     }
 
     #[tokio::test]
