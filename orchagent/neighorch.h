@@ -75,6 +75,11 @@ public:
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
+    bool hasLocalNextHop(const NextHopKey& nexthop) const
+    {
+        auto nextHop = m_syncdNextHops.find(nexthop);
+        return nextHop != m_syncdNextHops.end() && nextHop->second.next_hop_id != SAI_NULL_OBJECT_ID;
+    }
     bool isNeighborResolved(const NextHopKey&);
     bool addNextHop(NeighborContext& ctx);
     bool removeMplsNextHop(const NextHopKey&);

@@ -689,7 +689,10 @@ bool MuxCable::isIpInSubnet(IpAddress ip)
 
 bool MuxCable::isStateChangeReady(MuxState state) const
 {
-    if (state != MuxState::MUX_STATE_ACTIVE)
+    bool enabling = (state_ == MuxState::MUX_STATE_INIT || state_ == MuxState::MUX_STATE_STANDBY) &&
+                    state == MuxState::MUX_STATE_ACTIVE;
+    bool disabling = state_ == MuxState::MUX_STATE_ACTIVE && state == MuxState::MUX_STATE_STANDBY;
+    if (!enabling && !disabling)
     {
         return true;
     }
@@ -700,9 +703,18 @@ bool MuxCable::isStateChangeReady(MuxState state) const
     for (const auto& neighbor : nbr_handler_->getNeighbors())
     {
         NeighborEntry entry(neighbor.first, alias);
-        if (neighbors.find(entry) == neighbors.end())
+        auto current = neighbors.find(entry);
+        if (current == neighbors.end())
         {
-            SWSS_LOG_INFO("Neighbor %s on %s is not ready for active transition",
+            SWSS_LOG_INFO("Neighbor %s on %s is not ready for state transition",
+                          neighbor.first.to_string().c_str(), alias.c_str());
+            return false;
+        }
+
+        NextHopKey nextHop(neighbor.first, alias);
+        if (disabling && (!current->second.hw_configured || !gNeighOrch->hasLocalNextHop(nextHop)))
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s has no active local next hop",
                           neighbor.first.to_string().c_str(), alias.c_str());
             return false;
         }
