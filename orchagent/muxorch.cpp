@@ -482,15 +482,25 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
 
 bool MuxCable::stateInitActive()
 {
-    transitioned_neighbors_.clear();
-    return stateInitActive(nbr_handler_->getNeighbors(), transitioned_neighbors_);
+    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
+    try
+    {
+        bool ret = stateInitActive(neighbors);
+        transitioned_neighbors_ = std::move(neighbors);
+        return ret;
+    }
+    catch (...)
+    {
+        transitioned_neighbors_ = std::move(neighbors);
+        throw;
+    }
 }
 
-bool MuxCable::stateInitActive(const MuxNeighbor& neighbors, MuxNeighbor& transitioned_neighbors)
+bool MuxCable::stateInitActive(MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Active from %s", muxStateValToString.at(state_).c_str());
 
-    if (!nbrHandler(true, neighbors, transitioned_neighbors, false))
+    if (!nbrHandler(true, neighbors, false))
     {
         return false;
     }
@@ -501,28 +511,48 @@ bool MuxCable::stateInitActive(const MuxNeighbor& neighbors, MuxNeighbor& transi
 
 bool MuxCable::stateActive()
 {
-    transitioned_neighbors_.clear();
-    return stateActive(nbr_handler_->getNeighbors(), transitioned_neighbors_);
+    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
+    try
+    {
+        bool ret = stateActive(neighbors);
+        transitioned_neighbors_ = std::move(neighbors);
+        return ret;
+    }
+    catch (...)
+    {
+        transitioned_neighbors_ = std::move(neighbors);
+        throw;
+    }
 }
 
-bool MuxCable::stateActive(const MuxNeighbor& neighbors, MuxNeighbor& transitioned_neighbors)
+bool MuxCable::stateActive(MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Active for %s", mux_name_.c_str());
 
     Port port;
-    if (!gPortsOrch->getPort(mux_name_, port))
+    try
     {
-        SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
-        return false;
+        if (!gPortsOrch->getPort(mux_name_, port))
+        {
+            SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
+            neighbors.clear();
+            return false;
+        }
+
+        if (!aclHandler(port.m_port_id, mux_name_, false))
+        {
+            SWSS_LOG_INFO("Remove ACL drop rule failed for %s", mux_name_.c_str());
+            neighbors.clear();
+            return false;
+        }
+    }
+    catch (...)
+    {
+        neighbors.clear();
+        throw;
     }
 
-    if (!aclHandler(port.m_port_id, mux_name_, false))
-    {
-        SWSS_LOG_INFO("Remove ACL drop rule failed for %s", mux_name_.c_str());
-        return false;
-    }
-
-    if (!nbrHandler(true, neighbors, transitioned_neighbors))
+    if (!nbrHandler(true, neighbors))
     {
         return false;
     }
@@ -533,22 +563,41 @@ bool MuxCable::stateActive(const MuxNeighbor& neighbors, MuxNeighbor& transition
 
 bool MuxCable::stateStandby()
 {
-    transitioned_neighbors_.clear();
-    return stateStandby(nbr_handler_->getNeighbors(), transitioned_neighbors_);
+    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
+    try
+    {
+        bool ret = stateStandby(neighbors);
+        transitioned_neighbors_ = std::move(neighbors);
+        return ret;
+    }
+    catch (...)
+    {
+        transitioned_neighbors_ = std::move(neighbors);
+        throw;
+    }
 }
 
-bool MuxCable::stateStandby(const MuxNeighbor& neighbors, MuxNeighbor& transitioned_neighbors)
+bool MuxCable::stateStandby(MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Standby for %s", mux_name_.c_str());
 
     Port port;
-    if (!gPortsOrch->getPort(mux_name_, port))
+    try
     {
-        SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
-        return false;
+        if (!gPortsOrch->getPort(mux_name_, port))
+        {
+            SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
+            neighbors.clear();
+            return false;
+        }
+    }
+    catch (...)
+    {
+        neighbors.clear();
+        throw;
     }
 
-    if (!nbrHandler(false, neighbors, transitioned_neighbors))
+    if (!nbrHandler(false, neighbors))
     {
         return false;
     }
@@ -631,19 +680,17 @@ void MuxCable::rollbackStateChange()
     st_chg_in_progress_ = true;
     state_ = prev_state_;
     bool success = false;
-    MuxNeighbor rollback_neighbors;
-
     nbr_handler_->clearBulkers();
     gNeighOrch->clearBulkers();
 
     switch (prev_state_)
     {
         case MuxState::MUX_STATE_ACTIVE:
-            success = stateActive(transitioned_neighbors_, rollback_neighbors);
+            success = stateActive(transitioned_neighbors_);
             break;
         case MuxState::MUX_STATE_INIT:
         case MuxState::MUX_STATE_STANDBY:
-            success = stateStandby(transitioned_neighbors_, rollback_neighbors);
+            success = stateStandby(transitioned_neighbors_);
             break;
         case MuxState::MUX_STATE_FAILED:
         case MuxState::MUX_STATE_PENDING:
@@ -741,30 +788,38 @@ bool MuxCable::isStateChangeReady(MuxState state) const
     return true;
 }
 
-bool MuxCable::nbrHandler(bool enable, const MuxNeighbor& neighbors,
-                          MuxNeighbor& transitioned_neighbors, bool update_rt)
+bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
 {
     bool ret;
     SWSS_LOG_NOTICE("Processing neighbors for mux %s, enable %d, state %d",
                      mux_name_.c_str(), enable, state_);
     if (enable)
     {
-        ret = nbr_handler_->enable(neighbors, transitioned_neighbors, update_rt);
+        ret = nbr_handler_->enable(neighbors, update_rt);
         // Loop through all routes with nexthops through this mux cable when changing state
-        updateRoutes(transitioned_neighbors);
+        updateRoutes(neighbors);
     }
     else
     {
-        sai_object_id_t tnh = mux_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
+        sai_object_id_t tnh;
+        try
+        {
+            tnh = mux_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
+        }
+        catch (...)
+        {
+            neighbors.clear();
+            throw;
+        }
         if (tnh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Null NH object id, retry for %s", peer_ip4_.to_string().c_str());
+            neighbors.clear();
             return false;
         }
-        transitioned_neighbors.insert(neighbors.begin(), neighbors.end());
         // Loop through all routes with nexthops through this mux cable when changing state
         updateRoutes(neighbors);
-        ret = nbr_handler_->disable(neighbors, transitioned_neighbors, tnh);
+        ret = nbr_handler_->disable(neighbors, tnh);
     }
     return ret;
 }
@@ -947,12 +1002,11 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 
 bool MuxNbrHandler::enable(bool update_rt)
 {
-    MuxNeighbor transitioned_neighbors;
-    return enable(neighbors_, transitioned_neighbors, update_rt);
+    MuxNeighbor neighbors = neighbors_;
+    return enable(neighbors, update_rt);
 }
 
-bool MuxNbrHandler::enable(const MuxNeighbor& neighbors, MuxNeighbor& transitioned_neighbors,
-                           bool update_rt)
+bool MuxNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
 {
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
@@ -986,7 +1040,6 @@ bool MuxNbrHandler::enable(const MuxNeighbor& neighbors, MuxNeighbor& transition
             }
 
             ready_neighbors.emplace(neighbor.first, local_nh);
-            transitioned_neighbors.emplace(neighbor.first, neighbors_.at(neighbor.first));
         }
     };
 
@@ -997,12 +1050,14 @@ bool MuxNbrHandler::enable(const MuxNeighbor& neighbors, MuxNeighbor& transition
     catch (...)
     {
         record_ready_neighbors();
+        neighbors = ready_neighbors;
         throw;
     }
     record_ready_neighbors();
+    neighbors = ready_neighbors;
 
-    it = ready_neighbors.begin();
-    while (it != ready_neighbors.end())
+    it = neighbors.begin();
+    while (it != neighbors.end())
     {
         /* Update NH to point to learned neighbor */
         neigh = NeighborEntry(it->first, alias_);
@@ -1061,12 +1116,11 @@ bool MuxNbrHandler::enable(const MuxNeighbor& neighbors, MuxNeighbor& transition
 
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
-    MuxNeighbor transitioned_neighbors;
-    return disable(neighbors_, transitioned_neighbors, tnh);
+    MuxNeighbor neighbors = neighbors_;
+    return disable(neighbors, tnh);
 }
 
-bool MuxNbrHandler::disable(const MuxNeighbor& neighbors, MuxNeighbor& transitioned_neighbors,
-                            sai_object_id_t tnh)
+bool MuxNbrHandler::disable(MuxNeighbor& neighbors, sai_object_id_t tnh)
 {
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
@@ -1082,7 +1136,6 @@ bool MuxNbrHandler::disable(const MuxNeighbor& neighbors, MuxNeighbor& transitio
 
         /* Update NH to point to Tunnel nexhtop */
         auto& selected_nh = neighbors_.at(it->first);
-        transitioned_neighbors.emplace(it->first, selected_nh);
         selected_nh = tnh;
 
         /* Reprogram route */
@@ -1440,8 +1493,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
     }
 }
 
-bool MuxPrefixBasedNbrHandler::enable(const MuxNeighbor& neighbors,
-                                      MuxNeighbor& transitioned_neighbors, bool update_rt)
+bool MuxPrefixBasedNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
 {
     NeighborEntry neigh;
     std::list<MuxRouteBulkContext> route_ctx_list;
@@ -1451,7 +1503,6 @@ bool MuxPrefixBasedNbrHandler::enable(const MuxNeighbor& neighbors,
     {
         neigh = NeighborEntry(it->first, alias_);
         auto& selected_nh = neighbors_.at(it->first);
-        transitioned_neighbors.emplace(it->first, selected_nh);
         selected_nh = gNeighOrch->getLocalNextHopId(neigh);
         /* Reprogram route */
         NextHopKey nh_key = NextHopKey(it->first, alias_);
@@ -1515,8 +1566,7 @@ bool MuxPrefixBasedNbrHandler::enable(const MuxNeighbor& neighbors,
     return true;
 }
 
-bool MuxPrefixBasedNbrHandler::disable(const MuxNeighbor& neighbors,
-                                       MuxNeighbor& transitioned_neighbors, sai_object_id_t tnh)
+bool MuxPrefixBasedNbrHandler::disable(MuxNeighbor& neighbors, sai_object_id_t tnh)
 {
     NeighborEntry neigh;
     std::list<MuxRouteBulkContext> route_ctx_list;
@@ -1526,7 +1576,6 @@ bool MuxPrefixBasedNbrHandler::disable(const MuxNeighbor& neighbors,
     {
         /* Update NH to point to Tunnel nexthop */
         auto& selected_nh = neighbors_.at(it->first);
-        transitioned_neighbors.emplace(it->first, selected_nh);
         selected_nh = tnh;
 
         /* Set the neighbor prefix route to tunnel nexthop */
