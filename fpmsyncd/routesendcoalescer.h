@@ -20,27 +20,25 @@
 namespace swss {
 
 /*
- * RouteSendCoalescer decouples fpmsyncd's FRR/FPM ingest from the ZMQ send to
- * orchagent (issue sonic-buildimage #28369). Ingest upserts fully-formed KCOs
- * into a persistent, last-writer-wins coalescing map and returns immediately; a
- * single dedicated send thread drains the map in batches over ZMQ.
+ * Decouples fpmsyncd's FRR/FPM ingest from the ZMQ send to orchagent. Ingest
+ * upserts fully-formed KCOs into a last-writer-wins coalescing map and returns
+ * immediately; a dedicated send thread drains the map in batches over ZMQ.
  *
- *  - Transient back-pressure (ZmqClient throws io_error after its inner blip
- *    absorber): the failed chunk stays in the map and coalesces with newer ingest,
- *    so the per-key backlog shrinks and the next drain succeeds -> no route drop.
- *  - Prolonged failure: bounded by two independent triggers (time since last
- *    successful flush > tFailMs, OR map depth > mMax). Either fires -> the last
- *    assert record is written to STATE_DB and fpmsyncd exits deliberately;
- *    fpmsyncd is critical + autorestart=false, so the bgp container bounces and
- *    warm-restart RIB replay repopulates the table.
+ * On a transient send failure the chunk stays in the map and coalesces with
+ * newer ingest, so the backlog shrinks and no route is dropped. A prolonged
+ * failure is bounded by two independent triggers: time since the last
+ * successful flush past tFailMs, or map depth past mMax. Either writes an
+ * assert record to STATE_DB and exits deliberately. fpmsyncd is a critical
+ * process, so the bgp container bounces and the table is rebuilt by BGP
+ * re-convergence. Recovery rests on topology redundancy, which is why this
+ * path ships on T1 and above only.
  *
- * The send thread is the SOLE writer of the two ZMQ tables it owns. That is the
- * thread-safety contract: ZmqProducerStateTable::set(vector<KCO>) only touches
- * the ZmqClient socket (its own mutex) and AsyncDBUpdater's queue (its own
- * mutex), never the shared RedisPipeline the main thread uses for other tables.
- * Warm-restart reconciliation writes the same tables directly on the main
- * thread, so it parks the send thread first (see pause()) to preserve that
- * single-writer property.
+ * The send thread is the sole writer of the two ZMQ tables it owns, by
+ * construction rather than by handshake. ZmqProducerStateTable::set(vector<KCO>)
+ * touches only the ZmqClient socket and AsyncDBUpdater's queue, each under its
+ * own mutex, never the RedisPipeline the main thread uses for other tables.
+ * Warm restart is the only other writer of these tables and is mutually
+ * exclusive with the ZMQ route path (swss::validate_route_perf_zmq_supported).
  */
 class RouteSendCoalescer
 {
@@ -51,9 +49,6 @@ public:
     {
         uint32_t idleTickMs;             // condvar timed-wait period (telemetry tick)
         size_t   maxBatchEntries;        // max KCOs per wire chunk
-        size_t   maxBatchBytes;          // byte cap per chunk, under maxWireBytes
-        size_t   maxWireBytes;           // hard ZMQ message ceiling (MQ_RESPONSE_MAX_COUNT);
-                                         // a single entry above this can never be sent
         uint32_t outerBackoffMs;         // wait after a failed flush before re-draining
         uint32_t tFailMs;                // assert if now - lastSuccess exceeds this
         size_t   mMax;                   // assert if total map depth exceeds this
@@ -89,13 +84,6 @@ public:
     void start();   // launch the send thread (idempotent)
     void stop();     // signal + join the send thread (idempotent; drains best-effort)
 
-    // Park the send thread between drain cycles so the caller owns the route
-    // tables exclusively (warm-restart reconcile writes them directly). Unlike
-    // stop() this retains the map and does not account undelivered entries as
-    // lost. Blocks until the thread is parked; idempotent.
-    void pause();
-    void resume();
-
     // Drive exactly one fair drain cycle synchronously (no thread). Returns true
     // if it attempted a flush (map was non-empty). Exposed for deterministic tests.
     bool drainOnce();
@@ -117,23 +105,17 @@ private:
 
     void sendLoop();
     // Drain one table's share of a cycle. Repeatedly pulls a chunk (bounded by
-    // maxBatchEntries, maxBatchBytes and the remaining budget) from the live map
-    // under the lock and set()s it with the lock released. A failed chunk is
-    // re-merged last-writer-wins, so newer ingest is never clobbered, and false
-    // is returned; chunks already sent in this call stay delivered. `budget` is
-    // the table's depth at cycle start, which bounds the pass and keeps the two
-    // tables fair. `sent` reports entries delivered, so the caller can detect a
-    // cycle that made no progress. The pass resumes from the last key visited
-    // rather than restarting at begin(), covering each key present at entry once.
+    // maxBatchEntries and the remaining budget) under the lock and
+    // set()s it with the lock released. A failed chunk is re-merged
+    // last-writer-wins and false is returned; chunks already sent stay delivered.
+    // `budget` is the table's depth at cycle start, which bounds the pass and
+    // keeps the two tables fair. `sent` reports entries delivered.
     bool drainTable(TableId tbl, size_t budget, size_t &sent);
     // Worst stuck age across tables that still owe work, in ms; 0 when both maps
-    // are empty. Tracked per table so a table whose sends fail forever is caught
-    // while the other keeps flowing. Caller must hold m_mutex.
+    // are empty. Per table, so a table whose sends fail forever is caught while
+    // the other keeps flowing. Caller must hold m_mutex.
     uint64_t stuckMsLocked() const;
     static size_t tableIndex(TableId tbl) { return (tbl == TableId::Route) ? 0 : 1; }
-    // Conservative estimate of a KCO's serialized wire size, used only to cap a
-    // chunk's bytes below the ZMQ message ceiling.
-    static size_t approxKcoSerializedBytes(const KeyOpFieldsValuesTuple &kco);
     void evaluateAssertThresholds();
     void writeAssertRecordAndExit(const char *reason, size_t depth, uint64_t stuckMs);
     void publishTelemetry(bool force);
@@ -158,13 +140,10 @@ private:
     std::thread m_thread;
     bool        m_running{false};
     bool        m_stop{false};
-    bool        m_paused{false};   // caller wants the send thread parked
-    bool        m_parked{false};   // send thread is parked and not touching the maps
-    std::condition_variable m_parkedCv;   // send thread -> pause() waiter
 
     // liveness / episode / telemetry timing (guarded by m_mutex unless atomic)
-    // Per table, indexed by tableIndex(): a global timestamp would be refreshed
-    // by whichever table is healthy and hide the other one being stuck forever.
+    // Per table: a global timestamp would be refreshed by whichever table is
+    // healthy and hide the other one being stuck.
     SteadyClock::time_point m_lastSuccess[2]{SteadyClock::now(), SteadyClock::now()};
     // When a table went from empty to owing work. A table idle since startup has
     // an arbitrarily old m_lastSuccess; ageing its first pending entry from that
@@ -175,13 +154,13 @@ private:
 
     // congestion-episode accumulators (current open episode)
     bool                    m_inEpisode{false};
-    // Episode hysteresis: an episode opens only on the SECOND consecutive outer
-    // failure, since a single stranded flush is a blip rather than congestion.
-    // Touched only on the send thread / drainOnce; reset when a drain empties.
-    int                     m_consecutiveOuterFailures{0};
+    // An episode opens only on the second consecutive outer failure: a single
+    // stranded flush is a blip rather than congestion.
+    // The three atomics below are written on the send thread and read from
+    // drainOnce(), which is public and may be driven from a test thread.
+    std::atomic<int>        m_consecutiveOuterFailures{0};
     // Outcome and delivered-entry count of the most recent drain cycle; together
-    // they drive the outer backoff. Atomic because drainOnce() is public and may
-    // be driven from a test thread.
+    // they drive the outer backoff.
     std::atomic<bool>   m_lastCycleOk{true};
     std::atomic<size_t> m_lastCycleSent{0};
     SteadyClock::time_point m_epStart{};
