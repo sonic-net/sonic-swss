@@ -16,7 +16,10 @@
 #include "mirrororch.h"
 #undef private
 #include "mock_orch_test.h"
+#include "mock_sai_capability_wrap.h"
 #include "mirrororch_sample_port_sai_wrap.h"
+#include "saispy.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cstring>
 
@@ -28,6 +31,15 @@ namespace mirrororch_test
 
     class MirrorOrchTest : public MockOrchTest
     {
+    protected:
+        // createEntry publishes to STATE_DB, which outlives the fixture because
+        // all tests share the same Redis instance. Drop both the cache entry
+        // and the STATE_DB key the way deleteEntry would.
+        void eraseCreatedSession(const string& key)
+        {
+            gMirrorOrch->m_syncdMirrors.erase(key);
+            swss::Table(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME).del(key);
+        }
     };
 
     TEST_F(MirrorOrchTest, RejectsIngressWhenUnsupported)
@@ -140,6 +152,23 @@ namespace mirrororch_test
         ASSERT_EQ(entry.sample_rate, (uint32_t)0);
         ASSERT_EQ(entry.truncate_size, (uint32_t)0);
         ASSERT_EQ(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(entry.label.empty());
+    }
+
+    TEST_F(MirrorOrchTest, CreateEntryRetriesWhenPolicerMissing)
+    {
+        // policer field is accepted at parse time regardless of existence.
+        // The missing-policer check runs after validation and before cache
+        // insert so a retry does not leave a session in m_syncdMirrors.
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("policer", "nonexistent_policer");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("missing_policer_session", data),
+                  task_process_status::task_need_retry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("missing_policer_session"));
     }
 
     TEST_F(MirrorOrchTest, CreateEntryTruncateWithoutSampleRateDefaultsRateToOne)
@@ -1146,6 +1175,351 @@ namespace mirrororch_test
         // Clean up for real now that the fault is disabled.
         mirror_sample_port_wrap_ut::g_fail_samplepacket_remove = false;
         sai_samplepacket_api->remove_samplepacket(created);
+    }
+
+    // -------------------------------------------------------------------------
+    // Mirror session LABEL
+    // -------------------------------------------------------------------------
+
+    class MirrorOrchLabelTest : public MirrorOrchTest
+    {
+        void PostSetUp() override
+        {
+            // Keep label tests independent of the VS capability response.
+            gMirrorOrch->m_capabilities.label.capability =
+                MirrorSessionCapabilities::AttributeCapability::Supported;
+        }
+    };
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryAcceptsValidLabel)
+    {
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("label", "Mirror-Session_01");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("labeled_session", data),
+                  task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.at("labeled_session").label,
+                  "Mirror-Session_01");
+
+        eraseCreatedSession("labeled_session");
+    }
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryAcceptsMaximumLengthLabel)
+    {
+        const string maxLengthLabel(31, 'L');
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("label", maxLengthLabel);
+
+        ASSERT_EQ(gMirrorOrch->createEntry("max_label_session", data),
+                  task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.at("max_label_session").label,
+                  maxLengthLabel);
+
+        eraseCreatedSession("max_label_session");
+    }
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryRejectsInvalidLabels)
+    {
+        for (const auto& label : {string(), string(32, 'L'), string("invalid label"), string("invalid.label")})
+        {
+            vector<FieldValueTuple> data;
+            data.emplace_back("type", "ERSPAN");
+            data.emplace_back("src_ip", "10.0.0.1");
+            data.emplace_back("dst_ip", "10.0.0.2");
+            data.emplace_back("label", label);
+
+            ASSERT_EQ(gMirrorOrch->createEntry("invalid_label_session", data),
+                      task_process_status::task_invalid_entry);
+            ASSERT_FALSE(gMirrorOrch->sessionExists("invalid_label_session"));
+        }
+    }
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryRejectsDuplicateLabel)
+    {
+        vector<FieldValueTuple> first;
+        first.emplace_back("type", "ERSPAN");
+        first.emplace_back("src_ip", "10.0.0.1");
+        first.emplace_back("dst_ip", "10.0.0.2");
+        first.emplace_back("label", "shared_label");
+        ASSERT_EQ(gMirrorOrch->createEntry("first_session", first),
+                  task_process_status::task_success);
+
+        vector<FieldValueTuple> second;
+        second.emplace_back("type", "ERSPAN");
+        second.emplace_back("src_ip", "10.0.0.3");
+        second.emplace_back("dst_ip", "10.0.0.4");
+        second.emplace_back("label", "shared_label");
+        ASSERT_EQ(gMirrorOrch->createEntry("second_session", second),
+                  task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("second_session"));
+
+        eraseCreatedSession("first_session");
+    }
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryRejectsLabelWhenCapabilityIsUnsupported)
+    {
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("label", "capability_label");
+
+        gMirrorOrch->m_capabilities.label.capability =
+            MirrorSessionCapabilities::AttributeCapability::Unsupported;
+        ASSERT_EQ(gMirrorOrch->createEntry("unsupported_label_session", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("unsupported_label_session"));
+    }
+
+    TEST_F(MirrorOrchLabelTest, CreateEntryAcceptsLabelWhenCapabilityIsUnknown)
+    {
+        // A failed capability query is not proof that LABEL is unsupported.
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("label", "capability_label");
+
+        gMirrorOrch->m_capabilities.label.capability =
+            MirrorSessionCapabilities::AttributeCapability::Unknown;
+        ASSERT_EQ(gMirrorOrch->createEntry("unknown_capability_session", data),
+                  task_process_status::task_success);
+        eraseCreatedSession("unknown_capability_session");
+    }
+
+    TEST_F(MirrorOrchLabelTest, QueriesMirrorSessionLabelCreateCapability)
+    {
+        using namespace mirrororch_sai_wrap_ut;
+
+        {
+            MirrorSaiHookGuard guard(setSaiHookQueryFail);
+            MirrorSessionCapabilities capabilities;
+            ASSERT_TRUE(capabilities.isMirrorSessionLabelSupported());
+        }
+
+        {
+            MirrorSaiHookGuard guard(setSaiHookCreateSupported);
+            MirrorSessionCapabilities capabilities;
+            ASSERT_TRUE(capabilities.isMirrorSessionLabelSupported());
+        }
+
+        {
+            MirrorSaiHookGuard guard(setSaiHookCreateUnsupported);
+            MirrorSessionCapabilities capabilities;
+            ASSERT_FALSE(capabilities.isMirrorSessionLabelSupported());
+        }
+    }
+
+    TEST_F(MirrorOrchLabelTest, PublishesMirrorSessionLabelCapability)
+    {
+        swss::Table capabilityTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
+        string value;
+
+        gMirrorOrch->m_capabilities.label.capability =
+            MirrorSessionCapabilities::AttributeCapability::Supported;
+        gMirrorOrch->m_capabilities.writeCapabilitiesToDb();
+        ASSERT_TRUE(capabilityTable.hget(
+            "switch", "MIRROR_SESSION_LABEL_CAPABLE", value));
+        ASSERT_EQ(value, "true");
+
+        gMirrorOrch->m_capabilities.label.capability =
+            MirrorSessionCapabilities::AttributeCapability::Unsupported;
+        gMirrorOrch->m_capabilities.writeCapabilitiesToDb();
+        ASSERT_TRUE(capabilityTable.hget(
+            "switch", "MIRROR_SESSION_LABEL_CAPABLE", value));
+        ASSERT_EQ(value, "false");
+    }
+
+    TEST_F(MirrorOrchLabelTest, SetSessionStatePublishesLabelOnlyWhenSet)
+    {
+        // Label is create-only. STATE_DB gets the field only when CONFIG
+        // defined one; unlabeled/legacy sessions omit it. Session delete
+        // removes the whole STATE_DB key via removeSessionState.
+        const string key = "state_label_session";
+        swss::Table stateTable(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
+        MirrorEntry session("");
+        session.type = MIRROR_SESSION_ERSPAN;
+
+        gMirrorOrch->setSessionState(key, session, "label");
+        string stored;
+        ASSERT_FALSE(stateTable.hget(key, "label", stored));
+
+        session.label = "state_label";
+        gMirrorOrch->setSessionState(key, session, "label");
+        ASSERT_TRUE(stateTable.hget(key, "label", stored));
+        ASSERT_EQ(stored, session.label);
+        stateTable.del(key);
+    }
+
+    TEST_F(MirrorOrchLabelTest, InvalidEntryDoesNotReferencePolicer)
+    {
+        const string policerName = "mirror_test_policer";
+        gPolicerOrch->m_syncdPolicers[policerName] = 0x2000;
+        gPolicerOrch->m_policerRefCounts[policerName] = 0;
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("policer", policerName);
+        data.emplace_back("label", "");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("invalid_policer_session", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("invalid_policer_session"));
+        ASSERT_EQ(gPolicerOrch->m_policerRefCounts.at(policerName), 0);
+
+        gPolicerOrch->m_policerRefCounts.erase(policerName);
+        gPolicerOrch->m_syncdPolicers.erase(policerName);
+    }
+
+    TEST_F(MirrorOrchLabelTest, CachedEntryReferencesPolicerUntilDelete)
+    {
+        const string policerName = "committed_mirror_policer";
+        gPolicerOrch->m_syncdPolicers[policerName] = 0x2001;
+        gPolicerOrch->m_policerRefCounts[policerName] = 0;
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("policer", policerName);
+        data.emplace_back("label", "committed_label");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("committed_policer_session", data),
+                  task_process_status::task_success);
+        ASSERT_TRUE(gMirrorOrch->sessionExists("committed_policer_session"));
+        ASSERT_EQ(gPolicerOrch->m_policerRefCounts.at(policerName), 1);
+
+        ASSERT_EQ(gMirrorOrch->deleteEntry("committed_policer_session"),
+                  task_process_status::task_success);
+        ASSERT_EQ(gPolicerOrch->m_policerRefCounts.at(policerName), 0);
+
+        gPolicerOrch->m_policerRefCounts.erase(policerName);
+        gPolicerOrch->m_syncdPolicers.erase(policerName);
+    }
+
+    TEST_F(MirrorOrchLabelTest, ActivateSessionPassesLabelOnlyOnCreate)
+    {
+        vector<sai_attribute_t> capturedAttributes;
+        auto createSpy =
+            SpyOn<SAI_API_MIRROR, SAI_OBJECT_TYPE_MIRROR_SESSION>(
+                &sai_mirror_api->create_mirror_session);
+        createSpy->callFake(
+            [&capturedAttributes](sai_object_id_t *oid, sai_object_id_t, uint32_t attrCount,
+                const sai_attribute_t *attrList) -> sai_status_t {
+                *oid = 0x1234;
+                capturedAttributes.assign(attrList, attrList + attrCount);
+                return SAI_STATUS_SUCCESS;
+            });
+
+        MirrorEntry session("");
+        session.type = MIRROR_SESSION_ERSPAN;
+        session.srcIp = IpAddress("10.0.0.1");
+        session.dstIp = IpAddress("10.0.0.2");
+        session.neighborInfo.portId = 0x42;
+        session.neighborInfo.port.m_type = Port::PHY;
+        session.neighborInfo.mac = MacAddress("00:11:22:33:44:55");
+        session.label = "warm_reboot_label";
+
+        ASSERT_TRUE(gMirrorOrch->activateSession("sai_label_session", session));
+
+        auto labelAttribute = std::find_if(
+            capturedAttributes.begin(),
+            capturedAttributes.end(),
+            [](const sai_attribute_t& attribute) {
+                return attribute.id == SAI_MIRROR_SESSION_ATTR_LABEL;
+            });
+        ASSERT_NE(labelAttribute, capturedAttributes.end());
+        ASSERT_EQ(string(labelAttribute->value.chardata), session.label);
+
+        swss::Table(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME)
+            .del("sai_label_session");
+    }
+
+    TEST_F(MirrorOrchLabelTest, ActivateSessionOmitsAbsentLabel)
+    {
+        vector<sai_attribute_t> capturedAttributes;
+        auto createSpy =
+            SpyOn<SAI_API_MIRROR, SAI_OBJECT_TYPE_MIRROR_SESSION>(
+                &sai_mirror_api->create_mirror_session);
+        createSpy->callFake(
+            [&capturedAttributes](sai_object_id_t *oid, sai_object_id_t, uint32_t attrCount,
+                const sai_attribute_t *attrList) -> sai_status_t {
+                *oid = 0x1235;
+                capturedAttributes.assign(attrList, attrList + attrCount);
+                return SAI_STATUS_SUCCESS;
+            });
+
+        MirrorEntry session("");
+        session.type = MIRROR_SESSION_ERSPAN;
+        session.srcIp = IpAddress("10.0.0.1");
+        session.dstIp = IpAddress("10.0.0.2");
+        session.neighborInfo.portId = 0x43;
+        session.neighborInfo.port.m_type = Port::PHY;
+        session.neighborInfo.mac = MacAddress("00:11:22:33:44:55");
+
+        ASSERT_TRUE(gMirrorOrch->activateSession("unlabeled_session", session));
+        ASSERT_EQ(
+            std::count_if(
+                capturedAttributes.begin(),
+                capturedAttributes.end(),
+                [](const sai_attribute_t& attribute) {
+                    return attribute.id == SAI_MIRROR_SESSION_ATTR_LABEL;
+                }),
+            0);
+
+        swss::Table(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME)
+            .del("unlabeled_session");
+    }
+
+    class MirrorOrchLabelPortTest : public MirrorOrchPortTest
+    {
+        void PostSetUp() override
+        {
+            gMirrorOrch->m_capabilities.label.capability =
+                MirrorSessionCapabilities::AttributeCapability::Supported;
+        }
+    };
+
+    TEST_F(MirrorOrchLabelPortTest, CreateSpanSessionPassesLabelOnCreate)
+    {
+        vector<sai_attribute_t> capturedAttributes;
+        auto createSpy =
+            SpyOn<SAI_API_MIRROR, SAI_OBJECT_TYPE_MIRROR_SESSION>(
+                &sai_mirror_api->create_mirror_session);
+        createSpy->callFake(
+            [&capturedAttributes](sai_object_id_t *oid, sai_object_id_t, uint32_t attrCount,
+                const sai_attribute_t *attrList) -> sai_status_t {
+                *oid = 0x1236;
+                capturedAttributes.assign(attrList, attrList + attrCount);
+                return SAI_STATUS_SUCCESS;
+            });
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "SPAN");
+        data.emplace_back("dst_port", "Ethernet0");
+        data.emplace_back("label", "local_span_label");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("labeled_span_session", data),
+                  task_process_status::task_success);
+
+        auto labelAttribute = std::find_if(
+            capturedAttributes.begin(),
+            capturedAttributes.end(),
+            [](const sai_attribute_t& attribute) {
+                return attribute.id == SAI_MIRROR_SESSION_ATTR_LABEL;
+            });
+        ASSERT_NE(labelAttribute, capturedAttributes.end());
+        ASSERT_EQ(string(labelAttribute->value.chardata), "local_span_label");
+
+        eraseCreatedSession("labeled_span_session");
     }
 
 }

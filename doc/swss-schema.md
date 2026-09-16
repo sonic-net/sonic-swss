@@ -843,14 +843,17 @@ Stores information about mirror sessions and their properties.
     dscp      = h8                    ; Session DSCP
     ttl       = h8                    ; Session TTL
     queue     = h8                    ; Session output queue
+    label     = mirror-label          ; Session optional stable warm-reboot identity
     policer   = policer_name          ; Session policer name
     dst_port  = PORT_TABLE|ifname     ; Session destination PORT
     src_port  = PORT_TABLE|ifname     ; Session source PORT/LAG list
     direction = "RX"/"TX"/"BOTH"      ; Session direction
     type      = "SPAN"/"ERSPAN"       ; Session type. Default is ERSPAN
 
-    ;value annotations
+    ; value annotations
     mirror_session_name = 1*255VCHAR
+    mirror-label        = 1*31mirror-label-char
+    mirror-label-char   = ALPHA / DIGIT / "_" / "-"
     policer_name        = 1*255VCHAR
     h8                  = 1*2HEXDIG
     h16                 = 1*4HEXDIG
@@ -870,7 +873,8 @@ Example:
                 "gre_type": "0x6558",
                 "dscp": "50",
                 "ttl": "64",
-                "queue": "0"
+                "queue": "0",
+                "label": "session_1"
             },
             "OP": "SET"
         }
@@ -884,10 +888,11 @@ Example:
                 "gre_type": "0x6558",
                 "dscp": "50",
                 "ttl": "64",
-                "queue": "0"
-                "src_port": "Ethernet0,PortChannel001"
-                "direction": "BOTH"
-                "type": "ERSPAN"
+                "queue": "0",
+                "src_port": "Ethernet0,PortChannel001",
+                "direction": "BOTH",
+                "type": "ERSPAN",
+                "label": "session_2"
             },
             "OP": "SET"
         }
@@ -896,10 +901,11 @@ Example:
     [
         {
             "MIRROR_SESSION_TABLE:session_3": {
-                "type": "SPAN"
-                "dst_port": "Ethernet0"
-                "src_port": "Ethernet4,PortChannel002"
-                "direction": "BOTH"
+                "type": "SPAN",
+                "dst_port": "Ethernet0",
+                "src_port": "Ethernet4,PortChannel002",
+                "direction": "BOTH",
+                "label": "session_3"
             },
             "OP": "SET"
         }
