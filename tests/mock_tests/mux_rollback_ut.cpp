@@ -339,13 +339,24 @@ namespace mux_rollback_test
 
     TEST_F(MuxRollbackTest, StandbyToActiveNextHopAlreadyExists)
     {
-        if (!IsPrefixBasedMuxNeighbor())
+        if (IsPrefixBasedMuxNeighbor())
         {
-            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+            SetAndAssertMuxState(ACTIVE_STATE);
+            return;
         }
-        SetAndAssertMuxState(ACTIVE_STATE);
+
+        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+
+        // An already-exists status without a usable local OID cannot complete activation.
+        NextHopKey nextHop(IpAddress(SERVER_IP1), VLAN_1000);
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
+        EXPECT_FALSE(gNeighOrch->hasNextHop(nextHop));
+        EXPECT_EQ(gNeighOrch->getLocalNextHopId(nextHop), SAI_NULL_OBJECT_ID);
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyNextHopNotFound)
