@@ -189,15 +189,23 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 
-    // When the ZMQ route path is enabled, decouple FRR/FPM ingest from the ZMQ
-    // send: steady-state route/label-route writes are coalesced (last-writer-wins)
-    // and drained in batches by a dedicated send thread, so ingest never blocks on
-    // a full ZMQ socket (#28369). Warm-restart reconciliation keeps its existing
-    // direct-write path and parks the send thread for its duration, so there is a
-    // single ZMQ writer at any instant.
+    // On the ZMQ route path, steady-state route/label-route writes are coalesced
+    // and drained in batches by a dedicated send thread, so ingest never blocks
+    // on a full ZMQ socket.
     if (isNbZmqEnabled())
     {
-        m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
+        try
+        {
+            m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
+        }
+        catch (const std::exception &e)
+        {
+            // Telemetry is best-effort: start the coalescer without a STATE_DB
+            // handle rather than fail route delivery.
+            m_stateDb.reset();
+            SWSS_LOG_WARN("route-send telemetry disabled, STATE_DB connect failed: %s",
+                          e.what());
+        }
         m_routeCoalescer = std::make_shared<RouteSendCoalescer>(
             m_routeTable.get(), m_label_routeTable.get(), m_zmqClient.get(), m_stateDb.get());
         m_routeCoalescer->start();
@@ -221,7 +229,10 @@ bool RouteSync::zmqTableId(const ProducerStateTable & table, RouteSendCoalescer:
 
 bool RouteSync::coalescerActive() const
 {
-    return m_routeCoalescer != nullptr && !m_warmStartHelper.inProgress();
+    // No warm-restart term: the ZMQ route path refuses to start when warm or
+    // fast restart is armed, so a reconcile cannot be in progress while the
+    // coalescer exists (swss::validate_route_perf_zmq_supported).
+    return m_routeCoalescer != nullptr;
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
@@ -241,15 +252,17 @@ void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
         RouteSendCoalescer::TableId tblId;
         if (coalescerActive() && zmqTableId(table, tblId))
         {
-            // Steady-state ZMQ route write: upsert into the coalescing map, and
-            // let the send thread own the ZMQ post. On the ZMQ path the wrapper
-            // emits a single SET, so [0] is that SET; the non-ZMQ wrapper
-            // prefixes a DEL. Assert the layout so a future divergence fails
-            // loudly rather than dropping the route. Bound to a const ref to
-            // lifetime-extend the returned vector instead of copying it.
+            // Steady-state ZMQ route write: upsert into the coalescing map and
+            // let the send thread own the ZMQ post. The ZMQ wrapper emits a
+            // single SET, so [0] is that SET; the non-ZMQ wrapper prefixes a DEL.
+            // Const ref to lifetime-extend the returned vector.
             const auto &kcoVec = fvw.KeyOpFieldsValuesTupleVector();
-            assert(kcoVec.size() == 1 &&
-                   "coalescer expects the single-SET ZMQ KCO layout");
+            if (kcoVec.size() != 1)
+            {
+                SWSS_LOG_ERROR("Dropping route: coalescer expects the single-SET ZMQ "
+                               "KCO layout, got %zu tuples", kcoVec.size());
+                return;
+            }
             m_routeCoalescer->upsertKco(tblId, kcoVec[0]);
         }
         else
@@ -259,11 +272,9 @@ void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
     }
     else
     {
-        if(isNbZmqEnabled()) {
-            m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[0]);
-        } else {
-            m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[1]);
-        }
+        // Warm restart implies the ZMQ route path is disabled, so this is the
+        // non-ZMQ wrapper layout: [0] is the DEL, [1] the SET.
+        m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[1]);
     }
 }
 
@@ -3875,20 +3886,11 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
 
     if (m_warmStartHelper.inProgress())
     {
-        // Reconcile writes the route tables directly on this thread. Warm restart
-        // re-enters on every FPM reconnect, so the coalescer may hold pending work
-        // and its send thread may be mid-flight; park it so reconcile owns the
-        // tables and the ZMQ socket exclusively.
-        if (m_routeCoalescer)
-        {
-            m_routeCoalescer->pause();
-        }
+        // Reconcile writes the route tables directly on this thread. Warm
+        // restart and the ZMQ route path are mutually exclusive, so the coalescer
+        // does not exist here and there is no send thread to race.
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
-        if (m_routeCoalescer)
-        {
-            m_routeCoalescer->resume();
-        }
     }
 }
 

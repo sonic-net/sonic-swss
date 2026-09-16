@@ -377,6 +377,8 @@ bool OrchDaemon::init()
     };
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
+    // Refuse to configure the path when a warm or fast restart is armed.
+    validate_route_perf_zmq_supported();
     auto enable_route_zmq = get_route_perf_zmq_enabled();
     auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 

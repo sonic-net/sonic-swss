@@ -280,16 +280,17 @@ public:
 private:
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
-    /* STATE_DB handle for route-send telemetry (owned; only used when ZMQ enabled) */
-    shared_ptr<DBConnector> m_stateDb;
-    /* Coalescing map + dedicated send thread for the ZMQ route path (#28369).
-     * Non-null only when ZMQ is enabled; the steady-state route/label-route write
-     * path funnels through it so ingest never blocks on ZMQ. */
-    shared_ptr<RouteSendCoalescer> m_routeCoalescer;
     /* regular route table */
     shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
     shared_ptr<ProducerStateTable> m_label_routeTable;
+    /* STATE_DB handle for route-send telemetry (owned; only used when ZMQ enabled) */
+    shared_ptr<DBConnector> m_stateDb;
+    /* Coalescing map + dedicated send thread for the ZMQ route path.
+     * Non-null only when ZMQ is enabled. Declared after the tables, the ZMQ
+     * client and the STATE_DB handle it borrows raw pointers to, so it is
+     * destroyed first and its send thread joined while those are still alive. */
+    shared_ptr<RouteSendCoalescer> m_routeCoalescer;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  

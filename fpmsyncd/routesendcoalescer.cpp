@@ -1,11 +1,11 @@
 #include "fpmsyncd/routesendcoalescer.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -22,18 +22,18 @@ RouteSendCoalescer::Config RouteSendCoalescer::defaultConfig()
 {
     Config c;
     c.idleTickMs = 1000;              // wake at least once a second even with no ingest
+    // A full chunk is ~7.5 MiB worst case, well inside swss-common's 16 MiB
+    // MQ_RESPONSE_MAX_COUNT.
     c.maxBatchEntries = 256;          // KCOs per wire chunk
-    c.maxBatchBytes = 8u * 1024 * 1024; // soft cap per chunk, under maxWireBytes
-    c.maxWireBytes = 16u * 1024 * 1024; // MQ_RESPONSE_MAX_COUNT in swss-common zmqserver.h
     c.outerBackoffMs = 50;            // brief pause after a transient send failure
     c.tFailMs = 60000;                // 60s stuck -> assert (transient vs crash-loop)
     c.mMax = 1000000;                 // hard cap on backlog to bound memory
     c.telemetryMinIntervalMs = 10000; // <= 1 STATE_DB publish / 10s
     c.warnFraction = 0.5;             // STALLED once stuck age passes half of tFailMs
     // Bound the ZmqClient inner retry so a batched set() returns to the outer
-    // loop in ~10ms rather than running its ~41s default ladder. Long enough to
-    // absorb a sub-tick blip inline, short enough that newer ingest can coalesce
-    // onto a deferred batch and that the tFailMs budget stays meaningful.
+    // loop in ~10ms rather than running its ~41s default ladder: long enough to
+    // absorb a sub-tick blip inline, short enough to keep the tFailMs budget
+    // meaningful.
     c.sendInnerMaxRetries = 2;
     c.sendInnerMaxBackoffMs = 5;
     return c;
@@ -51,21 +51,31 @@ RouteSendCoalescer::RouteSendCoalescer(ProducerStateTable *routeTable,
 {
     if (stateDb != nullptr)
     {
-        m_statTable = std::make_unique<Table>(stateDb, FPMSYNCD_ROUTE_STAT_TABLE);
-        // assert_total is a lifetime counter across restarts, so seed it from any
-        // sticky record a prior process left behind. Without this a fresh process
-        // publishes 0 and clobbers the persisted value.
-        std::string persisted;
-        if (m_statTable->hget(FPMSYNCD_ROUTE_STAT_KEY, "assert_total", persisted))
+        try
         {
-            try
+            m_statTable = std::make_unique<Table>(stateDb, FPMSYNCD_ROUTE_STAT_TABLE);
+            // assert_total is a lifetime counter across restarts, so seed it from
+            // any sticky record a prior process left behind.
+            std::string persisted;
+            if (m_statTable->hget(FPMSYNCD_ROUTE_STAT_KEY, "assert_total", persisted))
             {
-                m_assertTotal.store(std::stoull(persisted), std::memory_order_relaxed);
+                try
+                {
+                    m_assertTotal.store(std::stoull(persisted), std::memory_order_relaxed);
+                }
+                catch (const std::exception &)
+                {
+                    // Malformed value -> start from zero.
+                }
             }
-            catch (const std::exception &)
-            {
-                // Malformed value -> start from zero (defensive; never fatal).
-            }
+        }
+        catch (const std::exception &e)
+        {
+            // Telemetry is best-effort: route delivery must start even when
+            // STATE_DB is unavailable. Every use of m_statTable is null-guarded.
+            m_statTable.reset();
+            SWSS_LOG_WARN("route stat telemetry disabled, STATE_DB unavailable: %s",
+                          e.what());
         }
     }
     // Retry beyond a sub-tick blip belongs to the outer loop (re-merge plus
@@ -75,8 +85,7 @@ RouteSendCoalescer::RouteSendCoalescer(ProducerStateTable *routeTable,
         m_zmqClient->setSendRetryConfig(m_cfg.sendInnerMaxRetries,
                                         m_cfg.sendInnerMaxBackoffMs);
     }
-    // A zero entry cap would produce empty chunks and never retire budget, so
-    // hold the floor at one entry per chunk.
+    // A zero entry cap would produce empty chunks and never retire budget.
     m_cfg.maxBatchEntries = std::max<size_t>(1, m_cfg.maxBatchEntries);
     m_lastSuccess[tableIndex(TableId::Route)] = SteadyClock::now();
     m_lastSuccess[tableIndex(TableId::LabelRoute)] = m_lastSuccess[tableIndex(TableId::Route)];
@@ -116,7 +125,6 @@ void RouteSendCoalescer::stop()
     }
     std::lock_guard<std::mutex> lock(m_mutex);
     m_running = false;
-    m_parkedCv.notify_all();   // release a pause() racing with shutdown
 }
 
 RouteSendCoalescer::CoalesceMap &RouteSendCoalescer::mapForLocked(TableId tbl)
@@ -143,10 +151,14 @@ uint64_t RouteSendCoalescer::mapDepth() const
 void RouteSendCoalescer::upsertKco(TableId tbl, const KeyOpFieldsValuesTuple &kco)
 {
     // A SET with no field-values serializes identically to a DEL on the ZMQ wire,
-    // so it would silently delete the route. Guarded here as well as in upsertSet
-    // because routesync feeds pre-formed KCOs straight into this entry point.
-    assert(!(kfvOp(kco) == SET_COMMAND && kfvFieldsValues(kco).empty()) &&
-           "SET KCO requires non-empty fields (empty == DEL on wire)");
+    // so queueing it would silently delete the route. Drop it rather than post a
+    // destructive tuple.
+    if (kfvOp(kco) == SET_COMMAND && kfvFieldsValues(kco).empty())
+    {
+        SWSS_LOG_ERROR("Dropping malformed SET for %s: empty field set "
+                       "(an empty SET is a DEL on the wire)", kfvKey(kco).c_str());
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         CoalesceMap &m = mapForLocked(tbl);
@@ -154,9 +166,8 @@ void RouteSendCoalescer::upsertKco(TableId tbl, const KeyOpFieldsValuesTuple &kc
         {
             m_pendingSince[tableIndex(tbl)] = SteadyClock::now();
         }
-        // Last-writer-wins: a newer op for the same key supersedes the pending
-        // one (SET over DEL, DEL over SET, or a refreshed SET). Overwriting a
-        // still-pending key is exactly the coalescing win under churn.
+        // Last-writer-wins: a newer op supersedes the pending one for the same
+        // key (SET over DEL, DEL over SET, or a refreshed SET).
         auto it = m.find(kfvKey(kco));
         if (it != m.end())
         {
@@ -167,8 +178,8 @@ void RouteSendCoalescer::upsertKco(TableId tbl, const KeyOpFieldsValuesTuple &kc
         {
             m.emplace(kfvKey(kco), kco);
         }
-        // Every op received during an episode is an input folded toward the next
-        // emitted chunk (feeds the consumer-derived ep_coalesce_ratio).
+        // Ops received during an episode are the "in" side of the episode
+        // coalesce ratio, which the consumer derives.
         if (m_inEpisode)
         {
             ++m_epCoalescedIn;
@@ -190,30 +201,19 @@ void RouteSendCoalescer::upsertKco(TableId tbl, const KeyOpFieldsValuesTuple &kc
 void RouteSendCoalescer::upsertSet(TableId tbl, const std::string &key,
                                    const std::vector<FieldValueTuple> &values)
 {
-    // Route SETs always carry fields today. Assert it, because a field-less SET
-    // is indistinguishable from a DEL on the ZMQ wire and would delete the route.
-    assert(!values.empty() && "upsertSet requires non-empty fields (empty == DEL on wire)");
+    // upsertKco drops this too; checked here so the log names the direct caller.
+    if (values.empty())
+    {
+        SWSS_LOG_ERROR("Dropping malformed SET for %s: empty field set "
+                       "(an empty SET is a DEL on the wire)", key.c_str());
+        return;
+    }
     upsertKco(tbl, KeyOpFieldsValuesTuple{key, SET_COMMAND, values});
 }
 
 void RouteSendCoalescer::upsertDel(TableId tbl, const std::string &key)
 {
     upsertKco(tbl, KeyOpFieldsValuesTuple{key, DEL_COMMAND, std::vector<FieldValueTuple>{}});
-}
-
-size_t RouteSendCoalescer::approxKcoSerializedBytes(const KeyOpFieldsValuesTuple &kco)
-{
-    // Rough upper-ish estimate of the on-wire size: key + op + each field/value
-    // plus a small constant per entry and per field for framing/length prefixes.
-    // Only used to keep a chunk under the byte cap; exactness is not required.
-    constexpr size_t kPerEntryOverhead = 32;
-    constexpr size_t kPerFieldOverhead = 16;
-    size_t bytes = kfvKey(kco).size() + kPerEntryOverhead;
-    for (const auto &fv : kfvFieldsValues(kco))
-    {
-        bytes += fvField(fv).size() + fvValue(fv).size() + kPerFieldOverhead;
-    }
-    return bytes;
 }
 
 bool RouteSendCoalescer::drainTable(TableId tbl, size_t budget, size_t &sent)
@@ -225,18 +225,16 @@ bool RouteSendCoalescer::drainTable(TableId tbl, size_t budget, size_t &sent)
         return true;
     }
 
-    // Chunked drain of the live map, bounded by this table's cycle budget. Each
-    // iteration pulls a chunk under the lock, sends it lock-free, then accounts
-    // it. Ingest keeps coalescing onto the map between chunks, and a transient
-    // failure strands only the one chunk in flight.
+    // Chunked drain of the live map: each iteration pulls a chunk under the
+    // lock and sends it lock-free, so ingest keeps coalescing between chunks and
+    // a transient failure strands only the chunk in flight.
     //
-    // The pass is one ordered sweep: each chunk resumes at the last key visited
-    // instead of restarting at begin(), so every key present at cycle entry is
-    // covered exactly once. Restarting at the head would let keys that arrive
-    // mid-drain and sort below the cursor consume the budget, starving the high
-    // end of the table. The budget bounds the sweep, since keys arriving ahead of
-    // the cursor would otherwise extend it without a fixed point; those are
-    // served by the next cycle.
+    // One ordered sweep per cycle. Each chunk resumes at the last key visited
+    // rather than at begin(), so keys arriving mid-drain below the cursor do not
+    // consume the remaining budget; keys arriving above it are swept with it and
+    // do. The budget, taken from the table's depth at cycle entry, is what makes
+    // the sweep terminate. Whatever the cycle does not reach is served by the
+    // next one, which restarts at the lowest key still present.
     std::string cursor;
     bool resume = false;
     size_t remaining = budget;
@@ -249,32 +247,10 @@ bool RouteSendCoalescer::drainTable(TableId tbl, size_t budget, size_t &sent)
             CoalesceMap &m = mapForLocked(tbl);
             // Cap the chunk by what this table is still owed for the cycle.
             const size_t chunkCap = std::min(m_cfg.maxBatchEntries, remaining);
-            size_t chunkBytes = 0;
             auto it = resume ? m.lower_bound(cursor) : m.begin();
             while (it != m.end() && chunk.size() < chunkCap)
             {
-                size_t kcoBytes = approxKcoSerializedBytes(it->second);
-                // An entry larger than the ZMQ message ceiling can never be
-                // delivered. Retrying it would hold the table stuck until the
-                // liveness guard exits the process, so drop and account it.
-                if (chunk.empty() && kcoBytes >= m_cfg.maxWireBytes)
-                {
-                    SWSS_LOG_ERROR("dropping undeliverable route %s: %zu bytes exceeds "
-                                   "the %zu byte wire limit",
-                                   it->first.c_str(), kcoBytes, m_cfg.maxWireBytes);
-                    m_routesLostTotal.fetch_add(1, std::memory_order_relaxed);
-                    it = m.erase(it);
-                    continue;
-                }
-                // Byte cap, but always take at least one entry so a single large
-                // KCO still makes progress (bounded ultimately by the 16 MiB ZMQ
-                // ceiling inside set()).
-                if (!chunk.empty() && chunkBytes + kcoBytes > m_cfg.maxBatchBytes)
-                {
-                    break;
-                }
                 chunk.push_back(it->second);
-                chunkBytes += kcoBytes;
                 it = m.erase(it);
             }
             if (it == m.end())
@@ -300,10 +276,9 @@ bool RouteSendCoalescer::drainTable(TableId tbl, size_t budget, size_t &sent)
         }
         catch (const std::exception &e)
         {
-            // Transient send failure (ZmqClient exhausted its inner blip-absorber,
-            // or a connection error). Keep the chunk by re-merging it into the live
-            // map; newer ingest that arrived during the send wins (do not clobber a
-            // fresher op for the same key). The chunk is retried on the next drain.
+            // Transient send failure. Re-merge the chunk into the live map and
+            // retry on the next drain; ingest that arrived during the send is
+            // newer, so it wins.
             std::lock_guard<std::mutex> lock(m_mutex);
             CoalesceMap &m = mapForLocked(tbl);
             for (auto &kco : chunk)
@@ -360,9 +335,7 @@ uint64_t RouteSendCoalescer::stuckMsLocked() const
 
 bool RouteSendCoalescer::drainOnce()
 {
-    // Sample both depths up front. The pair fixes this cycle's fair share, so
-    // one bounded pass covers both tables and entries arriving mid-cycle are
-    // served by the next one.
+    // Sample both depths up front: the pair fixes this cycle's fair share.
     size_t routeBudget = 0;
     size_t labelBudget = 0;
     {
@@ -378,8 +351,7 @@ bool RouteSendCoalescer::drainOnce()
     }
 
     // Drain both tables regardless of either outcome: a stalled route table must
-    // not hold up label-route delivery. A transient failure on either -> back off
-    // and retry.
+    // not hold up label-route delivery.
     bool ok = true;
     size_t routeSent = 0;
     size_t labelSent = 0;
@@ -391,8 +363,8 @@ bool RouteSendCoalescer::drainOnce()
 
     if (!ok)
     {
-        // Hysteresis: one stranded chunk is a blip, so an episode opens only on a
-        // second consecutive failure, once the stall has outlived one backoff.
+        // One stranded chunk is a blip, so an episode opens only on a second
+        // consecutive failure, once the stall has outlived one backoff.
         m_retryFromMapTotal.fetch_add(1, std::memory_order_relaxed);
         ++m_consecutiveOuterFailures;
         if (m_consecutiveOuterFailures >= 2)
@@ -402,10 +374,8 @@ bool RouteSendCoalescer::drainOnce()
     }
     else
     {
-        // The socket accepted a chunk, so the stall cleared. Any success breaks
-        // the streak, whether or not the map fully emptied.
+        // Any success breaks the streak, whether or not the map fully emptied.
         m_consecutiveOuterFailures = 0;
-        // If we were in an episode and the map is now empty, close the episode.
         bool empty = false;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -430,9 +400,8 @@ void RouteSendCoalescer::onEpisodeStart()
         return;
     }
     m_inEpisode = true;
-    // Arm the RECOVERED edge here (not only when publishTelemetry observes
-    // congestion): a short episode that opens and closes between two throttled
-    // publishes would otherwise never set this and skip RECOVERED.
+    // Arm the RECOVERED edge here: an episode that opens and closes between two
+    // throttled publishes would otherwise never set it.
     m_wasUnhealthy = true;
     m_epStart = SteadyClock::now();
     m_epPeakDepth = totalDepthLocked();
@@ -459,7 +428,7 @@ void RouteSendCoalescer::onEpisodeRecovered()
         m_epLastCoalescedOut.store(m_epCoalescedOut, std::memory_order_relaxed);
         m_inEpisode = false;
     }
-    // Force a telemetry snapshot at episode close (the post-incident artifact).
+    // Force a snapshot at episode close: this is the post-incident artifact.
     publishTelemetry(true);
 }
 
@@ -493,20 +462,18 @@ void RouteSendCoalescer::evaluateAssertThresholds()
 void RouteSendCoalescer::writeAssertRecordAndExit(const char *reason, size_t depth, uint64_t stuckMs)
 {
     m_assertTotal.fetch_add(1, std::memory_order_relaxed);
-    // Entries stranded in the map are lost across the deliberate exit; warm-restart
-    // RIB replay repopulates them. Record the count for the loss guard.
+    // Entries stranded in the map are lost across the deliberate exit. Record
+    // the count before it goes.
     m_routesLostTotal.fetch_add(depth, std::memory_order_relaxed);
 
     SWSS_LOG_ERROR("fpmsyncd route send stalled (reason=%s, map_depth=%zu, stuck_ms=%" PRIu64
-                   "); writing assert record and exiting for warm-restart recovery",
+                   "); writing assert record and exiting",
                    reason, depth, stuckMs);
 
-    // Write the last-assert record to STATE_DB IMMEDIATELY BEFORE exit so
-    // crash-loop RCA survives the container restart.
+    // Written immediately before exit so crash-loop RCA survives the restart.
     if (m_statTable != nullptr)
     {
-        // Human-readable UTC, so the record reads as a wall-clock instant rather
-        // than a raw epoch.
+        // Human-readable UTC rather than a raw epoch.
         auto nowEpoch = std::chrono::system_clock::to_time_t(
                             std::chrono::system_clock::now());
         char tsBuf[32] = {0};
@@ -533,12 +500,11 @@ void RouteSendCoalescer::writeAssertRecordAndExit(const char *reason, size_t dep
         }
     }
 
-    // Deliberate, logged termination (NOT an uncaught throw). fpmsyncd is critical +
-    // autorestart=false -> the bgp container bounces -> warm-restart replay.
+    // Deliberate termination: fpmsyncd is a critical process, so the bgp
+    // container bounces and the table is rebuilt by BGP re-convergence.
     // _Exit(), not exit(): this runs on the send thread while the main thread is
-    // still live, and exit() would run atexit handlers and static destructors
-    // across both, risking a deadlock or double-free that swallows the assert.
-    // The STATE_DB record above is written synchronously, so it is already durable.
+    // live, and exit() would run atexit handlers and static destructors across
+    // both. The STATE_DB record above is already durable.
     std::_Exit(EXIT_FAILURE);
 }
 
@@ -549,9 +515,8 @@ void RouteSendCoalescer::publishTelemetry(bool force)
         return;
     }
 
-    // Snapshot the mutex-guarded liveness/episode state and derive the health word
-    // under a single lock, which doubles as the throttle gate. Health is derived
-    // here so the record leads with one word an alert can key on.
+    // Snapshot the guarded liveness/episode state and derive health under a
+    // single lock, which doubles as the throttle gate.
     uint64_t depth = 0;
     uint64_t lastSuccessAgeSec = 0;
     const char *health = "OK";
@@ -571,9 +536,8 @@ void RouteSendCoalescer::publishTelemetry(bool force)
         auto stuckMs = stuckMsLocked();
         lastSuccessAgeSec = static_cast<uint64_t>(stuckMs / 1000);
 
-        // Health precedence: STALLED (backlog persisting past warnFraction of the
-        // assert budget -> bounce approaching) > CONGESTED (episode open, actively
-        // coalescing under pressure) > RECOVERED (one-shot edge after clearing) > OK.
+        // Precedence: STALLED (backlog past warnFraction of the assert budget)
+        // > CONGESTED (episode open) > RECOVERED (one-shot edge) > OK.
         bool stalled = depth > 0 &&
                        static_cast<double>(stuckMs) >= m_cfg.warnFraction * m_cfg.tFailMs;
         bool congested = m_inEpisode;
@@ -597,9 +561,9 @@ void RouteSendCoalescer::publishTelemetry(bool force)
     auto epIn = m_epLastCoalescedIn.load(std::memory_order_relaxed);
     auto epOut = m_epLastCoalescedOut.load(std::memory_order_relaxed);
 
-    // Ordered so a raw HGETALL reads top-down: health -> pending state -> lifetime
-    // -> last episode -> send-path back-pressure. Only raw counters are published;
-    // ratios are left to the consumer so no producer rounding is baked in.
+    // Ordered so a raw HGETALL reads top-down: health -> pending state ->
+    // lifetime -> last episode -> send-path back-pressure. Raw counters only;
+    // ratios are left to the consumer.
     std::vector<FieldValueTuple> fvs = {
         {"health", health},                                       // read this first
         // --- pending state ---
@@ -613,14 +577,14 @@ void RouteSendCoalescer::publishTelemetry(bool force)
         {"routes_lost_total", std::to_string(m_routesLostTotal.load(std::memory_order_relaxed))},
         {"congestion_episodes_total", std::to_string(m_congestionEpisodesTotal.load(std::memory_order_relaxed))},
         {"assert_total", std::to_string(m_assertTotal.load(std::memory_order_relaxed))},
-        // --- last congestion episode (raw in/out; consumer derives ep_coalesce_ratio) ---
+        // --- last congestion episode ---
         {"ep_duration_ms", std::to_string(m_epLastDurationMs.load(std::memory_order_relaxed))},
         {"ep_peak_depth", std::to_string(m_epLastPeakDepth.load(std::memory_order_relaxed))},
         {"ep_coalesced_in", std::to_string(epIn)},
         {"ep_coalesced_out", std::to_string(epOut)},
     };
 
-    // Fold in the PR-A send-path back-pressure counters (leading indicators).
+    // Send-path back-pressure counters: leading indicators of congestion.
     if (m_zmqClient != nullptr)
     {
         fvs.emplace_back("zmq_eagain_total", std::to_string(m_zmqClient->getSendEagainTotal()));
@@ -628,8 +592,8 @@ void RouteSendCoalescer::publishTelemetry(bool force)
                          std::to_string(m_zmqClient->getSendBlipAbsorbedTotal()));
         fvs.emplace_back("zmq_backoff_max_ms", std::to_string(m_zmqClient->getSendBackoffMaxMs()));
     }
-    // retry_from_map_total = outer re-merges (each stranded chunk = one re-drain);
-    // publish it alongside the ZMQ counters so the consistency check is local.
+    // Outer re-merges: one per stranded chunk. Published next to the ZMQ
+    // counters so the two can be compared in one record.
     fvs.emplace_back("retry_from_map_total",
                      std::to_string(m_retryFromMapTotal.load(std::memory_order_relaxed)));
 
@@ -643,37 +607,6 @@ void RouteSendCoalescer::publishTelemetry(bool force)
     }
 }
 
-void RouteSendCoalescer::pause()
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    if (m_paused)
-    {
-        return;
-    }
-    m_paused = true;
-    if (!m_running)
-    {
-        return; // no send thread, so nothing can be touching the maps
-    }
-    m_cv.notify_all();
-    // Bounded by one drain cycle: the thread parks at the top of the next
-    // iteration. Waiting is what makes exclusive ownership meaningful.
-    m_parkedCv.wait(lock, [this] { return m_parked || !m_running; });
-}
-
-void RouteSendCoalescer::resume()
-{
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (!m_paused)
-        {
-            return;
-        }
-        m_paused = false;
-    }
-    m_cv.notify_all();
-}
-
 void RouteSendCoalescer::sendLoop()
 {
     SWSS_LOG_NOTICE("route send thread started");
@@ -681,18 +614,8 @@ void RouteSendCoalescer::sendLoop()
     {
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            if (m_paused)
-            {
-                // Park between cycles: the maps and the ZMQ socket are the
-                // caller's until resume().
-                m_parked = true;
-                m_parkedCv.notify_all();
-                m_cv.wait(lock, [this] { return !m_paused || m_stop; });
-                m_parked = false;
-            }
-            // Timed wait (NOT signal-only): guarantees a tick even without
-            // ingest, so telemetry still publishes on an idle box. Wake early on
-            // new ingest or stop.
+            // Timed, not signal-only: guarantees a tick without ingest so
+            // telemetry still publishes on an idle box.
             m_cv.wait_for(lock, std::chrono::milliseconds(m_cfg.idleTickMs), [this] {
                 return m_stop || totalDepthLocked() != 0;
             });
@@ -702,16 +625,13 @@ void RouteSendCoalescer::sendLoop()
             }
         }
 
-        // Run one fair drain cycle over both tables, then re-check the queue.
         bool progressed = drainOnce();
         if (progressed)
         {
-            // Back off on a failed cycle, and also on a cycle that delivered
-            // nothing while the map still owes work -- otherwise a table that
-            // cannot be drained at all would spin the thread and never let the
-            // stop predicate below run. A non-empty map after a successful,
-            // productive cycle is the normal bounded-pass steady state, and the
-            // condvar predicate re-fires on it immediately.
+            // Back off on a failed cycle, and on one that delivered nothing
+            // while the map still owes work: an undrainable table would otherwise
+            // spin the thread and never reach the stop predicate. A non-empty map
+            // after a productive cycle is the normal bounded-pass steady state.
             bool noProgress = false;
             if (m_lastCycleSent == 0)
             {
@@ -720,11 +640,11 @@ void RouteSendCoalescer::sendLoop()
             }
             if (!m_lastCycleOk || noProgress)
             {
-                // Chunk still pending after a transient failure: pause before
-                // re-draining so newer ingest coalesces onto the stuck keys.
+                // Pause before re-draining so newer ingest coalesces onto the
+                // pending keys.
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_cv.wait_for(lock, std::chrono::milliseconds(m_cfg.outerBackoffMs),
-                              [this] { return m_stop || m_paused; });
+                              [this] { return m_stop; });
                 if (m_stop)
                 {
                     break;
@@ -733,8 +653,8 @@ void RouteSendCoalescer::sendLoop()
         }
     }
 
-    // Best-effort final drain so a clean shutdown does not strand a ready batch.
-    // Ingest has stopped by now, so one budgeted sweep per table covers the map.
+    // Best-effort final drain. Ingest has stopped, so one budgeted sweep per
+    // table covers the map.
     size_t routeLeft = 0;
     size_t labelLeft = 0;
     {
@@ -746,8 +666,7 @@ void RouteSendCoalescer::sendLoop()
     drainTable(TableId::Route, routeLeft, sent);
     drainTable(TableId::LabelRoute, labelLeft, sent);
 
-    // Anything still held at exit is lost: the map is in-memory only, so account
-    // it rather than let routes_lost_total under-report a failed final drain.
+    // The map is in-memory only, so anything still held at exit is lost.
     size_t stranded = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);

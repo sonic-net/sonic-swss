@@ -1,5 +1,5 @@
 /*
- * Unit tests for RouteSendCoalescer (sonic-buildimage #28369).
+ * Unit tests for RouteSendCoalescer.
  *
  * The tests drive the coalescer deterministically via drainOnce() (no send
  * thread) and inject transient or permanent send failures through a
@@ -314,29 +314,6 @@ TEST_F(RouteSendCoalescerTest, ChunkedDrainSplitsLargeBacklog)
     EXPECT_EQ(co->routesSentTotal(), 7u);
 }
 
-// 3c. Byte-capped chunk: a chunk is also split when it would exceed
-//     maxBatchBytes, but a single oversized KCO still makes progress alone.
-TEST_F(RouteSendCoalescerTest, ByteCapSplitsChunk)
-{
-    auto cfg = baseConfig();
-    cfg.maxBatchEntries = 1000;   // entry cap won't bind
-    cfg.maxBatchBytes = 200;      // small byte cap forces per-entry chunks
-    auto co = makeCoalescer(cfg);
-
-    // Each KCO is ~ key + nexthop(~40B) + overhead, comfortably > 100B, so two
-    // entries exceed the 200B cap and must land in separate chunks.
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.0.0/24",
-                  nh("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff"));
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.1.0/24",
-                  nh("2001:db8:aaaa:bbbb:cccc:dddd:eeee:0001"));
-    ASSERT_EQ(co->mapDepth(), 2u);
-
-    ASSERT_TRUE(co->drainOnce());
-    EXPECT_EQ(co->mapDepth(), 0u);
-    EXPECT_EQ(m_route->setCalls(), 2u);        // one entry per chunk (byte cap)
-    EXPECT_EQ(m_route->deliveredRows(), 2u);
-}
-
 // 4a. Assert on time trigger (STUCK_TIMEOUT): a permanently-failing send with a
 //     non-empty map and tFailMs=0 must deliberately exit(EXIT_FAILURE).
 TEST_F(RouteSendCoalescerTest, AssertOnTimeTrigger)
@@ -448,8 +425,7 @@ TEST_F(RouteSendCoalescerTest, DrainCycleIsBoundedAndFairUnderChurn)
 
 // 5c. The drain sweep resumes where it left off, so keys arriving mid-drain
 //     that sort BELOW the walk position do not consume the cycle's budget and
-//     starve the high end of the table. Every key queued at cycle entry is
-//     delivered in that cycle.
+//     starve the high end of the table.
 TEST_F(RouteSendCoalescerTest, DrainSweepCoversBacklogUnderLowSortingChurn)
 {
     auto cfg = baseConfig();
@@ -491,6 +467,51 @@ TEST_F(RouteSendCoalescerTest, DrainSweepCoversBacklogUnderLowSortingChurn)
     EXPECT_EQ(co->mapDepth(), static_cast<size_t>(injected));
     ASSERT_TRUE(co->drainOnce());
     EXPECT_EQ(co->mapDepth(), 0u);
+    EXPECT_EQ(co->routesLostTotal(), 0u);
+}
+
+// 5d. The complement of 5c, and the limit of what the cursor buys: arrivals that
+//     sort ABOVE the walk position are swept with it and do consume budget, so a
+//     cycle need not reach the top of the table. The budget is what makes the pass
+//     terminate. Nothing is lost -- the next cycle restarts at the lowest key still
+//     present and carries the remainder.
+TEST_F(RouteSendCoalescerTest, HighSortingChurnDefersRemainderToNextCycle)
+{
+    auto cfg = baseConfig();
+    cfg.maxBatchEntries = 4;
+    auto co = makeCoalescer(cfg);
+    using T = RouteSendCoalescer::TableId;
+
+    for (int i = 0; i < 12; i++)
+    {
+        co->upsertSet(T::Route, "10.0." + std::to_string(i) + ".0/24", nh("10.0.0.1"));
+    }
+
+    int injected = 0;
+    const int kMaxInjections = 6;
+    m_route->onSet([&]() {
+        if (injected >= kMaxInjections)
+        {
+            return;
+        }
+        // "99.0.*" sorts above every backlog key, so it lands ahead of the cursor.
+        co->upsertSet(T::Route, "99.0." + std::to_string(injected++) + ".0/24", nh("10.0.0.9"));
+    });
+
+    ASSERT_TRUE(co->drainOnce());
+    m_route->onSet(nullptr);
+
+    // The cycle carried some of the newcomers, so part of the table is still owed.
+    EXPECT_GT(co->mapDepth(), 0u);
+    EXPECT_EQ(co->routesLostTotal(), 0u);
+
+    // Subsequent cycles clear the remainder; no key is stranded.
+    for (int i = 0; i < 10 && co->mapDepth() != 0; i++)
+    {
+        ASSERT_TRUE(co->drainOnce());
+    }
+    EXPECT_EQ(co->mapDepth(), 0u);
+    EXPECT_EQ(m_route->deliveredRows(), static_cast<uint64_t>(12 + injected));
     EXPECT_EQ(co->routesLostTotal(), 0u);
 }
 
@@ -628,34 +649,56 @@ TEST_F(RouteSendCoalescerTest, DefaultConfigCarriesInnerRetryCaps)
     EXPECT_EQ(c.sendInnerMaxBackoffMs, 5);
 }
 
-// 10. An empty-fields SET serializes identically to a DEL on the ZMQ
-//     wire, so it must fail loudly rather than silently delete a route. Debug-only
-//     assert (compiled out under NDEBUG). Both ingest entry points are guarded:
-//     upsertSet (convenience) and upsertKco (the hot path routesync feeds).
-#ifndef NDEBUG
-TEST_F(RouteSendCoalescerTest, EmptyFieldSetAssertsInDebug)
+// 10. An empty-fields SET serializes identically to a DEL on the ZMQ wire, so
+//     accepting one would silently delete a route. fpmsyncd builds without
+//     -DNDEBUG, so an assert here would abort a production daemon over a single
+//     bad entry. Drop the entry and log it instead, keeping every other route
+//     flowing. Both ingest entry points are guarded: upsertSet (convenience) and
+//     upsertKco (the hot path routesync feeds).
+TEST_F(RouteSendCoalescerTest, EmptyFieldSetIsDroppedNotQueued)
 {
     auto co = makeCoalescer(baseConfig());
-    ASSERT_DEATH(
-        {
-            co->upsertSet(RouteSendCoalescer::TableId::Route, "9.9.9.0/24",
-                          std::vector<FieldValueTuple>{});
-        },
-        "non-empty fields");
+
+    co->upsertSet(RouteSendCoalescer::TableId::Route, "9.9.9.0/24",
+                  std::vector<FieldValueTuple>{});
+
+    EXPECT_EQ(co->mapDepth(), 0u);          // never queued
+    EXPECT_EQ(co->routesLostTotal(), 0u);   // not a delivery loss
 }
 
-// 10b. Same invariant on the hot path: routesync feeds pre-formed KCOs via upsertKco,
-//      so the empty-SET guard must fire there too.
-TEST_F(RouteSendCoalescerTest, EmptyFieldSetOnKcoAssertsInDebug)
+// 10b. Same invariant on the hot path: routesync feeds pre-formed KCOs via
+//      upsertKco, so the empty-SET guard must drop there too.
+TEST_F(RouteSendCoalescerTest, EmptyFieldSetOnKcoIsDroppedNotQueued)
 {
     auto co = makeCoalescer(baseConfig());
     KeyOpFieldsValuesTuple kco(
         "9.9.9.1/32", SET_COMMAND, std::vector<FieldValueTuple>{});
-    ASSERT_DEATH(
-        { co->upsertKco(RouteSendCoalescer::TableId::Route, kco); },
-        "non-empty fields");
+
+    co->upsertKco(RouteSendCoalescer::TableId::Route, kco);
+
+    EXPECT_EQ(co->mapDepth(), 0u);
+    EXPECT_EQ(co->routesLostTotal(), 0u);
 }
-#endif
+
+// 10c. A dropped malformed entry must not disturb the entries around it: the
+//      table keeps draining and the good routes still land.
+TEST_F(RouteSendCoalescerTest, MalformedDropDoesNotBlockOtherRoutes)
+{
+    auto co = makeCoalescer(baseConfig());
+
+    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.0.0/24", nh("1"));
+    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.1.0/24",
+                  std::vector<FieldValueTuple>{});
+    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.2.0/24", nh("2"));
+
+    EXPECT_TRUE(co->drainOnce());
+
+    EXPECT_EQ(co->mapDepth(), 0u);
+    EXPECT_EQ(m_route->deliveredRows(), 2u);
+    EXPECT_EQ(m_route->delivered().count("10.0.0.0/24"), 1u);
+    EXPECT_EQ(m_route->delivered().count("10.0.2.0/24"), 1u);
+    EXPECT_EQ(m_route->delivered().count("10.0.1.0/24"), 0u);
+}
 
 // 11. assert_total is a lifetime counter across restarts. A fresh
 //     coalescer must seed it from the sticky STATE_DB record left by a prior
@@ -673,113 +716,7 @@ TEST_F(RouteSendCoalescerTest, SeedsAssertTotalFromStateDb)
     stat.hdel("global", "assert_total");
 }
 
-// 12. Warm-restart reconcile writes the route tables directly, so pause() must
-//     park the send thread before returning and retain the pending map. stop()
-//     is not usable here: it accounts undelivered entries as lost.
-TEST_F(RouteSendCoalescerTest, PauseParksSendThreadAndRetainsMap)
-{
-    auto co = makeCoalescer(baseConfig());
-    co->start();
-
-    m_route->failForever();   // keep work pending so the thread stays busy
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.0.0/24", nh("1"));
-
-    co->pause();   // blocks until parked
-
-    // Parked: the entry is still owed, and nothing was counted as lost.
-    EXPECT_EQ(co->mapDepth(), 1u);
-    EXPECT_EQ(co->routesLostTotal(), 0u);
-
-    // No sends occur while parked, even as ingest continues.
-    const uint64_t sendsAtPause = m_route->setCalls();
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.1.0/24", nh("2"));
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    EXPECT_EQ(m_route->setCalls(), sendsAtPause);
-    EXPECT_EQ(co->mapDepth(), 2u);
-
-    // Resuming lets the thread drain the retained work.
-    m_route->failNext(0);   // stop failing
-    co->resume();
-    for (int i = 0; i < 100 && co->mapDepth() != 0; ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_EQ(co->mapDepth(), 0u);
-    EXPECT_EQ(co->routesLostTotal(), 0u);
-
-    co->stop();
-}
-
-// 13. pause()/resume() are idempotent, and pause() on a coalescer whose thread
-//     was never started must not block waiting for a park that cannot happen.
-TEST_F(RouteSendCoalescerTest, PauseIsIdempotentAndSafeWhenNotRunning)
-{
-    auto co = makeCoalescer(baseConfig());
-
-    co->pause();    // never started: returns immediately
-    co->pause();    // idempotent
-    co->resume();
-    co->resume();   // idempotent
-
-    // Still fully functional afterwards.
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.2.0/24", nh("3"));
-    EXPECT_TRUE(co->drainOnce());
-    EXPECT_EQ(co->mapDepth(), 0u);
-}
-
-// 14. The property warm-restart reconcile depends on: when pause() returns, the
-//     send thread is not inside a send. Returning early would leave reconcile
-//     writing the route tables concurrently with an in-flight producer send.
-TEST_F(RouteSendCoalescerTest, PauseWaitsForAnInFlightSendToComplete)
-{
-    auto co = makeCoalescer(baseConfig());
-    m_route->sendDelay(100);   // hold the send open long enough to catch it
-    co->start();
-
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.0.0/24", nh("1"));
-
-    // Wait until the thread is genuinely inside set(); otherwise the assertion
-    // below would hold trivially and prove nothing.
-    bool caught = false;
-    for (int i = 0; i < 200 && !caught; ++i)
-    {
-        caught = m_route->inSend();
-        if (!caught)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-    }
-    ASSERT_TRUE(caught) << "precondition: never observed a send in flight";
-
-    co->pause();
-    EXPECT_FALSE(m_route->inSend());
-
-    co->stop();
-}
-
-// 15. An entry too large for a ZMQ message can never be delivered. It must be
-//     dropped and accounted rather than retried until the liveness guard fires,
-//     and it must not block the deliverable entries behind it.
-TEST_F(RouteSendCoalescerTest, UndeliverableOversizeEntryIsDroppedNotRetriedForever)
-{
-    auto cfg = baseConfig();
-    cfg.maxWireBytes = 512;   // scale the ceiling down instead of building 16 MiB
-
-    auto co = makeCoalescer(cfg);
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.0.0/24",
-                  nh(std::string(4096, 'x')));          // over the ceiling
-    co->upsertSet(RouteSendCoalescer::TableId::Route, "10.0.1.0/24", nh("1"));
-
-    EXPECT_TRUE(co->drainOnce());
-
-    EXPECT_EQ(co->mapDepth(), 0u);              // nothing left stuck
-    EXPECT_EQ(co->routesLostTotal(), 1u);       // the oversize one, accounted
-    EXPECT_EQ(m_route->deliveredRows(), 1u);    // the deliverable one still went
-    EXPECT_EQ(m_route->delivered().count("10.0.1.0/24"), 1u);
-    EXPECT_EQ(m_route->delivered().count("10.0.0.0/24"), 0u);
-}
-
-// 16. Entries still held when the send thread stops are gone for good: the map is
+// 15. Entries still held when the send thread stops are gone for good: the map is
 //     in-memory only. They must be accounted rather than silently discarded.
 TEST_F(RouteSendCoalescerTest, StopWithUndrainableMapAccountsRoutesLost)
 {
@@ -796,7 +733,7 @@ TEST_F(RouteSendCoalescerTest, StopWithUndrainableMapAccountsRoutesLost)
     EXPECT_EQ(m_route->deliveredRows(), 0u);
 }
 
-// 17. A zero entry cap would build empty chunks, retire no budget and spin the
+// 16. A zero entry cap would build empty chunks, retire no budget and spin the
 //     drain loop forever, so the ctor holds the floor at one entry per chunk.
 TEST_F(RouteSendCoalescerTest, ZeroMaxBatchEntriesIsClampedToOne)
 {
