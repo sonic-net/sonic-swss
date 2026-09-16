@@ -99,7 +99,7 @@ public:
     virtual void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     virtual sai_object_id_t getNextHopId(const NextHopKey);
-    MuxNeighbor getNeighbors() const { return neighbors_; };
+    const MuxNeighbor& getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
     void clearBulkers() { gRouteBulker.clear(); };
 
