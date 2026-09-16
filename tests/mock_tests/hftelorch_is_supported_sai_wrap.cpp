@@ -17,6 +17,8 @@ namespace
         AttributeCapabilityQueryFail,
         CollectorCreateNotImplemented,
         SwitchNotifySetNotImplemented,
+        VxlanSportModeNotImplemented,
+        VxlanDefaultPortNotImplemented,
         AllSupported,
     };
 
@@ -122,6 +124,42 @@ extern "C"
             return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
         }
 
+        if (g_hook == Hook::VxlanSportModeNotImplemented)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            if (object_type == SAI_OBJECT_TYPE_SWITCH_TUNNEL &&
+                attr_id == SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->create_implemented = false;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
+        }
+
+        if (g_hook == Hook::VxlanDefaultPortNotImplemented)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            if (object_type == SAI_OBJECT_TYPE_SWITCH &&
+                attr_id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->set_implemented = false;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
+        }
+
         return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
     }
 }
@@ -151,6 +189,16 @@ namespace hftel_is_supported_ut
     void setSaiHookSwitchNotifySetNotImplemented()
     {
         g_hook = Hook::SwitchNotifySetNotImplemented;
+    }
+
+    void setSaiHookVxlanSportModeNotImplemented()
+    {
+        g_hook = Hook::VxlanSportModeNotImplemented;
+    }
+
+    void setSaiHookVxlanDefaultPortNotImplemented()
+    {
+        g_hook = Hook::VxlanDefaultPortNotImplemented;
     }
 
     void setSaiHookAllSupported()
