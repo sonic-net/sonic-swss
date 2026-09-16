@@ -795,7 +795,22 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
                      mux_name_.c_str(), enable, state_);
     if (enable)
     {
-        ret = nbr_handler_->enable(neighbors, update_rt);
+        try
+        {
+            ret = nbr_handler_->enable(neighbors, update_rt);
+        }
+        catch (...)
+        {
+            if (nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
+            {
+                retainReadyNeighbors(neighbors);
+            }
+            throw;
+        }
+        if (!ret && nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
+        {
+            retainReadyNeighbors(neighbors);
+        }
         // Loop through all routes with nexthops through this mux cable when changing state
         updateRoutes(neighbors);
     }
@@ -822,6 +837,23 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
         ret = nbr_handler_->disable(neighbors, tnh);
     }
     return ret;
+}
+
+void MuxCable::retainReadyNeighbors(MuxNeighbor& neighbors) const
+{
+    const auto& alias = nbr_handler_->getAlias();
+    for (auto it = neighbors.begin(); it != neighbors.end();)
+    {
+        NeighborEntry entry(it->first, alias);
+        if (gNeighOrch->getReadyLocalNextHopId(entry) == SAI_NULL_OBJECT_ID)
+        {
+            it = neighbors.erase(it);
+        }
+        else
+        {
+            it++;
+        }
+    }
 }
 
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
@@ -1002,11 +1034,10 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 
 bool MuxNbrHandler::enable(bool update_rt)
 {
-    MuxNeighbor neighbors = neighbors_;
-    return enable(neighbors, update_rt);
+    return enable(neighbors_, update_rt);
 }
 
-bool MuxNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
+bool MuxNbrHandler::enable(const MuxNeighbor& neighbors, bool update_rt)
 {
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
@@ -1043,21 +1074,11 @@ bool MuxNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
         }
     };
 
-    try
-    {
-        ret = gNeighOrch->enableNeighbors(neigh_ctx_list);
-    }
-    catch (...)
-    {
-        record_ready_neighbors();
-        neighbors = ready_neighbors;
-        throw;
-    }
+    ret = gNeighOrch->enableNeighbors(neigh_ctx_list);
     record_ready_neighbors();
-    neighbors = ready_neighbors;
 
-    it = neighbors.begin();
-    while (it != neighbors.end())
+    it = ready_neighbors.begin();
+    while (it != ready_neighbors.end())
     {
         /* Update NH to point to learned neighbor */
         neigh = NeighborEntry(it->first, alias_);
@@ -1116,11 +1137,10 @@ bool MuxNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
 
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
-    MuxNeighbor neighbors = neighbors_;
-    return disable(neighbors, tnh);
+    return disable(neighbors_, tnh);
 }
 
-bool MuxNbrHandler::disable(MuxNeighbor& neighbors, sai_object_id_t tnh)
+bool MuxNbrHandler::disable(const MuxNeighbor& neighbors, sai_object_id_t tnh)
 {
     NeighborEntry neigh;
     std::list<NeighborContext> neigh_ctx_list;
@@ -1493,7 +1513,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
     }
 }
 
-bool MuxPrefixBasedNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
+bool MuxPrefixBasedNbrHandler::enable(const MuxNeighbor& neighbors, bool update_rt)
 {
     NeighborEntry neigh;
     std::list<MuxRouteBulkContext> route_ctx_list;
@@ -1566,7 +1586,7 @@ bool MuxPrefixBasedNbrHandler::enable(MuxNeighbor& neighbors, bool update_rt)
     return true;
 }
 
-bool MuxPrefixBasedNbrHandler::disable(MuxNeighbor& neighbors, sai_object_id_t tnh)
+bool MuxPrefixBasedNbrHandler::disable(const MuxNeighbor& neighbors, sai_object_id_t tnh)
 {
     NeighborEntry neigh;
     std::list<MuxRouteBulkContext> route_ctx_list;
