@@ -687,6 +687,30 @@ bool MuxCable::isIpInSubnet(IpAddress ip)
     }
 }
 
+bool MuxCable::isStateChangeReady(MuxState state) const
+{
+    if (state != MuxState::MUX_STATE_ACTIVE)
+    {
+        return true;
+    }
+
+    const auto& neighbors = gNeighOrch->getNeighborTable();
+    const auto& alias = nbr_handler_->getAlias();
+
+    for (const auto& neighbor : nbr_handler_->getNeighbors())
+    {
+        NeighborEntry entry(neighbor.first, alias);
+        if (neighbors.find(entry) == neighbors.end())
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s is not ready for active transition",
+                          neighbor.first.to_string().c_str(), alias.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
     bool ret;
@@ -2973,6 +2997,12 @@ bool MuxCableOrch::addOperation(const Request& request)
 
     try
     {
+        MuxState new_state = muxStateStringToVal.at(state);
+        if (!mux_obj->isStateChangeReady(new_state))
+        {
+            SWSS_LOG_INFO("Mux state %s for port %s is not ready", state.c_str(), port_name.c_str());
+            return false;
+        }
         mux_obj->setState(state);
     }
     catch(const std::runtime_error& e)

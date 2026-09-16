@@ -236,21 +236,24 @@ namespace mux_rollback_test
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
-    TEST_F(MuxRollbackTest, StandbyToActiveMissingNeighborPropagatesFailure)
+    TEST_F(MuxRollbackTest, StandbyToActiveMissingNeighborDefersBeforeChanges)
     {
         IpAddress missingNeighbor("192.168.0.3");
         AddMissingMuxNeighbor(missingNeighbor);
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries).Times(1);
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries).Times(1);
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops).Times(1);
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops).Times(1);
+        EXPECT_CALL(*mock_sai_acl_api, remove_acl_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries).Times(0);
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops).Times(0);
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops).Times(0);
         NeighborEntry existingNeighbor(IpAddress(SERVER_IP1), VLAN_1000);
         NextHopKey existingNextHop(IpAddress(SERVER_IP1), VLAN_1000);
 
         SetMuxStateFromAppDb(ACTIVE_STATE);
 
         EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
-        EXPECT_TRUE(m_MuxCable->isStateChangeFailed());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+        auto consumer = m_MuxCableOrch->getConsumerBase(APP_MUX_CABLE_TABLE_NAME);
+        EXPECT_EQ(1u, consumer->m_toSync.count(TEST_INTERFACE));
         EXPECT_FALSE(gNeighOrch->isHwConfigured(existingNeighbor));
         EXPECT_EQ(gNeighOrch->getLocalNextHopId(existingNextHop), SAI_NULL_OBJECT_ID);
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(missingNeighbor, VLAN_1000)), 0u);
