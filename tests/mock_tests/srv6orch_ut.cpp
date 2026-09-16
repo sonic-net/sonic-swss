@@ -388,9 +388,20 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsPreservesEntryAndRollsBackResour
         const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
         for (uint32_t index = 0; index < attr_count; ++index)
         {
-            attrs[index].value.oid = attrs[index].id == SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID
-                                        ? 0xdead
-                                        : SAI_NULL_OBJECT_ID;
+            if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN;
+            }
+            else if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
+            }
+            else
+            {
+                attrs[index].value.oid = attrs[index].id == SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID
+                                            ? 0xdead
+                                            : SAI_NULL_OBJECT_ID;
+            }
         }
         return SAI_STATUS_SUCCESS;
     };
@@ -411,11 +422,17 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
         .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
     EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
 
+    static vector<vector<sai_attr_id_t>> get_requests;
+    get_requests.clear();
     auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
     sai_srv6_api->get_my_sid_entry_attribute = [](
         const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        vector<sai_attr_id_t> requested;
         for (uint32_t index = 0; index < attr_count; ++index)
         {
+            requested.push_back(attrs[index].id);
+            EXPECT_NE(attrs[index].id, SAI_MY_SID_ENTRY_ATTR_VRF);
+            EXPECT_NE(attrs[index].id, SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID);
             if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
             {
                 attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E;
@@ -429,6 +446,7 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
                 attrs[index].value.oid = SAI_NULL_OBJECT_ID;
             }
         }
+        get_requests.push_back(requested);
         return SAI_STATUS_SUCCESS;
     };
 
@@ -436,31 +454,181 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
     runAppMySidTask(key, "end", "", "");
     sai_srv6_api->get_my_sid_entry_attribute = old_get;
 
+    ASSERT_GE(get_requests.size(), 2u);
+    EXPECT_EQ(get_requests[0], vector<sai_attr_id_t>({SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR}));
+    EXPECT_EQ(get_requests[1], vector<sai_attr_id_t>({SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR}));
     vector<string> pending;
     static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
     EXPECT_TRUE(pending.empty());
 }
 
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReadsRetainedAttributes)
+{
+    struct RetainedEntry
+    {
+        sai_my_sid_entry_endpoint_behavior_t behavior;
+        sai_my_sid_entry_endpoint_behavior_flavor_t flavor;
+        bool read_flavor;
+        bool read_vrf;
+        bool read_next_hop;
+        bool read_tunnel;
+    };
+    const vector<RetainedEntry> entries = {
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, true, false, false, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP, true, false, false, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD, true, false, false, true},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, true, true, false, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD, true, false, true, true},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, false, false, true, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, false, true, false, true},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, false, false, true, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, true, false, false, false},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD, true, false, false, true},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD, true, false, true, true},
+        {SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UDT46, SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE, false, true, false, true},
+    };
+
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .Times(static_cast<int>(entries.size()))
+        .WillRepeatedly(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    static RetainedEntry retained;
+    static vector<sai_attr_id_t> expected_reads;
+    static size_t read_count;
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        EXPECT_EQ(attr_count, 1u);
+        if (attr_count != 1)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+        if (attrs[0].id == SAI_MY_SID_ENTRY_ATTR_COUNTER_ID)
+        {
+            EXPECT_EQ(read_count, expected_reads.size());
+            attrs[0].value.oid = SAI_NULL_OBJECT_ID;
+            return SAI_STATUS_SUCCESS;
+        }
+        if (read_count >= expected_reads.size() || attrs[0].id != expected_reads[read_count])
+        {
+            ADD_FAILURE() << "Unexpected read of attribute " << attrs[0].id;
+            return SAI_STATUS_INVALID_ATTRIBUTE_0;
+        }
+        ++read_count;
+        if (attrs[0].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+        {
+            attrs[0].value.s32 = retained.behavior;
+        }
+        else if (attrs[0].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+        {
+            attrs[0].value.s32 = retained.flavor;
+        }
+        else
+        {
+            attrs[0].value.oid = SAI_NULL_OBJECT_ID;
+        }
+        return SAI_STATUS_SUCCESS;
+    };
+    auto old_set = sai_srv6_api->set_my_sid_entry_attribute;
+    sai_srv6_api->set_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, const sai_attribute_t*) -> sai_status_t {
+        return SAI_STATUS_SUCCESS;
+    };
+
+    for (size_t index = 0; index < entries.size(); ++index)
+    {
+        SCOPED_TRACE(index);
+        retained = entries[index];
+        read_count = 0;
+        expected_reads = {SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR};
+        if (retained.read_flavor)
+        {
+            expected_reads.push_back(SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR);
+        }
+        if (retained.read_vrf)
+        {
+            expected_reads.push_back(SAI_MY_SID_ENTRY_ATTR_VRF);
+        }
+        if (retained.read_next_hop)
+        {
+            expected_reads.push_back(SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID);
+        }
+        if (retained.read_tunnel)
+        {
+            expected_reads.push_back(SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID);
+        }
+        const string action = retained.behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E ? "end.dt46" : "end";
+        runAppMySidTask("32:16:16:0:fc00:0:1:50::" + to_string(index), action, "default", "");
+        EXPECT_EQ(read_count, expected_reads.size());
+
+        vector<string> pending;
+        static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+        EXPECT_TRUE(pending.empty());
+    }
+    sai_srv6_api->set_my_sid_entry_attribute = old_set;
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+}
+
 TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReadbackFailureRemainsPending)
 {
     const string key = "32:16:16:0:fc00:0:1:25::";
-
+    const vector<sai_attr_id_t> failed_attributes = {
+        SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR,
+        SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR,
+        SAI_MY_SID_ENTRY_ATTR_VRF,
+        SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID,
+    };
     EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
-        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+        .Times(static_cast<int>(failed_attributes.size()))
+        .WillRepeatedly(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
     EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
 
+    static sai_attr_id_t failed_attribute;
+    static bool failure_seen;
     auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
     sai_srv6_api->get_my_sid_entry_attribute = [](
-        const sai_my_sid_entry_t*, uint32_t, sai_attribute_t*) -> sai_status_t {
-        return SAI_STATUS_FAILURE;
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        EXPECT_EQ(attr_count, 1u);
+        EXPECT_FALSE(failure_seen);
+        if (attr_count != 1)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+        if (attrs[0].id == failed_attribute)
+        {
+            failure_seen = true;
+            return SAI_STATUS_FAILURE;
+        }
+        if (attrs[0].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+        {
+            attrs[0].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T;
+        }
+        else if (attrs[0].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+        {
+            attrs[0].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_USD;
+        }
+        else
+        {
+            attrs[0].value.oid = SAI_NULL_OBJECT_ID;
+        }
+        return SAI_STATUS_SUCCESS;
     };
 
-    runAppMySidTask(key, "end", "", "");
-    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+    for (auto attr_id : failed_attributes)
+    {
+        SCOPED_TRACE(attr_id);
+        failed_attribute = attr_id;
+        failure_seen = false;
+        runAppMySidTask(key, "end", "", "");
+        EXPECT_TRUE(failure_seen);
 
-    vector<string> pending;
-    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
-    EXPECT_FALSE(pending.empty());
+        vector<string> pending;
+        static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+        EXPECT_FALSE(pending.empty());
+        runAppMySidRawTask(key, DEL_COMMAND, {});
+    }
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
 }
 
 TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsSetFailureRollsBackInPlace)

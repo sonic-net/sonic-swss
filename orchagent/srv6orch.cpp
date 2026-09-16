@@ -1745,8 +1745,49 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
             }
 
             vector<sai_attribute_t> current_attributes = desired_attributes;
-            auto get_status = sai_srv6_api->get_my_sid_entry_attribute(
-                &my_sid_entry, (uint32_t) current_attributes.size(), current_attributes.data());
+            // clear desired values
+            for (auto& attr : current_attributes)
+            {
+                attr.value = {};
+            }
+
+            // read current values if they meet validonly constraints
+            const array<sai_attr_id_t, 6> read_order = {
+                SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR,
+                SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR,
+                SAI_MY_SID_ENTRY_ATTR_VRF,
+                SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID,
+                SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID,
+                SAI_MY_SID_ENTRY_ATTR_COUNTER_ID,
+            };
+            sai_status_t get_status = SAI_STATUS_SUCCESS;
+            for (auto attr_id : read_order)
+            {
+                auto attr = find_if(current_attributes.begin(), current_attributes.end(),
+                                    [attr_id](const sai_attribute_t& value) { return value.id == attr_id; });
+                if (attr == current_attributes.end())
+                {
+                    continue;
+                }
+
+                const auto* metadata = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_MY_SID_ENTRY, attr_id);
+                if (!metadata)
+                {
+                    get_status = SAI_STATUS_FAILURE;
+                    break;
+                }
+                if (metadata->isvalidonly &&
+                    !sai_metadata_is_validonly_met(metadata, (uint32_t) current_attributes.size(), current_attributes.data()))
+                {
+                    continue;
+                }
+
+                get_status = sai_srv6_api->get_my_sid_entry_attribute(&my_sid_entry, 1, &*attr);
+                if (get_status != SAI_STATUS_SUCCESS)
+                {
+                    break;
+                }
+            }
             if (get_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_WARN("Failed to read existing my_sid entry %s, rv %d",
