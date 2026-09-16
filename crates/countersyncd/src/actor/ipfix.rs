@@ -184,8 +184,18 @@ struct TemplateGeneration {
     templates: HashMap<TemplateKey, Arc<CompiledTemplate>>,
 }
 
+impl TemplateGeneration {
+    fn depends_on(&self, type_id: u32) -> bool {
+        self.templates.values().any(|template| {
+            template.counters.iter().any(|counter| counter.type_id == type_id)
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionTemplates {
+    // Empty only when invalidated while an independent pending snapshot waits
+    // for valid new-key data; never used to infer a replacement wire layout.
     active: TemplateGeneration,
     // Latest complete snapshot, promoted by valid data on a new pending key.
     pending: Option<TemplateGeneration>,
@@ -211,6 +221,29 @@ impl From<&str> for IpfixError {
 impl From<String> for IpfixError {
     fn from(value: String) -> Self {
         Self(value)
+    }
+}
+
+enum TemplateUpdateError {
+    SourceInvalid(IpfixError),
+    Collision(IpfixError),
+}
+
+impl From<IpfixError> for TemplateUpdateError {
+    fn from(error: IpfixError) -> Self {
+        Self::SourceInvalid(error)
+    }
+}
+
+impl From<&str> for TemplateUpdateError {
+    fn from(error: &str) -> Self {
+        Self::SourceInvalid(error.into())
+    }
+}
+
+impl From<String> for TemplateUpdateError {
+    fn from(error: String) -> Self {
+        Self::SourceInvalid(error.into())
     }
 }
 
@@ -372,37 +405,51 @@ impl IpfixActor {
             return Ok(());
         }
 
-        let compilation = match Self::compile_candidate(&update) {
-            Ok(compilation) => compilation,
-            Err(err) => {
-                // Malformed configuration locally deactivates its owner.
-                self.remove_source(&update.key);
-                return Err(err);
+        let source = update.key.clone();
+        match self.apply_template(update) {
+            Ok(()) => Ok(()),
+            Err(TemplateUpdateError::SourceInvalid(err)) => {
+                self.remove_source(&source);
+                Err(err)
             }
-        };
+            Err(TemplateUpdateError::Collision(err)) => {
+                // Installed snapshots are transactional on collisions, but the
+                // previous raw row is no longer the latest source notification.
+                // It must not complete a later sibling update. Keep group/mode
+                // identity separate from raw-row eligibility for migration.
+                if let Some((profile, group)) = hft_group(&source) {
+                    if let Some(previous) = self.contributions.get_mut(profile) {
+                        previous.groups.remove(&group);
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    fn apply_template(&mut self, update: IPFixTemplatesMessage) -> Result<(), TemplateUpdateError> {
+        let compilation = Self::compile_candidate(&update)?;
         let Some((profile, group)) = hft_group(&update.key) else {
             if compilation.missing_labels {
-                self.remove_source(&update.key);
                 return Err("template references unmapped object IDs".into());
             }
-            return self.install_generation(compilation.generation, &[]);
+            return self.install_generation(compilation.generation, &[])
+                .map_err(TemplateUpdateError::Collision);
         };
         let profile = profile.to_string();
-        let mut candidate = self
-            .contributions
-            .get(&profile)
-            .cloned()
-            .unwrap_or_default();
+        let previous = self.contributions.get(&profile);
         let types: HashSet<_> = compilation.labels.iter().map(|(_, t)| *t).collect();
         // A suffix alone is not evidence of MIXED. A one-type initial MIXED
         // snapshot is indistinguishable from SINGLE and uses the strict path.
-        candidate.mixed |= types.len() > 1 && types.iter().all(|t| matches!(t, 1 | 21 | 24 | 26));
-        if !candidate.mixed {
+        let mixed = previous.is_some_and(|previous| previous.mixed)
+            || (types.len() > 1 && types.iter().all(|t| matches!(t, 1 | 21 | 24 | 26)));
+        if !mixed {
             if compilation.missing_labels {
-                self.remove_source(&update.key);
                 return Err("template references unmapped object IDs".into());
             }
-            self.install_generation(compilation.generation, &[])?;
+            self.install_generation(compilation.generation, &[])
+                .map_err(TemplateUpdateError::Collision)?;
+            let candidate = self.contributions.entry(profile.clone()).or_default();
             // Only a genuine group-shaped SINGLE row is eligible for later
             // retirement/aggregation; suffix-shaped opaque owners stay strict.
             if types.len() == 1 && types.contains(&group) {
@@ -412,8 +459,6 @@ impl IpfixActor {
             }
             if candidate.groups.is_empty() {
                 self.contributions.remove(&profile);
-            } else {
-                self.contributions.insert(profile, candidate);
             }
             return Ok(());
         }
@@ -427,44 +472,48 @@ impl IpfixActor {
                 return Err(format!("MIXED object ID {id} references multiple SAI types").into());
             }
         }
-        if self.sessions.contains_key(update.key.as_str()) && !candidate.groups.contains_key(&group)
-        {
-            return Err(
-                "MIXED source conflicts with an opaque owner, not a prior HFT group".into(),
-            );
-        }
-
         let owner = format!("{MIXED_OWNER_PREFIX}{profile}");
-        let mut combined = update.clone();
-        combined.key = owner.clone();
-        combined.object_ids = Some(Vec::new());
-        combined.object_names = Some(Vec::new());
-        candidate.groups.insert(group, update.clone());
+        // Compare full wire snapshots (domains and headers included). Preflight
+        // borrowed aggregate metadata before copying or concatenating names.
+        let sources: Vec<_> = previous.into_iter()
+            .flat_map(|previous| previous.groups.iter())
+            .filter(|(source_type, source)| **source_type != group && source.templates == update.templates)
+            .map(|(source_type, source)| (*source_type, source))
+            .chain(std::iter::once((group, &update)))
+            .collect();
+        let mut object_count = 0usize;
+        let mut metadata_bytes = owner.len();
+        for (_, source) in &sources {
+            let names = source.object_names.as_ref().expect("validated names");
+            let source_ids = source.object_ids.as_ref().expect("validated IDs");
+            object_count = object_count.checked_add(source_ids.len())
+                .ok_or("object metadata size overflow")?;
+            if object_count > MAX_OBJECTS_PER_UPDATE {
+                return Err(format!("object metadata exceeds {MAX_OBJECTS_PER_UPDATE} entries").into());
+            }
+            metadata_bytes = source_ids.len().checked_mul(std::mem::size_of::<u16>())
+                .and_then(|bytes| metadata_bytes.checked_add(bytes))
+                .ok_or("object metadata size overflow")?;
+            metadata_bytes = names.iter().try_fold(metadata_bytes, |total, name| {
+                total.checked_add(name.len())
+            }).ok_or("object metadata size overflow")?;
+            if metadata_bytes > MAX_OBJECT_METADATA_BYTES {
+                return Err(format!("object metadata exceeds {MAX_OBJECT_METADATA_BYTES} bytes").into());
+            }
+        }
         let mut ids = HashMap::new();
         let mut present_types = HashSet::new();
-        for (source_type, source) in &candidate.groups {
-            // Compare the entire concatenated wire snapshot, including domains
-            // and message headers. Never borrow labels from a stale sibling.
-            if source.templates != update.templates {
-                continue;
-            }
+        for (source_type, source) in &sources {
             present_types.insert(*source_type);
-            for (id, name) in source
+            for id in source
                 .object_ids
                 .as_ref()
                 .expect("validated IDs")
                 .iter()
-                .zip(source.object_names.as_ref().expect("validated names"))
             {
                 if ids.insert(*id, *source_type).is_some() {
                     return Err(format!("duplicate MIXED object ID {id}").into());
                 }
-                combined.object_ids.as_mut().expect("IDs").push(*id);
-                combined
-                    .object_names
-                    .as_mut()
-                    .expect("names")
-                    .push(name.clone());
             }
         }
         for (id, type_id) in &compilation.labels {
@@ -481,16 +530,38 @@ impl IpfixActor {
                 return Err(format!("MIXED group type {type_id} omits referenced object ID {id}").into());
             }
         }
-        validate_template_update_limits(&combined)?;
+        let combined = IPFixTemplatesMessage::new(
+            owner.clone(),
+            Arc::clone(update.templates.as_ref().expect("validated templates")),
+            Some(sources.iter().flat_map(|(_, source)| {
+                source.object_names.as_ref().expect("validated names").iter().cloned()
+            }).collect()),
+            Some(sources.iter().flat_map(|(_, source)| {
+                source.object_ids.as_ref().expect("validated IDs").iter().copied()
+            }).collect()),
+        );
         // Mode is effectively fixed per hardware profile. Eligible prior SINGLE
         // owners migrate to the logical owner only after all collision checks.
-        let retiring: Vec<_> = self
-            .contributions
-            .get(&profile)
-            .into_iter()
-            .flat_map(|previous| previous.groups.values())
-            .map(|source| source.key.clone())
+        // A collision can evict a raw row without retiring its valid SINGLE
+        // session. Derive migration eligibility from installed counter types.
+        let retiring: Vec<_> = self.sessions.iter()
+            .filter(|(source, session)| {
+                hft_group(source).is_some_and(|(source_profile, source_type)| {
+                    source_profile == profile && std::iter::once(&session.active)
+                        .chain(session.pending.iter()).all(|generation| {
+                            generation.templates.values().all(|template| {
+                                template.counters.iter().all(|counter| counter.type_id == source_type)
+                            })
+                        })
+                })
+            })
+            .map(|(source, _)| source.to_string())
             .collect();
+        if self.sessions.contains_key(update.key.as_str()) && !retiring.contains(&update.key) {
+            return Err(TemplateUpdateError::Collision(
+                "MIXED source conflicts with an opaque owner, not a prior HFT group".into(),
+            ));
+        }
         // Reuse the parser, but never retain two full scratch generations at
         // once. Only complete aggregate metadata may reach installation.
         drop(compilation);
@@ -501,33 +572,50 @@ impl IpfixActor {
                     && !retiring.iter().any(|s| s == installed.owner.as_ref()))
                     || !installed.matches_schema(template, true)
                 {
-                    return Err(format!("template collision at {key:?}: incoming owner {owner:?}, existing owner {:?}", installed.owner).into());
+                    return Err(TemplateUpdateError::Collision(format!("template collision at {key:?}: incoming owner {owner:?}, existing owner {:?}", installed.owner).into()));
                 }
             }
         }
         if !combined_candidate.missing_labels {
-            self.install_generation(combined_candidate.generation, &retiring)?;
+            self.install_generation(combined_candidate.generation, &retiring)
+                .map_err(TemplateUpdateError::Collision)?;
         }
-        // All validation and collision checks precede raw-state replacement.
+        // Only admitted notifications become reusable raw contributions.
         // Valid incomplete snapshots leave the last active/pending decoder live.
-        self.contributions.insert(profile, candidate);
+        let candidate = self.contributions.entry(profile).or_default();
+        candidate.mixed = true;
+        candidate.groups.insert(group, update);
         Ok(())
     }
 
     fn remove_source(&mut self, source: &str) {
         self.remove_session(source);
         if let Some((profile, group)) = hft_group(source) {
-            if let Some(contributions) = self.contributions.get_mut(profile) {
-                if contributions.groups.remove(&group).is_none() {
-                    return;
+            let owner = format!("{MIXED_OWNER_PREFIX}{profile}");
+            if let Some(session) = self.sessions.get_mut(owner.as_str()) {
+                // Invalidate whole dependent snapshots, not invented survivor
+                // layouts. An independent pending snapshot still waits for data
+                // to promote, even when its old active snapshot is now empty.
+                // Rust cannot restart hardware after partial group deletion;
+                // affected snapshots need fresh complete metadata to decode.
+                if session.active.depends_on(group) {
+                    session.active.templates.clear();
                 }
+                if session.pending.as_ref().is_some_and(|pending| pending.depends_on(group)) {
+                    session.pending = None;
+                }
+                self.installed.retain(|key, template| {
+                    template.owner.as_ref() != owner || session.active.templates.contains_key(key)
+                        || session.pending.as_ref().is_some_and(|pending| pending.templates.contains_key(key))
+                });
+                if session.active.templates.is_empty() && session.pending.is_none() {
+                    self.sessions.remove(owner.as_str());
+                }
+            }
+            if let Some(contributions) = self.contributions.get_mut(profile) {
+                contributions.groups.remove(&group);
                 let empty = contributions.groups.is_empty();
-                // The producer does not regenerate survivors on partial delete.
-                // Pause the whole shared decoder: it embeds the removed labels.
-                // Survivors retain only their latest raw row, never the removed
-                // mapping; only fresh complete metadata can restore decoding.
-                self.remove_session(&format!("{MIXED_OWNER_PREFIX}{profile}"));
-                if empty {
+                if empty && !self.sessions.contains_key(owner.as_str()) {
                     self.contributions.remove(profile);
                 }
             }
@@ -1423,7 +1511,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_duplicates_associations_limits_and_collisions_are_transactional() {
+    fn mixed_invalid_metadata_preserves_only_unaffected_raw_sources() {
         let mut actor = actor();
         let rows = mixed_rows("p", 0, 300);
         actor.handle_template(rows[0].clone()).unwrap();
@@ -1450,22 +1538,39 @@ mod tests {
         large.object_names = Some(vec!["y".repeat(MAX_OBJECT_METADATA_BYTES / 2)]);
         assert!(actor.handle_template(large).is_err());
         assert_eq!(format!("{:?}", actor.contributions), raw);
+    }
 
-        let mut actor = IpfixActor::new(channel(4).1, channel(4).1);
+    #[test]
+    fn mixed_collisions_preserve_installed_snapshots_but_evict_old_raw_source() {
+        let mut actor = actor();
+        let rows = mixed_rows("p", 0, 300);
         install_mixed(&mut actor, "p", 0, 300);
         actor
             .handle_template(snapshot("opaque", &[(0, 500, 1)]))
             .unwrap();
         let sessions = actor.sessions.clone();
-        let raw = format!("{:?}", actor.contributions);
+        let installed = actor.installed.clone();
         assert!(actor
             .handle_template(mixed_rows("p", 0, 500)[0].clone())
             .is_err());
+        assert_eq!(actor.sessions, sessions);
+        assert_eq!(actor.installed, installed);
+        assert!(!actor.contributions["p"].groups.contains_key(&1));
         let mut bad = rows[0].clone();
         bad.object_names = Some(vec!["changed".into()]);
         assert!(actor.handle_template(bad).is_err());
         assert_eq!(actor.sessions, sessions);
-        assert_eq!(format!("{:?}", actor.contributions), raw);
+        assert_eq!(actor.installed, installed);
+        assert!(!actor.contributions["p"].groups.contains_key(&1));
+        // Even after installed state is retired, replaying only siblings cannot
+        // reuse the source row from before either rejected notification.
+        actor.remove_session(&format!("{MIXED_OWNER_PREFIX}p"));
+        for row in &rows[1..] {
+            actor.handle_template(row.clone()).unwrap();
+        }
+        assert_eq!(keys(&actor), vec![(0, 500)]);
+        actor.handle_template(rows[0].clone()).unwrap();
+        let sessions = actor.sessions.clone();
         let logical = format!("{MIXED_OWNER_PREFIX}p");
         for bad in [
             snapshot(&logical, &[(0, 600, 1)]),
@@ -1524,6 +1629,186 @@ mod tests {
     }
 
     #[test]
+    fn mixed_invalid_old_source_cannot_resurrect_from_sibling_updates() {
+        for invalid in 0..7 {
+            let mut actor = actor();
+            let rows = mixed_rows("p", 0, 300);
+            install_mixed(&mut actor, "p", 0, 300);
+            let mut bad = rows[0].clone();
+            let expected = match invalid {
+                0 => {
+                    let wire = template_message("unused", 0, 400,
+                        &[(1, 0x0001_0007), (2, 0x0002_0007)]);
+                    bad.templates = wire.templates;
+                    "unsupported SAI"
+                }
+                1 => {
+                    let wire = template_message("unused", 0, 400,
+                        &[(1, 0x0001_0007), (5, 0x0015_0007), (5, 0x001a_0007)]);
+                    bad.templates = wire.templates;
+                    "multiple SAI types"
+                }
+                2 => {
+                    bad.object_ids.as_mut().unwrap().push(2);
+                    bad.object_names.as_mut().unwrap().push("duplicate queue".into());
+                    "duplicate MIXED"
+                }
+                3 => {
+                    bad.templates = mixed_rows("p", 0, 400)[0].templates.clone();
+                    bad.object_ids.as_mut().unwrap().push(2);
+                    bad.object_names.as_mut().unwrap().push("wrong group".into());
+                    "source group type"
+                }
+                4 => {
+                    bad.object_ids = Some(vec![5]);
+                    "omits referenced"
+                }
+                5 => {
+                    // Individually admissible; only the combined metadata is
+                    // too large. The logical owner is longer than the raw key.
+                    bad.object_names = Some(vec!["x".repeat(
+                        MAX_OBJECT_METADATA_BYTES - bad.key.len() - 2,
+                    )]);
+                    "object metadata exceeds"
+                }
+                _ => {
+                    // Individually valid IDs, but aggregate entry count exceeds
+                    // admission before duplicate/association validation.
+                    bad.object_ids = Some((1..=MAX_OBJECTS_PER_UPDATE as u16).collect());
+                    bad.object_names = Some(vec!["x".into(); MAX_OBJECTS_PER_UPDATE]);
+                    "entries"
+                }
+            };
+            assert!(actor.handle_template(bad).unwrap_err().to_string().contains(expected),
+                "invalid metadata case {invalid}");
+            assert!(!actor.contributions["p"].groups.contains_key(&1));
+            assert!(actor.installed.is_empty());
+            for row in &rows[1..] {
+                actor.handle_template(row.clone()).unwrap();
+            }
+            assert!(actor.installed.is_empty(), "invalid metadata case {invalid}");
+            actor.handle_template(rows[0].clone()).unwrap();
+            assert_eq!(keys(&actor), vec![(0, 300)]);
+        }
+    }
+
+    #[test]
+    fn mixed_one_type_active_survives_obsolete_raw_group_removal() {
+        for operation in 0..3 {
+            let mut actor = actor();
+            install_mixed(&mut actor, "p", 0, 300);
+            actor.handle_template(snapshot("p|PORT", &[(0, 400, 0x0001_0001)])).unwrap();
+            actor.handle_record(&data_message(0, &[(400, vec![(1, vec![9])])])).unwrap();
+            let sessions = actor.sessions.clone();
+            let installed = actor.installed.clone();
+            let remove = match operation {
+                0 => IPFixTemplatesMessage::delete("p|QUEUE".into()),
+                1 => IPFixTemplatesMessage::deactivate("p|QUEUE".into()),
+                _ => {
+                    let mut bad = mixed_rows("p", 0, 300)[1].clone();
+                    bad.object_ids = Some(vec![3]);
+                    bad
+                }
+            };
+            assert_eq!(actor.handle_template(remove).is_err(), operation == 2);
+            assert_eq!(actor.sessions, sessions);
+            assert_eq!(actor.installed, installed);
+            assert!(!actor.contributions["p"].groups.contains_key(&21));
+            // Old sibling notifications cannot reinstall the deleted group.
+            for (index, row) in mixed_rows("p", 0, 300).into_iter().enumerate() {
+                if index != 1 {
+                    actor.handle_template(row).unwrap();
+                }
+            }
+            assert_eq!(actor.sessions, sessions);
+            assert_eq!(keys(&actor), vec![(0, 400)]);
+            assert_eq!(actor.handle_record(&data_message(0, &[(400, vec![(2, vec![10])])]))
+                .unwrap().counter_count(), 1);
+        }
+    }
+
+    #[test]
+    fn mixed_removal_checks_active_and_pending_dependencies_separately() {
+        for (group, remove_active, remove_pending) in [
+            ("PORT", true, false), ("QUEUE", false, true),
+            ("INGRESS_PRIORITY_GROUP", false, false),
+        ] {
+            for malformed in [false, true] {
+                let mut actor = actor();
+                install_mixed(&mut actor, "p", 0, 300);
+                actor.handle_template(snapshot("p|PORT", &[(0, 400, 0x0001_0001)])).unwrap();
+                actor.handle_record(&data_message(0, &[(400, vec![(1, vec![9])])])).unwrap();
+                actor.handle_template(snapshot("p|QUEUE", &[(0, 500, 0x0015_0001)])).unwrap();
+                let owner = format!("{MIXED_OWNER_PREFIX}p");
+                let before = actor.sessions[owner.as_str()].clone();
+                let source = format!("p|{group}");
+                let remove = if malformed {
+                    let mut bad = snapshot(&source, &[(0, 600, 0x0001_0001)]);
+                    bad.templates = Some(Arc::new(vec![0]));
+                    bad
+                } else {
+                    IPFixTemplatesMessage::delete(source)
+                };
+                assert_eq!(actor.handle_template(remove).is_err(), malformed);
+                let session = &actor.sessions[owner.as_str()];
+                if remove_active {
+                    assert!(session.active.templates.is_empty());
+                } else {
+                    assert_eq!(session.active, before.active);
+                }
+                if remove_pending {
+                    assert!(session.pending.is_none());
+                } else {
+                    assert_eq!(session.pending, before.pending);
+                }
+                assert_eq!(actor.handle_record(&data_message(0, &[(400, vec![(2, vec![10])])]))
+                    .unwrap().counter_count(), usize::from(!remove_active));
+                if !remove_pending {
+                    // Invalid data cannot promote even with an empty active.
+                    assert!(actor.handle_record(&hardware_data(500, &[&[0; 8]])).is_err());
+                    assert!(actor.sessions[owner.as_str()].pending.is_some());
+                }
+                assert_eq!(actor.handle_record(&data_message(0, &[(500, vec![(3, vec![11])])]))
+                    .unwrap().counter_count(), usize::from(!remove_pending));
+                assert_eq!(keys(&actor), if remove_pending { vec![(0, 400)] } else { vec![(0, 500)] });
+                assert!(actor.sessions[owner.as_str()].pending.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_uncached_source_removal_uses_installed_dependencies() {
+        let mut actor = actor();
+        let mut port = template_message("p|PORT", 0, 300,
+            &[(1, 0x0001_0001), (2, 0x0015_0001)]);
+        port.object_ids = Some(vec![1]);
+        port.object_names = Some(vec!["Ethernet1".into()]);
+        let mut queue = port.clone();
+        queue.key = "p|QUEUE".into();
+        queue.object_ids = Some(vec![2]);
+        queue.object_names = Some(vec!["Ethernet0:0".into()]);
+        actor.handle_template(port.clone()).unwrap();
+        actor.handle_template(queue.clone()).unwrap();
+        let sessions = actor.sessions.clone();
+        // Supported but never cached and never referenced is unrelated.
+        actor.handle_template(IPFixTemplatesMessage::delete("p|BUFFER_POOL".into())).unwrap();
+        let mut unknown = port.clone();
+        unknown.key = "p|INGRESS_PRIORITY_GROUP".into();
+        unknown.templates = Some(Arc::new(vec![0]));
+        assert!(actor.handle_template(unknown).is_err());
+        assert_eq!(actor.sessions, sessions);
+        port.object_names = Some(vec!["renamed".into()]);
+        assert!(actor.handle_template(port).is_err());
+        assert!(!actor.contributions["p"].groups.contains_key(&1));
+        assert_eq!(actor.sessions, sessions);
+        // Raw eviction on collision must not mask a later real deletion.
+        actor.handle_template(IPFixTemplatesMessage::delete("p|PORT".into())).unwrap();
+        assert!(actor.installed.is_empty());
+        actor.handle_template(queue).unwrap();
+        assert!(actor.installed.is_empty());
+    }
+
+    #[test]
     fn single_group_start_and_nonoverlapping_mixed_transition_preserve_old_active() {
         let mut actor = actor();
         for (group, _, t, _) in MIXED_GROUPS {
@@ -1569,14 +1854,13 @@ mod tests {
         actor.handle_template(snapshot("p|PORT", &[(0, 350, 0x0001_0001)])).unwrap();
         let sessions = actor.sessions.clone();
         let installed = actor.installed.clone();
-        let raw = format!("{:?}", actor.contributions);
         // Even an incomplete first row must not reinterpret an active or
         // pending SINGLE template ID as a different MIXED record layout.
         for id in [300, 350] {
             assert!(actor.handle_template(mixed_rows("p", 0, id)[0].clone()).is_err());
             assert_eq!(actor.sessions, sessions);
             assert_eq!(actor.installed, installed);
-            assert_eq!(format!("{:?}", actor.contributions), raw);
+            assert!(!actor.contributions["p"].groups.contains_key(&1));
         }
         // Exercise the final installation boundary independently: exemption
         // from owner equality must never exempt even one schema component.
@@ -1624,11 +1908,10 @@ mod tests {
             if shared_key {
                 let mut bad = port.clone();
                 bad.object_names = Some(vec!["renamed".into()]);
-                let raw = format!("{:?}", actor.contributions);
                 let sessions = actor.sessions.clone();
                 assert!(actor.handle_template(bad).is_err());
                 assert_eq!(actor.sessions, sessions);
-                assert_eq!(format!("{:?}", actor.contributions), raw);
+                assert!(!actor.contributions["p"].groups.contains_key(&1));
             }
             let (first, last) = if queue_first { (queue, port) } else { (port, queue) };
             actor.handle_template(first).unwrap();
@@ -1730,13 +2013,12 @@ mod tests {
         actor
             .handle_template(snapshot("peer", &[(0, 300, 1)]))
             .unwrap();
-        let raw = format!("{:?}", actor.contributions);
         let sessions = actor.sessions.clone();
         assert!(actor
             .handle_template(mixed_rows("p", 0, 300)[0].clone())
             .is_err());
         assert_eq!(actor.sessions, sessions);
-        assert_eq!(format!("{:?}", actor.contributions), raw);
+        assert!(!actor.contributions["p"].groups.contains_key(&1));
 
         // A QUEUE-suffixed opaque owner actually carrying a non-QUEUE type is
         // not evidence of a prior SINGLE group that MIXED may retire.
