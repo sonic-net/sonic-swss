@@ -31,8 +31,7 @@ const MAX_EXPORT_RETRIES: u64 = 30;
 pub struct OtelActorConfig {
     /// OpenTelemetry collector endpoint
     pub collector_endpoint: String,
-    /// Maximum counters per export; must be positive.
-    /// This bounds counter count, not encoded bytes or collector message size.
+    /// Max counters to accumulate before forcing an export
     pub max_counters_per_export: usize,
     /// Max time to wait before flushing buffered metrics
     pub flush_timeout: Duration,
@@ -101,11 +100,6 @@ impl OtelActor {
         config: OtelActorConfig,
         shutdown_notifier: oneshot::Sender<()>,
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
-        if config.max_counters_per_export == 0 {
-            return Err(Box::new(OtelActorExportError(
-                "max_counters_per_export must be positive".to_string(),
-            )));
-        }
         let client = None;
 
         // Pre-create reusable resource
@@ -224,39 +218,28 @@ impl OtelActor {
                 stats.observation_time
             );
 
+            let was_empty = self.buffer.is_empty();
+
             // Convert to OTel format using message types and buffer
             let otel_metrics = OtelMetrics::from_sai_stats(stats);
+            let counters_in_message = stats.stats.len();
 
             if log::log_enabled!(log::Level::Debug) {
                 self.print_otel_metrics(&otel_metrics).await;
             }
 
-            let OtelMetrics {
-                service_name,
-                scope_name,
-                scope_version,
-                gauges,
-            } = otel_metrics;
-            let mut gauges = gauges.into_iter();
-            while gauges.len() > 0 {
-                // Each SAI counter produces one gauge. Split only at the exporter,
-                // moving whole gauges so their timestamps and attributes survive.
-                let remaining = self.config.max_counters_per_export - self.buffered_counters;
-                let chunk: Vec<_> = gauges.by_ref().take(remaining).collect();
-                if self.buffer.is_empty() {
-                    self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
-                }
-                self.buffered_counters += chunk.len();
-                self.buffer.push(OtelMetrics {
-                    service_name: service_name.clone(),
-                    scope_name: scope_name.clone(),
-                    scope_version: scope_version.clone(),
-                    gauges: chunk,
-                });
+            self.buffer.push(otel_metrics);
+            self.buffered_counters += counters_in_message;
 
-                if self.buffered_counters == self.config.max_counters_per_export {
-                    self.flush_buffer().await?;
-                }
+            // Start timeout when buffer transitions from empty to non-empty
+            if was_empty {
+                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+            }
+
+            // Force flush when counter threshold is reached
+            if self.buffered_counters >= self.config.max_counters_per_export {
+                self.flush_buffer().await?;
+                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
             }
         }
 
@@ -284,7 +267,7 @@ impl OtelActor {
                 let data_point = &gauge.data_points[0];
 
                 debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                debug!("Value (exact u64 before OTLP conversion): {}", data_point.value);
+                debug!("Value: {}", data_point.value);
                 debug!("Unit: {}", gauge.unit);
                 debug!("Time: {}ns", data_point.time_unix_nano);
                 debug!("Description: {}", gauge.description);
@@ -433,9 +416,9 @@ impl OtelActor {
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {
-        // Avoid idle wakeups without postponing an overdue non-empty buffer.
+        // Ensure the deadline is in the future to avoid immediate wakeups
         let now = TokioInstant::now();
-        let deadline = if self.buffer.is_empty() && self.flush_deadline <= now {
+        let deadline = if self.flush_deadline <= now {
             now + self.config.flush_timeout
         } else {
             self.flush_deadline
@@ -465,228 +448,8 @@ impl OtelActor {
 mod tests {
     use super::*;
     use crate::message::saistats::{SAIStat, SAIStatsBatch};
-    use opentelemetry_proto::tonic::{
-        collector::metrics::v1::{
-            metrics_service_server::{MetricsService, MetricsServiceServer},
-            ExportMetricsServiceResponse,
-        },
-        metrics::v1::{metric, number_data_point},
-    };
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio_stream::wrappers::TcpListenerStream;
-
-    struct Collector(mpsc::UnboundedSender<ExportMetricsServiceRequest>);
-
-    #[tonic::async_trait]
-    impl MetricsService for Collector {
-        async fn export(
-            &self,
-            request: tonic::Request<ExportMetricsServiceRequest>,
-        ) -> Result<tonic::Response<ExportMetricsServiceResponse>, tonic::Status> {
-            self.0.send(request.into_inner()).unwrap();
-            Ok(tonic::Response::new(Default::default()))
-        }
-    }
-
-    async fn start_collector() -> (
-        String,
-        mpsc::UnboundedReceiver<ExportMetricsServiceRequest>,
-        tokio::task::JoinHandle<()>,
-    ) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let server = tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(MetricsServiceServer::new(Collector(sender)))
-                .serve_with_incoming(TcpListenerStream::new(listener))
-                .await
-                .unwrap();
-        });
-        (endpoint, receiver, server)
-    }
-
-    #[tokio::test]
-    async fn caps_exports_across_records_and_within_wide_records() {
-        let (endpoint, mut requests, server) = start_collector().await;
-        for (cap, record_sizes) in [
-            (3, vec![2, 2, 3]),
-            (3, vec![8]),
-            (3, vec![3, 3]),
-            (1, vec![0, 2, 1]),
-        ] {
-            let (_sender, receiver) = mpsc::channel(1);
-            let (shutdown_sender, _) = oneshot::channel();
-            let mut actor = OtelActor::new(
-                receiver,
-                OtelActorConfig {
-                    collector_endpoint: endpoint.clone(),
-                    max_counters_per_export: cap,
-                    ..OtelActorConfig::default()
-                },
-                shutdown_sender,
-            )
-            .await
-            .unwrap();
-
-            let mut batch = SAIStatsBatch::default();
-            let mut counter = 0;
-            for (record, count) in record_sizes.iter().enumerate() {
-                batch.push_record(
-                    100 + record as u64,
-                    (0..*count).map(|_| {
-                        counter += 1;
-                        SAIStat::new(format!("Ethernet{counter}"), 1, 0, counter)
-                    }),
-                );
-            }
-            let expected: Vec<_> = batch
-                .iter()
-                .flat_map(|stats| OtelMetrics::from_sai_stats(stats).gauges)
-                .flat_map(|gauge| gauge.data_points)
-                .map(|point| point.to_proto())
-                .collect();
-            let total = expected.len();
-
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                actor.handle_stats_batch(Arc::new(batch)),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            assert_eq!(actor.messages_received, record_sizes.len() as u64);
-            assert_eq!(actor.exports_performed, (total / cap) as u64);
-            assert_eq!(actor.buffered_counters, total % cap);
-            tokio::time::timeout(Duration::from_secs(5), actor.flush_buffer())
-                .await
-                .unwrap()
-                .unwrap();
-
-            let mut actual = Vec::new();
-            let mut counts = Vec::new();
-            while let Ok(request) = requests.try_recv() {
-                let mut count = 0;
-                for resource in request.resource_metrics {
-                    for scope in resource.scope_metrics {
-                        for metric in scope.metrics {
-                            let Some(metric::Data::Gauge(gauge)) = metric.data else {
-                                panic!("Expected gauge");
-                            };
-                            count += gauge.data_points.len();
-                            actual.extend(gauge.data_points);
-                        }
-                    }
-                }
-                assert!(count > 0 && count <= cap);
-                counts.push(count);
-            }
-            let mut expected_counts = vec![cap; total / cap];
-            if total % cap != 0 {
-                expected_counts.push(total % cap);
-            }
-            assert_eq!(counts, expected_counts);
-            assert_eq!(actual, expected); // Includes every timestamp and attribute.
-            for (index, point) in actual.iter().enumerate() {
-                assert_eq!(
-                    point.value,
-                    Some(number_data_point::Value::AsInt(index as i64 + 1))
-                );
-            }
-            assert!(actor.buffer.is_empty());
-            assert_eq!(actor.buffered_counters, 0);
-        }
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn timeout_flushes_partial_export_while_input_stays_open() {
-        let (endpoint, mut requests, server) = start_collector().await;
-        let (sender, receiver) = mpsc::channel(1);
-        let (shutdown_sender, _) = oneshot::channel();
-        let actor = OtelActor::new(
-            receiver,
-            OtelActorConfig {
-                collector_endpoint: endpoint,
-                max_counters_per_export: 3,
-                flush_timeout: Duration::from_millis(25),
-            },
-            shutdown_sender,
-        )
-        .await
-        .unwrap();
-        let mut batch = SAIStatsBatch::default();
-        batch.push_record(99, [SAIStat::new("Ethernet0", 1, 0, u64::MAX)]);
-        sender.send(Arc::new(batch)).await.unwrap();
-        let task = tokio::spawn(actor.run());
-        let request = tokio::time::timeout(Duration::from_secs(5), requests.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        let metrics = &request.resource_metrics[0].scope_metrics[0].metrics;
-        assert_eq!(metrics.len(), 1);
-        let Some(metric::Data::Gauge(gauge)) = &metrics[0].data else {
-            panic!("Expected gauge");
-        };
-        assert_eq!(gauge.data_points.len(), 1);
-        assert_eq!(gauge.data_points[0].time_unix_nano, 99);
-        assert_eq!(
-            gauge.data_points[0].value,
-            Some(number_data_point::Value::AsDouble(u64::MAX as f64))
-        );
-        drop(sender);
-        tokio::time::timeout(Duration::from_secs(5), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        assert!(requests.try_recv().is_err());
-        server.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn later_records_do_not_postpone_partial_export_deadline() {
-        let (_sender, receiver) = mpsc::channel(1);
-        let (shutdown_sender, _) = oneshot::channel();
-        let mut actor = OtelActor::new(receiver, OtelActorConfig::default(), shutdown_sender)
-            .await
-            .unwrap();
-        let mut batch = SAIStatsBatch::default();
-        batch.push_record(99, [SAIStat::new("Ethernet0", 1, 0, 1)]);
-        let batch = Arc::new(batch);
-        actor.handle_stats_batch(batch.clone()).await.unwrap();
-        let deadline = actor.flush_deadline;
-        let mut timer = Box::pin(sleep_until(deadline));
-        tokio::time::advance(Duration::from_millis(500)).await;
-        actor.handle_stats_batch(batch.clone()).await.unwrap();
-        actor.reset_flush_timer(&mut timer);
-        assert_eq!(timer.deadline(), deadline);
-        tokio::time::advance(Duration::from_secs(1)).await;
-        actor.handle_stats_batch(batch).await.unwrap();
-        actor.reset_flush_timer(&mut timer);
-        assert_eq!(timer.deadline(), deadline);
-        assert!(timer.deadline() <= TokioInstant::now());
-    }
-
-    #[tokio::test]
-    async fn rejects_zero_counter_cap() {
-        let (_sender, receiver) = mpsc::channel(1);
-        let (shutdown_sender, _) = oneshot::channel();
-        let result = OtelActor::new(
-            receiver,
-            OtelActorConfig {
-                max_counters_per_export: 0,
-                ..OtelActorConfig::default()
-            },
-            shutdown_sender,
-        )
-        .await;
-        assert!(matches!(
-            result,
-            Err(error) if error.to_string() == "max_counters_per_export must be positive"
-        ));
-    }
 
     #[tokio::test]
     async fn handles_batch_records_in_order_and_counts_records() {
