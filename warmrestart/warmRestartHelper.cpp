@@ -227,10 +227,8 @@ void WarmStartHelper::reconcile(void)
                     SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s in %s",
                                     printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
 
-                    context.syncTable->set({
-                        {refreshedKey, DEL_COMMAND, {}},
-                        {refreshedKey, SET_COMMAND, refreshedFV},
-                    });
+                    context.syncTable->del(refreshedKey);
+                    context.syncTable->set(refreshedKey, refreshedFV);
                 }
                 else
                 {

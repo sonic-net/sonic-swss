@@ -92,8 +92,11 @@ namespace wrhelper_test
                                         {"protocol", "kernel"}
                                     }
                                 });
+        testing_db::resetOperationCounters();
         wrHelper->reconcile();
         ASSERT_EQ(wrHelper->getState(), WarmStart::RECONCILED);
+        EXPECT_EQ(testing_db::getProducerDelCount("ROUTE_TABLE"), 3u);
+        EXPECT_EQ(testing_db::getProducerSetCount("ROUTE_TABLE"), 3u);
 
         std::string val;
         ASSERT_TRUE(m_routeTable->hget("1.0.0.0/24", "protocol", val));
@@ -108,6 +111,26 @@ namespace wrhelper_test
         m_routeTable->hget("1.2.0.0/24", "protocol", val);
         ASSERT_EQ(val, "kernel");
         ASSERT_FALSE(m_routeTable->hget("1.2.0.0/24", "random_attrib", val));
+    }
+
+    TEST_F(WRHelperTest, testBatchedSetIgnoresOperationTags)
+    {
+        const std::string key = "32:16:16:0:fc00:0:1::";
+        m_mysidTable->set(key, {{"action", "end.t"}, {"vrf", "VrfOld"}});
+        testing_db::resetOperationCounters();
+
+        m_mysidProducerTable->set({
+            {key, DEL_COMMAND, {}},
+            {key, SET_COMMAND, {{"action", "end"}}},
+        });
+
+        std::string value;
+        ASSERT_TRUE(m_mysidTable->hget(key, "action", value));
+        EXPECT_EQ(value, "end");
+        ASSERT_TRUE(m_mysidTable->hget(key, "vrf", value));
+        EXPECT_EQ(value, "VrfOld");
+        EXPECT_EQ(testing_db::getProducerDelCount("SRV6_MY_SID_TABLE"), 0u);
+        EXPECT_EQ(testing_db::getProducerSetCount("SRV6_MY_SID_TABLE"), 2u);
     }
 
     TEST_F(WRHelperTest, testEmptyRouteTableWithRetainedMySid)
@@ -154,7 +177,7 @@ namespace wrhelper_test
     TEST_F(WRHelperTest, testReconcilesAllEntryOutcomesAcrossTables)
     {
         m_routeTable->set("unchanged", {{"nexthop", "10.0.0.1"}});
-        m_mysidTable->set("changed", {{"action", "end"}});
+        m_mysidTable->set("changed", {{"action", "end.t"}, {"vrf", "VrfOld"}});
         m_mysidTable->set("stale", {{"action", "end"}});
         m_mysidTable->set("deleted", {{"action", "end"}});
 
@@ -172,6 +195,12 @@ namespace wrhelper_test
         std::vector<swss::FieldValueTuple> fields;
         EXPECT_TRUE(m_routeTable->get("unchanged", fields));
         EXPECT_TRUE(m_mysidTable->get("changed", fields));
+        std::string value;
+        EXPECT_FALSE(m_mysidTable->hget("changed", "vrf", value));
+        ASSERT_TRUE(m_mysidTable->hget("changed", "action", value));
+        EXPECT_EQ(value, "end.x");
+        ASSERT_TRUE(m_mysidTable->hget("changed", "adj", value));
+        EXPECT_EQ(value, "2001:db8::1");
         EXPECT_FALSE(m_mysidTable->get("stale", fields));
         EXPECT_FALSE(m_mysidTable->get("deleted", fields));
         EXPECT_TRUE(m_mysidTable->get("new", fields));

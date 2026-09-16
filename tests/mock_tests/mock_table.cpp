@@ -206,18 +206,7 @@ namespace swss
     {
         for (const auto& kfv : values)
         {
-            const std::string& key = kfvKey(kfv);
-            const std::string& op = kfvOp(kfv);
-            const std::vector<FieldValueTuple>& fvs = kfvFieldsValues(kfv);
-
-            if (op == SET_COMMAND)
-            {
-                set(key, fvs);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                del(key);
-            }
+            set(kfvKey(kfv), kfvFieldsValues(kfv));
         }
     }
 
