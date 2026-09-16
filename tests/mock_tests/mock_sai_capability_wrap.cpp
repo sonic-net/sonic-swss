@@ -90,6 +90,19 @@ namespace
     // Generic object type availability override (sai_availability_ut), checked
     // first in __wrap_sai_object_type_get_availability.
     thread_local sai_availability_ut::ObjectTypeAvailabilityOverride g_availability_override;
+
+    namespace mirror
+    {
+        enum class Hook
+        {
+            None = 0,
+            QueryFail,
+            CreateUnsupported,
+            CreateSupported,
+        };
+
+        thread_local Hook g_hook = Hook::None;
+    }
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -317,6 +330,26 @@ extern "C"
                 }
                 return st;
             }
+        }
+
+        if (object_type == SAI_OBJECT_TYPE_MIRROR_SESSION &&
+            attr_id == SAI_MIRROR_SESSION_ATTR_LABEL &&
+            mirror::g_hook != mirror::Hook::None)
+        {
+            if (mirror::g_hook == mirror::Hook::QueryFail)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
+            attr_capability->create_implemented =
+                mirror::g_hook == mirror::Hook::CreateSupported;
+            return SAI_STATUS_SUCCESS;
         }
 
         // ICMP echo session selective-counter capability (IcmpOrch via the shared
@@ -614,5 +647,38 @@ namespace sai_enum_cap_ut
     EnumValuesCapabilityOverrideGuard::~EnumValuesCapabilityOverrideGuard()
     {
         clearEnumValuesCapabilityOverride();
+    }
+}
+
+namespace mirrororch_sai_wrap_ut
+{
+    void setSaiHookNone()
+    {
+        mirror::g_hook = mirror::Hook::None;
+    }
+
+    void setSaiHookQueryFail()
+    {
+        mirror::g_hook = mirror::Hook::QueryFail;
+    }
+
+    void setSaiHookCreateUnsupported()
+    {
+        mirror::g_hook = mirror::Hook::CreateUnsupported;
+    }
+
+    void setSaiHookCreateSupported()
+    {
+        mirror::g_hook = mirror::Hook::CreateSupported;
+    }
+
+    MirrorSaiHookGuard::MirrorSaiHookGuard(void (*apply)())
+    {
+        apply();
+    }
+
+    MirrorSaiHookGuard::~MirrorSaiHookGuard()
+    {
+        setSaiHookNone();
     }
 }
