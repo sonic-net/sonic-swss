@@ -9,6 +9,7 @@
 #include "mock_table.h"
 #include "mock_response_publisher.h"
 #include "switchorch.h"
+#include "hftelorch_is_supported_sai_wrap.h"
 
 extern void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             sai_switch_asic_sdk_health_severity_t severity,
@@ -38,6 +39,8 @@ namespace switchorch_test
 
     bool _ut_create_switch_tunnel_called;
     bool _ut_create_switch_tunnel_has_security_attr;
+    bool _ut_vxlan_default_port_set_called;
+    bool _ut_vxlan_router_mac_set_called;
 
     sai_status_t _ut_stub_create_switch_tunnel(
         _Out_ sai_object_id_t *switch_tunnel_id,
@@ -77,6 +80,12 @@ namespace switchorch_test
                 return SAI_STATUS_NOT_IMPLEMENTED;
             }
             break;
+        case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+            _ut_vxlan_default_port_set_called = true;
+            return SAI_STATUS_SUCCESS;
+        case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
+            _ut_vxlan_router_mac_set_called = true;
+            return SAI_STATUS_SUCCESS;
         case SAI_SWITCH_ATTR_REG_FATAL_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
         case SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
         case SAI_SWITCH_ATTR_REG_NOTICE_SWITCH_ASIC_SDK_HEALTH_CATEGORY:
@@ -124,6 +133,8 @@ namespace switchorch_test
             _ut_reg_event_unsupported = false;
             _ut_create_switch_tunnel_called = false;
             _ut_create_switch_tunnel_has_security_attr = false;
+            _ut_vxlan_default_port_set_called = false;
+            _ut_vxlan_router_mac_set_called = false;
 
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -401,6 +412,57 @@ namespace switchorch_test
         static_cast<Orch *>(gSwitchOrch)->doTask();
 
         ASSERT_TRUE(_ut_create_switch_tunnel_called);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SwitchOrchTest, VxlanSportModeNotSupportedSkipsSwitchTunnel)
+    {
+        hftel_is_supported_ut::SaiHookGuard guard(hftel_is_supported_ut::setSaiHookVxlanSportModeNotImplemented);
+
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"switch", "SET",
+                           {
+                               {"vxlan_sport", "1024"},
+                               {"vxlan_router_mac", "00:11:22:33:44:55"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        // Sport mode is skipped, the rest of the SWITCH entry is still applied.
+        ASSERT_FALSE(_ut_create_switch_tunnel_called);
+        ASSERT_TRUE(_ut_vxlan_router_mac_set_called);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SwitchOrchTest, VxlanDefaultPortNotSupportedSkipsAttribute)
+    {
+        hftel_is_supported_ut::SaiHookGuard guard(hftel_is_supported_ut::setSaiHookVxlanDefaultPortNotImplemented);
+
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"switch", "SET",
+                           {
+                               {"vxlan_port", "4789"},
+                               {"vxlan_router_mac", "00:11:22:33:44:55"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        ASSERT_FALSE(_ut_vxlan_default_port_set_called);
+        ASSERT_TRUE(_ut_vxlan_router_mac_set_called);
         ASSERT_TRUE(consumer->m_toSync.empty());
 
         _unhook_sai_apis();
