@@ -19,8 +19,13 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "subscriberstatetable.h"
 
 #define VLAN_PREFIX         "Vlan"
+#define FDB_SYNC_GLOBAL_KEY "global"
+#define MAC_SYNC_MODE_FIELD "mac_sync_mode"
+#define MAC_SYNC_MODE_FPM   "fpm"
+#define L3_EVPN_MH_SUBTYPE  "L3EvpnMH"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
@@ -55,6 +60,24 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
         gNotifConsumerStatsOrch->registerConsumer("FdbOrch:flush", m_flushNotificationsConsumer);
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
+
+    /* Track which component owns local MAC synchronization. Read the current
+     * value before registering for changes because SubscriberStateTable only
+     * delivers updates made after subscription.
+     */
+    string subtype;
+    Table deviceMetadata(configDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    m_l3EvpnMh = deviceMetadata.hget("localhost", "subtype", subtype) && subtype == L3_EVPN_MH_SUBTYPE;
+
+    Table cfgFdbSyncTable(configDb, CFG_FDB_SYNC_TABLE_NAME);
+    string macSyncMode;
+    cfgFdbSyncTable.hget(FDB_SYNC_GLOBAL_KEY, MAC_SYNC_MODE_FIELD, macSyncMode);
+    m_fpmMacSync = m_l3EvpnMh || (macSyncMode == MAC_SYNC_MODE_FPM);
+
+    auto *fdbSyncConfigTable = new swss::SubscriberStateTable(
+        configDb, CFG_FDB_SYNC_TABLE_NAME,
+        swss::TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+    Orch::addExecutor(new Consumer(fdbSyncConfigTable, this, CFG_FDB_SYNC_TABLE_NAME));
 
     /* Add FDB notifications support from ASIC.
      *
@@ -793,7 +816,20 @@ void FdbOrch::update(sai_fdb_event_t        type,
         SWSS_LOG_INFO("Received mac age out for mac:%s vlan:0x%" PRIx64 "of type:%d",
                                 update.entry.mac.to_string().c_str(), update.entry.bv_id, static_cast<int>(dest_type));
 
-        gNeighOrch->processFDBResolve(update.entry);
+        /* In FPM mode zebra owns the liveness probe after a local MAC ages.
+         * Asking nbrmgrd to resolve the existing neighbor here can make the
+         * ASIC synthesize a fresh FDB learn from that neighbor without any
+         * host traffic, feeding a false local-MAC add straight back to zebra.
+         */
+        if (!m_fpmMacSync)
+        {
+            gNeighOrch->processFDBResolve(update.entry);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Skip ARP resolve for aged MAC %s in FPM sync mode",
+                          update.entry.mac.to_string().c_str());
+        }
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
@@ -1029,6 +1065,44 @@ void FdbOrch::doTask(Consumer& consumer)
     if (table_name == CFG_MAC_MOVE_GUARD_TABLE_NAME)
     {
         m_macMoveGuard->doConfigTask(consumer);
+        return;
+    }
+
+    if (table_name == CFG_FDB_SYNC_TABLE_NAME)
+    {
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            const auto &entry = it->second;
+
+            if (kfvKey(entry) == FDB_SYNC_GLOBAL_KEY)
+            {
+                bool fpmMacSync = m_l3EvpnMh;
+                bool modePresent = (kfvOp(entry) == DEL_COMMAND);
+
+                if (kfvOp(entry) == SET_COMMAND)
+                {
+                    for (const auto &fv : kfvFieldsValues(entry))
+                    {
+                        if (fvField(fv) == MAC_SYNC_MODE_FIELD)
+                        {
+                            fpmMacSync = m_l3EvpnMh || (fvValue(fv) == MAC_SYNC_MODE_FPM);
+                            modePresent = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (modePresent && fpmMacSync != m_fpmMacSync)
+                {
+                    m_fpmMacSync = fpmMacSync;
+                    SWSS_LOG_NOTICE("FdbOrch: mac_sync_mode is now %s",
+                                    m_fpmMacSync ? "fpm" : "kernel");
+                }
+            }
+
+            it = consumer.m_toSync.erase(it);
+        }
         return;
     }
 
