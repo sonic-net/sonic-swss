@@ -514,6 +514,20 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 
     if (!m_vxlanSportUserModeEnabled)
     {
+        sai_attr_capability_t capability;
+
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
+                                                SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("VXLAN UDP sport mode attribute query capability failed, rv:%d", status);
+        }
+        else if (!capability.create_implemented)
+        {
+            SWSS_LOG_NOTICE("VXLAN UDP sport mode not supported, skipping switch tunnel attribute %s", attribute.c_str());
+            return SAI_STATUS_SUCCESS;
+        }
+
         // Enable Vxlan src port range feature
         vector<sai_attribute_t> attrs;
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_TYPE;
@@ -522,7 +536,6 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
-        sai_attr_capability_t capability;
         status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
                                                 SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY, &capability);
         if (status == SAI_STATUS_SUCCESS) {
@@ -670,8 +683,22 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+                    {
+                        sai_attr_capability_t capability;
+                        sai_status_t cap_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                                SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT, &capability);
+                        if (cap_status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_WARN("VXLAN default port attribute query capability failed, rv:%d", cap_status);
+                        }
+                        else if (!capability.set_implemented)
+                        {
+                            SWSS_LOG_NOTICE("VXLAN default port not supported, skipping switch attribute %s", attribute.c_str());
+                            continue;
+                        }
                         attr.value.u16 = to_uint<uint16_t>(value);
                         break;
+                    }
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
                         mac_addr = value;
