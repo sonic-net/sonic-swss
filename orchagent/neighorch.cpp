@@ -24,6 +24,7 @@ extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
+extern NeighOrch *gNeighOrch;
 
 extern bool isChassisDbInUse();
 
@@ -64,9 +65,15 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
 
 NeighOrch::~NeighOrch()
 {
+    gNeighOrch = nullptr;
+}
+
+void NeighOrch::detachObservers()
+{
     if (m_fdbOrch)
     {
         m_fdbOrch->detach(this);
+        m_fdbOrch = nullptr;
     }
 }
 
