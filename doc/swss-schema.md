@@ -275,6 +275,22 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ; bgp warm restart is enabled for static MySIDs; SWSS cannot infer completion
     ; from an idle FPM stream.
 
+    ; MySID processing follows the standard task-status convention in both normal
+    ; operation and warm restore: invalid requests and permanent failures are
+    ; reported and discarded from the task queue; only retryable work remains
+    ; pending or in the dependency retry cache. Discarding a task does not delete
+    ; its APP_DB row.
+    ;
+    ; If MySID creation reports ITEM_ALREADY_EXISTS and retained tunnel/counter
+    ; OIDs conflict with locally owned resources, the conflict handler leaves the
+    ; retained entry unchanged and reports the conflicting OIDs in STATE_DB
+    ; PROCESS_HEALTH|orchagent and syslog. Equivalent attributes do not establish
+    ; ownership. The task fails without automatic retry in either mode.
+    ; Cleanup releases only resources allocated by the failed attempt and restores
+    ; any pre-existing counter-name mapping. A discarded failure does not block
+    ; APPLY_VIEW, which may remove retained entries absent from the restored view.
+    ; Operator recovery must resolve the ownership conflict before resubmission.
+
 ---------------------------------------------
 ### FDB_TABLE
 

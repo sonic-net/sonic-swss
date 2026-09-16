@@ -14,7 +14,6 @@
 #include "redisutility.h"
 #include "flex_counter_manager.h"
 #include "flow_counter_handler.h"
-#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -1695,8 +1694,12 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
         }
 
         sai_object_id_t counter_oid = SAI_NULL_OBJECT_ID;
+        string previous_counter_mapping;
+        bool had_counter_mapping = false;
         if (counter_required)
         {
+            had_counter_mapping = m_mysid_counters_table->hget(
+                "", getMySidCounterKey(my_sid_entry), previous_counter_mapping);
             if (!addMySidCounter(my_sid_entry, counter_oid))
             {
                 if (created_tunnel_term)
@@ -1715,6 +1718,10 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
         auto cleanupCreatedResources = [&]()
         {
             removeMySidCounter(my_sid_entry, counter_oid);
+            if (had_counter_mapping)
+            {
+                m_mysid_counters_table->hset("", getMySidCounterKey(my_sid_entry), previous_counter_mapping);
+            }
             if (created_tunnel_term)
             {
                 removeMySidIpInIpTunnelTermEntry(tunnel_term_entry);
@@ -1806,10 +1813,18 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
                 (current_attributes.size() > 5 &&
                  hasResourceConflict(current_attributes[5], desired_attributes[5])))
             {
-                SWSS_LOG_WARN("Existing my_sid entry %s references resources not owned by this process",
-                              key_string.c_str());
+                const auto retained_counter = current_attributes.size() > 5
+                                            ? current_attributes[5].value.oid : SAI_NULL_OBJECT_ID;
+                const string error = "Cannot recover my_sid entry " + key_string +
+                    ": retained tunnel " + sai_serialize_object_id(current_attributes[2].value.oid) +
+                    ", requested tunnel " + sai_serialize_object_id(desired_attributes[2].value.oid) +
+                    ", retained counter " + sai_serialize_object_id(retained_counter) +
+                    ", requested counter " + sai_serialize_object_id(counter_oid) +
+                    "; resource ownership is unknown, leaving the entry unchanged for this attempt";
+                SWSS_LOG_ERROR("%s", error.c_str());
+                setSaiFailureStatus(true, error);
                 cleanupCreatedResources();
-                return task_need_retry;
+                return task_failed;
             }
 
             auto attributesEqual = [](const sai_attribute_t& left,
@@ -2866,13 +2881,7 @@ void Srv6Orch::doTask(Consumer &consumer)
                 consumer.m_toSync.erase(it++);
                 continue;
             }
-            WarmStart::WarmStartState warm_state = WarmStart::RECONCILED;
-            WarmStart::getWarmStartState("orchagent", warm_state);
-            bool warm_restore_in_progress = WarmStart::isWarmStart() &&
-                                            warm_state == WarmStart::INITIALIZED;
-            if (result.status == task_need_retry ||
-                ((result.status == task_failed || result.status == task_invalid_entry) &&
-                 warm_restore_in_progress))
+            if (result.status == task_need_retry)
             {
                 ++it;
                 continue;

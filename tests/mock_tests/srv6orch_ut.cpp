@@ -2,6 +2,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "ut_helper.h"
+#include "warm_restart.h"
 
 #include <gtest/gtest.h>
 #include <deque>
@@ -16,6 +17,7 @@ namespace srv6orch_test
 
 DEFINE_SAI_GENERIC_API_MOCK(tunnel, tunnel);
 DEFINE_SAI_API_MOCK(srv6, my_sid);
+DEFINE_SAI_GENERIC_API_MOCK(counter, counter);
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -29,12 +31,17 @@ protected:
     {
         INIT_SAI_API_MOCK(tunnel);
         INIT_SAI_API_MOCK(srv6);
+        INIT_SAI_API_MOCK(counter);
         MockSaiApis();
+        initSaiFailureTable();
+        setSaiFailureStatus(false);
     }
 
     void PreTearDown() override
     {
+        setSaiFailureStatus(false);
         RestoreSaiApis();
+        DEINIT_SAI_API_MOCK(counter);
         DEINIT_SAI_API_MOCK(srv6);
         DEINIT_SAI_API_MOCK(tunnel);
     }
@@ -142,25 +149,6 @@ TEST_F(Srv6OrchMySidTest, MySidEntryCreation_WithoutDecapDscpMode)
 
     runCfgMySidTask(cfg_key, {});
     runAppMySidTask(app_key, "un", "default", "");
-}
-
-TEST_F(Srv6OrchMySidTest, InvalidMySidRequestsAreDiscarded)
-{
-    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _)).Times(0);
-
-    runAppMySidTask("32:16:16:0:fc00:0:1:40::", "invalid", "", "");
-    runAppMySidTask("32:16:16:0:fc00:0:1:41::", "end.t", "", "");
-    runAppMySidTask("32:16:16:0:fc00:0:1:42::", "end.x", "", "");
-    runAppMySidRawTask("32:16:16:0:fc00:0:1:43::", "INVALID", {});
-    runAppMySidTask("32:16:16", "end", "", "");
-    runAppMySidTask("129:16:16:0:fc00:0:1:44::", "end", "", "");
-    runAppMySidTask("32:16:16:0:192.0.2.1", "end", "", "");
-    runAppMySidTask("32:16:16:0:not-an-ip", "end", "", "");
-    runAppMySidTask("64:32:32:1:fc00:0:1:45::", "end", "", "");
-
-    vector<string> pending;
-    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
-    EXPECT_TRUE(pending.empty());
 }
 
 TEST_F(Srv6OrchMySidTest, DuplicateEndReplayIsNoOp)
@@ -369,7 +357,7 @@ TEST_F(Srv6OrchMySidTest, SaiCreateFailureRollsBackTunnelAndRemainsPending)
     EXPECT_FALSE(pending.empty());
 }
 
-TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsPreservesEntryAndRollsBackResources)
+TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsResourceConflictFailsWithoutRetry)
 {
     const string locator = "loc1";
     const string key = "32:16:16:0:fc00:0:1:23::1";
@@ -407,12 +395,182 @@ TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsPreservesEntryAndRollsBackResour
     };
 
     runAppMySidTask(key, "un", "default", "");
+    retryMySidTasks();
     sai_srv6_api->get_my_sid_entry_attribute = old_get;
 
     vector<string> pending;
     static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
-    EXPECT_FALSE(pending.empty());
+    EXPECT_TRUE(pending.empty());
+    string error;
+    EXPECT_TRUE(getSaiFailureStatus(error));
+    EXPECT_NE(error.find(key), string::npos);
+    EXPECT_NE(error.find("retained tunnel oid:0xdead"), string::npos);
 }
+
+class Srv6OrchMySidRecoveryTest : public Srv6OrchMySidTest, public testing::WithParamInterface<bool>
+{
+protected:
+    void PostSetUp() override
+    {
+        Srv6OrchMySidTest::PostSetUp();
+        WarmStart::initialize("orchagent", "swss");
+        Table enable_table(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+        enable_table.hset("swss", "enable", GetParam() ? "true" : "false");
+        Table warm_restart_table(m_state_db.get(), STATE_WARM_RESTART_TABLE_NAME);
+        warm_restart_table.hset("orchagent", "restore_count", "0");
+        WarmStart::checkWarmStart("orchagent", "swss");
+        WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
+        ASSERT_EQ(WarmStart::isWarmStart(), GetParam());
+    }
+
+    void PreTearDown() override
+    {
+        Table enable_table(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+        enable_table.hset("swss", "enable", "false");
+        Table warm_restart_table(m_state_db.get(), STATE_WARM_RESTART_TABLE_NAME);
+        warm_restart_table.hset("orchagent", "restore_count", "");
+        WarmStart::checkWarmStart("orchagent", "swss");
+        EXPECT_FALSE(WarmStart::isWarmStart());
+        WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+        Srv6OrchMySidTest::PreTearDown();
+    }
+};
+
+TEST_P(Srv6OrchMySidRecoveryTest, InvalidMySidRequestsAreDiscarded)
+{
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _)).Times(0);
+
+    runAppMySidTask("32:16:16:0:fc00:0:1:40::", "invalid", "", "");
+    runAppMySidTask("32:16:16:0:fc00:0:1:41::", "end.t", "", "");
+    runAppMySidTask("32:16:16:0:fc00:0:1:42::", "end.x", "", "");
+    runAppMySidRawTask("32:16:16:0:fc00:0:1:43::", "INVALID", {});
+    runAppMySidTask("32:16:16", "end", "", "");
+    runAppMySidTask("129:16:16:0:fc00:0:1:44::", "end", "", "");
+    runAppMySidTask("32:16:16:0:192.0.2.1", "end", "", "");
+    runAppMySidTask("32:16:16:0:not-an-ip", "end", "", "");
+    runAppMySidTask("64:32:32:1:fc00:0:1:45::", "end", "", "");
+    retryMySidTasks();
+    retryMySidTasks();
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+}
+
+TEST_P(Srv6OrchMySidRecoveryTest, PermanentSaiCreateFailureIsDiscarded)
+{
+    const string key = "32:16:16:0:fc00:0:1:46::";
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    runAppMySidTask(key, "end", "", "");
+    retryMySidTasks();
+    retryMySidTasks();
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+    string error;
+    EXPECT_TRUE(getSaiFailureStatus(error));
+    EXPECT_NE(error.find("SAI_STATUS_INVALID_PARAMETER"), string::npos);
+}
+
+TEST_P(Srv6OrchMySidRecoveryTest, RetryableSaiCreateFailureRemainsPending)
+{
+    const string key = "32:16:16:0:fc00:0:1:47::";
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    runAppMySidTask(key, "end", "", "");
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_EQ(pending.size(), 1u);
+
+    retryMySidTasks();
+    retryMySidTasks();
+    pending.clear();
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+}
+
+TEST_P(Srv6OrchMySidRecoveryTest, CounterConflictPreservesMappingWithoutRepeatedAllocation)
+{
+    const string key = "32:16:16:0:fc00:0:1:27::";
+    const string counter_key = "fc00:0:1:27::/64";
+    static sai_object_id_t retained_counter;
+    sai_attribute_t counter_type{};
+    counter_type.id = SAI_COUNTER_ATTR_TYPE;
+    counter_type.value.s32 = SAI_COUNTER_TYPE_REGULAR;
+    ASSERT_EQ(sai_counter_api->create_counter(&retained_counter, gSwitchId, 1, &counter_type), SAI_STATUS_SUCCESS);
+
+    DBConnector counters_db("COUNTERS_DB", 0);
+    Table name_map(&counters_db, COUNTERS_SRV6_NAME_MAP);
+    name_map.hset("", counter_key, sai_serialize_object_id(retained_counter));
+    gSrv6Orch->setCountersState(true);
+
+    EXPECT_CALL(*mock_sai_counter_api, create_counter(_, _, _, _)).Times(1);
+    EXPECT_CALL(*mock_sai_counter_api, remove_counter(testing::Ne(retained_counter))).Times(1);
+    EXPECT_CALL(*mock_sai_counter_api, remove_counter(retained_counter)).Times(0);
+    EXPECT_CALL(*mock_sai_srv6_api, create_my_sid_entry(_, _, _))
+        .WillOnce(Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+    EXPECT_CALL(*mock_sai_srv6_api, remove_my_sid_entry(_)).Times(0);
+
+    auto old_get = sai_srv6_api->get_my_sid_entry_attribute;
+    sai_srv6_api->get_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, uint32_t attr_count, sai_attribute_t* attrs) -> sai_status_t {
+        for (uint32_t index = 0; index < attr_count; ++index)
+        {
+            if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E;
+            }
+            else if (attrs[index].id == SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR)
+            {
+                attrs[index].value.s32 = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+            }
+            else
+            {
+                attrs[index].value.oid = attrs[index].id == SAI_MY_SID_ENTRY_ATTR_COUNTER_ID
+                                            ? retained_counter : SAI_NULL_OBJECT_ID;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    };
+    auto old_set = sai_srv6_api->set_my_sid_entry_attribute;
+    sai_srv6_api->set_my_sid_entry_attribute = [](
+        const sai_my_sid_entry_t*, const sai_attribute_t*) -> sai_status_t {
+        ADD_FAILURE() << "Retained MySID must not be modified on resource conflict";
+        return SAI_STATUS_FAILURE;
+    };
+
+    runAppMySidTask(key, "end", "", "");
+    retryMySidTasks();
+    retryMySidTasks();
+    sai_srv6_api->set_my_sid_entry_attribute = old_set;
+    sai_srv6_api->get_my_sid_entry_attribute = old_get;
+
+    string mapping;
+    EXPECT_TRUE(name_map.hget("", counter_key, mapping));
+    EXPECT_EQ(mapping, sai_serialize_object_id(retained_counter));
+    EXPECT_EQ(sai_counter_api->get_counter_attribute(retained_counter, 1, &counter_type), SAI_STATUS_SUCCESS);
+    EXPECT_EQ(counter_type.value.s32, SAI_COUNTER_TYPE_REGULAR);
+
+    vector<string> pending;
+    static_cast<Orch*>(gSrv6Orch)->dumpPendingTasks(pending);
+    EXPECT_TRUE(pending.empty());
+    string error;
+    EXPECT_TRUE(getSaiFailureStatus(error));
+    EXPECT_NE(error.find(key), string::npos);
+    EXPECT_NE(error.find("retained counter " + mapping), string::npos);
+    EXPECT_NE(error.find("resource ownership is unknown"), string::npos);
+
+    EXPECT_EQ(old_sai_counter_api->remove_counter(retained_counter), SAI_STATUS_SUCCESS);
+    name_map.hdel("", counter_key);
+}
+
+INSTANTIATE_TEST_SUITE_P(RestoreModes, Srv6OrchMySidRecoveryTest, testing::Bool());
 
 TEST_F(Srv6OrchMySidTest, SaiCreateAlreadyExistsReconcilesMatchingEntryInPlace)
 {
