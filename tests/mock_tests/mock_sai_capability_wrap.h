@@ -74,22 +74,6 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookSwitchNotifySetNotImplemented();
     void setSaiHookAllSupported();
 
-    // Pin whether SAI_OBJECT_TYPE_TAM_TEL_TYPE's SWITCH_ENABLE_*_STATS attributes
-    // report create_implemented. All other object types behave as AllSupported so
-    // isSupportedHFTel reaches the mode/category probe. Combine with a
-    // setSaiHookModeAdvertised* call to exercise HFTelOrch::querySupportedTelTypeModes'
-    // per-category downgrade, which applies to single_supported and mixed_supported
-    // alike.
-    void setSaiHookMixedEnableAttrsAllUnsupported();
-    void setSaiHookMixedEnableAttrsMmuUnsupported();
-
-    // Pin what SAI_TAM_TEL_TYPE_ATTR_MODE enum-values capability advertises.
-    void setSaiHookModeAdvertisedSingleOnly();
-    void setSaiHookModeAdvertisedMixedOnly();
-    void setSaiHookModeAdvertisedBoth();
-    void setSaiHookModeAdvertisedNeither();
-    void setSaiHookModeQueryNotSupported();
-
     /** RAII: restores the HFTel hook to None on scope exit. */
     struct HFTelSaiHookGuard
     {

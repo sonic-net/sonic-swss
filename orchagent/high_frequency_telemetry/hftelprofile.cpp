@@ -19,15 +19,11 @@ HFTelProfile::HFTelProfile(
     const string &profile_name,
     sai_object_id_t sai_tam_obj,
     sai_object_id_t sai_tam_collector_obj,
-    const CounterNameCache &cache,
-    sai_tam_tel_type_mode_t tel_type_mode,
-    std::unordered_set<sai_object_type_t> tel_type_supported_categories)
+    const CounterNameCache &cache)
     : m_profile_name(profile_name),
       m_setting_state(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM),
       m_poll_interval(0),
       m_counter_name_cache(cache),
-      m_tel_type_mode(tel_type_mode),
-      m_tel_type_supported_categories(std::move(tel_type_supported_categories)),
       m_sai_tam_obj(sai_tam_obj),
       m_sai_tam_collector_obj(sai_tam_collector_obj)
 {
@@ -72,8 +68,7 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
 {
     SWSS_LOG_ENTER();
 
-    const auto key = mapKey(type);
-    auto type_itr = m_sai_tam_tel_type_objs.find(key);
+    auto type_itr = m_sai_tam_tel_type_objs.find(type);
     if (type_itr == m_sai_tam_tel_type_objs.end())
     {
         return;
@@ -90,31 +85,27 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
         return;
     }
 
-    const bool ready = (m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
-        ? areAllMonitoringObjectsReady()
-        : isMonitoringObjectReady(type);
-
     do
     {
         if (stats->second == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
             if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
             {
-                if (!ready)
+                if (!isMonitoringObjectReady(type))
                 {
                     return;
                 }
                 // Clearup the previous templates
-                m_sai_tam_tel_type_templates.erase(key);
+                m_sai_tam_tel_type_templates.erase(type);
             }
             else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
             {
-                if (m_sai_tam_tel_type_templates.find(key) == m_sai_tam_tel_type_templates.end())
+                if (m_sai_tam_tel_type_templates.find(type) == m_sai_tam_tel_type_templates.end())
                 {
                     // The template isn't ready
                     return;
                 }
-                if (!ready)
+                if (!isMonitoringObjectReady(type))
                 {
                     return;
                 }
@@ -180,7 +171,7 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
 sai_tam_tel_type_state_t HFTelProfile::getStreamState(sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
-    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
+    auto itr = m_sai_tam_tel_type_objs.find(object_type);
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
@@ -197,7 +188,7 @@ void HFTelProfile::notifyConfigReady(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
+    auto itr = m_sai_tam_tel_type_objs.find(object_type);
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return;
@@ -211,7 +202,7 @@ sai_tam_tel_type_state_t HFTelProfile::getTelemetryTypeState(sai_object_type_t o
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
+    auto itr = m_sai_tam_tel_type_objs.find(object_type);
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
@@ -287,37 +278,13 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
 
-    if (isMixedTypeMode())
-    {
-        const auto next = static_cast<uint32_t>(m_next_label) + object_names.size();
-        if (next > MAX_LABEL)
-        {
-            SWSS_LOG_ERROR(
-                "HFTel: cannot add group %s (%zu objects); label allocator would exceed the "
-                "15-bit IPFIX IE range (%u). Delete and recreate the profile to reset.",
-                group_name.c_str(), object_names.size(),
-                MAX_LABEL);
-            return;
-        }
-    }
-
     auto itr = m_groups.lower_bound(sai_object_type);
-
-    // In MIXED_TYPE mode all groups in a profile share one IPFIX template and
-    // labels must be globally unique within the profile. Allocate from
-    // m_next_label and never reuse. In SINGLE_TYPE the label space is per-group
-    // (legacy behavior) so we keep the default start_label of 1.
-    const sai_uint16_t start_label = isMixedTypeMode() ? m_next_label : 1;
 
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateObjects(object_names, start_label);
+        group.updateObjects(object_names);
         m_groups.insert(itr, {sai_object_type, move(group)});
-        if (isMixedTypeMode())
-        {
-            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
-        }
     }
     else
     {
@@ -329,11 +296,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
         {
             delObjectSAIID(sai_object_type, obj.first.c_str());
         }
-        itr->second.updateObjects(object_names, start_label);
-        if (isMixedTypeMode())
-        {
-            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
-        }
+        itr->second.updateObjects(object_names);
     }
     loadCounterNameCache(sai_object_type);
 
@@ -497,28 +460,16 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         }
         m_groups.erase(itr);
     }
+    m_sai_tam_tel_type_templates.erase(sai_object_type);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
-    m_name_sai_map.erase(sai_object_type);
-
-    // In SINGLE mode each object type owns its own tam_tel_type / tam_report,
-    // so the shared_key below is just sai_object_type and erasing only
-    // touches the group being cleared. In MIXED mode the shared_key is the
-    // singleton and these maps hold resources shared across every group in the
-    // profile, so we must only tear them down when this is the last group.
-    const bool teardown_shared =
-        m_tel_type_mode != SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE || m_groups.empty();
-    if (teardown_shared)
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
     {
-        const auto shared_key = mapKey(sai_object_type);
-        m_sai_tam_tel_type_templates.erase(shared_key);
-        auto type_itr = m_sai_tam_tel_type_objs.find(shared_key);
-        if (type_itr != m_sai_tam_tel_type_objs.end())
-        {
-            m_sai_tam_tel_type_states.erase(type_itr->second);
-            m_sai_tam_tel_type_objs.erase(type_itr);
-        }
-        m_sai_tam_report_objs.erase(shared_key);
+        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
+        m_sai_tam_tel_type_objs.erase(tel_type_itr);
     }
+    m_sai_tam_report_objs.erase(sai_object_type);
+    m_name_sai_map.erase(sai_object_type);
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
 }
@@ -527,7 +478,7 @@ const vector<uint8_t> &HFTelProfile::getTemplates(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    return m_sai_tam_tel_type_templates.at(mapKey(object_type));
+    return m_sai_tam_tel_type_templates.at(object_type);
 }
 
 const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
@@ -689,26 +640,11 @@ bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
     return true;
 }
 
-bool HFTelProfile::areAllMonitoringObjectsReady() const
-{
-    SWSS_LOG_ENTER();
-
-    for (const auto &group : m_groups)
-    {
-        if (!isMonitoringObjectReady(group.first))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    const auto key = mapKey(object_type);
-    auto itr = m_sai_tam_report_objs.find(key);
+    auto itr = m_sai_tam_report_objs.find(object_type);
     if (itr != m_sai_tam_report_objs.end())
     {
         return *itr->second;
@@ -751,7 +687,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    m_sai_tam_report_objs[key] = move(
+    m_sai_tam_report_objs[object_type] = move(
         sai_guard_t(
             new sai_object_id_t(sai_object),
             [this](sai_object_id_t *p)
@@ -769,8 +705,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    const auto key = mapKey(object_type);
-    auto itr = m_sai_tam_tel_type_objs.find(key);
+    auto itr = m_sai_tam_tel_type_objs.find(object_type);
     if (itr != m_sai_tam_tel_type_objs.end())
     {
         return *itr->second;
@@ -786,38 +721,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.s32 = SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION;
     attrs.push_back(attr);
 
-    if (m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
-    {
-        // The single tel_type for this profile must cover every supported
-        // counter category; individual sai_tam_counter_subscription objects
-        // scope what is actually streamed. Only enable the categories the
-        // vendor SAI actually implements (m_tel_type_supported_categories, set
-        // from HFTelOrch::querySupportedTelTypeModes) - groups for any other
-        // category are rejected before reaching here, in
-        // HFTelOrch::groupTableSet.
-        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_PORT))
-        {
-            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
-            attr.value.booldata = true;
-            attrs.push_back(attr);
-        }
-
-        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_BUFFER_POOL) ||
-            m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP))
-        {
-            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
-            attr.value.booldata = true;
-            attrs.push_back(attr);
-        }
-
-        if (m_tel_type_supported_categories.count(SAI_OBJECT_TYPE_QUEUE))
-        {
-            attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
-            attr.value.booldata = true;
-            attrs.push_back(attr);
-        }
-    }
-    else if (object_type == SAI_OBJECT_TYPE_PORT)
+    if (object_type == SAI_OBJECT_TYPE_PORT)
     {
         attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
         attr.value.booldata = true;
@@ -842,8 +746,8 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
                        sai_serialize_object_type(object_type).c_str());
     }
 
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE;
-    attr.value.s32 = m_tel_type_mode;
+    attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
+    attr.value.s32 = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_REPORT_ID;
@@ -858,7 +762,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    m_sai_tam_tel_type_objs[key] = move(
+    m_sai_tam_tel_type_objs[object_type] = move(
         sai_guard_t(
             new sai_object_id_t(sai_object),
             [this](sai_object_id_t *p)
@@ -876,7 +780,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
                     sai_tam_api->remove_tam_tel_type(*p));
                 delete p;
             }));
-    m_sai_tam_tel_type_states[m_sai_tam_tel_type_objs[key]] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    m_sai_tam_tel_type_states[m_sai_tam_tel_type_objs[object_type]] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
 
     HFTELUTILS_ADD_SAI_OBJECT_LIST(
         *m_sai_tam_telemetry_obj,
@@ -1052,15 +956,11 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
 {
     SWSS_LOG_ENTER();
 
-    // In MIXED mode the stored key is the singleton (SAI_OBJECT_TYPE_NULL),
-    // which collides with getObjectType's "not found" sentinel. Use the
-    // guard to disambiguate.
-    if (!getTAMTelTypeGuard(tam_tel_type_obj))
-    {
-        SWSS_LOG_THROW("The TAM tel type object %s is not registered with this profile",
-                       sai_serialize_object_id(tam_tel_type_obj).c_str());
-    }
     auto object_type = getObjectType(tam_tel_type_obj);
+    if (object_type == SAI_OBJECT_TYPE_NULL)
+    {
+        SWSS_LOG_THROW("The object type is not found");
+    }
 
     // Query the required buffer size first by passing count=0 and list=nullptr,
     // then allocate and fetch the actual data.
@@ -1077,7 +977,7 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
     }
 
     vector<uint8_t> buffer;
-    if (attr.value.u8list.count > 0)
+    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.u8list.count > 0)
     {
         buffer.resize(attr.value.u8list.count, 0);
         attr.value.u8list.list = buffer.data();

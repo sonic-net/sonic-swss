@@ -28,22 +28,10 @@ public:
 
     static const std::unordered_map<std::string, sai_object_type_t> SUPPORT_COUNTER_TABLES;
 
-    // Mode used when the vendor SAI advertises both SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
-    // and SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE, or when the capability probe is
-    // unavailable. MIXED_TYPE is preferred by default to exercise the shared
-    // tel_type path.
-    static constexpr sai_tam_tel_type_mode_t DEFAULT_TEL_TYPE_MODE = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
-
     void locallyNotify(const CounterNameMapUpdater::Message &msg);
     static bool isSupportedHFTel(sai_object_id_t switch_id);
 
 private:
-    static bool querySupportedTelTypeModes(
-        sai_object_id_t switch_id,
-        bool &single_supported,
-        bool &mixed_supported,
-        std::unordered_set<sai_object_type_t> &tel_type_supported_categories);
-
     swss::Table m_state_telemetry_session;
     swss::DBConnector m_asic_db;
     swss::NotificationConsumer* m_asic_notification_consumer = nullptr;
@@ -71,12 +59,6 @@ private:
     sai_object_id_t m_sai_tam_transport_obj;
     sai_object_id_t m_sai_tam_collector_obj;
     sai_object_id_t m_sai_tam_obj;
-
-    sai_tam_tel_type_mode_t m_tel_type_mode;
-
-    // Object types whose SWITCH_ENABLE_*_STATS attribute the vendor SAI implements
-    // (see querySupportedTelTypeModes).
-    std::unordered_set<sai_object_type_t> m_tel_type_supported_categories;
 
     // SAI calls
     void createNetlinkChannel(const std::string &genl_family, const std::string &genl_group);
