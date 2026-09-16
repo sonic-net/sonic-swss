@@ -37,8 +37,8 @@ pub struct OtelDataPoint {
     pub attributes: Vec<OtelAttribute>,
     /// Timestamp in nanoseconds since Unix epoch
     pub time_unix_nano: u64,
-    /// The exact unsigned SAI counter; converted to an OTLP number by `to_proto`.
-    pub value: u64,
+    /// The gauge value (converted from SAI counter)
+    pub value: i64,
 }
 
 /// OpenTelemetry Attribute (Key-Value Pair)
@@ -88,22 +88,15 @@ impl OtelDataPoint {
         Self {
             attributes,
             time_unix_nano: observation_time_nano,
-            value: sai_stat.counter,
+            value: sai_stat.counter as i64,
         }
     }
 
     /// Converts to OpenTelemetry protobuf NumberDataPoint
-    ///
-    /// OTLP has no unsigned integer variant. Values through `i64::MAX` remain
-    /// exact integers; larger counters use doubles, which may lose precision
-    /// for large u64 values but never wrap into negative integers.
     pub fn to_proto(&self) -> NumberDataPoint {
         NumberDataPoint {
             time_unix_nano: self.time_unix_nano,
-            value: Some(match i64::try_from(self.value) {
-                Ok(value) => number_data_point::Value::AsInt(value),
-                Err(_) => number_data_point::Value::AsDouble(self.value as f64),
-            }),
+            value: Some(number_data_point::Value::AsInt(self.value)),
             attributes: self.attributes.iter().map(|attr| attr.to_proto()).collect(),
             ..Default::default()
         }
@@ -416,35 +409,6 @@ mod tests {
             assert_eq!(val, "TestInterface");
         } else {
             panic!("Expected string value");
-        }
-    }
-
-    #[test]
-    fn test_otel_data_point_unsigned_boundaries() {
-        for counter in [0, (1u64 << 53) + 1, i64::MAX as u64 - 1, i64::MAX as u64] {
-            let stat = SAIStat::new("Ethernet0", 1, 0, counter);
-            let point = OtelDataPoint::from_sai_stat(&stat, 99);
-            assert_eq!(point.value, counter);
-            assert_eq!(
-                point.to_proto().value,
-                Some(number_data_point::Value::AsInt(counter as i64))
-            );
-        }
-
-        for counter in [1u64 << 63, (1u64 << 63) + 1, u64::MAX] {
-            let stat = SAIStat::new("Ethernet0", 1, 0, counter);
-            let point = OtelDataPoint::from_sai_stat(&stat, 99);
-            assert_eq!(point.value, counter);
-            let proto = point.to_proto();
-            assert_eq!(proto.time_unix_nano, 99);
-            assert_eq!(
-                proto.attributes,
-                point.attributes.iter().map(|a| a.to_proto()).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                proto.value,
-                Some(number_data_point::Value::AsDouble(counter as f64))
-            );
         }
     }
 

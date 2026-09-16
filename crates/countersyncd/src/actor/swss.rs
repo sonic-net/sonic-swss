@@ -2,15 +2,11 @@ use super::super::message::ipfix::{
     IPFixTemplatesMessage, MAX_OBJECTS_PER_UPDATE, MAX_OBJECT_METADATA_BYTES,
     MAX_TEMPLATE_CONFIG_BYTES,
 };
-use swss_common::{DbConnector, KeyOperation, SubscriberStateTable, Table};
+use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
 use log::{debug, error, info};
 use std::time::Duration;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    thread,
-};
+use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::mpsc::{self, Sender};
 
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
@@ -18,7 +14,6 @@ const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
 const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 const SWSS_SELECT_TIMEOUT: Duration = Duration::from_millis(50);
-const SWSS_RECOVERY_DELAY: Duration = Duration::from_millis(100);
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -43,7 +38,7 @@ pub struct SwssActor {
 enum SwssEvent {
     Update {
         key: String,
-        session_data: Arc<SessionData>,
+        session_data: SessionData,
     },
     Delete {
         key: String,
@@ -99,8 +94,6 @@ impl SwssActor {
             .spawn(move || {
                 #[cfg(test)]
                 let mut iteration_count = 0;
-                let mut forwarded = HashMap::new();
-                let mut needs_reconcile = false;
 
                 loop {
                     if event_sender.is_closed() {
@@ -120,12 +113,7 @@ impl SwssActor {
                         }
                     }
 
-                    match Self::blocking_read_events(
-                        &mut session_table,
-                        &mut forwarded,
-                        &mut needs_reconcile,
-                        SWSS_SELECT_TIMEOUT,
-                    ) {
+                    match Self::blocking_collect_events(&mut session_table, SWSS_SELECT_TIMEOUT) {
                         Ok(events) => {
                             for event in events {
                                 if event_sender.blocking_send(event).is_err() {
@@ -136,6 +124,7 @@ impl SwssActor {
                         }
                         Err(e) => {
                             error!("Error reading from session table: {}", e);
+                            thread::sleep(Duration::from_millis(100));
                         }
                     }
                 }
@@ -155,114 +144,6 @@ impl SwssActor {
         }
 
         debug!("SwssActor terminated");
-    }
-
-    fn blocking_read_events(
-        session_table: &mut SubscriberStateTable,
-        forwarded: &mut HashMap<String, Arc<SessionData>>,
-        needs_reconcile: &mut bool,
-        timeout: Duration,
-    ) -> Result<Vec<SwssEvent>, String> {
-        let result = Self::blocking_collect_events(session_table, timeout);
-        Self::finish_read(session_table, forwarded, needs_reconcile, result)
-    }
-
-    fn finish_read(
-        session_table: &mut SubscriberStateTable,
-        forwarded: &mut HashMap<String, Arc<SessionData>>,
-        needs_reconcile: &mut bool,
-        result: Result<Vec<SwssEvent>, String>,
-    ) -> Result<Vec<SwssEvent>, String> {
-        let read_failed = result.is_err();
-        let reconciling = read_failed || *needs_reconcile;
-        let mut events = if reconciling {
-            *needs_reconcile = true;
-            if let Err(e) = &result {
-                error!("{e}; reconciling session table");
-            }
-            thread::sleep(SWSS_RECOVERY_DELAY);
-            // Timeout/signal from select does not prove the native cache is empty.
-            // Discard its notifications before taking an authoritative snapshot.
-            // Only an empty successful pop proves the cache drained (startup
-            // rows and notifications can occupy separate native buffers).
-            let mut retry = read_failed;
-            match session_table.pops() {
-                Ok(items) => retry |= !items.is_empty(),
-                Err(e) => {
-                    error!("Failed to drain session notifications during recovery: {e}");
-                    retry = true;
-                }
-            }
-
-            // pops consumes notifications before reading rows and can throw after
-            // consuming valid deletes. Re-read the source, including known keys
-            // that no longer appear in get_keys, rather than retrying that batch.
-            let db = session_table
-                .db_connector()
-                .clone_timeout(0)
-                .map_err(|e| format!("Failed to connect for session reconciliation: {e}"))?;
-            let table = Table::new(db, session_table.table_name())
-                .map_err(|e| format!("Failed to open session table for reconciliation: {e}"))?;
-            let mut keys: HashSet<_> = table
-                .get_keys()
-                .map_err(|e| format!("Failed to list sessions for reconciliation: {e}"))?
-                .into_iter()
-                .collect();
-            keys.extend(forwarded.keys().cloned());
-            let mut events = Vec::new();
-            for key in keys {
-                if key.len() > MAX_OBJECT_METADATA_BYTES {
-                    error!("Ignoring session key exceeding metadata byte limit");
-                    continue;
-                }
-                match table.get(&key) {
-                    Ok(Some(fields)) => events.push(SwssEvent::Update {
-                        key,
-                        session_data: Arc::new(Self::parse_session_data(&fields)),
-                    }),
-                    Ok(None) => events.push(SwssEvent::Delete { key }),
-                    Err(e) => {
-                        error!("Failed to reconcile session {key}: {e}");
-                        // Fail closed for this owner, without blocking other rows.
-                        retry = true;
-                        events.push(SwssEvent::Delete { key });
-                    }
-                }
-            }
-            // A failed pop can leave older notifications in its native buffer.
-            // Reconcile again after a successful drain instead of replaying them
-            // over this newer snapshot. Retry unreadable rows even without events.
-            *needs_reconcile = retry;
-            events
-        } else {
-            result?
-        };
-        // Every returned event is enqueued in order before the next read; a failed
-        // send terminates the reader. Keep the last forwarded source state, not
-        // the last observed template. Suppress only synthetic recovery replay:
-        // explicit refreshes may retry rejected ownership or cancel pending state,
-        // and even unknown explicit deletes can invalidate uncached dependencies.
-        // Absence represents a forwarded delete, so tombstones need no storage.
-        events.retain_mut(|event| match event {
-            SwssEvent::Update { key, session_data } => {
-                if let Some(previous) = forwarded.get(key) {
-                    if reconciling && previous.as_ref() == session_data.as_ref() {
-                        return false;
-                    }
-                    if previous.session_config == session_data.session_config {
-                        Arc::make_mut(session_data).session_config =
-                            Arc::clone(&previous.session_config);
-                    }
-                }
-                forwarded.insert(key.clone(), Arc::clone(session_data));
-                true
-            }
-            SwssEvent::Delete { key } => {
-                let known = forwarded.remove(key).is_some();
-                !reconciling || known
-            }
-        });
-        Ok(events)
     }
 
     fn blocking_collect_events(
@@ -290,9 +171,7 @@ impl SwssActor {
                                 KeyOperation::Set => {
                                     events.push(SwssEvent::Update {
                                         key: item.key,
-                                        session_data: Arc::new(Self::parse_session_data(
-                                            &item.field_values,
-                                        )),
+                                        session_data: Self::parse_session_data(&item.field_values),
                                     });
                                 }
                                 KeyOperation::Del => {
@@ -353,7 +232,7 @@ impl SwssActor {
                 "object_names" => session_data.object_names = value.to_string_lossy().into_owned(),
                 "object_ids" => session_data.object_ids = value.to_string_lossy().into_owned(),
                 "session_config" => {
-                    session_data.session_config = Arc::new(value.as_bytes().to_vec());
+                    session_data.session_config = value.as_bytes().to_vec();
                 }
                 _ => {
                     debug!("Ignoring unknown session field ({} bytes)", field.len());
@@ -531,7 +410,7 @@ impl SwssActor {
 
         Ok(IPFixTemplatesMessage::new(
             key.to_string(),
-            Arc::clone(&session_data.session_config),
+            Arc::new(session_data.session_config.clone()),
             Some(object_names),
             Some(object_ids),
         ))
@@ -546,14 +425,14 @@ impl SwssActor {
 /// - object_names: Comma-separated list of object names (e.g., "Ethernet0")
 /// - object_ids: Comma-separated list of object IDs (e.g., "1")
 /// - session_config: Binary data containing the session configuration (IPFIX templates)
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug)]
 struct SessionData {
     validation_error: Option<&'static str>,
     stream_status: String,
     session_type: String,
     object_names: String,
     object_ids: String,
-    session_config: Arc<Vec<u8>>,
+    session_config: Vec<u8>,
 }
 
 impl SessionData {
@@ -627,7 +506,7 @@ mod tests {
         let record = batch.iter().next().unwrap();
         assert_eq!(record.observation_time, 7);
         assert_eq!(record.stats.len(), 1);
-        let stat = record.stats.get(0).unwrap();
+        let stat=record.stats.get(0).unwrap();
         assert_eq!(stat.object_name.as_ref(), expected_name);
         assert_eq!(stat.counter, 42);
         assert_eq!((stat.type_id, stat.stat_id), (1, 1));
@@ -639,500 +518,6 @@ mod tests {
             // Capacity one: the actor handles each update synchronously before
             // it can process our next data probe.
             drop(sender.reserve().await.unwrap());
-        }
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn normal_refresh_is_forwarded_but_unchanged_recovery_rows_are_not_replayed() {
-        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        let name = format!("test_swss_no_replay_{}", std::process::id());
-        let table = Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-        for key in ["owner|PORT", "bad|PORT"] {
-            table.del(key).unwrap();
-            table.set(key, fields("Ethernet0", 300)).unwrap();
-        }
-        let mut subscriber =
-            SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
-        let mut forwarded = HashMap::new();
-        let mut retry = false;
-        let initial = SwssActor::blocking_read_events(
-            &mut subscriber,
-            &mut forwarded,
-            &mut retry,
-            Duration::ZERO,
-        )
-        .unwrap();
-        let (sender, mut receiver) = channel(1);
-        for event in initial {
-            SwssActor::process_event(&sender, event).await;
-            let message = receiver.try_recv().unwrap();
-            assert!(Arc::ptr_eq(
-                message.templates.as_ref().unwrap(),
-                &forwarded[&message.key].session_config,
-            ));
-        }
-
-        table.set("owner|PORT", fields("Ethernet0", 300)).unwrap();
-        let events = SwssActor::blocking_read_events(
-            &mut subscriber,
-            &mut forwarded,
-            &mut retry,
-            Duration::from_secs(1),
-        )
-        .unwrap();
-        assert!(
-            matches!(events.as_slice(), [SwssEvent::Update { key, .. }] if key == "owner|PORT")
-        );
-        SwssActor::process_event(&sender, events.into_iter().next().unwrap()).await;
-        assert_eq!(
-            receiver.try_recv().unwrap().operation,
-            IPFixTemplateOperation::Update
-        );
-
-        db.set(&format!("{name}|bad|PORT"), &CxxString::from("not a hash"))
-            .unwrap();
-        let events = SwssActor::blocking_read_events(
-            &mut subscriber,
-            &mut forwarded,
-            &mut retry,
-            Duration::from_secs(1),
-        )
-        .unwrap();
-        assert!(matches!(events.as_slice(), [SwssEvent::Delete { key }] if key == "bad|PORT"));
-        assert!(retry);
-        assert!(
-            SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::ZERO,
-            )
-            .unwrap()
-            .is_empty(),
-            "unchanged readable rows must not replay on error retries"
-        );
-        assert!(retry, "deduplication must not stop recovery reads");
-
-        // Same config, different source metadata: each change must be forwarded.
-        let config = Arc::clone(&forwarded["owner|PORT"].session_config);
-        for (field, value) in [
-            ("object_names", "Ethernet4"),
-            ("object_ids", "2"),
-            ("stream_status", "disabled"),
-            ("session_type", "netflow"),
-        ] {
-            table
-                .hset("owner|PORT", field, &CxxString::from(value))
-                .unwrap();
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::from_secs(1),
-            )
-            .unwrap();
-            assert!(
-                matches!(events.as_slice(), [SwssEvent::Update { key, .. }] if key == "owner|PORT")
-            );
-            assert_eq!(
-                forwarded["owner|PORT"].session_config.as_ref(),
-                &template(300)
-            );
-            assert!(Arc::ptr_eq(
-                &config,
-                &forwarded["owner|PORT"].session_config
-            ));
-            assert!(retry);
-        }
-        table.del("bad|PORT").unwrap();
-        assert!(SwssActor::blocking_read_events(
-            &mut subscriber,
-            &mut forwarded,
-            &mut retry,
-            Duration::from_secs(1),
-        )
-        .unwrap()
-        .is_empty());
-        assert!(!retry);
-        table
-            .hset("owner|PORT", "object_names", &CxxString::from("Ethernet8"))
-            .unwrap();
-        let events = SwssActor::blocking_read_events(
-            &mut subscriber,
-            &mut forwarded,
-            &mut retry,
-            Duration::from_secs(1),
-        )
-        .unwrap();
-        assert!(
-            matches!(events.as_slice(), [SwssEvent::Update { key, .. }] if key == "owner|PORT")
-        );
-        table.del("owner|PORT").unwrap();
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn recovery_drains_cached_deletes_even_when_select_did_not_report_data() {
-        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        let name = format!("test_swss_cached_delete_{}", std::process::id());
-        let table = Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-        for select_result in [
-            swss_common::SelectResult::Timeout,
-            swss_common::SelectResult::Signal,
-        ] {
-            table.del("owner|PORT").unwrap();
-            table.set("owner|PORT", fields("Ethernet0", 300)).unwrap();
-            let mut subscriber =
-                SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
-            let mut forwarded = HashMap::new();
-            let mut retry = false;
-            assert_eq!(
-                SwssActor::blocking_read_events(
-                    &mut subscriber,
-                    &mut forwarded,
-                    &mut retry,
-                    Duration::ZERO,
-                )
-                .unwrap()
-                .len(),
-                1
-            );
-
-            table.del("owner|PORT").unwrap();
-            assert!(matches!(
-                subscriber.read_data(Duration::from_secs(1), false).unwrap(),
-                swss_common::SelectResult::Data
-            ));
-            // The native buffer now contains a DEL, but the source is repaired.
-            table.set("owner|PORT", fields("Ethernet4", 400)).unwrap();
-            retry = true;
-            // Inject the collect result for timeout/signal while retaining a real
-            // native cache. Neither outcome justifies skipping the explicit pop.
-            let result = match select_result {
-                swss_common::SelectResult::Timeout | swss_common::SelectResult::Signal => {
-                    Ok(Vec::new())
-                }
-                _ => unreachable!(),
-            };
-            let events =
-                SwssActor::finish_read(&mut subscriber, &mut forwarded, &mut retry, result)
-                    .unwrap();
-            assert!(
-                matches!(events.as_slice(), [SwssEvent::Update { key, session_data }]
-                if key == "owner|PORT" && session_data.session_config.as_ref() == &template(400))
-            );
-            assert!(retry, "a nonempty drain requires a final empty-pop check");
-            assert!(
-                subscriber.pops().unwrap().is_empty(),
-                "cached DEL must have been drained"
-            );
-            assert!(SwssActor::finish_read(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Ok(Vec::new()),
-            )
-            .unwrap()
-            .is_empty());
-            assert!(!retry);
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::from_secs(1),
-            )
-            .unwrap();
-            assert!(
-                matches!(events.as_slice(), [SwssEvent::Update { key, .. }] if key == "owner|PORT"),
-                "the real repair notification must survive, but not the stale cached delete"
-            );
-        }
-        table.del("owner|PORT").unwrap();
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn unchanged_normal_refresh_retries_rejected_owner_after_other_owner_delete() {
-        use crate::actor::ipfix::IpfixActor;
-
-        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        let name = format!("test_swss_retry_owner_{}", std::process::id());
-        let table = Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-        for key in ["owner_a", "owner_b", "unknown"] {
-            table.del(key).unwrap();
-        }
-        let mut subscriber = SubscriberStateTable::new(db, &name, None, None).unwrap();
-        let mut forwarded = HashMap::new();
-        let mut retry = false;
-        let (templates, template_rx) = channel(1);
-        let (records, record_rx) = channel(1);
-        let (stats, mut stats_rx) = channel(1);
-        let mut actor = IpfixActor::new(template_rx, record_rx);
-        actor.add_recipient(stats);
-        let task = tokio::spawn(IpfixActor::run(actor));
-        let result = tokio::time::timeout(Duration::from_secs(5), async {
-            for (key, port) in [("owner_a", "Ethernet0"), ("owner_b", "Ethernet4")] {
-                table.set(key, fields(port, 300)).unwrap();
-                let events = SwssActor::blocking_read_events(
-                    &mut subscriber,
-                    &mut forwarded,
-                    &mut retry,
-                    Duration::from_secs(1),
-                )
-                .unwrap();
-                assert_eq!(events.len(), 1);
-                forward(events, &templates).await;
-                // B's conflicting source is forwarded, but A remains installed.
-                probe(&records, &mut stats_rx, 300, "Ethernet0").await;
-            }
-            table.del("owner_a").unwrap();
-            forward(
-                SwssActor::blocking_read_events(
-                    &mut subscriber,
-                    &mut forwarded,
-                    &mut retry,
-                    Duration::from_secs(1),
-                )
-                .unwrap(),
-                &templates,
-            )
-            .await;
-            table.set("owner_b", fields("Ethernet4", 300)).unwrap();
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::from_secs(1),
-            )
-            .unwrap();
-            assert!(
-                matches!(events.as_slice(), [SwssEvent::Update { key, .. }] if key == "owner_b")
-            );
-            forward(events, &templates).await;
-            probe(&records, &mut stats_rx, 300, "Ethernet4").await;
-
-            // A real delete can arrive without a prior observed SET (or after
-            // the cached source was evicted); forward it without a cache entry.
-            table.set("unknown", fields("Ethernet8", 700)).unwrap();
-            table.del("unknown").unwrap();
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::from_secs(1),
-            )
-            .unwrap();
-            assert!(matches!(events.as_slice(), [SwssEvent::Delete { key }] if key == "unknown"));
-        })
-        .await;
-        task.abort();
-        let _ = task.await;
-        for key in ["owner_a", "owner_b", "unknown"] {
-            table.del(key).unwrap();
-        }
-        result.expect("explicit refresh must retry a previously rejected source");
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn normal_notifications_preserve_repeated_invalid_updates_and_reactivation() {
-        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        let name = format!("test_swss_invalid_dedup_{}", std::process::id());
-        let table = Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-        let key = "owner|PORT";
-        table.del(key).unwrap();
-        let mut subscriber = SubscriberStateTable::new(db, &name, None, None).unwrap();
-        let mut forwarded = HashMap::new();
-        let mut retry = false;
-        let (sender, mut receiver) = channel(1);
-        for (action, expected) in [
-            ("valid", Some(IPFixTemplateOperation::Update)),
-            ("invalid", Some(IPFixTemplateOperation::Delete)),
-            ("invalid", Some(IPFixTemplateOperation::Delete)),
-            ("delete", Some(IPFixTemplateOperation::Delete)),
-            ("delete", None),
-            ("valid", Some(IPFixTemplateOperation::Update)),
-            ("invalid", Some(IPFixTemplateOperation::Delete)),
-            ("valid", Some(IPFixTemplateOperation::Update)),
-            ("valid", Some(IPFixTemplateOperation::Update)),
-        ] {
-            match action {
-                "valid" => table.set(key, fields("Ethernet0", 300)).unwrap(),
-                "invalid" => table
-                    .hset(key, "object_ids", &CxxString::from("0"))
-                    .unwrap(),
-                "delete" => table.del(key).unwrap(),
-                _ => unreachable!(),
-            }
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut forwarded,
-                &mut retry,
-                Duration::from_millis(50),
-            )
-            .unwrap();
-            assert!(!retry);
-            assert_eq!(events.len(), usize::from(expected.is_some()), "{action}");
-            for event in events {
-                SwssActor::process_event(&sender, event).await;
-                let message = receiver.try_recv().unwrap();
-                assert_eq!(message.key, key);
-                assert_eq!(Some(message.operation), expected);
-            }
-            assert_eq!(forwarded.contains_key(key), action != "delete");
-            assert!(receiver.try_recv().is_err());
-        }
-        table.del(key).unwrap();
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn failed_pop_reconciles_deletes_and_repaired_rows() {
-        let db = DbConnector::new_unix(STATE_DB_ID, SOCK_PATH, 0).unwrap();
-        for malformed_first in [false, true] {
-            let name = format!(
-                "test_swss_reconcile_{}_{malformed_first}",
-                std::process::id()
-            );
-            let table = Table::new(db.clone_timeout(0).unwrap(), &name).unwrap();
-            let deleted = format!("{STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE}|owner|PORT");
-            let bad = "malformed|PORT";
-            let healthy = "healthy|PORT";
-            for key in [deleted.as_str(), bad, healthy] {
-                table.del(key).unwrap();
-                table.set(key, fields("Ethernet0", 300)).unwrap();
-            }
-            let mut subscriber =
-                SubscriberStateTable::new(db.clone_timeout(0).unwrap(), &name, None, None).unwrap();
-            let mut known = HashMap::new();
-            let mut retry = false;
-            let initial = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut known,
-                &mut retry,
-                Duration::ZERO,
-            )
-            .unwrap();
-            assert_eq!(initial.len(), 3);
-            assert_eq!(known.len(), 3);
-
-            if !malformed_first {
-                table.del(&deleted).unwrap();
-            }
-            db.set(&format!("{name}|{bad}"), &CxxString::from("not a hash"))
-                .unwrap();
-            if malformed_first {
-                table.del(&deleted).unwrap();
-            }
-            // A complete row read must notice removed fields, not merge with the
-            // preceding snapshot. Also preserve non-UTF-8 and embedded NUL bytes.
-            let binary = vec![0, 255, 128, 0, 1];
-            table.hdel(healthy, "object_ids").unwrap();
-            // The native single-field hset uses %s and truncates at NUL;
-            // Table::set uses length-aware arguments for binary values.
-            table
-                .set(
-                    healthy,
-                    [("session_config", CxxString::from(binary.clone()))],
-                )
-                .unwrap();
-            let stored = table.get(healthy).unwrap().unwrap();
-            assert_eq!(stored["session_config"].as_bytes(), binary.as_slice());
-            assert!(!stored.contains_key("object_ids"));
-            assert!(SwssActor::parse_session_data(&stored)
-                .validation_error
-                .is_none());
-            let started = std::time::Instant::now();
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut known,
-                &mut retry,
-                Duration::from_secs(1),
-            )
-            .unwrap();
-            assert!(retry, "the malformed row must trigger recovery");
-            assert!(started.elapsed() >= SWSS_RECOVERY_DELAY);
-            assert!(events.iter().any(|event| matches!(event,
-                SwssEvent::Delete { key } if key == &deleted)));
-            assert!(events.iter().any(|event| matches!(event,
-                SwssEvent::Delete { key } if key == bad)));
-            assert!(events.iter().any(|event| matches!(event,
-                SwssEvent::Update { key, .. } if key == healthy)));
-            let (sender, mut receiver) = channel(1);
-            for event in events {
-                if let SwssEvent::Update { key, session_data } = &event {
-                    if key == healthy {
-                        assert!(session_data.object_ids.is_empty());
-                        assert_eq!(session_data.session_config.as_ref(), &binary);
-                    }
-                }
-                SwssActor::process_event(&sender, event).await;
-                assert_eq!(
-                    receiver.try_recv().unwrap().operation,
-                    IPFixTemplateOperation::Delete
-                );
-            }
-
-            let started = std::time::Instant::now();
-            let events = SwssActor::blocking_read_events(
-                &mut subscriber,
-                &mut known,
-                &mut retry,
-                Duration::ZERO,
-            )
-            .unwrap();
-            assert!(
-                retry,
-                "unreadable rows must be retried without new notifications"
-            );
-            assert!(started.elapsed() >= SWSS_RECOVERY_DELAY);
-            assert!(
-                events.is_empty(),
-                "unchanged invalid and deleted rows must not replay"
-            );
-
-            // A later drain must not replay stale deletes over repaired rows.
-            table.del(bad).unwrap();
-            table.set(bad, fields("Ethernet4", 400)).unwrap();
-            table
-                .hset(healthy, "object_ids", &CxxString::from("1"))
-                .unwrap();
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            let mut repaired = false;
-            loop {
-                let events = SwssActor::blocking_read_events(
-                    &mut subscriber,
-                    &mut known,
-                    &mut retry,
-                    Duration::from_millis(50),
-                )
-                .unwrap();
-                for event in events {
-                    SwssActor::process_event(&sender, event).await;
-                    let message = receiver.try_recv().unwrap();
-                    if message.key == bad {
-                        assert_eq!(message.operation, IPFixTemplateOperation::Update);
-                        assert_eq!(message.templates.as_deref(), Some(&template(400)));
-                        assert_eq!(message.object_names, Some(vec!["Ethernet4".to_string()]));
-                        repaired = true;
-                    } else if message.key == healthy {
-                        assert_eq!(message.templates.as_deref(), Some(&binary));
-                    }
-                }
-                if repaired && !retry {
-                    break;
-                }
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "repaired row must converge"
-                );
-            }
-            assert!(!known.contains_key(&deleted));
-            assert!(known.contains_key(bad));
-            for key in [deleted.as_str(), bad, healthy] {
-                table.del(key).unwrap();
-            }
         }
     }
 
@@ -1399,7 +784,7 @@ mod tests {
     async fn oversized_session_is_deleted_without_copying_config() {
         let (sender, mut receiver) = channel(1);
         let session = SessionData {
-            session_config: Arc::new(vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1]),
+            session_config: vec![0; MAX_TEMPLATE_CONFIG_BYTES + 1],
             ..SessionData::default()
         };
         assert!(
@@ -1452,7 +837,7 @@ mod tests {
             session_type: "ipfix".into(),
             object_names: ",".repeat(MAX_OBJECTS_PER_UPDATE + 1),
             object_ids: "1".into(),
-            session_config: Arc::new(vec![1]),
+            session_config: vec![1],
             ..SessionData::default()
         };
         assert!(SwssActor::validated_update("test", &session)
@@ -1649,7 +1034,7 @@ mod tests {
                 session_type: "ipfix".to_string(),
                 object_names: names.to_string(),
                 object_ids: ids.to_string(),
-                session_config: Arc::new(vec![1]),
+                session_config: vec![1],
                 ..SessionData::default()
             };
             assert!(

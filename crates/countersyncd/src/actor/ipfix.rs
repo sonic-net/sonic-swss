@@ -1211,15 +1211,9 @@ fn compile_template_set(
                 }
                 let enterprise_number = NetworkEndian::read_u32(&set[offset..offset + 4]);
                 offset += 4;
-                // Hardware placeholders occupy record bytes but are not counters.
-                if field_id == 0 && enterprise_number == 0 {
-                    continue;
-                }
+                // Zero-PEN placeholders occupy record bytes regardless of IE number.
                 if enterprise_number == 0 {
-                    return Err(format!(
-                        "template {template_id} uses reserved enterprise number zero"
-                    )
-                    .into());
+                    continue;
                 }
                 if field_id == 0 {
                     return Err("counter object ID zero is reserved for placeholders".into());
@@ -1266,7 +1260,7 @@ fn compile_template_set(
                 .into());
             }
         }
-        if field_keys.is_empty() {
+        if counters.is_empty() {
             return Err(format!("template {template_id} requires at least one counter").into());
         }
         let observation_time = if let Some(offset) = raw_nanos_offset {
@@ -1485,7 +1479,7 @@ mod tests {
         // Errors after an unmapped field must still be found by the one parser.
         for fields in [
             vec![(1, 0x0001_0007), (2, 0x0015_0007), (2, 0x0015_0007)],
-            vec![(1, 0x0001_0007), (2, 0x0015_0007), (3, 0)],
+            vec![(1, 0x0001_0007), (2, 0x0015_0007), (0, 0x0015_0007)],
         ] {
             let mut row = template_message("p|PORT", 0, 300, &fields);
             row.object_ids = base.object_ids.clone();
@@ -2855,7 +2849,7 @@ mod tests {
             vec![(0, 0, Some(0)), counter],
             vec![(0, 9, Some(0)), counter],
             vec![(0, u16::MAX, Some(0)), counter],
-            vec![(1, 8, Some(0)), counter],
+            vec![(0, 8, Some(0x0001_0001)), counter],
             vec![counter, counter],
             vec![(0, 8, Some(0))],
             vec![(322, 4, None), (325, 4, None)],
@@ -2885,6 +2879,59 @@ mod tests {
                 IpfixActor::compile_generation(&truncated).is_err(),
                 "end={end}"
             );
+        }
+    }
+
+    #[test]
+    fn mixed_width_port_queue_decode_skips_nonzero_ie_zero_pen() {
+        for width in 1u16..=8 {
+            let update = hardware_template(
+                300,
+                &[
+                    (325, 8, None),
+                    (1, 3, Some(0x0001_0007)),
+                    (42, width, Some(0)),
+                    (2, 6, Some(0x0015_0029)),
+                ],
+            );
+            let compilation = IpfixActor::compile_candidate(&update).unwrap();
+            assert!(!compilation.missing_labels);
+            assert_eq!(compilation.labels, HashSet::from_iter([(1, 1), (2, 21)]));
+            let template = compilation.generation.templates.values().next().unwrap();
+            assert_eq!(template.record_len, 17 + usize::from(width));
+            assert_eq!(
+                template.counters.iter().map(|c| (c.offset, c.len)).collect::<Vec<_>>(),
+                vec![(8, 3), (11 + usize::from(width), 6)]
+            );
+
+            let mut actor = actor();
+            for (group, label, _, name) in &MIXED_GROUPS[..2] {
+                let mut row = update.clone();
+                row.key = format!("p|{group}");
+                row.object_ids = Some(vec![*label]);
+                row.object_names = Some(vec![name.to_string()]);
+                actor.handle_template(row).unwrap();
+            }
+            let mut record = 42u64.to_be_bytes().to_vec();
+            record.extend_from_slice(&[0x12, 0x34, 0x56]);
+            record.extend_from_slice(&vec![0xff; usize::from(width)]);
+            record.extend_from_slice(&[0x87, 0x65, 0x43, 0x21, 0xab, 0xcd]);
+            let batch = actor.handle_record(&hardware_data(300, &[&record, &record])).unwrap();
+            assert_eq!(batch.record_count(), 2);
+            assert_eq!(batch.counter_count(), 4);
+            for record in batch.iter() {
+                assert_eq!(record.observation_time, 42);
+                assert_eq!(
+                    record.stats.iter().map(|stat| (
+                        stat.object_name.as_ref(), stat.type_id, stat.stat_id, stat.counter
+                    )).collect::<Vec<_>>(),
+                    vec![
+                        ("Ethernet0", 1, 7, 0x12_3456),
+                        ("Ethernet0:0", 21, 41, 0x8765_4321_abcd),
+                    ]
+                );
+            }
+            assert_eq!(actor.dropped_sets, 0);
         }
     }
 
