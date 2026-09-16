@@ -703,16 +703,14 @@ bool MuxCable::isStateChangeReady(MuxState state) const
     for (const auto& neighbor : nbr_handler_->getNeighbors())
     {
         NeighborEntry entry(neighbor.first, alias);
-        auto current = neighbors.find(entry);
-        if (current == neighbors.end())
+        if (enabling && neighbors.find(entry) == neighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s on %s is not ready for state transition",
                           neighbor.first.to_string().c_str(), alias.c_str());
             return false;
         }
 
-        NextHopKey nextHop(neighbor.first, alias);
-        if (disabling && (!current->second.hw_configured || !gNeighOrch->hasLocalNextHop(nextHop)))
+        if (disabling && gNeighOrch->getReadyLocalNextHopId(entry) == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Neighbor %s on %s has no active local next hop",
                           neighbor.first.to_string().c_str(), alias.c_str());
@@ -946,8 +944,8 @@ bool MuxNbrHandler::enable(bool update_rt)
         /* Update NH to point to learned neighbor */
         neigh = NeighborEntry(it->first, alias_);
         NextHopKey nh_key = NextHopKey(it->first, alias_);
-        sai_object_id_t local_nh = gNeighOrch->getLocalNextHopId(nh_key);
-        if (!gNeighOrch->isHwConfigured(neigh) || local_nh == SAI_NULL_OBJECT_ID)
+        sai_object_id_t local_nh = gNeighOrch->getReadyLocalNextHopId(neigh);
+        if (local_nh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Neighbor %s on %s was not enabled",
                           it->first.to_string().c_str(), alias_.c_str());
@@ -1021,8 +1019,8 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
 
         neigh = NeighborEntry(it->first, alias_);
         NextHopKey nh_key = NextHopKey(it->first, alias_);
-        sai_object_id_t local_nh = gNeighOrch->getLocalNextHopId(nh_key);
-        if (!gNeighOrch->isHwConfigured(neigh) || local_nh == SAI_NULL_OBJECT_ID)
+        sai_object_id_t local_nh = gNeighOrch->getReadyLocalNextHopId(neigh);
+        if (local_nh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Neighbor %s on %s is not available for disable",
                           it->first.to_string().c_str(), alias_.c_str());

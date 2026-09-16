@@ -883,6 +883,18 @@ sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
     return m_syncdNextHops[nexthop].next_hop_id;
 }
 
+sai_object_id_t NeighOrch::getReadyLocalNextHopId(const NeighborEntry& neighbor) const
+{
+    auto neighborIt = m_syncdNeighbors.find(neighbor);
+    if (neighborIt == m_syncdNeighbors.end() || !neighborIt->second.hw_configured)
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    auto nextHopIt = m_syncdNextHops.find(NextHopKey(neighbor));
+    return nextHopIt == m_syncdNextHops.end() ? SAI_NULL_OBJECT_ID : nextHopIt->second.next_hop_id;
+}
+
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
     assert(hasNextHop(nexthop));

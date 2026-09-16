@@ -308,7 +308,7 @@ namespace mux_rollback_test
 
         EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
         EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
-        EXPECT_FALSE(gNeighOrch->hasLocalNextHop(nextHop));
+        EXPECT_EQ(SAI_NULL_OBJECT_ID, gNeighOrch->getReadyLocalNextHopId(nextHop));
         auto consumer = m_MuxCableOrch->getConsumerBase(APP_MUX_CABLE_TABLE_NAME);
         EXPECT_EQ(1u, consumer->m_toSync.count(TEST_INTERFACE));
 
