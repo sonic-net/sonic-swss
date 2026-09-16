@@ -521,9 +521,9 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
         if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
+            SWSS_LOG_ERROR("Next hop %s on %s already exists without a usable object id",
                         nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
+            return false;
         }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
@@ -1831,8 +1831,18 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
         {
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
-                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, reconciling: status:%s",
+                SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
                            macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
+                if (ctx.next_hop_id != SAI_NULL_OBJECT_ID)
+                {
+                    sai_status_t remove_status = sai_next_hop_api->remove_next_hop(ctx.next_hop_id);
+                    if (remove_status != SAI_STATUS_SUCCESS && remove_status != SAI_STATUS_ITEM_NOT_FOUND)
+                    {
+                        SWSS_LOG_ERROR("Failed to remove newly created next hop %s on %s, rv:%d",
+                                       ip_address.to_string().c_str(), alias.c_str(), remove_status);
+                    }
+                }
+                return false;
             }
             else
             {
