@@ -70,6 +70,8 @@ int gRingSize = RING_SIZE;
 bool gSyncMode = false;
 bool gEnableFibSuppress = false;
 bool gEnableConflatedChannel = false;
+bool gEnableDoubleBuffer = false;
+string gConflatedChannelDbName;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -411,7 +413,7 @@ int main(int argc, char **argv)
     // WS4: R: → R (fix: -R is a boolean flag, not an argument-taking option;
     // the old R: consumed the next CLI arg as optarg, causing crash-loops).
     // Added Q: for ring buffer size, p: for msgpack, e: for conflated channel.
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MFpe")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RQ:MFpeDC:")) != -1)
     {
         switch (opt)
         {
@@ -559,6 +561,14 @@ int main(int argc, char **argv)
             // WS8: enable conflated-hash route channel.
             gEnableConflatedChannel = true;
             SWSS_LOG_NOTICE("Conflated-hash route channel enabled (-e)");
+            break;
+        case 'D':
+            gEnableDoubleBuffer = true;
+            SWSS_LOG_NOTICE("Double-buffered route bulk submission enabled (-D)");
+            break;
+        case 'C':
+            gConflatedChannelDbName = optarg;
+            SWSS_LOG_NOTICE("Conflated channel DB set to %s (-C)", optarg);
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);

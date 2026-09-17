@@ -32,6 +32,13 @@
  */
 #define ROUTE_CONFLATED_CHANNEL_ENABLED "route_conflated_channel_enabled"
 
+/*
+ * WS10: DB name for the conflated channel instance split.
+ * When set to anything other than "APPL_DB", PENDING/PROCESSING/CHANNEL
+ * hashes live on this DB instead of APPL_DB.
+ */
+#define ROUTE_CONFLATED_CHANNEL_DB "route_conflated_channel_db"
+
 namespace swss {
 
 std::set<std::string> load_zmq_tables();

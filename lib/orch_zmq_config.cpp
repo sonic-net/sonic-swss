@@ -140,9 +140,23 @@ std::shared_ptr<swss::ProducerStateTable> swss::createProducerStateTable(RedisPi
     }
     else if (get_feature_status(ROUTE_CONFLATED_CHANNEL_ENABLED, false) ||
              (std::getenv("ROUTE_CONFLATED_CHANNEL_CLI") && std::string(std::getenv("ROUTE_CONFLATED_CHANNEL_CLI")) == "true")) {
-        // WS8: conflated-hash route channel — one hash per channel, ~1 redis call/route.
-        SWSS_LOG_NOTICE("Create ConflatedProducerStateTable : %s", tableName.c_str());
-        tablePtr = new swss::ConflatedProducerStateTable(pipeline, tableName, buffered);
+        // WS10: check if channel DB is split to a separate instance
+        std::string channelDbName;
+        try {
+            swss::DBConnector cfg("CONFIG_DB", 0);
+            auto val = cfg.hget("DEVICE_METADATA|localhost", ROUTE_CONFLATED_CHANNEL_DB);
+            if (val) channelDbName = *val;
+        } catch (...) {}
+
+        if (!channelDbName.empty() && channelDbName != "APPL_DB" && channelDbName != "None") {
+            static swss::DBConnector *s_channelDb = new swss::DBConnector(channelDbName, 0);
+            static swss::RedisPipeline *s_channelPipeline = new swss::RedisPipeline(s_channelDb);
+            SWSS_LOG_NOTICE("Create ConflatedProducerStateTable : %s (channel DB=%s)", tableName.c_str(), channelDbName.c_str());
+            tablePtr = new swss::ConflatedProducerStateTable(s_channelPipeline, tableName, buffered);
+        } else {
+            SWSS_LOG_NOTICE("Create ConflatedProducerStateTable : %s", tableName.c_str());
+            tablePtr = new swss::ConflatedProducerStateTable(pipeline, tableName, buffered);
+        }
     }
     else {
         // WS3: pass flushPub through to the 4-arg ProducerStateTable ctor.
