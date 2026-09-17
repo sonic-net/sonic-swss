@@ -7,6 +7,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include <swss/redisutility.h>
+#include <climits>
 
 using namespace std;
 using namespace swss;
@@ -81,6 +82,41 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
         throw runtime_error(cmd_str + " : " + res);
     }
     return true;
+}
+
+bool PortMgr::setPortDHCPMitigationRate(const string &alias, const string &dhcp_rate_limit)
+{
+    stringstream cmd;
+    string res, cmd_str;
+
+    if (dhcp_rate_limit == "0")
+    {
+        // Delete filter when dhcp-rate limit is set to zero
+        cmd << TC_CMD << " qdisc del dev " << shellquote(alias) << " handle ffff: ingress";
+    }
+    else
+    {
+        // Assuming dhcp_rate_limit is already validated and contains valid integer
+        int byte_rate = stoi(dhcp_rate_limit.c_str()) * PACKET_SIZE;
+        if (byte_rate > INT_MAX / PACKET_SIZE)
+        {
+            SWSS_LOG_WARN("DHCP rate limit too high, would overflow INT_MAX: %s", dhcp_rate_limit.c_str());
+            return false;
+        }
+        cmd << TC_CMD << " qdisc add dev " << shellquote(alias) << " handle ffff: ingress" << " && " << TC_CMD << " filter add dev " << shellquote(alias) << " protocol ip parent ffff: prio 1 u32 match ip protocol 17 0xff match ip dport 67 0xffff police rate " << byte_rate << "bps burst " << byte_rate << "b conform-exceed drop";
+    }
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (!ret)
+    {
+        return true;
+    }
+    else
+    {
+        bool portOk = isPortStateOk(alias);
+        SWSS_LOG_WARN("Setting DHCP rate limit to alias:%s failed (port state:%s) with cmd:%s, rc:%d, error:%s", alias.c_str(), portOk ? "ready" : "not ready", cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
 }
 
 bool PortMgr::isPortStateOk(const string &alias)
@@ -162,18 +198,19 @@ void PortMgr::doTask(Consumer &consumer)
              */
             bool portOk = isPortStateOk(alias);
 
-            string admin_status, mtu;
+            string admin_status, mtu, dhcp_rate_limit;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
 
             /* If this is the first time we set port settings
-             * assign default admin status and mtu
+             * assign default admin status and mtu and dhcp_rate_limit
              */
             if (!configured)
             {
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
+                dhcp_rate_limit = DEFAULT_DHCP_RATE_LIMIT_STR;
 
                 m_portList.insert(alias);
             }
@@ -192,6 +229,10 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
+                }
+                else if (fvField(i) == "dhcp_rate_limit")
+                {
+                    dhcp_rate_limit = fvValue(i);
                 }
                 else
                 {
@@ -236,6 +277,12 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+            }
+
+            if (!dhcp_rate_limit.empty())
+            {
+                setPortDHCPMitigationRate(alias, dhcp_rate_limit);
+                SWSS_LOG_NOTICE("Configure %s DHCP rate limit to %s", alias.c_str(), dhcp_rate_limit.c_str());
             }
         }
         else if (op == DEL_COMMAND)
