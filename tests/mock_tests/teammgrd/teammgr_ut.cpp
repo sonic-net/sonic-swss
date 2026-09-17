@@ -216,6 +216,14 @@ int cb(const std::string &cmd, std::string &stdout)
     {
         pidFiles["/var/run/teamd/PortChannel198.pid"] = NULL;
     }
+    else if (cmd.find("ip link set dev Ethernet64 down") != std::string::npos)
+    {
+        return 1;
+    }
+    else if (cmd.find("port config update Ethernet68") != std::string::npos)
+    {
+        return 1;
+    }
     else
     {
         for (int i = 600; i < 620; i++)
@@ -509,5 +517,59 @@ namespace teammgr_ut
         EXPECT_TRUE(std::any_of(values.begin(), values.end(), [](const auto &fv) {
             return fvField(fv) == "system_mac" && fvValue(fv) == "02:03:04:05:06:07";
         }));
+    }
+
+    TEST_F(TeamMgrTest, testAddLagMemberIpLinkDownFails)
+    {
+        swss::Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet64", { { "state", "ok" } });
+        swss::Table state_lag_table(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        state_lag_table.set("PortChannelFail1", { { "state", "ok" } });
+
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member_table.set("PortChannelFail1|Ethernet64", { { "status", "enabled" } });
+        teammgr.addExistingData(&cfg_lag_member_table);
+        teammgr.doTask();
+
+        bool down_called = false;
+        bool port_config_update_called = false;
+        for (auto &c : mockCallArgs)
+        {
+            if (c.find("ip link set dev Ethernet64 down") != std::string::npos) down_called = true;
+            if (c.find("port config update Ethernet64") != std::string::npos) port_config_update_called = true;
+        }
+        // The "down" command must be attempted and, since it fails, the
+        // subsequent "port config update" must not be executed (retry).
+        EXPECT_TRUE(down_called);
+        EXPECT_FALSE(port_config_update_called);
+    }
+
+    TEST_F(TeamMgrTest, testAddLagMemberPortConfigUpdateFails)
+    {
+        swss::Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet68", { { "state", "ok" } });
+        swss::Table state_lag_table(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        state_lag_table.set("PortChannelFail2", { { "state", "ok" } });
+
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member_table.set("PortChannelFail2|Ethernet68", { { "status", "enabled" } });
+        teammgr.addExistingData(&cfg_lag_member_table);
+        teammgr.doTask();
+
+        bool down_called = false;
+        bool port_config_update_called = false;
+        bool port_add_called = false;
+        for (auto &c : mockCallArgs)
+        {
+            if (c.find("ip link set dev Ethernet68 down") != std::string::npos) down_called = true;
+            if (c.find("port config update Ethernet68") != std::string::npos) port_config_update_called = true;
+            if (c.find("port add Ethernet68") != std::string::npos) port_add_called = true;
+        }
+        // "down" succeeds, "port config update" fails, so "port add" must not run.
+        EXPECT_TRUE(down_called);
+        EXPECT_TRUE(port_config_update_called);
+        EXPECT_FALSE(port_add_called);
     }
 }
