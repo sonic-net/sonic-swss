@@ -1505,7 +1505,7 @@ bool MACsecMgr::preflightRollover(
     }
 
     if (status.kayStatus != "active" ||
-        !status.authenticated ||
+        status.authenticated ||
         !status.secured ||
         status.failed)
     {

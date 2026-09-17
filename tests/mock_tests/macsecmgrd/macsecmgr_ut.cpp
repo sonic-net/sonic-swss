@@ -58,12 +58,14 @@ string participant(
 string statusOutput(
     const string &primaryCkn,
     const string &fallbackCkn = FALLBACK_CKN,
-    bool fallbackPrincipal = false)
+    bool fallbackPrincipal = false,
+    bool authenticated = false,
+    bool secured = true)
 {
     string output =
         "PAE KaY status=Active\n"
-        "Authenticated=Yes\n"
-        "Secured=Yes\n"
+        "Authenticated=" + string(authenticated ? "Yes\n" : "No\n") +
+        "Secured=" + string(secured ? "Yes\n" : "No\n") +
         "Failed=No\n"
         "Actor Priority=16\n"
         "Key Server Priority=16\n"
@@ -113,6 +115,8 @@ struct CommandState
     string failQueryPort;
     bool failRemove = false;
     bool addAppliedButFailed = false;
+    bool authenticated = false;
+    bool secured = true;
     int addCalls = 0;
 };
 
@@ -133,7 +137,9 @@ int commandCallback(const string &cmd, string &output)
         output = statusOutput(
             commandState.primaryCkn,
             commandState.fallbackCkn,
-            commandState.primaryCkn.empty());
+            commandState.primaryCkn.empty(),
+            commandState.authenticated,
+            commandState.secured);
         return 0;
     }
     if (cmd.find("macsec_del_mka") != string::npos)
@@ -233,6 +239,8 @@ TEST(MKAStatusParser, NormalizesFrozenInterface)
         [](unsigned char c) { return static_cast<char>(toupper(c)); });
     ASSERT_TRUE(parseMKAStatus(statusOutput(uppercaseCkn), status, error)) << error;
     EXPECT_EQ("active", status.kayStatus);
+    EXPECT_FALSE(status.authenticated);
+    EXPECT_TRUE(status.secured);
     EXPECT_EQ("0011223344550001", status.actorSci);
     ASSERT_EQ(2u, status.participants.size());
     EXPECT_EQ(PRIMARY_CKN, status.participants[0].ckn);
@@ -380,7 +388,7 @@ TEST(MACsecMgrRestart, RetainsConfiguredRowsAndDeletesOrphans)
     EXPECT_FALSE(participantTable.get("Ethernet4|" + PRIMARY_CKN, values));
 }
 
-TEST_F(MACsecMgrTest, PrimaryRolloverRemovesBeforeAdding)
+TEST_F(MACsecMgrTest, SecuredSessionPrimaryRolloverRemovesBeforeAdding)
 {
     auto &mkaSession = session();
     auto desired = profile(NEW_PRIMARY_CKN);
@@ -398,6 +406,25 @@ TEST_F(MACsecMgrTest, PrimaryRolloverRemovesBeforeAdding)
     ASSERT_NE(mockCallArgs.end(), add);
     EXPECT_LT(distance(mockCallArgs.begin(), remove), distance(mockCallArgs.begin(), add));
     EXPECT_EQ(NEW_PRIMARY_CKN, mkaSession.applied_profile.primary_ckn);
+}
+
+TEST_F(MACsecMgrTest, AuthenticatedButUnsecuredSessionFailsRolloverPreflight)
+{
+    auto &mkaSession = session();
+    auto desired = profile(NEW_PRIMARY_CKN);
+    manager->m_profiles["profile"] = desired;
+    commandState.authenticated = true;
+    commandState.secured = false;
+
+    EXPECT_FALSE(manager->reconcilePort("Ethernet0", mkaSession, desired));
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_EQ(PRIMARY_CKN, mkaSession.applied_profile.primary_ckn);
+    EXPECT_TRUE(none_of(
+        mockCallArgs.begin(),
+        mockCallArgs.end(),
+        [](const string &cmd) {
+            return cmd.find("macsec_del_mka") != string::npos;
+        }));
 }
 
 TEST_F(MACsecMgrTest, RemoveFailureNeverAddsReplacement)
