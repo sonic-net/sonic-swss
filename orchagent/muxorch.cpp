@@ -643,6 +643,7 @@ void MuxCable::setState(string new_state)
     mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
 
     prev_state_ = state_;
+    requested_state_ = ns;
     state_ = ns;
 
     st_chg_in_progress_ = true;
@@ -682,6 +683,12 @@ void MuxCable::rollbackStateChange()
     bool success = false;
     nbr_handler_->clearBulkers();
     gNeighOrch->clearBulkers();
+
+    if (requested_state_ == MuxState::MUX_STATE_ACTIVE &&
+        nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
+    {
+        retainReadyNeighbors(transitioned_neighbors_);
+    }
 
     switch (prev_state_)
     {
@@ -795,18 +802,7 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
                      mux_name_.c_str(), enable, state_);
     if (enable)
     {
-        try
-        {
-            ret = nbr_handler_->enable(neighbors, update_rt);
-        }
-        catch (...)
-        {
-            if (nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
-            {
-                retainReadyNeighbors(neighbors);
-            }
-            throw;
-        }
+        ret = nbr_handler_->enable(neighbors, update_rt);
         if (!ret && nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
         {
             retainReadyNeighbors(neighbors);

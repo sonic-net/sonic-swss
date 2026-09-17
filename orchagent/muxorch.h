@@ -199,6 +199,7 @@ private:
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     MuxState prev_state_;
+    MuxState requested_state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
     MuxNeighbor transitioned_neighbors_;
