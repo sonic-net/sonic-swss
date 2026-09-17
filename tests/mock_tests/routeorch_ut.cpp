@@ -1766,12 +1766,23 @@ namespace routeorch_test
         NextHopKey nh2(IpAddress("10.0.0.3"), "Ethernet0");
         uint32_t count = 0;
 
+        // Capture nexthop refcounts before invalidation
+        auto refcount1_before = gNeighOrch->getNextHopRefCount(nh1);
+        auto refcount2_before = gNeighOrch->getNextHopRefCount(nh2);
+        ASSERT_GT(refcount1_before, 0);
+        ASSERT_GT(refcount2_before, 0);
+
         ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh1, count));
         ASSERT_EQ(count, 1u);
         ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh2, count));
         ASSERT_EQ(count, 1u);
 
-        // Delete the route
+        // invalidnexthopinNextHopGroup only removes SAI members;
+        // NeighOrch refcounts must remain unchanged until the NHG is destroyed.
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before);
+
+        // Delete the route — triggers removeNextHopGroup which decrements refcounts
         auto fail_before = sai_fail_count;
 
         entries.clear();
@@ -1785,5 +1796,9 @@ namespace routeorch_test
         ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
                   gRouteOrch->m_syncdNextHopGroups.end())
             << "NHG should be removed after route deletion";
+
+        // After NHG destruction, refcounts must be decremented
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
     }
 }
