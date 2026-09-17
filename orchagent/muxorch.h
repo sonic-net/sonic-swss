@@ -202,7 +202,7 @@ private:
     MuxState requested_state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
-    MuxNeighbor transitioned_neighbors_;
+    bool neighbor_transition_started_ = false;
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;

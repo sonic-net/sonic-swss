@@ -483,17 +483,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
 bool MuxCable::stateInitActive()
 {
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    try
-    {
-        bool ret = stateInitActive(neighbors);
-        transitioned_neighbors_ = std::move(neighbors);
-        return ret;
-    }
-    catch (...)
-    {
-        transitioned_neighbors_ = std::move(neighbors);
-        throw;
-    }
+    return stateInitActive(neighbors);
 }
 
 bool MuxCable::stateInitActive(MuxNeighbor& neighbors)
@@ -512,17 +502,7 @@ bool MuxCable::stateInitActive(MuxNeighbor& neighbors)
 bool MuxCable::stateActive()
 {
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    try
-    {
-        bool ret = stateActive(neighbors);
-        transitioned_neighbors_ = std::move(neighbors);
-        return ret;
-    }
-    catch (...)
-    {
-        transitioned_neighbors_ = std::move(neighbors);
-        throw;
-    }
+    return stateActive(neighbors);
 }
 
 bool MuxCable::stateActive(MuxNeighbor& neighbors)
@@ -530,26 +510,16 @@ bool MuxCable::stateActive(MuxNeighbor& neighbors)
     SWSS_LOG_INFO("Set state to Active for %s", mux_name_.c_str());
 
     Port port;
-    try
+    if (!gPortsOrch->getPort(mux_name_, port))
     {
-        if (!gPortsOrch->getPort(mux_name_, port))
-        {
-            SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
-            neighbors.clear();
-            return false;
-        }
-
-        if (!aclHandler(port.m_port_id, mux_name_, false))
-        {
-            SWSS_LOG_INFO("Remove ACL drop rule failed for %s", mux_name_.c_str());
-            neighbors.clear();
-            return false;
-        }
+        SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
+        return false;
     }
-    catch (...)
+
+    if (!aclHandler(port.m_port_id, mux_name_, false))
     {
-        neighbors.clear();
-        throw;
+        SWSS_LOG_INFO("Remove ACL drop rule failed for %s", mux_name_.c_str());
+        return false;
     }
 
     if (!nbrHandler(true, neighbors))
@@ -564,17 +534,7 @@ bool MuxCable::stateActive(MuxNeighbor& neighbors)
 bool MuxCable::stateStandby()
 {
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    try
-    {
-        bool ret = stateStandby(neighbors);
-        transitioned_neighbors_ = std::move(neighbors);
-        return ret;
-    }
-    catch (...)
-    {
-        transitioned_neighbors_ = std::move(neighbors);
-        throw;
-    }
+    return stateStandby(neighbors);
 }
 
 bool MuxCable::stateStandby(MuxNeighbor& neighbors)
@@ -582,19 +542,10 @@ bool MuxCable::stateStandby(MuxNeighbor& neighbors)
     SWSS_LOG_INFO("Set state to Standby for %s", mux_name_.c_str());
 
     Port port;
-    try
+    if (!gPortsOrch->getPort(mux_name_, port))
     {
-        if (!gPortsOrch->getPort(mux_name_, port))
-        {
-            SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
-            neighbors.clear();
-            return false;
-        }
-    }
-    catch (...)
-    {
-        neighbors.clear();
-        throw;
+        SWSS_LOG_NOTICE("Port %s not found in port table", mux_name_.c_str());
+        return false;
     }
 
     if (!nbrHandler(false, neighbors))
@@ -623,6 +574,10 @@ void MuxCable::setState(string new_state)
     /* Update new_state to handle unknown state */
     new_state = muxStateValToString.at(ns);
 
+    prev_state_ = state_;
+    requested_state_ = ns;
+    neighbor_transition_started_ = false;
+
     auto it = muxStateTransition.find(make_pair(state_, ns));
     if (it ==  muxStateTransition.end())
     {
@@ -642,8 +597,6 @@ void MuxCable::setState(string new_state)
 
     mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
 
-    prev_state_ = state_;
-    requested_state_ = ns;
     state_ = ns;
 
     st_chg_in_progress_ = true;
@@ -664,6 +617,7 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
     mux_cb_orch_->updateMuxState(mux_name_, new_state);
+    neighbor_transition_started_ = false;
     return;
 }
 
@@ -673,53 +627,69 @@ void MuxCable::rollbackStateChange()
     {
         SWSS_LOG_ERROR("[%s] Rollback to %s not supported", mux_name_.c_str(),
                             muxStateValToString.at(prev_state_).c_str());
+        neighbor_transition_started_ = false;
         return;
     }
     SWSS_LOG_WARN("[%s] Rolling back state change to %s", mux_name_.c_str(),
                      muxStateValToString.at(prev_state_).c_str());
-    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(prev_state_), true);
-    st_chg_in_progress_ = true;
-    state_ = prev_state_;
-    bool success = false;
-    nbr_handler_->clearBulkers();
-    gNeighOrch->clearBulkers();
 
-    if (requested_state_ == MuxState::MUX_STATE_ACTIVE &&
-        nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
+    try
     {
-        retainReadyNeighbors(transitioned_neighbors_);
-    }
+        mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(prev_state_), true);
+        st_chg_in_progress_ = true;
+        state_ = prev_state_;
+        bool success = false;
+        MuxNeighbor rollback_neighbors = nbr_handler_->getNeighbors();
+        nbr_handler_->clearBulkers();
+        gNeighOrch->clearBulkers();
 
-    switch (prev_state_)
-    {
-        case MuxState::MUX_STATE_ACTIVE:
-            success = stateActive(transitioned_neighbors_);
-            break;
-        case MuxState::MUX_STATE_INIT:
-        case MuxState::MUX_STATE_STANDBY:
-            success = stateStandby(transitioned_neighbors_);
-            break;
-        case MuxState::MUX_STATE_FAILED:
-        case MuxState::MUX_STATE_PENDING:
-            // Check at the start of the function means we will never reach here
-            SWSS_LOG_ERROR("[%s] Rollback to %s not supported", mux_name_.c_str(),
-                                muxStateValToString.at(prev_state_).c_str());
-            return;
+        if (!neighbor_transition_started_)
+        {
+            rollback_neighbors.clear();
+        }
+        else if (requested_state_ == MuxState::MUX_STATE_ACTIVE &&
+            nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
+        {
+            retainReadyNeighbors(rollback_neighbors);
+        }
+
+        switch (prev_state_)
+        {
+            case MuxState::MUX_STATE_ACTIVE:
+                success = stateActive(rollback_neighbors);
+                break;
+            case MuxState::MUX_STATE_INIT:
+            case MuxState::MUX_STATE_STANDBY:
+                success = stateStandby(rollback_neighbors);
+                break;
+            case MuxState::MUX_STATE_FAILED:
+            case MuxState::MUX_STATE_PENDING:
+                // Check at the start of the function means we will never reach here
+                SWSS_LOG_ERROR("[%s] Rollback to %s not supported", mux_name_.c_str(),
+                                    muxStateValToString.at(prev_state_).c_str());
+                neighbor_transition_started_ = false;
+                return;
+        }
+        st_chg_in_progress_ = false;
+        if (success)
+        {
+            st_chg_failed_ = false;
+        }
+        else
+        {
+            st_chg_failed_ = true;
+            SWSS_LOG_ERROR("[%s] Rollback to %s failed",
+                            mux_name_.c_str(), muxStateValToString.at(prev_state_).c_str());
+        }
+        mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(state_), false);
+        mux_cb_orch_->updateMuxState(mux_name_, muxStateValToString.at(state_));
     }
-    st_chg_in_progress_ = false;
-    if (success)
+    catch (...)
     {
-        st_chg_failed_ = false;
+        neighbor_transition_started_ = false;
+        throw;
     }
-    else
-    {
-        st_chg_failed_ = true;
-        SWSS_LOG_ERROR("[%s] Rollback to %s failed",
-                        mux_name_.c_str(), muxStateValToString.at(prev_state_).c_str());
-    }
-    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(state_), false);
-    mux_cb_orch_->updateMuxState(mux_name_, muxStateValToString.at(state_));
-    transitioned_neighbors_.clear();
+    neighbor_transition_started_ = false;
 }
 
 string MuxCable::getState()
@@ -802,6 +772,7 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
                      mux_name_.c_str(), enable, state_);
     if (enable)
     {
+        neighbor_transition_started_ = true;
         ret = nbr_handler_->enable(neighbors, update_rt);
         if (!ret && nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
         {
@@ -812,22 +783,13 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
     }
     else
     {
-        sai_object_id_t tnh;
-        try
-        {
-            tnh = mux_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
-        }
-        catch (...)
-        {
-            neighbors.clear();
-            throw;
-        }
+        sai_object_id_t tnh = mux_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
         if (tnh == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("Null NH object id, retry for %s", peer_ip4_.to_string().c_str());
-            neighbors.clear();
             return false;
         }
+        neighbor_transition_started_ = true;
         // Loop through all routes with nexthops through this mux cable when changing state
         updateRoutes(neighbors);
         ret = nbr_handler_->disable(neighbors, tnh);

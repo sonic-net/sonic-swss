@@ -284,16 +284,12 @@ namespace mux_rollback_test
 
         EXPECT_THROW(m_MuxCable->setState(ACTIVE_STATE), runtime_error);
 
-        EXPECT_EQ(1u, m_MuxCable->transitioned_neighbors_.count(IpAddress(SERVER_IP1)));
-        EXPECT_EQ(0u, m_MuxCable->transitioned_neighbors_.count(missingNeighbor));
-
         m_MuxCable->rollbackStateChange();
 
         NeighborEntry existingNeighbor(IpAddress(SERVER_IP1), VLAN_1000);
         NextHopKey existingNextHop(IpAddress(SERVER_IP1), VLAN_1000);
         EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
         EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
-        EXPECT_TRUE(m_MuxCable->transitioned_neighbors_.empty());
         EXPECT_FALSE(gNeighOrch->isHwConfigured(existingNeighbor));
         EXPECT_EQ(SAI_NULL_OBJECT_ID, gNeighOrch->getLocalNextHopId(existingNextHop));
         EXPECT_EQ(0u, gNeighOrch->m_syncdNeighbors.count(NeighborEntry(missingNeighbor, VLAN_1000)));
