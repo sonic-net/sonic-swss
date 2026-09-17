@@ -258,20 +258,28 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
-            if (state != bfd_session_lookup[id].state)
+            auto it = bfd_session_lookup.find(id);
+
+            if (it == bfd_session_lookup.end())
             {
-                auto key = bfd_session_lookup[id].peer;
+                SWSS_LOG_NOTICE("BFD session id:%" PRIx64 " not found", id);
+                continue;
+            }
+
+            if (state != it->second.state)
+            {
+                auto key = it->second.peer;
                 m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
 
                 SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
-                            session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
+                            session_state_lookup.at(it->second.state).c_str(), session_state_lookup.at(state).c_str());
 
                 BfdUpdate update;
                 update.peer = key;
                 update.state = state;
                 notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
-                bfd_session_lookup[id].state = state;
+                it->second.state = state;
             }
         }
 
