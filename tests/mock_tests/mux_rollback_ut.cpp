@@ -540,4 +540,73 @@ namespace mux_rollback_test
         m_MuxOrch->updateFdb(update);
         EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
     }
+
+    // NeighOrch::addNeighbor update path: NO_HOST_ROUTE and the explicit /32
+    // are one state. A neighbor that is already programmed and only later
+    // qualifies as a prefix neighbor must get its prefix route created here,
+    // otherwise it is recorded as prefix_route with nothing in hardware and
+    // every later mux transition fails on it.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateCreatesMissingPrefixRoute)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        // Neighbor was programmed before it was classified as a prefix neighbor.
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = false;
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_TRUE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+    }
+
+    // A failed prefix route must not be recorded as prefix_route, so the task
+    // retries instead of latching a state that does not exist in hardware.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdatePrefixRouteFailureIsNotRecorded)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = false;
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillRepeatedly(Return(SAI_STATUS_TABLE_FULL));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+    }
+
+    // Inverse transition: a neighbor that stops qualifying as a prefix neighbor
+    // must have its /32 removed here, because removeNeighbor() only deletes the
+    // route when prefix_route is still set.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateRemovesStalePrefixRoute)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        m_MuxOrch->prefix_nbrs_supported_ = false;
+
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_TRUE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxOrch->prefix_nbrs_supported_ = true;
+    }
 }
