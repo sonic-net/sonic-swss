@@ -1321,7 +1321,8 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
 
     auto portCount = static_cast<std::uint32_t>(portList.size());
     std::vector<sai_object_id_t> oidList(portCount, SAI_NULL_OBJECT_ID);
-    std::vector<sai_status_t> statusList(portCount, SAI_STATUS_SUCCESS);
+    // Default to failure so any port SAI does not explicitly mark success is treated as not-created.
+    std::vector<sai_status_t> statusList(portCount, SAI_STATUS_FAILURE);
 
     for (const auto &cit : portList)
     {
@@ -1500,35 +1501,32 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR,
         oidList.data(), statusList.data()
     );
+
+    // Under IGNORE_ERROR the bulk call returns a non-success aggregate status if ANY port
+    // fails, with per-port results in statusList. Don't abort: keep the ports that were
+    // created and skip the ones that failed (per-port triage below).
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create ports with bulk operation, rv:%d", status);
-
-        auto handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            SWSS_LOG_THROW("PortsOrch bulk create failure");
-        }
-
-        return false;
+        SWSS_LOG_WARN("Bulk port create returned rv:%d; keeping the ports that succeeded", status);
     }
+
+    std::uint32_t failedPortCount = 0;
 
     for (std::uint32_t i = 0; i < portCount; i++)
     {
-        if (statusList.at(i) != SAI_STATUS_SUCCESS)
+        // Skip any port SAI did not create (incl. already-exists / resource errors); one bad port must not fail the bulk.
+        bool created = (status == SAI_STATUS_SUCCESS) || (statusList.at(i) == SAI_STATUS_SUCCESS);
+        if (!created)
         {
             SWSS_LOG_ERROR(
-                "Failed to create port %s with bulk operation, rv:%d",
+                "Failed to create port %s with bulk operation, rv:%d - skipping",
                 portList.at(i).key.c_str(), statusList.at(i)
             );
 
-            auto handle_status = handleSaiCreateStatus(SAI_API_PORT, statusList.at(i));
-            if (handle_status != task_process_status::task_success)
-            {
-                SWSS_LOG_THROW("PortsOrch bulk create failure");
-            }
-
-            return false;
+            // Leave m_port_id at SAI_NULL_OBJECT_ID so this entry is pruned below.
+            addedPorts.at(i).m_port_id = SAI_NULL_OBJECT_ID;
+            failedPortCount++;
+            continue;
         }
 
         Port& p = addedPorts.at(i);
@@ -1544,6 +1542,29 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         m_portCount++;
     }
 
+    // Drop the failed ports so the caller only initializes the ones SAI created.
+    if (failedPortCount > 0)
+    {
+        addedPorts.erase(
+            std::remove_if(
+                addedPorts.begin(), addedPorts.end(),
+                [](const Port &p) { return p.m_port_id == SAI_NULL_OBJECT_ID; }
+            ),
+            addedPorts.end()
+        );
+
+        SWSS_LOG_WARN(
+            "addPortBulk: %u of %u port(s) failed to create and were skipped; continuing with %zu",
+            failedPortCount, portCount, addedPorts.size()
+        );
+
+        // No port could be created: keep the original fail-fast for a total failure.
+        if (addedPorts.empty())
+        {
+            return false;
+        }
+    }
+
     // newly created ports might be put in the default vlan so remove all ports from
     // the default vlan.
     if (gMySwitchType == "voq") {
@@ -1551,7 +1572,13 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         removeDefaultBridgePorts();
     }
 
-    SWSS_LOG_NOTICE("Created ports: %s", swss::join(',', oidList.begin(), oidList.end()).c_str());
+    // Log only the OIDs actually created (addedPorts is pruned of skipped ports).
+    std::vector<sai_object_id_t> createdOids;
+    for (const auto &p : addedPorts)
+    {
+        createdOids.push_back(p.m_port_id);
+    }
+    SWSS_LOG_NOTICE("Created ports: %s", swss::join(',', createdOids.begin(), createdOids.end()).c_str());
 
     return true;
 }
