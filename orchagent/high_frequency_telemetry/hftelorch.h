@@ -52,6 +52,31 @@ private:
     std::unordered_map<sai_object_type_t, std::unordered_set<std::shared_ptr<HFTelProfile>>> m_type_profile_mapping;
     CounterNameCache m_counter_name_cache;
 
+    // A counter-name-map update arriving while the target profile's shared
+    // tel_type state is transiently SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG
+    // (canBeUpdated() == false) cannot be applied yet. In MIXED mode this
+    // state is shared across every group in the profile, so one group's
+    // in-flight commit can transiently block an unrelated group's object
+    // resolution. Queue those updates here and replay them once
+    // notifyConfigReady() clears the profile's blocking state, instead of
+    // silently dropping them.
+    struct PendingCounterUpdate
+    {
+        std::shared_ptr<HFTelProfile> profile;
+        sai_object_type_t object_type;
+        CounterNameMapUpdater::Message msg;
+    };
+    std::vector<PendingCounterUpdate> m_pending_counter_updates;
+
+    // Applies msg to profile for object_type if the profile currently allows
+    // updates; returns false (without applying) if it is blocked and should
+    // be queued/retried later.
+    bool applyCounterUpdate(
+        const std::shared_ptr<HFTelProfile> &profile,
+        sai_object_type_t object_type,
+        const CounterNameMapUpdater::Message &msg);
+    void retryPendingCounterUpdates(const std::shared_ptr<HFTelProfile> &profile);
+
     task_process_status profileTableSet(const std::string &profile_name, const std::vector<swss::FieldValueTuple> &values);
     task_process_status profileTableDel(const std::string &profile_name);
     task_process_status groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values);

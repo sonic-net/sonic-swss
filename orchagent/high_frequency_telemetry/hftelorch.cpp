@@ -159,37 +159,79 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     for (auto profile_itr = type_itr->second.begin(); profile_itr != type_itr->second.end(); profile_itr++)
     {
         auto profile = *profile_itr;
-        const auto &counter_name = msg.m_counter_name;
 
-        if (!profile->canBeUpdated(counter_itr->second))
+        if (!applyCounterUpdate(profile, counter_itr->second, msg))
         {
-            // TODO: Here is a potential issue, we might need to retry the task.
-            // Because the Syncd is generating the configuration(template),
-            // we cannot update the monitor objects at this time.
-            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name.c_str());
-            continue;
+            // The profile's shared tel_type state is transiently blocking
+            // updates (e.g. another group in the same MIXED-mode profile is
+            // mid-commit). Queue this update to replay once the state
+            // clears, instead of dropping it - otherwise this object's SAI
+            // ID is lost forever and its group's session never becomes
+            // ready.
+            SWSS_LOG_NOTICE("The high frequency telemetry profile %s is not ready to be updated, queuing object %s for retry",
+                            profile->getProfileName().c_str(), msg.m_counter_name.c_str());
+            m_pending_counter_updates.push_back({profile, counter_itr->second, msg});
         }
-
-        if (msg.m_operation == CounterNameMapUpdater::SET)
-        {
-            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
-            {
-                continue;
-            }
-        }
-        else if (msg.m_operation == CounterNameMapUpdater::DEL)
-        {
-            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
-            {
-                continue;
-            }
-        }
-        else
-        {
-            SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
-        }
-        profile->tryCommitConfig(counter_itr->second);
     }
+}
+
+bool HFTelOrch::applyCounterUpdate(
+    const std::shared_ptr<HFTelProfile> &profile,
+    sai_object_type_t object_type,
+    const CounterNameMapUpdater::Message &msg)
+{
+    SWSS_LOG_ENTER();
+
+    if (!profile->canBeUpdated(object_type))
+    {
+        return false;
+    }
+
+    const auto &counter_name = msg.m_counter_name;
+
+    if (msg.m_operation == CounterNameMapUpdater::SET)
+    {
+        if (!profile->setObjectSAIID(object_type, counter_name.c_str(), msg.m_oid))
+        {
+            return true;
+        }
+    }
+    else if (msg.m_operation == CounterNameMapUpdater::DEL)
+    {
+        if (!profile->delObjectSAIID(object_type, counter_name.c_str()))
+        {
+            return true;
+        }
+    }
+    else
+    {
+        SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+    }
+    profile->tryCommitConfig(object_type);
+    return true;
+}
+
+void HFTelOrch::retryPendingCounterUpdates(const std::shared_ptr<HFTelProfile> &profile)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_pending_counter_updates.empty())
+    {
+        return;
+    }
+
+    std::vector<PendingCounterUpdate> remaining;
+    remaining.reserve(m_pending_counter_updates.size());
+
+    for (auto &pending : m_pending_counter_updates)
+    {
+        if (pending.profile != profile || !applyCounterUpdate(pending.profile, pending.object_type, pending.msg))
+        {
+            remaining.push_back(std::move(pending));
+        }
+    }
+
+    m_pending_counter_updates = std::move(remaining);
 }
 
 bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
@@ -503,6 +545,14 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
         return task_process_status::task_need_retry;
     }
 
+    m_pending_counter_updates.erase(
+        std::remove_if(
+            m_pending_counter_updates.begin(),
+            m_pending_counter_updates.end(),
+            [&profile_itr](const PendingCounterUpdate &pending)
+            { return pending.profile == profile_itr->second; }),
+        m_pending_counter_updates.end());
+
     m_name_profile_mapping.erase(profile_itr);
 
     SWSS_LOG_NOTICE("The high frequency telemetry profile %s is deleted", profile_name.c_str());
@@ -698,6 +748,11 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         // TODO: A potential optimization
         // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
         profile.second->notifyConfigReady(type);
+
+        // Replay any counter-name-map updates that arrived while this
+        // profile's shared tel_type state was transiently blocking updates
+        // (see locallyNotify/applyCounterUpdate).
+        retryPendingCounterUpdates(profile.second);
 
         // In SINGLE mode SAI fires this callback once per object type, so we
         // write the matching per-group STATE_DB entry. In MIXED mode the
