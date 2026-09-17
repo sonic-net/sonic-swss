@@ -558,7 +558,6 @@ int main(int argc, char **argv)
             SWSS_LOG_NOTICE("ASIC_DB msgpack encoding enabled (-p)");
             break;
         case 'e':
-            // WS8: enable conflated-hash route channel.
             gEnableConflatedChannel = true;
             SWSS_LOG_NOTICE("Conflated-hash route channel enabled (-e)");
             break;

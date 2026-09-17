@@ -1255,6 +1255,10 @@ void OrchDaemon::start(long heartBeatInterval)
                 {
                     gRingBuffer->waitUntilEmptyAndIdle();
                 }
+                if (gRouteOrch)
+                {
+                    gRouteOrch->waitForBulkSubmitter();
+                }
 
                 // Should sleep here or continue handling timers and etc.??
                 if (!gSwitchOrch->checkRestartNoFreeze())

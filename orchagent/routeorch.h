@@ -13,6 +13,7 @@
 #include "nexthopgroupkey.h"
 #include "bulker.h"
 #include "producerstatetable.h"
+#include "routebulksubmitter.h"
 #include <map>
 #include <unordered_map>
 
@@ -235,6 +236,8 @@ public:
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
     void flushRouteBulker() { gRouteBulker.flush(); }
+    void waitForBulkSubmitter();
+    void drainPendingBulk(ConsumerBase& consumer);
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
 
@@ -350,9 +353,15 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    EntityBulker<sai_route_api_t>           gRouteBulker;
+    EntityBulker<sai_route_api_t>           gRouteBulker;  // active bulker the build loop writes to
     EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+
+    EntityBulker<sai_route_api_t>           m_spareBulker;
+    std::unique_ptr<RouteBulkSubmitter>     m_submitter;
+    using BulkMap = std::map<std::pair<std::string, std::string>, RouteBulkContext>;
+    BulkMap                                 m_pendingToBulk;
+    bool                                    m_hasPendingBulk = false;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 
@@ -368,6 +377,7 @@ private:
     void createDefaultDropRoutes();
     void doTask(ConsumerBase& consumer);
     void doTask(swss::SelectableTimer &timer) override;
+    void processRouteBulkResults(ConsumerBase& consumer, BulkMap& toBulk);
 #ifdef INCLUDE_MPLS
     void doLabelTask(ConsumerBase& consumer);
 #endif

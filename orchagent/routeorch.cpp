@@ -47,6 +47,7 @@ extern ArsOrch *gArsOrch;
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
 extern bool gEnableFibSuppress;
+extern bool gEnableDoubleBuffer;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -56,6 +57,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
+        m_spareBulker(sai_route_api, gMaxBulkSize),
         ZmqOrch(db, tableNames, zmqServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
@@ -71,6 +73,12 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     m_publisher.setBuffered(true);
     m_publisher.m_directDbWrite = true;
+
+    if (gEnableDoubleBuffer)
+    {
+        m_submitter = std::make_unique<RouteBulkSubmitter>();
+        SWSS_LOG_NOTICE("Double-buffered route bulk submitter created");
+    }
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -957,6 +965,14 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         }
     }
 
+    if (m_hasPendingBulk)
+    {
+        m_submitter->waitForFlush();
+        processRouteBulkResults(consumer, m_pendingToBulk);
+        m_pendingToBulk.clear();
+        m_hasPendingBulk = false;
+    }
+
     /* Default handling is for APP_ROUTE_TABLE_NAME */
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1447,145 +1463,160 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
         }
 
-        // Flush the route bulker, so routes will be written to syncd and ASIC
-        gRouteBulker.flush();
-
-        // Go through the bulker results
-        auto it_prev = consumer.m_toSync.begin();
-        m_bulkNhgReducedRefCnt.clear();
-        NextHopGroupKey v4_default_nhg_key;
-        NextHopGroupKey v6_default_nhg_key;
-        m_bulkSrv6NhgReducedVec.clear();
-
-        while (it_prev != it)
+        if (m_submitter)
         {
-            KeyOpFieldsValuesTuple t = it_prev->second;
+            std::swap(gRouteBulker, m_spareBulker);
+            std::swap(m_pendingToBulk, toBulk);
+            m_hasPendingBulk = true;
+            m_submitter->submit(m_spareBulker);
+        }
+        else
+        {
+            gRouteBulker.flush();
+            processRouteBulkResults(consumer, toBulk);
+        }
+    }
+}
 
-            string key = kfvKey(t);
-            string op = kfvOp(t);
-            auto found = toBulk.find(make_pair(key, op));
-            if (found == toBulk.end())
+void RouteOrch::processRouteBulkResults(ConsumerBase& consumer, BulkMap& toBulk)
+{
+    auto it_prev = consumer.m_toSync.begin();
+    m_bulkNhgReducedRefCnt.clear();
+    NextHopGroupKey v4_default_nhg_key;
+    NextHopGroupKey v6_default_nhg_key;
+    m_bulkSrv6NhgReducedVec.clear();
+
+    while (it_prev != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it_prev->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto found = toBulk.find(make_pair(key, op));
+        if (found == toBulk.end())
+        {
+            it_prev++;
+            continue;
+        }
+
+        const auto& ctx = found->second;
+        const auto& object_statuses = ctx.object_statuses;
+        if (object_statuses.empty())
+        {
+            it_prev++;
+            continue;
+        }
+
+        const sai_object_id_t& vrf_id = ctx.vrf_id;
+        const IpPrefix& ip_prefix = ctx.ip_prefix;
+
+        sai_route_entry_t route_entry;
+        route_entry.vr_id = vrf_id;
+        route_entry.switch_id = gSwitchId;
+        copy(route_entry.destination, ip_prefix);
+
+        if (op == SET_COMMAND)
+        {
+            const bool& excp_intfs_flag = ctx.excp_intfs_flag;
+
+            if (excp_intfs_flag)
             {
-                it_prev++;
-                continue;
-            }
-
-            const auto& ctx = found->second;
-            const auto& object_statuses = ctx.object_statuses;
-            if (object_statuses.empty())
-            {
-                it_prev++;
-                continue;
-            }
-
-            const sai_object_id_t& vrf_id = ctx.vrf_id;
-            const IpPrefix& ip_prefix = ctx.ip_prefix;
-
-            sai_route_entry_t route_entry;
-            route_entry.vr_id = vrf_id;
-            route_entry.switch_id = gSwitchId;
-            copy(route_entry.destination, ip_prefix);
-            
-            if (op == SET_COMMAND)
-            {
-                const bool& excp_intfs_flag = ctx.excp_intfs_flag;
-
-                if (excp_intfs_flag)
-                {
-                    /* If any existing routes are updated to point to the
-                     * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(ctx))
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-                    continue;
-                }
-
-                const NextHopGroupKey& nhg = ctx.nhg;
-
-                if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
-                {
-                    if (addRoutePost(ctx, nhg))
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-                }
-                else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
-                         m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                         m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
-                         gRouteBulker.bulk_entry_pending_removal(route_entry) ||
-                         ctx.using_temp_nhg)
-                {
-                    if (addRoutePost(ctx, nhg))
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-
-		    // Save the Default Route of Default VRF to be used for 
-		    // enabling fallback to it as needed
-                    if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
-                    {
-                       if (ip_prefix.isV4())
-                       {
-                            v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
-                       }
-                       else
-                       {
-                            v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
-                       }
-                    }
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                /* Cannot locate the route or remove succeed */
                 if (removeRoutePost(ctx))
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
+                continue;
             }
-        }
 
-        /* Flush response publisher so route notifications reach fpmsyncd every batch.
-         * Without this, notifications stay buffered in the Redis pipeline until the
-         * next OrchDaemon periodic flush (up to 1s), delaying the offload reply to
-         * zebra and causing BGP advertisement delay when supress fib pending is ON */
-        m_publisher.flush();
+            const NextHopGroupKey& nhg = ctx.nhg;
 
-        /* Remove next hop group if the reference count decreases to zero */
-        for (auto& it_nhg : m_bulkNhgReducedRefCnt)
-        {
-            if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
+            if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
             {
-                removeOverlayNextHops(it_nhg.second, it_nhg.first);
+                if (addRoutePost(ctx, nhg))
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                else
+                    it_prev++;
             }
-            else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+            else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
+                     gRouteBulker.bulk_entry_pending_removal(route_entry) ||
+                     ctx.using_temp_nhg)
             {
-                // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
-                removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
+                if (addRoutePost(ctx, nhg))
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                else
+                    it_prev++;
+
+                if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
+                {
+                   if (ip_prefix.isV4())
+                   {
+                        v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                   }
+                   else
+                   {
+                        v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                   }
+                }
             }
         }
-        /* Reduce reference for srv6 next hop group */
-        /* Later delete for increase refcnt early */
-        if (!m_bulkSrv6NhgReducedVec.empty())
+        else if (op == DEL_COMMAND)
         {
-            m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
+            if (removeRoutePost(ctx))
+                it_prev = consumer.m_toSync.erase(it_prev);
+            else
+                it_prev++;
         }
-        /* No Update to Default Route so we can return */
-        if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
+    }
+
+    m_publisher.flush();
+
+    for (auto& it_nhg : m_bulkNhgReducedRefCnt)
+    {
+        if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
         {
-            return;
+            removeOverlayNextHops(it_nhg.second, it_nhg.first);
         }
-	/* Update to v4 Default Route so update the data structure */
-        if (v4_default_nhg_key.getSize())
+        else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
         {
-            updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
+            removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
         }
-	/* Update to v6 Default Route so update the data structure */
-        if (v6_default_nhg_key.getSize())
-        {
-            updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
-        }
+    }
+    if (!m_bulkSrv6NhgReducedVec.empty())
+    {
+        m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
+    }
+    if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
+    {
+        return;
+    }
+    if (v4_default_nhg_key.getSize())
+    {
+        updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
+    }
+    if (v6_default_nhg_key.getSize())
+    {
+        updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
+    }
+}
+
+void RouteOrch::waitForBulkSubmitter()
+{
+    if (m_submitter)
+    {
+        m_submitter->waitForFlush();
+    }
+}
+
+void RouteOrch::drainPendingBulk(ConsumerBase& consumer)
+{
+    if (m_hasPendingBulk)
+    {
+        m_submitter->waitForFlush();
+        processRouteBulkResults(consumer, m_pendingToBulk);
+        m_pendingToBulk.clear();
+        m_hasPendingBulk = false;
     }
 }
 

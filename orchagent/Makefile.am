@@ -72,6 +72,7 @@ libswssorchagent_a_SOURCES = \
             nhgorch.cpp \
             nhgbase.cpp \
             routeorch.cpp \
+            routebulksubmitter.cpp \
             neighorch.cpp \
             intfsorch.cpp \
             port/port_capabilities.cpp \
