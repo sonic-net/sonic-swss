@@ -96,7 +96,7 @@ tunnelmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CF
 tunnelmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 tunnelmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h $(top_srcdir)/orchagent/macsecpost.cpp
+macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp macsecmkastatus.cpp $(COMMON_ORCH_SOURCE) shellcmd.h $(top_srcdir)/orchagent/macsecpost.cpp
 macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
@@ -143,4 +143,3 @@ macsecmgrd_SOURCES += $(ASAN_SOURCES)
 fabricmgrd_SOURCES += $(ASAN_SOURCES)
 stpmgrd_SOURCES += $(ASAN_SOURCES)
 endif
-

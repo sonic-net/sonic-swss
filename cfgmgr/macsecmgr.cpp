@@ -2,6 +2,7 @@
 
 #include <exec.h>
 #include <shellcmd.h>
+#include <timer.h>
 #include <swss/stringutility.h>
 #include <swss/redisutility.h>
 #include <boost/algorithm/string/predicate.hpp>
@@ -17,8 +18,13 @@
 #include <map>
 #include <tuple>
 #include <algorithm>
+#include <chrono>
 #include <sstream>
 #include <cctype>
+#include <ctime>
+#include <functional>
+#include <iomanip>
+#include <set>
 
 
 using namespace std;
@@ -33,6 +39,9 @@ constexpr std::uint64_t RETRY_TIME = 30;
 
 /* retry interval, in millisecond */
 constexpr std::uint64_t RETRY_INTERVAL = 100;
+constexpr std::uint64_t MKA_STATUS_SWEEP_INTERVAL_SECONDS = 20;
+
+#define TIMEOUT_CMD "/usr/bin/timeout"
 
 /*
  * The input cipher_str is the encoded string which can be either of length 66 bytes or 130 bytes.
@@ -122,13 +131,13 @@ static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MAC
         (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_128))
     {
         if (cipher_str.length() != AES_LEN_128_BYTE)
-            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+            throw std::invalid_argument("Invalid encoded CAK length");
     }
     else if ((cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_256) ||
              (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_256))
     {
         if (cipher_str.length() != AES_LEN_256_BYTE)
-            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+            throw std::invalid_argument("Invalid encoded CAK length");
     }
 
     // Get the salt index from the cipher_str
@@ -144,6 +153,76 @@ static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MAC
     }
 
     return decodedPassword;
+}
+
+static bool normalizeCkn(std::string &ckn)
+{
+    if (ckn.empty() || ckn.size() > 128 || (ckn.size() % 2) != 0 ||
+        !std::all_of(ckn.begin(), ckn.end(), [](unsigned char c) { return std::isxdigit(c); }))
+    {
+        return false;
+    }
+    std::transform(ckn.begin(), ckn.end(), ckn.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return true;
+}
+
+static bool validateEncodedCak(const std::string &cak, size_t expectedLength)
+{
+    if (cak.size() != expectedLength ||
+        !std::isdigit(static_cast<unsigned char>(cak[0])) ||
+        !std::isdigit(static_cast<unsigned char>(cak[1])) ||
+        !std::all_of(
+            cak.begin() + 2,
+            cak.end(),
+            [](unsigned char c) { return std::isxdigit(c); }))
+    {
+        return false;
+    }
+
+    return std::stoul(cak.substr(0, 2)) < 53;
+}
+
+static bool sameNonKeyProfile(const MACsecMgr::MACsecProfile &lhs, const MACsecMgr::MACsecProfile &rhs)
+{
+    return lhs.priority == rhs.priority &&
+           lhs.cipher_suite == rhs.cipher_suite &&
+           lhs.policy == rhs.policy &&
+           static_cast<bool>(lhs.enable_replay_protect) == static_cast<bool>(rhs.enable_replay_protect) &&
+           lhs.replay_window == rhs.replay_window &&
+           static_cast<bool>(lhs.send_sci) == static_cast<bool>(rhs.send_sci) &&
+           lhs.rekey_period == rhs.rekey_period;
+}
+
+static bool sameProfile(const MACsecMgr::MACsecProfile &lhs, const MACsecMgr::MACsecProfile &rhs)
+{
+    return sameNonKeyProfile(lhs, rhs) &&
+           lhs.primary_cak == rhs.primary_cak &&
+           lhs.primary_ckn == rhs.primary_ckn &&
+           lhs.fallback_cak == rhs.fallback_cak &&
+           lhs.fallback_ckn == rhs.fallback_ckn;
+}
+
+static const MKAParticipantStatus *findParticipant(
+    const MKASessionStatus &status,
+    const std::string &ckn)
+{
+    const auto participant = std::find_if(
+        status.participants.begin(),
+        status.participants.end(),
+        [&](const MKAParticipantStatus &entry) { return entry.ckn == ckn; });
+    return participant == status.participants.end() ? nullptr : &*participant;
+}
+
+static std::string utcTimestamp()
+{
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    struct tm utc = {};
+    gmtime_r(&time, &utc);
+    std::ostringstream stream;
+    stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    return stream.str();
 }
 
 template<class T>
@@ -266,23 +345,110 @@ static void wpa_cli_exec_and_check(
     }
 }
 
+template<typename...Args>
+static void wpa_cli_exec_sensitive_and_check(
+    const std::string &sock,
+    const std::string &port_name,
+    const std::string &network_id,
+    Args && ... args)
+{
+    std::ostringstream stream;
+    std::string result;
+    wpa_cli_commands(
+        stream,
+        sock,
+        port_name,
+        network_id,
+        std::forward<Args>(args)...);
+    if (swss::exec(stream.str(), result) != 0 || result.find("OK") != 0)
+    {
+        throw std::runtime_error("sensitive WPA control command failed");
+    }
+}
+
+static std::string query_mka_status_with_timeout(
+    const std::string &sock,
+    const std::string &port_name)
+{
+    std::ostringstream command;
+    std::string output;
+    const std::string networkId;
+    command << TIMEOUT_CMD << " --signal=KILL 2s ";
+    wpa_cli_commands(command, sock, port_name, networkId, "macsec_mka_list");
+    EXEC_WITH_ERROR_THROW(command.str(), output);
+    return output;
+}
+
 MACsecMgr::MACsecMgr(
     DBConnector *cfgDb,
     DBConnector *stateDb,
     const vector<std::string> &tables) :
         Orch(cfgDb, tables),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME)
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_stateMkaSessionTable(stateDb, STATE_MACSEC_MKA_SESSION_TABLE_NAME),
+        m_stateMkaParticipantTable(stateDb, STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME)
 {
+    const auto interval = timespec {
+        .tv_sec = MKA_STATUS_SWEEP_INTERVAL_SECONDS,
+        .tv_nsec = 0,
+    };
+    m_mkaStatusTimer = new SelectableTimer(interval);
+    auto executor = new ExecutableTimer(
+        m_mkaStatusTimer,
+        this,
+        "MACSEC_MKA_STATUS_TIMER");
+    Orch::addExecutor(executor);
+    m_mkaStatusTimer->start();
+
+    std::vector<std::string> keys;
+    m_stateMkaSessionTable.getKeys(keys);
+    for (const auto &key : keys)
+    {
+        m_stateMkaSessionTable.hset(key, "query_status", "error");
+    }
 }
 
 MACsecMgr::~MACsecMgr()
 {
-    // Disable MACsec for all ports
     while (!m_macsec_ports.empty())
     {
         auto port = m_macsec_ports.begin();
-        const TaskArgs temp;
-        disableMACsec(port->first, temp);
+        markMKAQueryError(port->first, port->second, "manager stopped");
+        unconfigureMACsec(port->first, port->second);
+        stopWPASupplicant(port->second.wpa_supplicant_pid);
+        m_macsec_ports.erase(port);
+    }
+}
+
+void MACsecMgr::doTask()
+{
+    Orch::doTask();
+
+    if (!m_startupStateReconciled)
+    {
+        reconcileStartupState();
+        m_startupStateReconciled = true;
+    }
+
+}
+
+void MACsecMgr::doTask(SelectableTimer &timer)
+{
+    if (&timer != m_mkaStatusTimer)
+    {
+        SWSS_LOG_WARN("Unknown timer passed to MACsecMgr");
+        return;
+    }
+
+    sweepMKAStatus();
+}
+
+void MACsecMgr::sweepMKAStatus()
+{
+    for (auto &port : m_macsec_ports)
+    {
+        collectMKAStatus(port.first, port.second);
     }
 }
 
@@ -357,8 +523,12 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
 {
     SWSS_LOG_ENTER();
 
+    *this = MACsecProfile();
+
     // The following fields are optional
-    if (GetValue(ta, fallback_cak) && !GetValue(ta, fallback_ckn))
+    const bool hasFallbackCak = GetValue(ta, fallback_cak);
+    const bool hasFallbackCkn = GetValue(ta, fallback_ckn);
+    if (hasFallbackCak != hasFallbackCkn)
     {
         return false;
     }
@@ -388,9 +558,22 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
     }
 
     // The following fields are necessary
-    return GetValue(ta, cipher_suite)
-        && GetValue(ta, primary_cak)
-        && GetValue(ta, primary_ckn);
+    if (!GetValue(ta, cipher_suite) ||
+        !GetValue(ta, primary_cak) ||
+        !GetValue(ta, primary_ckn) ||
+        !normalizeCkn(primary_ckn) ||
+        (hasFallbackCkn && !normalizeCkn(fallback_ckn)) ||
+        (hasFallbackCkn && primary_ckn == fallback_ckn))
+    {
+        return false;
+    }
+
+    const auto expectedCakLength =
+        cipher_suite == CipherSuite::GCM_AES_128 ||
+        cipher_suite == CipherSuite::GCM_AES_XPN_128 ?
+        AES_LEN_128_BYTE : AES_LEN_256_BYTE;
+    return validateEncodedCak(primary_cak, expectedCakLength) &&
+           (!hasFallbackCak || validateEncodedCak(fallback_cak, expectedCakLength));
 }
 
 task_process_status MACsecMgr::loadProfile(
@@ -399,30 +582,53 @@ task_process_status MACsecMgr::loadProfile(
 {
     SWSS_LOG_ENTER();
 
-    auto profile = m_profiles.emplace(
-        std::piecewise_construct,
-        std::make_tuple(profile_name),
-        std::make_tuple());
+    MACsecProfile desired;
     try
     {
-        if (profile.first->second.update(profile_attr))
+        if (!desired.update(profile_attr))
         {
-            SWSS_LOG_NOTICE(
-                "The MACsec profile '%s' is loaded",
-                profile_name.c_str());
+            SWSS_LOG_WARN("The MACsec profile '%s' is invalid", profile_name.c_str());
+            return task_invalid_entry;
         }
-        // If the profile has been used
-        if (profile.second)
+
+        const auto existing = m_profiles.find(profile_name);
+        if (existing == m_profiles.end())
         {
-            for (auto & port : m_macsec_ports)
+            m_profiles.emplace(profile_name, desired);
+            SWSS_LOG_NOTICE("The MACsec profile '%s' is loaded", profile_name.c_str());
+            return task_success;
+        }
+
+        existing->second = desired;
+        std::vector<std::reference_wrapper<std::pair<const std::string, MKASession>>> attachedPorts;
+        for (auto &port : m_macsec_ports)
+        {
+            if (port.second.profile_name == profile_name &&
+                !sameProfile(port.second.applied_profile, desired))
             {
-                if (port.second.profile_name == profile_name)
-                {
-                    // Hot update
-                    SWSS_LOG_DEBUG("Hot update");
-                }
+                attachedPorts.emplace_back(port);
             }
         }
+
+        for (auto &portRef : attachedPorts)
+        {
+            auto &port = portRef.get();
+            if (!preflightRollover(port.first, port.second, desired))
+            {
+                return task_need_retry;
+            }
+        }
+
+        for (auto &portRef : attachedPorts)
+        {
+            auto &port = portRef.get();
+            if (!reconcilePort(port.first, port.second, desired))
+            {
+                return task_need_retry;
+            }
+        }
+
+        SWSS_LOG_NOTICE("The MACsec profile '%s' is reconciled", profile_name.c_str());
         return task_success;
     }
     catch(const std::invalid_argument & e)
@@ -537,6 +743,7 @@ task_process_status MACsecMgr::enableMACsec(
         std::make_tuple());
     auto & session = port.first->second;
     session.profile_name = profile_name;
+    session.applied_profile = profile;
     ostringstream ostream;
     ostream << SOCK_DIR << port_name;
     session.sock = ostream.str();
@@ -569,6 +776,7 @@ task_process_status MACsecMgr::enableMACsec(
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
         profile_name.c_str(),
         port_name.c_str());
+    collectMKAStatus(port_name, session);
     return task_success;
 }
 
@@ -578,6 +786,7 @@ task_process_status MACsecMgr::disableMACsec(
 {
     SWSS_LOG_ENTER();
 
+    deleteOperationalState(port_name);
     auto itr = m_macsec_ports.find(port_name);
     if (itr == m_macsec_ports.end())
     {
@@ -699,7 +908,7 @@ bool MACsecMgr::stopWPASupplicant(pid_t pid) const
 
 bool MACsecMgr::configureMACsec(
     const std::string & port_name,
-    const MKASession & session,
+    MKASession & session,
     const MACsecProfile & profile) const
 {
     SWSS_LOG_ENTER();
@@ -735,6 +944,7 @@ bool MACsecMgr::configureMACsec(
         {
             throw std::runtime_error("Cannot add network : " + res);
         }
+        session.network_id = network_id;
 
         wpa_cli_exec_and_check(
             session.sock,
@@ -764,7 +974,7 @@ bool MACsecMgr::configureMACsec(
             "macsec_integ_only",
             (profile.policy == MACsecProfile::Policy::INTEGRITY_ONLY ? 1 : 0));
 
-        wpa_cli_exec_and_check(
+        wpa_cli_exec_sensitive_and_check(
             session.sock,
             port_name,
             network_id,
@@ -777,6 +987,23 @@ bool MACsecMgr::configureMACsec(
             network_id,
             "mka_ckn",
             profile.primary_ckn);
+
+        if (!profile.fallback_ckn.empty())
+        {
+            wpa_cli_exec_sensitive_and_check(
+                session.sock,
+                port_name,
+                network_id,
+                "mka_cak_fallback",
+                decodeKey(profile.fallback_cak, profile.cipher_suite));
+
+            wpa_cli_exec_and_check(
+                session.sock,
+                port_name,
+                network_id,
+                "mka_ckn_fallback",
+                profile.fallback_ckn);
+        }
 
         wpa_cli_exec_and_check(
             session.sock,
@@ -920,4 +1147,577 @@ bool MACsecMgr::unconfigureMACsec(
         }
     }
     return true;
+}
+
+bool MACsecMgr::queryMKAStatus(
+    const std::string &port_name,
+    const MKASession &session,
+    MKASessionStatus &status,
+    std::string &error) const
+{
+    try
+    {
+        const auto output = query_mka_status_with_timeout(
+            session.sock,
+            port_name);
+        return parseMKAStatus(output, status, error);
+    }
+    catch (const std::exception &)
+    {
+        error = "WPA status query failed";
+        return false;
+    }
+}
+
+bool MACsecMgr::validateExpectedParticipants(
+    const MKASession &session,
+    const MKASessionStatus &status,
+    const MACsecProfile *desired,
+    bool allowDesiredReplacement,
+    std::string &error) const
+{
+    std::map<std::string, bool> fixed;
+    if (!session.applied_profile.primary_ckn.empty())
+    {
+        fixed.emplace(session.applied_profile.primary_ckn, true);
+    }
+    if (!session.applied_profile.fallback_ckn.empty())
+    {
+        fixed.emplace(session.applied_profile.fallback_ckn, false);
+    }
+
+    std::map<std::string, bool> alternatives;
+    if (allowDesiredReplacement && !session.pending_old_ckn.empty())
+    {
+        alternatives.emplace(session.pending_old_ckn, session.pending_primary);
+        if (desired != nullptr)
+        {
+            alternatives.emplace(
+                session.pending_primary ? desired->primary_ckn : desired->fallback_ckn,
+                session.pending_primary);
+        }
+    }
+
+    size_t alternativeCount = 0;
+    for (const auto &participant : status.participants)
+    {
+        const auto expected = fixed.find(participant.ckn);
+        if (expected != fixed.end())
+        {
+            if (participant.isPrimary != expected->second)
+            {
+                error = "runtime participant role differs from applied state";
+                return false;
+            }
+            continue;
+        }
+
+        const auto alternative = alternatives.find(participant.ckn);
+        if (alternative == alternatives.end() ||
+            participant.isPrimary != alternative->second)
+        {
+            error = "runtime participant set differs from applied state";
+            return false;
+        }
+        ++alternativeCount;
+    }
+
+    for (const auto &expected : fixed)
+    {
+        if (findParticipant(status, expected.first) == nullptr)
+        {
+            error = "runtime participant set is incomplete";
+            return false;
+        }
+    }
+
+    if (alternativeCount > 1 ||
+        status.participants.size() != fixed.size() + alternativeCount)
+    {
+        error = "runtime participant set is ambiguous";
+        return false;
+    }
+
+    return true;
+}
+
+bool MACsecMgr::collectMKAStatus(
+    const std::string &port_name,
+    MKASession &session,
+    MKASessionStatus *statusResult,
+    bool allowDesiredReplacement)
+{
+    MKASessionStatus status;
+    std::string error;
+    const auto desired = m_profiles.find(session.profile_name);
+    const MACsecProfile *desiredProfile =
+        desired == m_profiles.end() ? nullptr : &desired->second;
+
+    if (!queryMKAStatus(port_name, session, status, error) ||
+        !validateExpectedParticipants(
+            session,
+            status,
+            desiredProfile,
+            allowDesiredReplacement,
+            error))
+    {
+        markMKAQueryError(port_name, session, error);
+        return false;
+    }
+
+    if (allowDesiredReplacement &&
+        desiredProfile != nullptr &&
+        !session.pending_old_ckn.empty())
+    {
+        const auto &replacementCkn =
+            session.pending_primary ?
+            desiredProfile->primary_ckn :
+            desiredProfile->fallback_ckn;
+        if (findParticipant(status, replacementCkn) != nullptr)
+        {
+            if (session.pending_primary)
+            {
+                session.applied_profile.primary_ckn = desiredProfile->primary_ckn;
+                session.applied_profile.primary_cak = desiredProfile->primary_cak;
+            }
+            else
+            {
+                session.applied_profile.fallback_ckn = desiredProfile->fallback_ckn;
+                session.applied_profile.fallback_cak = desiredProfile->fallback_cak;
+            }
+            session.pending_old_ckn.clear();
+            session.pending_primary = false;
+        }
+    }
+
+    publishMKAStatus(port_name, session, status);
+    if (statusResult != nullptr)
+    {
+        *statusResult = status;
+    }
+    return true;
+}
+
+void MACsecMgr::publishMKAStatus(
+    const std::string &port_name,
+    MKASession &session,
+    const MKASessionStatus &status)
+{
+    auto sessionValues = status.toFieldValues();
+    sessionValues.emplace_back("profile", session.profile_name);
+    sessionValues.emplace_back("query_status", "ok");
+    sessionValues.emplace_back("last_updated", utcTimestamp());
+    m_stateMkaSessionTable.set(port_name, sessionValues);
+
+    std::set<std::string> publishedKeys;
+    for (const auto &participant : status.participants)
+    {
+        const auto key = port_name + "|" + participant.ckn;
+        publishedKeys.insert(key);
+        m_stateMkaParticipantTable.set(key, participant.toFieldValues());
+    }
+
+    std::vector<std::string> existingKeys;
+    m_stateMkaParticipantTable.getKeys(existingKeys);
+    const auto prefix = port_name + "|";
+    for (const auto &key : existingKeys)
+    {
+        if (key.compare(0, prefix.size(), prefix) == 0 &&
+            publishedKeys.find(key) == publishedKeys.end())
+        {
+            m_stateMkaParticipantTable.del(key);
+        }
+    }
+
+    setConfigState(port_name, session, "");
+}
+
+void MACsecMgr::markMKAQueryError(
+    const std::string &port_name,
+    MKASession &session,
+    const std::string &reason)
+{
+    m_stateMkaSessionTable.set(port_name, {
+        {"profile", session.profile_name},
+        {"query_status", "error"},
+    });
+    setConfigState(port_name, session, "");
+    SWSS_LOG_WARN("MKA status query for port '%s' failed: %s",
+                  port_name.c_str(), reason.c_str());
+}
+
+void MACsecMgr::setConfigState(
+    const std::string &port_name,
+    MKASession &session,
+    const std::string &error)
+{
+    const auto desired = m_profiles.find(session.profile_name);
+    const bool inSync =
+        desired != m_profiles.end() &&
+        session.pending_old_ckn.empty() &&
+        sameProfile(session.applied_profile, desired->second);
+
+    if (inSync)
+    {
+        session.config_error.clear();
+        m_stateMkaSessionTable.hset(port_name, "config_status", "in-sync");
+        m_stateMkaSessionTable.hdel(port_name, "config_error");
+        return;
+    }
+
+    if (!error.empty())
+    {
+        session.config_error = error;
+    }
+    else if (session.config_error.empty())
+    {
+        session.config_error = "desired profile is not applied";
+    }
+
+    m_stateMkaSessionTable.set(port_name, {
+        {"config_status", "degraded"},
+        {"config_error", session.config_error},
+    });
+}
+
+void MACsecMgr::deleteOperationalState(const std::string &port_name)
+{
+    m_stateMkaSessionTable.del(port_name);
+    std::vector<std::string> keys;
+    m_stateMkaParticipantTable.getKeys(keys);
+    const auto prefix = port_name + "|";
+    for (const auto &key : keys)
+    {
+        if (key.compare(0, prefix.size(), prefix) == 0)
+        {
+            m_stateMkaParticipantTable.del(key);
+        }
+    }
+}
+
+void MACsecMgr::reconcileStartupState()
+{
+    std::set<std::string> configuredPorts;
+    std::vector<std::string> portKeys;
+    m_cfgPortTable.getKeys(portKeys);
+    for (const auto &port : portKeys)
+    {
+        std::vector<FieldValueTuple> values;
+        std::string profile;
+        if (m_cfgPortTable.get(port, values) &&
+            get_value(values, "macsec", profile) &&
+            !profile.empty())
+        {
+            configuredPorts.insert(port);
+        }
+    }
+
+    std::vector<std::string> sessionKeys;
+    m_stateMkaSessionTable.getKeys(sessionKeys);
+    for (const auto &port : sessionKeys)
+    {
+        if (configuredPorts.find(port) == configuredPorts.end())
+        {
+            deleteOperationalState(port);
+        }
+        else
+        {
+            m_stateMkaSessionTable.hset(port, "query_status", "error");
+        }
+    }
+
+    std::vector<std::string> participantKeys;
+    m_stateMkaParticipantTable.getKeys(participantKeys);
+    for (const auto &key : participantKeys)
+    {
+        const auto separator = key.find('|');
+        const auto port = key.substr(0, separator);
+        if (separator == std::string::npos ||
+            configuredPorts.find(port) == configuredPorts.end())
+        {
+            m_stateMkaParticipantTable.del(key);
+        }
+    }
+
+    for (auto &port : m_macsec_ports)
+    {
+        collectMKAStatus(port.first, port.second);
+    }
+}
+
+bool MACsecMgr::preflightRollover(
+    const std::string &port_name,
+    MKASession &session,
+    const MACsecProfile &desired)
+{
+    if (!sameNonKeyProfile(session.applied_profile, desired) ||
+        session.applied_profile.fallback_ckn.empty() != desired.fallback_ckn.empty())
+    {
+        setConfigState(port_name, session, "profile update is not a single-key rollover");
+        return false;
+    }
+
+    const bool primaryChanged =
+        session.applied_profile.primary_ckn != desired.primary_ckn ||
+        session.applied_profile.primary_cak != desired.primary_cak ||
+        (session.pending_primary && !session.pending_old_ckn.empty());
+    const bool fallbackChanged =
+        session.applied_profile.fallback_ckn != desired.fallback_ckn ||
+        session.applied_profile.fallback_cak != desired.fallback_cak ||
+        (!session.pending_primary && !session.pending_old_ckn.empty());
+
+    if (!primaryChanged && !fallbackChanged)
+    {
+        setConfigState(port_name, session, "");
+        return true;
+    }
+    if (primaryChanged == fallbackChanged ||
+        (primaryChanged &&
+         session.applied_profile.primary_ckn == desired.primary_ckn &&
+         session.applied_profile.primary_cak != desired.primary_cak) ||
+        (fallbackChanged &&
+         session.applied_profile.fallback_ckn == desired.fallback_ckn &&
+         session.applied_profile.fallback_cak != desired.fallback_cak))
+    {
+        setConfigState(port_name, session, "profile update is not a supported CKN replacement");
+        return false;
+    }
+
+    const bool rotatingPrimary = primaryChanged;
+    const auto &alternateCkn =
+        rotatingPrimary ? desired.fallback_ckn : desired.primary_ckn;
+    if (alternateCkn.empty())
+    {
+        setConfigState(port_name, session, "no alternate participant is configured");
+        return false;
+    }
+
+    MKASessionStatus status;
+    if (!collectMKAStatus(port_name, session, &status, true))
+    {
+        setConfigState(port_name, session, "fresh MKA status is unavailable");
+        return false;
+    }
+
+    if (sameProfile(session.applied_profile, desired))
+    {
+        return true;
+    }
+
+    if (status.kayStatus != "active" ||
+        !status.authenticated ||
+        !status.secured ||
+        status.failed)
+    {
+        setConfigState(port_name, session, "MKA session is not healthy");
+        return false;
+    }
+
+    const auto alternate = findParticipant(status, alternateCkn);
+    if (alternate == nullptr ||
+        alternate->isPrimary == rotatingPrimary ||
+        !alternate->active ||
+        alternate->livePeers == 0)
+    {
+        setConfigState(port_name, session, "alternate participant is not live and role-correct");
+        return false;
+    }
+
+    const auto &selectedCkn =
+        !session.pending_old_ckn.empty() ?
+        session.pending_old_ckn :
+        (rotatingPrimary ?
+         session.applied_profile.primary_ckn :
+         session.applied_profile.fallback_ckn);
+    const auto selected = findParticipant(status, selectedCkn);
+    if (selected != nullptr && selected->isPrimary != rotatingPrimary)
+    {
+        setConfigState(port_name, session, "selected participant role is inconsistent");
+        return false;
+    }
+
+    return true;
+}
+
+bool MACsecMgr::reconcilePort(
+    const std::string &port_name,
+    MKASession &session,
+    const MACsecProfile &desired)
+{
+    if (!preflightRollover(port_name, session, desired))
+    {
+        return false;
+    }
+    if (sameProfile(session.applied_profile, desired))
+    {
+        setConfigState(port_name, session, "");
+        return true;
+    }
+
+    const bool primaryChanged =
+        session.applied_profile.primary_ckn != desired.primary_ckn ||
+        session.applied_profile.primary_cak != desired.primary_cak ||
+        (session.pending_primary && !session.pending_old_ckn.empty());
+    const bool primary = primaryChanged;
+    MKASessionStatus status;
+    if (!collectMKAStatus(port_name, session, &status, true))
+    {
+        setConfigState(port_name, session, "fresh MKA status is unavailable");
+        return false;
+    }
+
+    const auto oldCkn =
+        !session.pending_old_ckn.empty() ?
+        session.pending_old_ckn :
+        (primary ?
+         session.applied_profile.primary_ckn :
+         session.applied_profile.fallback_ckn);
+    if (!oldCkn.empty() && findParticipant(status, oldCkn) != nullptr)
+    {
+        if (!removeParticipant(port_name, session, oldCkn))
+        {
+            setConfigState(port_name, session, "failed to remove selected participant");
+            return false;
+        }
+
+        session.pending_old_ckn = oldCkn;
+        session.pending_primary = primary;
+        if (primary)
+        {
+            session.applied_profile.primary_ckn.clear();
+            session.applied_profile.primary_cak.clear();
+        }
+        else
+        {
+            session.applied_profile.fallback_ckn.clear();
+            session.applied_profile.fallback_cak.clear();
+        }
+        setConfigState(port_name, session, "selected participant removed; replacement pending");
+
+        MKASessionStatus postRemoveStatus;
+        if (!collectMKAStatus(port_name, session, &postRemoveStatus, true) ||
+            findParticipant(postRemoveStatus, oldCkn) != nullptr)
+        {
+            setConfigState(port_name, session, "selected participant removal is not yet verified");
+            return false;
+        }
+    }
+
+    if (!updateNetworkParticipant(port_name, session, desired, primary))
+    {
+        setConfigState(port_name, session, "failed to update participant network configuration");
+        return false;
+    }
+    if (!addParticipant(port_name, session, desired, primary))
+    {
+        setConfigState(port_name, session, "failed to add replacement participant");
+        return false;
+    }
+
+    if (primary)
+    {
+        session.applied_profile.primary_ckn = desired.primary_ckn;
+        session.applied_profile.primary_cak = desired.primary_cak;
+    }
+    else
+    {
+        session.applied_profile.fallback_ckn = desired.fallback_ckn;
+        session.applied_profile.fallback_cak = desired.fallback_cak;
+    }
+    session.pending_old_ckn.clear();
+    session.pending_primary = false;
+    session.config_error.clear();
+    setConfigState(port_name, session, "");
+    collectMKAStatus(port_name, session);
+    return true;
+}
+
+bool MACsecMgr::removeParticipant(
+    const std::string &port_name,
+    const MKASession &session,
+    const std::string &ckn) const
+{
+    try
+    {
+        wpa_cli_exec_and_check(
+            session.sock,
+            port_name,
+            "",
+            "macsec_del_mka",
+            "ckn=" + ckn);
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+bool MACsecMgr::updateNetworkParticipant(
+    const std::string &port_name,
+    const MKASession &session,
+    const MACsecProfile &desired,
+    bool primary) const
+{
+    try
+    {
+        const auto &cak = primary ? desired.primary_cak : desired.fallback_cak;
+        const auto &ckn = primary ? desired.primary_ckn : desired.fallback_ckn;
+        wpa_cli_exec_sensitive_and_check(
+            session.sock,
+            port_name,
+            session.network_id,
+            primary ? "mka_cak" : "mka_cak_fallback",
+            decodeKey(cak, desired.cipher_suite));
+        wpa_cli_exec_and_check(
+            session.sock,
+            port_name,
+            session.network_id,
+            primary ? "mka_ckn" : "mka_ckn_fallback",
+            ckn);
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+bool MACsecMgr::addParticipant(
+    const std::string &port_name,
+    const MKASession &session,
+    const MACsecProfile &desired,
+    bool primary) const
+{
+    try
+    {
+        const auto &cak = primary ? desired.primary_cak : desired.fallback_cak;
+        const auto &ckn = primary ? desired.primary_ckn : desired.fallback_ckn;
+        if (primary)
+        {
+            wpa_cli_exec_sensitive_and_check(
+                session.sock,
+                port_name,
+                "",
+                "macsec_add_mka",
+                "ckn=" + ckn,
+                "cak=" + decodeKey(cak, desired.cipher_suite));
+        }
+        else
+        {
+            wpa_cli_exec_sensitive_and_check(
+                session.sock,
+                port_name,
+                "",
+                "macsec_add_mka",
+                "ckn=" + ckn,
+                "cak=" + decodeKey(cak, desired.cipher_suite),
+                "fallback=1");
+        }
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
 }
