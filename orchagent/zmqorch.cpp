@@ -1,9 +1,11 @@
 #include "zmqorch.h"
+#include "conflatedconsumertable.h"
 
 using namespace swss;
 using namespace std;
 
 extern int gBatchSize;
+extern bool gEnableConflatedChannel;
 
 void ZmqConsumer::execute()
 {
@@ -51,6 +53,12 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
         {
             SWSS_LOG_DEBUG("ZmqConsumer initialize for: %s", tableName.c_str());
             addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
+        }
+        else if (gEnableConflatedChannel &&
+                 (tableName == APP_ROUTE_TABLE_NAME || tableName == APP_LABEL_ROUTE_TABLE_NAME))
+        {
+            SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s", tableName.c_str());
+            addExecutor(new Consumer(new ConflatedConsumerTable(db, tableName, gBatchSize, pri), this, tableName));
         }
         else
         {
