@@ -1433,6 +1433,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     bool hw_config = isHwConfigured(neighborEntry);
+    bool was_prefix_route = isPrefixNeighbor(neighborEntry);
     /*
      * Prefix-route mode programs neighbors with NO_HOST_ROUTE and controls
      * active/standby forwarding through the explicit host prefix route.  Keep
@@ -1559,6 +1560,20 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             sai_object_id_t next_hop_id = m_syncdNextHops[nhKey].next_hop_id;
             if (!addPrefixRouteForNeighbor(ip_address, alias, next_hop_id, is_nbr_active))
             {
+                /*
+                 * The neighbor was created with NO_HOST_ROUTE, so without the
+                 * prefix route it has no forwarding entry at all.  Clear the
+                 * flag to restore the implicit host route instead of leaving
+                 * the neighbor unreachable.
+                 */
+                neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+                neighbor_attr.value.booldata = 0;
+                status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to revert NO_HOST_ROUTE for neighbor %s on %s, rv:%d",
+                                   ip_address.to_string().c_str(), alias.c_str(), status);
+                }
                 return false;
             }
         }
@@ -1567,6 +1582,19 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
     else if (isHwConfigured(neighborEntry))
     {
+        /*
+         * NO_HOST_ROUTE is only pushed into neighbor_attrs when it has to be
+         * set.  When a neighbor stops being a prefix-route neighbor the flag
+         * has to be cleared explicitly, otherwise the implicit host route stays
+         * suppressed while the explicit prefix route is removed below.
+         */
+        if (was_prefix_route && !no_host_route)
+        {
+            neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+            neighbor_attr.value.booldata = 0;
+            neighbor_attrs.push_back(neighbor_attr);
+        }
+
         for (auto itr : neighbor_attrs)
         {
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
@@ -1582,6 +1610,60 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
+
+        /*
+         * NO_HOST_ROUTE and the explicit prefix route are a single state: the
+         * suppressed host route must always be replaced by a real route object.
+         * An already programmed neighbor that becomes a prefix-route neighbor
+         * has to get its prefix route created here as well, otherwise the
+         * neighbor is recorded as a prefix neighbor while no route exists in
+         * hardware and every later mux state transition fails on it.
+         */
+        if (prefix_route && !was_prefix_route)
+        {
+            auto nhKey = NextHopKey(ip_address, alias);
+            auto nh_it = m_syncdNextHops.find(nhKey);
+            bool route_added = false;
+
+            if (nh_it == m_syncdNextHops.end())
+            {
+                SWSS_LOG_ERROR("Next hop for neighbor %s on %s does not exist",
+                               ip_address.to_string().c_str(), alias.c_str());
+            }
+            else
+            {
+                route_added = addPrefixRouteForNeighbor(ip_address, alias, nh_it->second.next_hop_id,
+                                                        is_nbr_active);
+            }
+
+            if (!route_added)
+            {
+                /* Restore the implicit host route so the neighbor is not left unreachable */
+                neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+                neighbor_attr.value.booldata = 0;
+                status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to revert NO_HOST_ROUTE for neighbor %s on %s, rv:%d",
+                                   ip_address.to_string().c_str(), alias.c_str(), status);
+                }
+                SWSS_LOG_ERROR("Failed to add prefix route for neighbor %s on %s",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+        }
+        else if (!prefix_route && was_prefix_route)
+        {
+            sai_object_id_t port_vrf_id = gVirtualRouterId;
+            Port port;
+
+            if (m_portsOrch->getPort(alias, port))
+            {
+                port_vrf_id = port.m_vr_id;
+            }
+
+            removePrefixRouteForNeighbor(ip_address, port_vrf_id);
+        }
     }
 
     m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
