@@ -183,14 +183,14 @@ public:
 
 private:
     bool stateActive();
-    bool stateActive(MuxNeighbor& neighbors);
+    bool stateActive(const MuxNeighbor& neighbors);
     bool stateInitActive();
-    bool stateInitActive(MuxNeighbor& neighbors);
+    bool stateInitActive(const MuxNeighbor& neighbors);
     bool stateStandby();
-    bool stateStandby(MuxNeighbor& neighbors);
+    bool stateStandby(const MuxNeighbor& neighbors);
 
     bool aclHandler(sai_object_id_t port, string alias, bool add = true);
-    bool nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_routes = true);
+    bool nbrHandler(bool enable, const MuxNeighbor& neighbors, bool update_routes = true);
     void retainReadyNeighbors(MuxNeighbor& neighbors) const;
 
     string mux_name_;

@@ -482,11 +482,10 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
 
 bool MuxCable::stateInitActive()
 {
-    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    return stateInitActive(neighbors);
+    return stateInitActive(nbr_handler_->getNeighbors());
 }
 
-bool MuxCable::stateInitActive(MuxNeighbor& neighbors)
+bool MuxCable::stateInitActive(const MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Active from %s", muxStateValToString.at(state_).c_str());
 
@@ -501,11 +500,10 @@ bool MuxCable::stateInitActive(MuxNeighbor& neighbors)
 
 bool MuxCable::stateActive()
 {
-    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    return stateActive(neighbors);
+    return stateActive(nbr_handler_->getNeighbors());
 }
 
-bool MuxCable::stateActive(MuxNeighbor& neighbors)
+bool MuxCable::stateActive(const MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Active for %s", mux_name_.c_str());
 
@@ -533,11 +531,10 @@ bool MuxCable::stateActive(MuxNeighbor& neighbors)
 
 bool MuxCable::stateStandby()
 {
-    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
-    return stateStandby(neighbors);
+    return stateStandby(nbr_handler_->getNeighbors());
 }
 
-bool MuxCable::stateStandby(MuxNeighbor& neighbors)
+bool MuxCable::stateStandby(const MuxNeighbor& neighbors)
 {
     SWSS_LOG_INFO("Set state to Standby for %s", mux_name_.c_str());
 
@@ -765,7 +762,7 @@ bool MuxCable::isStateChangeReady(MuxState state) const
     return true;
 }
 
-bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
+bool MuxCable::nbrHandler(bool enable, const MuxNeighbor& neighbors, bool update_rt)
 {
     bool ret;
     SWSS_LOG_NOTICE("Processing neighbors for mux %s, enable %d, state %d",
@@ -776,10 +773,15 @@ bool MuxCable::nbrHandler(bool enable, MuxNeighbor& neighbors, bool update_rt)
         ret = nbr_handler_->enable(neighbors, update_rt);
         if (!ret && nbr_handler_type_ == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE)
         {
-            retainReadyNeighbors(neighbors);
+            MuxNeighbor ready_neighbors = neighbors;
+            retainReadyNeighbors(ready_neighbors);
+            updateRoutes(ready_neighbors);
         }
-        // Loop through all routes with nexthops through this mux cable when changing state
-        updateRoutes(neighbors);
+        else
+        {
+            // Loop through all routes with nexthops through this mux cable when changing state
+            updateRoutes(neighbors);
+        }
     }
     else
     {
