@@ -1405,6 +1405,8 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
     // Verification should succeed with vaild key and value.
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kNeighborId), kNeighborId1});
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId1});
+    // VerifyStateCache compares the rif and neighbor of an IP next hop only when the action is known.
+    attributes.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kSetIpNexthop});
     EXPECT_EQ(VerifyState(db_key, attributes), "");
 
     // Invalid key should fail verification.
