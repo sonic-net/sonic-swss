@@ -169,7 +169,7 @@ copp_trap = {
         "lacp": ["lacp", copp_group_queue4_group1, "always_enabled"],
         "arp": ["arp_req;arp_resp;neigh_discovery", copp_group_queue4_group2, "always_enabled"],
         "lldp": ["lldp", copp_group_queue4_group3],
-        "dhcp": ["dhcp;dhcpv6", copp_group_queue4_group3],
+        "dhcp": ["dhcp;dhcp_l2;dhcpv6;dhcpv6_l2", copp_group_queue4_group3],
         "udld": ["udld", copp_group_queue4_group3, "always_enabled"],
         "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
         "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
