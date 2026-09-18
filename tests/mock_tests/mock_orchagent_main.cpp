@@ -26,7 +26,7 @@ VRFOrch *gVrfOrch;
 void syncd_apply_view() {}
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }
