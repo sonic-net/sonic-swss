@@ -4276,7 +4276,8 @@ void PortsOrch::registerPort(Port &p)
     if (flex_counters_orch->getPortPhyAttrCounterState())
     {
         if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY &&
-            p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb)
+            p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb &&
+            getGearboxPhy(p) == nullptr)
         {
             auto supported_attrs = getPortPhySupportedAttrs(p.m_port_id, p.m_alias.c_str());
             if (!supported_attrs.empty())
@@ -9469,7 +9470,8 @@ void PortsOrch::generatePortPhyAttrCounterMap()
     {
         if (it.second.m_type == Port::Type::PHY &&
             it.second.m_role != Port::Role::Rec &&
-            it.second.m_role != Port::Role::Inb)
+            it.second.m_role != Port::Role::Inb &&
+            getGearboxPhy(it.second) == nullptr)
         {
             auto supported_attrs = getPortPhySupportedAttrs(it.second.m_port_id, it.second.m_alias.c_str());
             if (!supported_attrs.empty())
