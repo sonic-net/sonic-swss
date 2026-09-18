@@ -17,9 +17,12 @@ EXTERN_MOCK_FNS
 namespace neighorch_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
+    DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     using namespace std;
     using namespace mock_orch_test;
+    using ::testing::DoAll;
     using ::testing::Return;
+    using ::testing::SetArgPointee;
     using ::testing::Throw;
 
     static const string TEST_IP = "10.10.10.10";
@@ -180,12 +183,14 @@ namespace neighorch_test
         void PostSetUp() override
         {
             INIT_SAI_API_MOCK(neighbor);
+            INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
         }
     };
 
@@ -276,6 +281,132 @@ namespace neighorch_test
         LearnNeighbor("usb0", TEST_IP, MAC1);
         /* Literal "usb0" can overload-resolve to NextHopKey(str, bool overlay) vs (str, str). */
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(TEST_IP, std::string("usb0"))), 0);
+    }
+
+    /* --- IPinIP tunnel NextHopKey tests --- */
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyConstructor)
+    {
+        IpAddress ip("10.1.0.32");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+
+        EXPECT_TRUE(nh.isTunnelNextHop());
+        EXPECT_EQ(nh.ip_address, ip);
+        EXPECT_EQ(nh.tunnel_name, "MuxTunnel0");
+        EXPECT_EQ(nh.alias, "");
+        EXPECT_EQ(nh.vni, 0u);
+        EXPECT_FALSE(nh.isSrv6NextHop());
+        EXPECT_FALSE(nh.isMplsNextHop());
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyToStringRoundtrip)
+    {
+        IpAddress ip("192.168.1.1");
+        NextHopKey original(ip, string("IPINIP_TUNNEL"), true /*tunnel_nh*/, 0 /*tag*/);
+
+        string str = original.to_string();
+        EXPECT_EQ(str, "tunnel:IPINIP_TUNNEL@192.168.1.1");
+
+        NextHopKey parsed(str);
+        EXPECT_TRUE(parsed.isTunnelNextHop());
+        EXPECT_EQ(parsed.tunnel_name, "IPINIP_TUNNEL");
+        EXPECT_EQ(parsed.ip_address, ip);
+        EXPECT_EQ(original, parsed);
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyComparison)
+    {
+        NextHopKey nh_a(IpAddress("10.0.0.1"), string("TunA"), true, 0);
+        NextHopKey nh_b(IpAddress("10.0.0.1"), string("TunB"), true, 0);
+        NextHopKey nh_same(IpAddress("10.0.0.1"), string("TunA"), true, 0);
+
+        EXPECT_EQ(nh_a, nh_same);
+        EXPECT_NE(nh_a, nh_b);
+
+        NextHopKey regular_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        EXPECT_NE(nh_a, regular_nh);
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyInvalidParseFails)
+    {
+        EXPECT_THROW(NextHopKey("tunnel:@10.0.0.1@extra"), std::invalid_argument);
+        EXPECT_THROW(NextHopKey("tunnel:OnlyName"), std::invalid_argument);
+    }
+
+    // Multiple producers can register the same tunnel NH key; the entry
+    // must survive until the last registrant unregisters.
+    TEST_F(NeighOrchTest, IpinipTunnelNextHopMultiProducerRegistration)
+    {
+        IpAddress ip("10.2.0.1");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+        const sai_object_id_t tunnel_id = 0x5000;
+        const sai_object_id_t oid = 0x1001;
+        sai_object_id_t nh_id;
+
+        // First producer registers the key: SAI object created.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::CREATED);
+        EXPECT_EQ(nh_id, oid);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh].next_hop_id, oid);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 1u);
+
+        // Second producer registers the same key: reused, no SAI call.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::REUSED);
+        EXPECT_EQ(nh_id, oid);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 2u);
+
+        // First producer tears down: entry must survive, no SAI call.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::OTHER_REGISTRANTS_REMAIN);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 1u);
+
+        // Last producer tears down: SAI object deleted, entry erased.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 0);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs.count(nh), 0);
+
+        // Removing an already-gone key is idempotent and touches no SAI object.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
+    }
+
+    // create_next_hop() failing on first registration must leave nothing
+    // registered, so the caller's normal retry path can safely call again.
+    TEST_F(NeighOrchTest, IpinipTunnelNextHopCreateFailureIsRetryable)
+    {
+        IpAddress ip("10.2.0.2");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+        const sai_object_id_t tunnel_id = 0x5000;
+        const sai_object_id_t oid = 0x1002;
+        sai_object_id_t nh_id;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::SAI_FAILED);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 0);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs.count(nh), 0);
+
+        // Retry succeeds.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::CREATED);
+        EXPECT_EQ(nh_id, oid);
+
+        // Cleanup.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
     }
 
     TEST_F(NeighOrchTest, ProcessFDBAdd_EnableNeighbor)
