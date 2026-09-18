@@ -321,6 +321,51 @@ namespace teammgr_ut
         EXPECT_TRUE(mockCallArgs.empty());
     }
 
+    TEST_F(TeamMgrTest, testInvalidPortStateNameIsRejected)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet 0", {{"state", "ok"}});
+        teammgr.addExistingData(&state_port_table);
+        mockCallArgs.clear();
+        auto consumer = dynamic_cast<Consumer *>(teammgr.getExecutor(STATE_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+
+        teammgr.doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(TeamMgrTest, testInvalidMemberNamesAreRejectedByHelpers)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        mockCallArgs.clear();
+
+        EXPECT_FALSE(teammgr.checkPortIffUp("Ethernet 0"));
+        EXPECT_EQ(teammgr.addLagMember("PortChannel1", "Ethernet 0"), task_ignore);
+        EXPECT_EQ(teammgr.addLagMember("Port Channel", "Ethernet0"), task_ignore);
+        EXPECT_FALSE(teammgr.removeLagMember("PortChannel1", "Ethernet 0"));
+        EXPECT_FALSE(teammgr.removeLagMember("Port Channel", "Ethernet0"));
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(TeamMgrTest, testMalformedMemberKeysAreSkippedByLookups)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member_table.set("PortChannel1|Ethernet 0", {});
+        mockCallArgs.clear();
+
+        std::string master;
+        EXPECT_FALSE(teammgr.findPortMaster(master, "Ethernet0"));
+        EXPECT_TRUE(teammgr.setLagMtu("PortChannel1", "9100"));
+
+        ASSERT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set dev \"PortChannel1\" mtu \"9100\"");
+    }
+
     TEST_F(TeamMgrTest, testRemoveLagMemberQuotesInterfaceNames)
     {
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
