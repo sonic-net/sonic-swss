@@ -1,6 +1,8 @@
 #include "gtest/gtest.h"
 #include <stdlib.h>
 #include <string>
+#include <vector>
+#include <stdexcept>
 #include <unistd.h>
 #include "schema.h"
 #include "ut_helper.h"
@@ -196,6 +198,54 @@ TEST(ZmqOrchTest, GetRoutePerfZmqEnabled)
     // Test: missing key → default false
     config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
     EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+}
+
+// The ZMQ route path and warm/fast restart are mutually exclusive: the coalescer
+// owns the ZMQ route writes for the life of the process, and warm-restart
+// reconcile writes the same tables directly. Both daemons resolve this from the
+// same helper, so producer and consumer cannot disagree. An unsupported
+// combination must refuse to start rather than run with two writers.
+TEST(ZmqOrchTest, RoutePerfZmqRefusesWarmOrFastRestart)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "enabled");
+
+    const std::vector<std::string> keys = {
+        "WARM_RESTART_ENABLE_TABLE|system",
+        "WARM_RESTART_ENABLE_TABLE|bgp",
+        "WARM_RESTART_ENABLE_TABLE|swss",
+        "FAST_RESTART_ENABLE_TABLE|system",
+    };
+
+    std::string scope;
+
+    for (const auto &key : keys)
+    {
+        state_db.hset(key, "enable", "true");
+        EXPECT_TRUE(swss::route_perf_zmq_conflict(scope)) << key;
+        EXPECT_EQ(scope, key);
+        EXPECT_TRUE(swss::get_route_perf_zmq_enabled()) << key;
+        state_db.hdel(key, "enable");
+        // With the key cleared the same call must pass, so the conflict is
+        // attributable to that key alone.
+        EXPECT_FALSE(swss::route_perf_zmq_conflict(scope)) << key;
+        EXPECT_TRUE(scope.empty()) << key;
+    }
+
+    // "enable" set to anything other than "true" is not armed.
+    state_db.hset("WARM_RESTART_ENABLE_TABLE|system", "enable", "false");
+    EXPECT_FALSE(swss::route_perf_zmq_conflict(scope));
+    state_db.hdel("WARM_RESTART_ENABLE_TABLE|system", "enable");
+
+    // Warm restart armed while ZMQ is disabled stays the normal, supported case.
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
+    state_db.hset("WARM_RESTART_ENABLE_TABLE|system", "enable", "true");
+    EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+    EXPECT_FALSE(swss::route_perf_zmq_conflict(scope));
+
+    state_db.hdel("WARM_RESTART_ENABLE_TABLE|system", "enable");
+    config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
 }
 
 TEST(ZmqOrchTest, CreateRoutePerfZmqClient)

@@ -323,6 +323,7 @@ tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/test_routesync.cpp \
+                         fpmsyncd/routesendcoalescer_ut.cpp \
                          fpmsyncd/receive_srv6_steer_routes_ut.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
@@ -336,7 +337,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/lib/orch_zmq_config.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
-                         $(top_srcdir)/fpmsyncd/routesync.cpp
+                         $(top_srcdir)/fpmsyncd/routesync.cpp \
+                         $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
