@@ -5,6 +5,7 @@ import time
 import pytest
 
 from swsscommon import swsscommon
+from dvslib.dvs_common import wait_for_result
 from pprint import pprint
 
 
@@ -284,6 +285,66 @@ def get_lo(dvs):
 
 
 class TestVxlan(object):
+    @pytest.mark.parametrize(
+        "src_ip,dst_ip,suffix,vlan_id,vni",
+        [
+            ("invalid-address", "192.0.2.1", "src", "58", "858"),
+            ("192.0.2.1", "invalid-address", "dst", "59", "859"),
+        ],
+    )
+    def test_reject_invalid_tunnel_addresses(
+        self, dvs, testlog, src_ip, dst_ip, suffix, vlan_id, vni
+    ):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        tunnel_name = "tunnel_{}".format(suffix)
+        map_name = "{}|entry".format(tunnel_name)
+        app_map_name = "{}:entry".format(tunnel_name)
+        vlan_name = "Vlan{}".format(vlan_id)
+        vxlan_device = "{}-{}".format(tunnel_name, vlan_id)
+        marker = dvs.add_log_marker()
+
+        try:
+            create_entry_tbl(
+                config_db,
+                "VLAN", '|', vlan_name,
+                [("vlanid", vlan_id)],
+            )
+            create_entry_tbl(
+                config_db,
+                "VXLAN_TUNNEL", '|', tunnel_name,
+                [("src_ip", src_ip), ("dst_ip", dst_ip)],
+            )
+            create_entry_tbl(
+                config_db,
+                "VXLAN_TUNNEL_MAP", '|', map_name,
+                [("vni", vni), ("vlan", vlan_name)],
+            )
+
+            def rejection_was_logged():
+                _, output = dvs.runcmd([
+                    "sh", "-c",
+                    "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | "
+                    "grep -c 'Rejecting VXLAN tunnel map {}'".format(marker, app_map_name),
+                ])
+                return int(output.strip()) >= 1, output
+
+            wait_for_result(
+                rejection_was_logged,
+                failure_message="vxlanmgrd did not reject {}".format(map_name),
+            )
+
+            app_map_table = swsscommon.Table(app_db, "VXLAN_TUNNEL_MAP_TABLE")
+            status, _ = app_map_table.get(app_map_name)
+            assert not status
+
+            status, _ = dvs.runcmd(["ip", "link", "show", vxlan_device])
+            assert status != 0
+        finally:
+            delete_entry_tbl(config_db, "VXLAN_TUNNEL_MAP", map_name)
+            delete_entry_tbl(config_db, "VXLAN_TUNNEL", tunnel_name)
+            delete_entry_tbl(config_db, "VLAN", vlan_name)
+
     def test_vxlan_term_orch(self, dvs, testlog):
         tunnel_map_ids       = set()
         tunnel_map_entry_ids = set()
