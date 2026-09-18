@@ -141,6 +141,22 @@ public:
         Dpc  // DPU Connect Port on SmartSwitch
     };
 
+    enum class LagLearnModeGuardState
+    {
+        IDLE,
+        PENDING,
+        STUCK,
+    };
+
+    enum class LagLearnModeRetryPhase
+    {
+        NONE,
+        PRE_MEMBER,
+        RETRY_MEMBER,
+        COMPLETE_MEMBER,
+        CONFIGURE,
+    };
+
 public:
     static constexpr std::size_t max_lanes = 8; // Max HW lanes
     static constexpr std::size_t max_fec_modes = 3; // Max FEC modes (sync with SAI)
@@ -270,6 +286,12 @@ public:
     uint32_t m_flap_penalty = 0;
 
     Role m_role;
+    LagLearnModeGuardState m_lag_learn_mode_guard_state = LagLearnModeGuardState::IDLE;
+    LagLearnModeRetryPhase m_lag_learn_mode_retry_phase = LagLearnModeRetryPhase::NONE;
+    uint8_t m_lag_learn_mode_retry_count = 0;
+    sai_bridge_port_fdb_learning_mode_t m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    std::string m_lag_learn_mode_retry_owner;
+    std::chrono::steady_clock::time_point m_lag_learn_mode_next_retry;
 };
 
 }

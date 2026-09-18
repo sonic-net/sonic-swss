@@ -57,6 +57,14 @@ namespace orchdaemon_test
         orchd->logRotate();
     }
 
+    TEST_F(OrchDaemonTest, LagMemberGuardScope)
+    {
+        EXPECT_TRUE(OrchDaemon::isLagMemberGuardEnabled("broadcom", "M2-W6520-48C8QC"));
+        EXPECT_FALSE(OrchDaemon::isLagMemberGuardEnabled("broadcom", "M2-W6510-48GT4V"));
+        EXPECT_FALSE(OrchDaemon::isLagMemberGuardEnabled("broadcom", ""));
+        EXPECT_FALSE(OrchDaemon::isLagMemberGuardEnabled("mellanox", "M2-W6520-48C8QC"));
+    }
+
     TEST_F(OrchDaemonTest, ringBuffer)
     {
         int test_ring_size = 2;

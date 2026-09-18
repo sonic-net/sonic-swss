@@ -144,7 +144,8 @@ class PortSerdesAttrTest;
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
+              DBConnector *chassisAppDb, bool lagMemberGuardEnabled = false);
 
     bool allPortsReady();
     bool isInitDone();
@@ -405,6 +406,9 @@ private:
     bool m_supportsHostIfTxQueue = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
+    swss::SelectableTimer *m_lagLearnModeRetryTimer = nullptr;
+    bool m_lagLearnModeRetryTimerRunning = false;
+    bool m_lagMemberGuardEnabled = false;
 
     bool m_cmisModuleAsicSyncSupported = false;
 
@@ -442,6 +446,26 @@ private:
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
+
+    task_process_status setBridgePortLearnModeVerified(
+        Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
+    task_process_status getBridgePortLearnMode(
+        const Port &port, sai_bridge_port_fdb_learning_mode_t &learn_mode);
+    bool tryLagLearnModeTransition(
+        Port &lag,
+        sai_bridge_port_fdb_learning_mode_t target,
+        Port::LagLearnModeRetryPhase phase,
+        const std::string &owner,
+        bool retryAttempt = false);
+    void clearLagLearnModeGuardState(Port &lag);
+    void scheduleLagLearnModeRetry(
+        Port &lag,
+        sai_bridge_port_fdb_learning_mode_t target,
+        Port::LagLearnModeRetryPhase phase,
+        const std::string &owner);
+    void markLagLearnModeGuardStuck(Port &lag);
+    bool isLagLearnModeRetryDue(const Port &lag) const;
+    void updateLagLearnModeRetryTimer();
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);

@@ -70,6 +70,7 @@ public:
     virtual ~OrchDaemon();
 
     virtual bool init();
+    static bool isLagMemberGuardEnabled(const string &platform, const string &hwsku);
     void start(long heartBeatInterval);
     bool warmRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);

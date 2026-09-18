@@ -164,11 +164,42 @@ void OrchDaemon::disableRingBuffer() {
     Orch::gRingBuffer = nullptr;
 }
 
+bool OrchDaemon::isLagMemberGuardEnabled(const string &platform, const string &hwsku)
+{
+    return platform == BRCM_PLATFORM_SUBSTRING && hwsku == "M2-W6520-48C8QC";
+}
+
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
+
+    string hwsku;
+    bool lagMemberGuardEnabled = false;
+    if (platform == BRCM_PLATFORM_SUBSTRING)
+    {
+        try
+        {
+            Table deviceMetadata(m_configDb, CFG_DEVICE_METADATA_TABLE_NAME);
+            if (deviceMetadata.hget("localhost", "hwsku", hwsku))
+            {
+                lagMemberGuardEnabled = isLagMemberGuardEnabled(platform, hwsku);
+            }
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_WARN(
+                "Unable to read HwSKU for LAG member transition guard: %s",
+                e.what());
+        }
+    }
+
+    SWSS_LOG_NOTICE(
+        "LAG member transition guard %s: platform=%s, hwsku=%s",
+        lagMemberGuardEnabled ? "enabled" : "disabled",
+        platform.c_str(),
+        hwsku.c_str());
 
     g_events_handle = events_init_publisher("sonic-events-swss");
 
@@ -208,7 +239,12 @@ bool OrchDaemon::init()
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
-    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+    gPortsOrch = new PortsOrch(
+        m_applDb,
+        m_stateDb,
+        ports_tables,
+        m_chassisAppDb,
+        lagMemberGuardEnabled);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
