@@ -19,6 +19,8 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "notifications.h"
+#include "sainotificationorch.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -88,6 +90,17 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
         gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
+
+    if (gSaiNotificationOrch)
+    {
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_FDB_EVENT,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            },
+            [this]() { return m_portsOrch->allPortsReady(); });
+    }
 
     /* MAC Move Guard: detects MAC flapping between ports and applies a
        remediation (admin-disable port, or pre-ingress ACL learn-suppress).
@@ -1416,32 +1429,48 @@ void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFiel
     }
     else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
-        uint32_t count;
-        sai_fdb_event_notification_data_t *fdbevent = nullptr;
-        sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
+        KeyOpFieldsValuesTuple notificationEntry = entry;
+        handleNotification(notificationEntry);
+    }
+}
 
-        for (uint32_t i = 0; i < count; ++i)
+void FdbOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
+{
+    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_FDB_EVENT)
+    {
+        handleFdbEventNotification(kfvKey(entry));
+    }
+}
+
+void FdbOrch::handleFdbEventNotification(const std::string& data)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t count;
+    sai_fdb_event_notification_data_t *fdbevent = nullptr;
+    sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+
+        for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
         {
-            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-            sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-
-            for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
+            if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
             {
-                if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
-                {
-                    oid = fdbevent[i].attr[j].value.oid;
-                }
-                else if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_TYPE)
-                {
-                    sai_fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
-                }
+                oid = fdbevent[i].attr[j].value.oid;
             }
-
-            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, sai_fdb_type);
+            else if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_TYPE)
+            {
+                sai_fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
+            }
         }
 
-        sai_deserialize_free_fdb_event_ntf(count, fdbevent);
+        this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, sai_fdb_type);
     }
+
+    sai_deserialize_free_fdb_event_ntf(count, fdbevent);
 }
 
 /*
