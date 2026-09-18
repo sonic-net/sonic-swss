@@ -193,9 +193,30 @@ void syncd_apply_view()
 
     sai_status_t status;
     sai_attribute_t attr;
+    char *platform = getenv("platform");
+
+    /* syncd runs the view comparison and the ASIC_DB rewrite inside this single
+     * notification. Both scale with the number of objects and exceed the default
+     * response timeout at high route scale, so allow the long timeout here. */
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        SWSS_LOG_NOTICE("Set SAI REDIS response timeout to %d for Mellanox platform, to extend the timeout for apply view", SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT);
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
+
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW;
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        SWSS_LOG_NOTICE("Set SAI REDIS response timeout to %d for Mellanox platform, to restore the default timeout", SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 
     if (status != SAI_STATUS_SUCCESS)
     {

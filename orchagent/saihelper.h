@@ -16,6 +16,12 @@ extern "C" {
 #define IS_ATTR_ID_IN_RANGE(attrId, objectType, attrPrefix) \
     ((attrId) >= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _START && (attrId) <= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _END)
 
+#if defined(__arm__)
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT ((480*1000)*2)
+#else
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+#endif
+
 void initFlexCounterTables();
 void initSaiApi();
 void initSaiRedis();
