@@ -424,7 +424,19 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     int ret = swss::exec(cmds, res);
     if (ret != 0)
     {
-        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        if (info->op_type == FDB_OPER_DEL)
+        {
+            /*
+             * vlanmgrd may remove the VLAN/bridge membership first, in which
+             * case the kernel has already flushed this FDB entry by the time
+             * the later STATE_DB delete is processed. Do not report it as ERR.
+             */
+            SWSS_LOG_WARN("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        }
     }
     else
     {
