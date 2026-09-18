@@ -1,6 +1,7 @@
 #include "exec.h"
 #include "teammgr.h"
 #include "logger.h"
+#include "interface.h"
 #include "shellcmd.h"
 #include "tokenize.h"
 #include "warm_restart.h"
@@ -8,6 +9,7 @@
 #include <swss/redisutility.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -24,6 +26,28 @@
 
 using namespace std;
 using namespace swss;
+
+namespace
+{
+
+bool parseLagMemberKey(const string &key, string &lag, string &member)
+{
+    auto tokens = tokenize(key, config_db_key_delimiter);
+    if (
+        tokens.size() != 2 ||
+        !isInterfaceNameValid(tokens[0]) ||
+        !isInterfaceNameValid(tokens[1])
+    )
+    {
+        return false;
+    }
+
+    lag = tokens[0];
+    member = tokens[1];
+    return true;
+}
+
+}
 
 
 TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
@@ -243,6 +267,13 @@ void TeamMgr::doLagTask(Consumer &consumer)
         string alias = kfvKey(t);
         string op = kfvOp(t);
 
+        if (!isInterfaceNameValid(alias))
+        {
+            SWSS_LOG_ERROR("Invalid port channel name, skipping entry");
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         if (op == SET_COMMAND)
         {
             int min_links = 0;
@@ -363,9 +394,14 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
-        auto tokens = tokenize(kfvKey(t), config_db_key_delimiter);
-        auto lag = tokens[0];
-        auto member = tokens[1];
+        string lag;
+        string member;
+        if (!parseLagMemberKey(kfvKey(t), lag, member))
+        {
+            SWSS_LOG_ERROR("Invalid port channel member key, skipping entry");
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         auto op = kfvOp(t);
 
@@ -400,9 +436,17 @@ bool TeamMgr::checkPortIffUp(const string &port)
 {
     SWSS_LOG_ENTER();
 
-    struct ifreq ifr;
-    memcpy(ifr.ifr_name, port.c_str(), strlen(port.c_str()));
-    ifr.ifr_name[strlen(port.c_str())] = 0;
+    if (!isInterfaceNameValid(port))
+    {
+        return false;
+    }
+
+    struct ifreq ifr = {};
+    int length = snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", port.c_str());
+    if (length < 0 || static_cast<size_t>(length) >= sizeof(ifr.ifr_name))
+    {
+        return false;
+    }
 
     int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (fd == -1 || ioctl(fd, SIOCGIFFLAGS, &ifr) == -1)
@@ -439,9 +483,12 @@ bool TeamMgr::findPortMaster(string &master, const string &port)
 
     for (auto key: keys)
     {
-        auto tokens = tokenize(key, config_db_key_delimiter);
-        auto lag = tokens[0];
-        auto member = tokens[1];
+        string lag;
+        string member;
+        if (!parseLagMemberKey(key, lag, member))
+        {
+            continue;
+        }
 
         if (port == member)
         {
@@ -467,6 +514,13 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
 
         auto alias = kfvKey(t);
         auto op = kfvOp(t);
+
+        if (!isInterfaceNameValid(alias))
+        {
+            SWSS_LOG_ERROR("Invalid port name in state update, skipping entry");
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -536,9 +590,12 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
 
     for (auto key : keys)
     {
-        auto tokens = tokenize(key, config_db_key_delimiter);
-        auto lag = tokens[0];
-        auto member = tokens[1];
+        string lag;
+        string member;
+        if (!parseLagMemberKey(key, lag, member))
+        {
+            continue;
+        }
 
         if (alias == lag)
         {
@@ -751,7 +808,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
     cmd << TEAMD_CMD
         << warmstart_flag
-        << " -t " << alias
+        << " -t " << shellquote(alias)
         << " -c " << conf.str()
         << " -L " << dump_path
         << " -g -d";
@@ -851,6 +908,12 @@ uint16_t TeamMgr::generateLacpKey(const string& lag)
 task_process_status TeamMgr::addLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
+
+    if (!isInterfaceNameValid(lag) || !isInterfaceNameValid(member))
+    {
+        SWSS_LOG_ERROR("Invalid port channel member, skipping operation");
+        return task_ignore;
+    }
 
     stringstream cmd;
     string res;
@@ -955,11 +1018,17 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
 
+    if (!isInterfaceNameValid(lag) || !isInterfaceNameValid(member))
+    {
+        SWSS_LOG_ERROR("Invalid port channel member, skipping operation");
+        return false;
+    }
+
     stringstream cmd;
     string res;
 
     // teamdctl <port_channel_name> port remove <member>;
-    cmd << TEAMDCTL_CMD << " " << lag << " port remove " << member << "; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port remove " << shellquote(member) << "; ";
 
     vector<FieldValueTuple> fvs;
     m_cfgPortTable.get(member, fvs);
