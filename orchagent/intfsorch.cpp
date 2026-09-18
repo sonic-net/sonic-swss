@@ -39,7 +39,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern RouteOrch *gRouteOrch;
 extern bool gTraditionalFlexCounter;
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 
 const int IntfsOrch::intfsorch_pri = 35;
 
@@ -101,7 +101,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Add subscriber to process VOQ system interface
         string tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
@@ -110,6 +110,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
     }
 
 }
+
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
@@ -1520,7 +1521,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
 
     SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         // Sync the interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncAddIntf(port.m_alias);
@@ -1573,7 +1574,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         // Sync the removal of interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncDelIntf(port.m_alias);

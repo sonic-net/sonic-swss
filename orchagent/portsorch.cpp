@@ -24,6 +24,8 @@
 #include <sstream>
 #include <unordered_set>
 
+#include <boost/algorithm/string.hpp>
+
 #include <netinet/if_ether.h>
 #include "net/if.h"
 
@@ -74,7 +76,7 @@ extern string gMyHostName;
 extern string gMyAsicName;
 extern EvpnMhOrch *gEvpnMhOrch;
 extern event_handle_t g_events_handle;
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 extern bool gMultiAsicVoq;
 
 // defines ------------------------------------------------------------------------------------------------------------
@@ -1131,7 +1133,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         string tableName;
         //Add subscriber to process system LAG (System PortChannel) table
@@ -6426,12 +6428,33 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         {
             if (gMySwitchType == "voq")
             {
-                size_t pos = lag_alias.find('|');
-                std::string port_hostname = (pos != std::string::npos) ? lag_alias.substr(0, pos) : lag_alias;
+                // VoQ LAG aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
+                const auto alias_tokens = tokenize(lag_alias, '|');
+                std::string port_hostname = alias_tokens.empty() ? lag_alias : alias_tokens[0];
                 if (gMyHostName == port_hostname)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    if (isVoqChassisDbInUse())
+                    {
+                        std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                        std::string lower_port_asic = port_asic;
+                        std::string lower_my_asic = gMyAsicName;
+                        boost::algorithm::to_lower(lower_port_asic);
+                        boost::algorithm::to_lower(lower_my_asic);
+                        SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
+                                       lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+                        if (lower_port_asic == lower_my_asic)
+                        {
+                            SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (single-asic voq)", lag_alias.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
                 }
             }
             SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
@@ -6510,7 +6533,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 }
             }
 
-            if (isChassisDbInUse() && (port.m_type != Port::SYSTEM))
+            if (isVoqChassisDbInUse() && (port.m_type != Port::SYSTEM))
             {
                //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
                voqSyncAddLagMember(lag, port, status);
@@ -8286,7 +8309,7 @@ bool PortsOrch::removeLag(Port lag)
 
     m_counterLagTable->hdel("", lag.m_alias);
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         // Free the lag id, if this is local LAG
 
@@ -8399,7 +8422,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncAddLagMember(lag, port, member_status);
@@ -8447,7 +8470,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncDelLagMember(lag, port);
@@ -10096,7 +10119,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         if (gIntfsOrch->isLocalSystemPortIntf(port.m_alias))
         {
