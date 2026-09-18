@@ -37,6 +37,12 @@
 #define STATE_FAST_RESTART_ENABLE_KEY        "FAST_RESTART_ENABLE_TABLE|system"
 #define STATE_RESTART_ENABLE_FIELD           "enable"
 
+/* Refusal message, shared by every entry point that reports it. */
+#define ROUTE_PERF_ZMQ_CONFLICT_MSG \
+    "swss_zmq is enabled together with %s, which is unsupported. " \
+    "Disable one of them: the ZMQ route path and warm/fast restart " \
+    "are mutually exclusive."
+
 namespace swss {
 
 std::set<std::string> load_zmq_tables();
@@ -60,11 +66,10 @@ bool warm_or_fast_restart_enabled(std::string &scope);
 bool get_route_perf_zmq_enabled();
 
 /*
- * Throws when the ZMQ route path is configured together with a warm or fast
- * restart, which is unsupported. No-op when the path is disabled. Called where
- * either daemon configures the path, so neither can start half-enabled.
+ * True when the ZMQ route path is configured together with a warm or fast
+ * restart, which is unsupported. `scope` reports the restart key that matched.
  */
-void validate_route_perf_zmq_supported();
+bool route_perf_zmq_conflict(std::string &scope);
 
 std::shared_ptr<swss::ZmqClient> create_route_perf_zmq_client();
 

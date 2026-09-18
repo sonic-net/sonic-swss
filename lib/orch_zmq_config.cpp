@@ -182,32 +182,19 @@ bool swss::get_route_perf_zmq_enabled()
     return *value == "enabled";
 }
 
-void swss::validate_route_perf_zmq_supported()
+bool swss::route_perf_zmq_conflict(std::string &scope)
 {
+    scope.clear();
     if (!get_route_perf_zmq_enabled())
     {
-        return;
+        return false;
     }
 
-    // warm-reboot, fast-reboot and `config warm_restart enable` reject this
-    // combination before arming the restart. Re-checked here because a direct
-    // STATE_DB write bypasses them, and because starting half-enabled is worse
-    // than not starting: fpmsyncd and orchagent decide independently, so a
-    // silent fallback could leave the producer on Redis while the consumer
-    // waits on the ZMQ socket.
-    std::string scope;
-    if (warm_or_fast_restart_enabled(scope))
-    {
-        SWSS_LOG_THROW("swss_zmq is enabled together with %s, which is unsupported. "
-                       "Disable one of them: the ZMQ route path and warm/fast restart "
-                       "are mutually exclusive.",
-                       scope.c_str());
-    }
+    return warm_or_fast_restart_enabled(scope);
 }
 
 std::shared_ptr<swss::ZmqClient> swss::create_route_perf_zmq_client()
 {
-    validate_route_perf_zmq_supported();
     if (get_route_perf_zmq_enabled())
     {
         SWSS_LOG_NOTICE("Route perf ZMQ enabled, creating local ZMQ client");

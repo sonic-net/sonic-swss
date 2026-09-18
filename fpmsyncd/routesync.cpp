@@ -230,7 +230,7 @@ bool RouteSync::coalescerActive() const
 {
     // No warm-restart term: the ZMQ route path refuses to start when warm or
     // fast restart is armed, so a reconcile cannot be in progress while the
-    // coalescer exists (swss::validate_route_perf_zmq_supported).
+    // coalescer exists (swss::route_perf_zmq_conflict).
     return m_routeCoalescer != nullptr;
 }
 

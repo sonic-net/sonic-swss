@@ -218,28 +218,31 @@ TEST(ZmqOrchTest, RoutePerfZmqRefusesWarmOrFastRestart)
         "FAST_RESTART_ENABLE_TABLE|system",
     };
 
+    std::string scope;
+
     for (const auto &key : keys)
     {
         state_db.hset(key, "enable", "true");
-        EXPECT_THROW(swss::validate_route_perf_zmq_supported(), std::runtime_error) << key;
-        // The getter itself stays a pure read of the knob and never throws.
+        EXPECT_TRUE(swss::route_perf_zmq_conflict(scope)) << key;
+        EXPECT_EQ(scope, key);
         EXPECT_TRUE(swss::get_route_perf_zmq_enabled()) << key;
         state_db.hdel(key, "enable");
-        // With the key cleared the same call must pass, so the throw is
+        // With the key cleared the same call must pass, so the conflict is
         // attributable to that key alone.
-        EXPECT_NO_THROW(swss::validate_route_perf_zmq_supported()) << key;
+        EXPECT_FALSE(swss::route_perf_zmq_conflict(scope)) << key;
+        EXPECT_TRUE(scope.empty()) << key;
     }
 
     // "enable" set to anything other than "true" is not armed.
     state_db.hset("WARM_RESTART_ENABLE_TABLE|system", "enable", "false");
-    EXPECT_NO_THROW(swss::validate_route_perf_zmq_supported());
+    EXPECT_FALSE(swss::route_perf_zmq_conflict(scope));
     state_db.hdel("WARM_RESTART_ENABLE_TABLE|system", "enable");
 
     // Warm restart armed while ZMQ is disabled stays the normal, supported case.
     config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
     state_db.hset("WARM_RESTART_ENABLE_TABLE|system", "enable", "true");
     EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
-    EXPECT_NO_THROW(swss::validate_route_perf_zmq_supported());
+    EXPECT_FALSE(swss::route_perf_zmq_conflict(scope));
 
     state_db.hdel("WARM_RESTART_ENABLE_TABLE|system", "enable");
     config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
