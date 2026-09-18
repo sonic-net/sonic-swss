@@ -238,8 +238,12 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
                 SWSS_LOG_WARN("PFC deadlock DETECTED on queue 0x%" PRIx64 " (no port info)", notification.queue_id);
             }
 
-            // Let SAI/SDK manage recovery automatically
-            notification.app_managed_recovery = false;
+            // Recovery mode is not selectable from here. This notification reached us over
+            // the ASIC_DB NOTIFICATIONS channel, so `notification` is a local copy that
+            // sai_deserialize_free_queue_deadlock_ntf releases once this handler returns;
+            // writing app_managed_recovery would set a field nothing reads and could not
+            // travel back to SAI. Hardware-managed recovery is what the ASIC already does
+            // for a port configured through configureHwWatchdog.
         }
         else if (notification.event == SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED)
         {
@@ -392,6 +396,15 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         SWSS_LOG_ERROR("%s is invalid value for %s", pfcStatHistory.c_str(), PFC_STAT_HISTORY);
         return task_process_status::task_invalid_entry;
     }
+    if (pfcStatHistory == "enable")
+    {
+        // The field is only consumed by the software detection plugin, which reads it from
+        // the queue's COUNTERS_DB entry. Hardware mode detects in the ASIC and runs no such
+        // plugin, so there is nothing to honour the request. Accept the key so an existing
+        // configuration that sets it stays valid, but say plainly that it does nothing here.
+        SWSS_LOG_WARN("%s is not supported in hardware PFC watchdog mode and is ignored on %s",
+                      PFC_STAT_HISTORY, key.c_str());
+    }
 
     // All ports must use the same switch-level PFC DLR packet action.
     // Action can only change when no ports are configured, or when
@@ -451,6 +464,14 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 {
 	SWSS_LOG_ENTER();
+
+	// GLOBAL is a config key, not a port, and createEntry already special-cases it.
+	// Short-circuit before the port lookup so a routine DEL of PFC_WD|GLOBAL does not
+	// log "Invalid port interface GLOBAL". The base class guards the same way.
+	if (key == PFC_WD_GLOBAL)
+	{
+		return task_process_status::task_success;
+	}
 
 	Port port;
 	if (!gPortsOrch->getPort(key, port))
