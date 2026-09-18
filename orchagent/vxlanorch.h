@@ -218,8 +218,10 @@ public:
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
+    void updateStateDbForP2MP(const string vtep, bool add = true);
     void cleanupDynamicDIPTunnel(const std::string remote_vtep);
     bool isTunnelReferenced(void);
+    void updateRemoteEndPointRef(const std::string remote_vtep, bool inc, tunnel_user_t usr);
     void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
     void eraseRemoteEndPoint(const std::string remote_vtep);
     uint32_t vlan_vrf_vni_count = 0;
