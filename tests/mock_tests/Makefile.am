@@ -62,6 +62,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                vnetorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 mux_subnet_slicing_ut.cpp \
                 warmrestartassist_ut.cpp \
