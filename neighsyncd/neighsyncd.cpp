@@ -6,6 +6,7 @@
 #include "select.h"
 #include "netdispatcher.h"
 #include "netlink.h"
+#include "neighsyncd/linklocalresyncstate.h"
 #include "neighsyncd/neighsync.h"
 
 using namespace std;
@@ -68,14 +69,49 @@ int main(int argc, char **argv)
 
             s.addSelectable(&netlink);
             s.addSelectable(sync.getCfgEvpnNvoTable());
+            // Match the configuration tables read by isLinkLocalEnabled().
+            SubscriberStateTable interfaces(&cfgDb, CFG_INTF_TABLE_NAME);
+            SubscriberStateTable lags(&cfgDb, CFG_LAG_INTF_TABLE_NAME);
+            SubscriberStateTable vlans(&cfgDb, CFG_VLAN_INTF_TABLE_NAME);
+            SubscriberStateTable *interfaceTables[] = {&interfaces, &lags, &vlans};
+            LinkLocalResyncState resyncState;
+            for (auto *table : interfaceTables)
+            {
+                deque<KeyOpFieldsValuesTuple> entries;
+                table->pops(entries);
+                // Existing rows initialize the observed state. The startup
+                // RTM_GETNEIGH request already covers their kernel neighbors.
+                resyncState.initialize(entries);
+                s.addSelectable(table);
+            }
+            auto nextResync = steady_clock::now();
             while (true)
             {
-                Selectable *temps;
-                s.select(&temps);
+                Selectable *temps = nullptr;
+                s.select(&temps, resyncState.getPendingInterfaces().empty() ? -1 : 1000);
                 if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
                     sync.processCfgEvpnNvo();
-                    continue;
+                }
+                for (auto *table : interfaceTables)
+                {
+                    if (temps != table)
+                    {
+                        continue;
+                    }
+                    deque<KeyOpFieldsValuesTuple> entries;
+                    table->pops(entries);
+                    resyncState.process(entries);
+                }
+                if (!resyncState.getPendingInterfaces().empty() && steady_clock::now() >= nextResync)
+                {
+                    if (sync.resyncLinkLocalNeighbors(resyncState.getPendingInterfaces()))
+                    {
+                        resyncState.markResyncComplete();
+                    }
+                    // Coalesce notifications and retry failed dumps without
+                    // waiting for another configuration or neighbor event.
+                    nextResync = steady_clock::now() + seconds(1);
                 }
                 /*
                  * If warmstart is in progress, we check the reconcile timer,
