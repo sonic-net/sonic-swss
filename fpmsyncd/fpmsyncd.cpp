@@ -12,6 +12,7 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
+#include "lib/orch_zmq_config.h"
 
 #include <netlink/route/route.h>
 
@@ -83,6 +84,15 @@ int main(int argc, char **argv)
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
     RedisPipeline pipeline(&db, ROUTE_SYNC_PPL_SIZE);
+
+    // RouteSync's constructor configures the ZMQ route path.
+    std::string restartScope;
+    if (route_perf_zmq_conflict(restartScope))
+    {
+        SWSS_LOG_ERROR(ROUTE_PERF_ZMQ_CONFLICT_MSG, restartScope.c_str());
+        exit(EXIT_FAILURE);
+    }
+
     RouteSync sync(&pipeline);
 
     DBConnector stateDb("STATE_DB", 0);

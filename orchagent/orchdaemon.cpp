@@ -202,6 +202,15 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+
+    // Orch constructors below configure the ZMQ route path.
+    std::string restart_scope;
+    if (route_perf_zmq_conflict(restart_scope))
+    {
+        SWSS_LOG_ERROR(ROUTE_PERF_ZMQ_CONFLICT_MSG, restart_scope.c_str());
+        return false;
+    }
+
     gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";
@@ -377,8 +386,6 @@ bool OrchDaemon::init()
     };
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
-    // Refuse to configure the path when a warm or fast restart is armed.
-    validate_route_perf_zmq_supported();
     auto enable_route_zmq = get_route_perf_zmq_enabled();
     auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 

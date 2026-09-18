@@ -38,7 +38,7 @@ namespace swss {
  * touches only the ZmqClient socket and AsyncDBUpdater's queue, each under its
  * own mutex, never the RedisPipeline the main thread uses for other tables.
  * Warm restart is the only other writer of these tables and is mutually
- * exclusive with the ZMQ route path (swss::validate_route_perf_zmq_supported).
+ * exclusive with the ZMQ route path (swss::route_perf_zmq_conflict).
  */
 class RouteSendCoalescer
 {
