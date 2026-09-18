@@ -203,8 +203,8 @@ public:
     void decNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
 
     bool deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
+    bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src, VxlanTunnel* mapper_common_src = nullptr);
+    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL, VxlanTunnel* mapper_common_src = nullptr);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
@@ -224,6 +224,7 @@ public:
     void eraseRemoteEndPoint(const std::string remote_vtep);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
+    bool vnet_hw_refcount_tracked_ = false;
 
 private:
     string tunnel_name_;
@@ -395,6 +396,19 @@ private:
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
     bool is_dip_tunnel_supported;
+
+    uint32_t vnet_vrf_tunnel_hw_refcount_ = 0;
+    VxlanTunnel* vnet_vrf_mapper_template_ = nullptr;
+
+    struct shared_vrf_map_entry_t
+    {
+        sai_object_id_t encap_entry;
+        sai_object_id_t decap_entry;
+        uint32_t        refcount;
+    };
+    // Refcounted registry of VRF tunnel-map entries shared across tunnels
+    // that use the same encap mapper. Keyed by (encap_map_oid, vni).
+    std::map<std::pair<sai_object_id_t, uint32_t>, shared_vrf_map_entry_t> vnet_vrf_map_entries_;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {

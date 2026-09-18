@@ -714,6 +714,15 @@ bool VxlanTunnel::deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src)
                 remove_tunnel_map(ids_.tunnel_encap_id[TUNNEL_MAP_T_BRIDGE]);
             }
         }
+        else if (map_src == TUNNEL_MAP_USE_COMMON_ENCAP_DECAP)
+        {
+            /*
+             * Both mappers belong to another tunnel and stay shared with the
+             * remaining users. removeVxlanTunnelMap owns their lifetime and
+             * deletes them through the DEDICATED path once the last shared
+             * reference goes away.
+             */
+        }
         else if (map_src == TUNNEL_MAP_USE_DECAP_ONLY)
         {
             if (IS_TUNNELMAP_SET_VLAN(mapper_list))
@@ -742,7 +751,7 @@ bool VxlanTunnel::deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src)
     return true;
 }
 
-bool VxlanTunnel::createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src)
+bool VxlanTunnel::createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src, VxlanTunnel* mapper_common_src)
 {
     try
     {
@@ -803,22 +812,28 @@ bool VxlanTunnel::createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src)
         }
         else if (TUNNEL_MAP_USE_COMMON_ENCAP_DECAP == map_src)
         {
+            VxlanTunnel *tpl = mapper_common_src ? mapper_common_src : vtep_ptr;
+            if (!tpl)
+            {
+                throw std::runtime_error("Vxlan COMMON encap/decap mapper template is null");
+            }
+
             if (IS_TUNNELMAP_SET_VLAN(mapper_list))
             {
-                ids_.tunnel_decap_id[TUNNEL_MAP_T_VLAN] = vtep_ptr->getDecapMapId(TUNNEL_MAP_T_VLAN);
-                ids_.tunnel_encap_id[TUNNEL_MAP_T_VLAN] = vtep_ptr->getEncapMapId(TUNNEL_MAP_T_VLAN);
+                ids_.tunnel_decap_id[TUNNEL_MAP_T_VLAN] = tpl->getDecapMapId(TUNNEL_MAP_T_VLAN);
+                ids_.tunnel_encap_id[TUNNEL_MAP_T_VLAN] = tpl->getEncapMapId(TUNNEL_MAP_T_VLAN);
             }
 
             if (IS_TUNNELMAP_SET_VRF(mapper_list))
             {
-                ids_.tunnel_decap_id[TUNNEL_MAP_T_VIRTUAL_ROUTER] = vtep_ptr->getDecapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER);
-                ids_.tunnel_encap_id[TUNNEL_MAP_T_VIRTUAL_ROUTER] = vtep_ptr->getEncapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER);
+                ids_.tunnel_decap_id[TUNNEL_MAP_T_VIRTUAL_ROUTER] = tpl->getDecapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER);
+                ids_.tunnel_encap_id[TUNNEL_MAP_T_VIRTUAL_ROUTER] = tpl->getEncapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER);
             }
  
             if (IS_TUNNELMAP_SET_BRIDGE(mapper_list))
             {
-                ids_.tunnel_decap_id[TUNNEL_MAP_T_BRIDGE] = vtep_ptr->getDecapMapId(TUNNEL_MAP_T_BRIDGE);
-                ids_.tunnel_encap_id[TUNNEL_MAP_T_BRIDGE] = vtep_ptr->getEncapMapId(TUNNEL_MAP_T_BRIDGE);
+                ids_.tunnel_decap_id[TUNNEL_MAP_T_BRIDGE] = tpl->getDecapMapId(TUNNEL_MAP_T_BRIDGE);
+                ids_.tunnel_encap_id[TUNNEL_MAP_T_BRIDGE] = tpl->getEncapMapId(TUNNEL_MAP_T_BRIDGE);
             }
         }
         else if (TUNNEL_MAP_USE_DECAP_ONLY == map_src)
@@ -883,7 +898,8 @@ bool VxlanTunnel::deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 //Creation of SAI Tunnel Object with multiple mapper types
 
 bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, 
-                                                                  bool with_term, sai_uint8_t encap_ttl)
+                                                                  bool with_term, sai_uint8_t encap_ttl,
+                                                                  VxlanTunnel* mapper_common_src)
 {
     bool p2p = false;
 
@@ -893,7 +909,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
         sai_ip_address_t ips, ipd, *ip=nullptr;
         swss::copy(ips, src_ip_);
 
-        createMapperHw(mapper_list, map_src);
+        createMapperHw(mapper_list, map_src, mapper_common_src);
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -1525,11 +1541,30 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
-            tunnel_created = tunnel_obj->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP , true, encap_ttl);
-            if (!tunnel_created)
+            tunnel_map_use_t map_use = TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP;
+            VxlanTunnel* mapper_common_src = nullptr;
+            if (vnet_vrf_tunnel_hw_refcount_ > 0)
             {
+                map_use = TUNNEL_MAP_USE_COMMON_ENCAP_DECAP;
+                mapper_common_src = vnet_vrf_mapper_template_;
+                if (!mapper_common_src)
+                {
+                    SWSS_LOG_ERROR("Vxlan vnet mapper template missing with refcount %u",
+                                   vnet_vrf_tunnel_hw_refcount_);
+                    return false;
+                }
+            }
+            if (!tunnel_obj->createTunnelHw(mapper_list, map_use, true, encap_ttl, mapper_common_src))
+            {
+                SWSS_LOG_ERROR("Vxlan tunnel '%s' HW create failed", tunnelName.c_str());
                 return false;
             }
+            vnet_vrf_tunnel_hw_refcount_++;
+            if (map_use == TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)
+            {
+                vnet_vrf_mapper_template_ = tunnel_obj;
+            }
+            tunnel_obj->vnet_hw_refcount_tracked_ = true;
         }
         else if (map == TUNNEL_MAP_T_BRIDGE)
         {
@@ -1548,10 +1583,38 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
     try
     {
         /*
-         * Create encap and decap mapper
+         * Create encap and decap mapper, or reuse existing entries when
+         * another VNET already programmed the same VNI on the same shared
+         * encap mapper (e.g. multiple VNETs sharing the same VNI).
          */
-        auto encap_id = tunnel_obj->addEncapMapperEntry(encap, vni);
-        auto decap_id = tunnel_obj->addDecapMapperEntry(decap, vni);
+        sai_object_id_t encap_map_oid = (map == TUNNEL_MAP_T_VIRTUAL_ROUTER)
+                                            ? tunnel_obj->getEncapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER)
+                                            : SAI_NULL_OBJECT_ID;
+        auto reg_key = std::make_pair(encap_map_oid, vni);
+
+        sai_object_id_t encap_id = SAI_NULL_OBJECT_ID;
+        sai_object_id_t decap_id = SAI_NULL_OBJECT_ID;
+
+        auto reg_it = (encap_map_oid != SAI_NULL_OBJECT_ID)
+                          ? vnet_vrf_map_entries_.find(reg_key)
+                          : vnet_vrf_map_entries_.end();
+        if (reg_it != vnet_vrf_map_entries_.end())
+        {
+            encap_id = reg_it->second.encap_entry;
+            decap_id = reg_it->second.decap_entry;
+            reg_it->second.refcount++;
+            SWSS_LOG_NOTICE("Reusing Vxlan tunnel map entry for vni %u (refcount %u)",
+                            vni, reg_it->second.refcount);
+        }
+        else
+        {
+            encap_id = tunnel_obj->addEncapMapperEntry(encap, vni);
+            decap_id = tunnel_obj->addDecapMapperEntry(decap, vni);
+            if (encap_map_oid != SAI_NULL_OBJECT_ID)
+            {
+                vnet_vrf_map_entries_[reg_key] = { encap_id, decap_id, 1 };
+            }
+        }
 
         tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
 
@@ -1590,13 +1653,39 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
     try
     {
         /*
-         * Delete encap and decap mapper
+         * Delete encap and decap mapper. The entries may be shared by
+         * multiple VNETs that use the same VNI on the same shared mapper,
+         * so only remove from SAI when the last reference goes away.
          */
 
         std::pair<sai_object_id_t, sai_object_id_t> mapper = tunnel_obj->getMapperEntry(vni);
 
-        remove_tunnel_map_entry(mapper.first);
-        remove_tunnel_map_entry(mapper.second);
+        sai_object_id_t encap_map_oid = tunnel_obj->getEncapMapId(TUNNEL_MAP_T_VIRTUAL_ROUTER);
+        bool free_sai_entries = true;
+        if (encap_map_oid != SAI_NULL_OBJECT_ID)
+        {
+            auto reg_it = vnet_vrf_map_entries_.find(std::make_pair(encap_map_oid, vni));
+            if (reg_it != vnet_vrf_map_entries_.end())
+            {
+                if (reg_it->second.refcount > 1)
+                {
+                    reg_it->second.refcount--;
+                    free_sai_entries = false;
+                    SWSS_LOG_NOTICE("Releasing Vxlan tunnel map entry for vni %u (refcount %u)",
+                                    vni, reg_it->second.refcount);
+                }
+                else
+                {
+                    vnet_vrf_map_entries_.erase(reg_it);
+                }
+            }
+        }
+
+        if (free_sai_entries)
+        {
+            remove_tunnel_map_entry(mapper.first);
+            remove_tunnel_map_entry(mapper.second);
+        }
 
         SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", mapper.first, mapper.second);
     }
@@ -1618,7 +1707,23 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
        TUNNELMAP_SET_VLAN(mapper_list);
        TUNNELMAP_SET_VRF(mapper_list);
 
-       tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+       if (tunnel_obj->vnet_hw_refcount_tracked_)
+       {
+           vnet_vrf_tunnel_hw_refcount_--;
+           tunnel_map_use_t del_map_use = (vnet_vrf_tunnel_hw_refcount_ == 0)
+                                              ? TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP
+                                              : TUNNEL_MAP_USE_COMMON_ENCAP_DECAP;
+           tunnel_obj->deleteTunnelHw(mapper_list, del_map_use);
+           tunnel_obj->vnet_hw_refcount_tracked_ = false;
+           if (vnet_vrf_tunnel_hw_refcount_ == 0)
+           {
+               vnet_vrf_mapper_template_ = nullptr;
+           }
+       }
+       else
+       {
+           tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+       }
     }
 
     SWSS_LOG_NOTICE("Vxlan map entry deleted for tunnel '%s' with vni '%d'", tunnelName.c_str(), vni);
@@ -1699,6 +1804,30 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
     {
         SWSS_LOG_WARN("VTEP %s not deleted as hw delete is pending", tunnel_name.c_str());
         return false;
+    }
+
+    if (vtep_ptr && vtep_ptr == vnet_vrf_mapper_template_)
+    {
+        /*
+         * The shared vnet mappers outlive this tunnel object, so rehome the
+         * template to another tunnel still holding them. Every tracked tunnel
+         * carries the same mapper ids, so any of them is a valid source.
+         */
+        vnet_vrf_mapper_template_ = nullptr;
+        for (const auto& tunnel : vxlan_tunnel_table_)
+        {
+            if (tunnel.second.get() != vtep_ptr && tunnel.second->vnet_hw_refcount_tracked_)
+            {
+                vnet_vrf_mapper_template_ = tunnel.second.get();
+                break;
+            }
+        }
+
+        if (!vnet_vrf_mapper_template_ && vnet_vrf_tunnel_hw_refcount_ > 0)
+        {
+            SWSS_LOG_WARN("Vxlan vnet mapper template tunnel '%s' removed with refcount %u",
+                          tunnel_name.c_str(), vnet_vrf_tunnel_hw_refcount_);
+        }
     }
 
     vxlan_tunnel_table_.erase(tunnel_name);
