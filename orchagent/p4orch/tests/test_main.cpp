@@ -40,7 +40,7 @@ string gMySwitchType = "switch";
 event_handle_t g_events_handle;
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }
