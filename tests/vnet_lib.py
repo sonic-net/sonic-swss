@@ -145,7 +145,7 @@ def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monit
 
 
 def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
     attrs = [
             ("endpoint", endpoint),
@@ -187,9 +187,9 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     if metric >= 0:
         attrs.append(('metric', str(metric)))
 
-    tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
+    tbl = swsscommon.ProducerStateTable(app_db, "VNET_ROUTE_TUNNEL_TABLE")
     fvs = swsscommon.FieldValuePairs(attrs)
-    tbl.set("%s|%s" % (vnet_name, prefix), fvs)
+    tbl.set("%s:%s" % (vnet_name, prefix), fvs)
 
     time.sleep(2)
 
