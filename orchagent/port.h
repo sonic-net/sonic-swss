@@ -213,6 +213,18 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
+    /* MACsec data-plane state for a LAG member. Set false when the last
+     * MACsec SA on the port is torn down (session timeout) so a teamsyncd
+     * refresh of APP_LAG_MEMBER_TABLE does not silently re-enable the member
+     * while MACsec is down.
+     *
+     * Known limitation: this intent is in-memory only and defaults true. Any
+     * orchagent/swss restart loses the prior value, so until macsecorch
+     * rebuilds MACsec state (createMACsecPort -> setMACsecEnabledState(true)
+     * -> setLagMemberMacsecSaActive(false)), a teamsyncd status=enabled
+     * refresh is not suppressed. It is not reconciled from STATE_DB MACsec SA
+     * presence on init. */
+    bool                m_macsec_sa_active = true;
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_nexthop_group_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
