@@ -35,7 +35,6 @@ const set<string> PARTICIPANT_FIELDS = {
     "mi",
     "mn",
     "active",
-    "participant",
     "retain",
     "is_principal",
     "is_primary",
@@ -174,7 +173,6 @@ bool parseParticipant(
         !normalizeHex(values.at("mi"), participant.mi, 24) ||
         !parseUint32(values.at("mn"), participant.mn) ||
         !parseBoolean(values.at("active"), participant.active) ||
-        !parseBoolean(values.at("participant"), participant.participant) ||
         !parseBoolean(values.at("retain"), participant.retain) ||
         !parseBoolean(values.at("is_principal"), participant.isPrincipal) ||
         !parseBoolean(values.at("is_primary"), participant.isPrimary) ||
@@ -199,7 +197,6 @@ vector<FieldValueTuple> MKAParticipantStatus::toFieldValues() const
         {"mi", mi},
         {"mn", to_string(mn)},
         {"active", active ? "true" : "false"},
-        {"participant", participant ? "true" : "false"},
         {"retain", retain ? "true" : "false"},
         {"is_principal", isPrincipal ? "true" : "false"},
         {"is_primary", isPrimary ? "true" : "false"},

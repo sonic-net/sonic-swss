@@ -45,7 +45,6 @@ string participant(
         "mi=102030405060708090a0b0c0\n"
         "mn=482\n"
         "active=Yes\n"
-        "participant=Yes\n"
         "retain=No\n"
         "is_principal=" + string(principal ? "Yes\n" : "No\n") +
         "is_primary=" + string(primary ? "Yes\n" : "No\n") +
@@ -227,7 +226,7 @@ struct MACsecMgrTest : public ::testing::Test
     }
 };
 
-TEST(MKAStatusParser, NormalizesFrozenInterface)
+TEST(MKAStatusParser, AcceptsFinalFrozenInterfaceWithoutParticipantField)
 {
     MKASessionStatus status;
     string error;
@@ -279,6 +278,7 @@ TEST_F(MACsecMgrTest, QueryFailurePreservesLastSuccessfulSnapshot)
     EXPECT_EQ(lastUpdated, value);
     vector<FieldValueTuple> participantValues;
     EXPECT_TRUE(participantTable.get("Ethernet0|" + PRIMARY_CKN, participantValues));
+    EXPECT_FALSE(fvsGetValue(participantValues, "participant", true));
 }
 
 TEST_F(MACsecMgrTest, ExplicitDisableDeletesOperationalRows)

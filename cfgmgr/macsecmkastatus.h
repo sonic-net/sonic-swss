@@ -16,7 +16,6 @@ struct MKAParticipantStatus
     std::string mi;
     std::uint32_t mn;
     bool active;
-    bool participant;
     bool retain;
     bool isPrincipal;
     bool isPrimary;
