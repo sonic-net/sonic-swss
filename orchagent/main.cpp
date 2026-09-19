@@ -567,7 +567,9 @@ int main(int argc, char **argv)
             break;
         case 'C':
             gConflatedChannelDbName = optarg;
-            SWSS_LOG_NOTICE("Conflated channel DB set to %s (-C)", optarg);
+            SWSS_LOG_NOTICE("Conflated channel DB set to %s (-C) [addr=%p, len=%zu]",
+                            optarg, (void*)&gConflatedChannelDbName,
+                            gConflatedChannelDbName.size());
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
