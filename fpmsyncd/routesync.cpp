@@ -322,6 +322,12 @@ void RouteSync::flushPendingRoutes()
     flushMap(m_pendingLabelRoutes, *m_label_routeTable);
 }
 
+void RouteSync::flushRouteTables()
+{
+    m_routeTable->flush();
+    m_label_routeTable->flush();
+}
+
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
 {
     char *ptr = buf;

@@ -320,6 +320,7 @@ int main(int argc, char **argv)
 
                     // WS6: flush pending batches before reconciliation
                     sync.flushPendingRoutes();
+                    sync.flushRouteTables();
                     sync.onWarmStartEnd(applStateDb);
 
                     // remove the one-shot timer.
@@ -436,6 +437,7 @@ int main(int argc, char **argv)
                     {
                         // WS6: flush pending batches before setting drain flag
                         sync.flushPendingRoutes();
+                        sync.flushRouteTables();
                         sync.setDrainingForWarmRestart(true);
                         SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
                     }
@@ -499,6 +501,10 @@ int main(int argc, char **argv)
                     // WS6: flush pending route batches before the pipeline flush.
                     // Batched EVALSHAs land in the pipeline → pipeline flush ships them.
                     sync.flushPendingRoutes();
+                    // WS10: route tables may be on a separate pipeline (APPL_CHANNEL_DB).
+                    // flushPipeline only flushes the APPL_DB pipeline; this flushes
+                    // each route table's own pipeline so channel writes reach redis.
+                    sync.flushRouteTables();
                     flushPipeline(pipeline);
                 }
             }

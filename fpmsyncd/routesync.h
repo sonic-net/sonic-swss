@@ -262,6 +262,8 @@ public:
     int  getBatchSize() const   { return m_batchSize; }
     void flushPendingRoutes();
 
+    void flushRouteTables();
+
     /* True if either route table is a ZmqProducerStateTable. Set once in ctor. */
     bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
 
