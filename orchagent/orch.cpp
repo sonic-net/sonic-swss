@@ -951,13 +951,8 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
     else if (gEnableConflatedChannel &&
              (tableName == APP_ROUTE_TABLE_NAME || tableName == APP_LABEL_ROUTE_TABLE_NAME))
     {
-        SWSS_LOG_NOTICE("addConsumer: gConflatedChannelDbName at %p = '%s' (empty=%d)",
-                        (void*)&gConflatedChannelDbName,
-                        gConflatedChannelDbName.c_str(),
-                        (int)gConflatedChannelDbName.empty());
         if (!gConflatedChannelDbName.empty() && gConflatedChannelDbName != "APPL_DB")
         {
-            // WS10: channel hashes on a separate redis instance; permanent writes stay on APPL_DB.
             auto *channelDb = new DBConnector(gConflatedChannelDbName, 0);
             SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s (split: channel=%s, perm=APPL_DB)",
                             tableName.c_str(), gConflatedChannelDbName.c_str());

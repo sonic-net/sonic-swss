@@ -6,6 +6,7 @@ using namespace std;
 
 extern int gBatchSize;
 extern bool gEnableConflatedChannel;
+extern std::string gConflatedChannelDbName;
 
 void ZmqConsumer::execute()
 {
@@ -57,8 +58,18 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
         else if (gEnableConflatedChannel &&
                  (tableName == APP_ROUTE_TABLE_NAME || tableName == APP_LABEL_ROUTE_TABLE_NAME))
         {
-            SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s", tableName.c_str());
-            addExecutor(new Consumer(new ConflatedConsumerTable(db, tableName, gBatchSize, pri), this, tableName));
+            if (!gConflatedChannelDbName.empty() && gConflatedChannelDbName != "APPL_DB")
+            {
+                auto *channelDb = new DBConnector(gConflatedChannelDbName, 0);
+                SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s (split: channel=%s, perm=APPL_DB)",
+                                tableName.c_str(), gConflatedChannelDbName.c_str());
+                addExecutor(new Consumer(new ConflatedConsumerTable(channelDb, tableName, db, gBatchSize, pri), this, tableName));
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Using ConflatedConsumerTable for %s", tableName.c_str());
+                addExecutor(new Consumer(new ConflatedConsumerTable(db, tableName, gBatchSize, pri), this, tableName));
+            }
         }
         else
         {
