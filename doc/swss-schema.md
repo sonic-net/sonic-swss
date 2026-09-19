@@ -650,6 +650,11 @@ Stores rules associated with a specific ACL table on the switch.
     mirror_action = 1*255VCHAR                 ; refer to the mirror session (by default it will be ingress mirror action)
     mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
     mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
+    packet_color_action = "green"/"yellow"/"red"
+                                               ; sets the packet color on matching packets; maps to
+                                               ; SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR (case-insensitive).
+                                               ; Supported only where the platform SAI advertises the action for the
+                                               ; table's ACL stage (ingress and/or egress)
 
     policer_action = 1*255VCHAR                ; name of a POLICER table entry used to
                                                ; meter/rate-limit packets matching this rule.
