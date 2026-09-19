@@ -6133,7 +6133,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (l.m_bridge_port_id != SAI_NULL_OBJECT_ID)
                     {
                         bool retry_attempt = false;
-                        const bool desired_mode_changed = l.m_learn_mode != learn_mode;
 
                         if (m_lagMemberGuardEnabled &&
                             l.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::PENDING)
@@ -6142,11 +6141,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                                 l.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::CONFIGURE &&
                                 l.m_lag_learn_mode_retry_owner == alias &&
                                 l.m_lag_learn_mode_retry_target == learn_mode;
-                            if (!owns_config_retry && !desired_mode_changed)
-                            {
-                                it++;
-                                continue;
-                            }
                             if (owns_config_retry && !isLagLearnModeRetryDue(l))
                             {
                                 it++;
@@ -6228,15 +6222,13 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 continue;
             }
 
-            if (m_lagMemberGuardEnabled &&
+            const bool configure_retry_pending = m_lagMemberGuardEnabled &&
                 lag.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::PENDING &&
-                lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::CONFIGURE)
-            {
-                clearLagLearnModeGuardState(lag);
-                m_portList[alias] = lag;
-            }
-
-            const auto retry_owner = lag.m_lag_learn_mode_retry_owner;
+                lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::CONFIGURE;
+            const auto retry_owner =
+                lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::CONFIGURE
+                    ? std::string()
+                    : lag.m_lag_learn_mode_retry_owner;
             if (removeLag(lag))
             {
                 if (m_lagMemberGuardEnabled && !retry_owner.empty())
@@ -6255,6 +6247,24 @@ void PortsOrch::doLagTask(Consumer &consumer)
             }
             else
             {
+                if (configure_retry_pending &&
+                    isLagLearnModeRetryDue(lag) &&
+                    m_portList.find(alias) != m_portList.end())
+                {
+                    const auto retry_target = lag.m_lag_learn_mode_retry_target;
+                    const bool retry_succeeded = tryLagLearnModeTransition(
+                        lag,
+                        retry_target,
+                        Port::LagLearnModeRetryPhase::CONFIGURE,
+                        lag.m_lag_learn_mode_retry_owner,
+                        true);
+                    if (retry_succeeded ||
+                        lag.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::STUCK)
+                    {
+                        lag.m_learn_mode = retry_target;
+                    }
+                    m_portList[alias] = lag;
+                }
                 it++;
             }
         }
@@ -6328,16 +6338,35 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         const bool port_found = getPort(port_alias, port);
         const bool port_type_valid = port_found && isValidPortTypeForLagMember(port);
 
+        const bool restore_for_owner_delete = m_lagMemberGuardEnabled &&
+            lag.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::PENDING &&
+            lag.m_lag_learn_mode_retry_owner == key &&
+            op == DEL_COMMAND &&
+            (lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::RETRY_MEMBER ||
+             lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::COMPLETE_MEMBER);
+        if (restore_for_owner_delete)
+        {
+            tryLagLearnModeTransition(
+                lag,
+                lag.m_lag_learn_mode_retry_target,
+                Port::LagLearnModeRetryPhase::DELETE_MEMBER,
+                key);
+            m_portList[lag_alias] = lag;
+        }
+
         if (m_lagMemberGuardEnabled &&
             lag.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::PENDING &&
             lag.m_lag_learn_mode_retry_phase == Port::LagLearnModeRetryPhase::PRE_MEMBER &&
             lag.m_lag_learn_mode_retry_owner == key &&
             (op != SET_COMMAND || status != "enabled" || !port_type_valid))
         {
+            const auto retry_phase = op == DEL_COMMAND
+                ? Port::LagLearnModeRetryPhase::DELETE_MEMBER
+                : Port::LagLearnModeRetryPhase::RETRY_MEMBER;
             tryLagLearnModeTransition(
                 lag,
                 lag.m_learn_mode,
-                Port::LagLearnModeRetryPhase::RETRY_MEMBER,
+                retry_phase,
                 key);
             m_portList[lag_alias] = lag;
         }
@@ -6369,22 +6398,27 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             const auto retry_phase = lag.m_lag_learn_mode_retry_phase;
             const auto retry_target = lag.m_lag_learn_mode_retry_target;
             const auto retry_owner = lag.m_lag_learn_mode_retry_owner;
-            if (!tryLagLearnModeTransition(
-                    lag, retry_target, retry_phase, retry_owner, true))
-            {
-                m_portList[lag_alias] = lag;
-                it++;
-                continue;
-            }
+            const bool retry_succeeded = tryLagLearnModeTransition(
+                lag, retry_target, retry_phase, retry_owner, true);
             m_portList[lag_alias] = lag;
-            SWSS_LOG_NOTICE("LAG %s learning mode retry succeeded", lag_alias.c_str());
-            if (retry_phase == Port::LagLearnModeRetryPhase::COMPLETE_MEMBER &&
-                retry_owner == key &&
-                op == SET_COMMAND &&
-                status == "enabled")
+            if (!retry_succeeded)
             {
-                it = consumer.m_toSync.erase(it);
-                continue;
+                if (lag.m_lag_learn_mode_guard_state == Port::LagLearnModeGuardState::PENDING ||
+                    op != DEL_COMMAND)
+                {
+                    it++;
+                    continue;
+                }
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("LAG %s learning mode retry succeeded", lag_alias.c_str());
+                if (retry_phase == Port::LagLearnModeRetryPhase::COMPLETE_MEMBER &&
+                    op == SET_COMMAND && status == "enabled")
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
             }
         }
 
@@ -6485,8 +6519,6 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             /* Sync an enabled member */
             if (status == "enabled")
             {
-                SWSS_LOG_INFO("Configured learning mode for %s is %d",
-                    lag.m_alias.c_str(), lag.m_learn_mode);
                 /* enable collection first, distribution-only mode
                  * is not supported on Mellanox platform
                  */
@@ -7513,13 +7545,13 @@ task_process_status PortsOrch::getBridgePortLearnMode(
     }
 
     learn_mode = static_cast<sai_bridge_port_fdb_learning_mode_t>(attr.value.s32);
-    SWSS_LOG_INFO("Read bridge port %s learning mode %d",
+    SWSS_LOG_DEBUG("Read bridge port %s learning mode %d",
         port.m_alias.c_str(), learn_mode);
     return task_success;
 }
 
 task_process_status PortsOrch::setBridgePortLearnModeVerified(
-    Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode)
+    const Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode)
 {
     if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
     {
@@ -12024,7 +12056,11 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
             return;
         }
 
-        for (const auto &tableName : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        for (const auto &tableName : {
+                 APP_LAG_TABLE_NAME,
+                 CHASSIS_APP_LAG_TABLE_NAME,
+                 APP_LAG_MEMBER_TABLE_NAME,
+                 CHASSIS_APP_LAG_MEMBER_TABLE_NAME})
         {
             auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
             if (consumer != nullptr)

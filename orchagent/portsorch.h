@@ -448,7 +448,7 @@ private:
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
 
     task_process_status setBridgePortLearnModeVerified(
-        Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
+        const Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
     task_process_status getBridgePortLearnMode(
         const Port &port, sai_bridge_port_fdb_learning_mode_t &learn_mode);
     bool tryLagLearnModeTransition(

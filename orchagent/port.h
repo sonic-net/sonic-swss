@@ -154,6 +154,7 @@ public:
         PRE_MEMBER,
         RETRY_MEMBER,
         COMPLETE_MEMBER,
+        DELETE_MEMBER,
         CONFIGURE,
     };
 

@@ -18,8 +18,8 @@
 #include "warm_restart.h"
 #undef private
 
-#include <sstream>
 #include <array>
+#include <sstream>
 
 extern redisReply *mockReply;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
@@ -4815,14 +4815,10 @@ namespace portsorch_test
         ASSERT_FALSE(port.m_init);
     }
 
-    TEST_F(PortsOrchTest, LagLearnModeReadbackAndFailureClassification)
+    TEST_F(PortsOrchLagLearnModeGuardTest, LagLearnModeReadbackAndFailureClassification)
     {
-        EXPECT_EQ(static_cast<int>(SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP), 0);
-        EXPECT_EQ(static_cast<int>(SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW), 2);
-
         Port lag("PortChannel1", Port::LAG);
         lag.m_bridge_port_id = 0x1234;
-        lag.m_lag_id = 0x5678;
         lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_TRAP;
 
         auto hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
@@ -4834,7 +4830,7 @@ namespace portsorch_test
 
         auto getSpy = SpyOn<100, SAI_OBJECT_TYPE_BRIDGE_PORT>(
             &sai_bridge_api->get_bridge_port_attribute);
-        getSpy->callFake([&](sai_object_id_t, uint32_t count, sai_attribute_t *attrs) {
+        getSpy->callFake([&](sai_object_id_t, uint32_t count, sai_attribute_t *attrs) -> sai_status_t {
             getCalls++;
             EXPECT_EQ(count, 1u);
             EXPECT_EQ(attrs[0].id, SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE);
@@ -4880,7 +4876,6 @@ namespace portsorch_test
                 lag, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW),
             task_need_retry);
 
-        hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
         setStatus = SAI_STATUS_INSUFFICIENT_RESOURCES;
         applySet = true;
         EXPECT_EQ(
@@ -4897,7 +4892,7 @@ namespace portsorch_test
             task_failed);
     }
 
-    TEST_F(PortsOrchTest, LagLearnModeRetryStopsAfterFiveAttempts)
+    TEST_F(PortsOrchLagLearnModeGuardTest, LagLearnModeRetryStopsAfterFiveAttempts)
     {
         Port lag("PortChannel1", Port::LAG);
         lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
@@ -4911,13 +4906,13 @@ namespace portsorch_test
                 SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW,
                 Port::LagLearnModeRetryPhase::COMPLETE_MEMBER,
                 "PortChannel1:Ethernet0");
+            const auto after = std::chrono::steady_clock::now();
+            const auto expectedDelay = std::chrono::milliseconds(expectedIntervals[retry]);
             EXPECT_EQ(
                 lag.m_lag_learn_mode_guard_state,
                 Port::LagLearnModeGuardState::PENDING);
-            const auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(
-                lag.m_lag_learn_mode_next_retry - before).count();
-            EXPECT_GE(delay, expectedIntervals[retry]);
-            EXPECT_LE(delay, expectedIntervals[retry] + 1);
+            EXPECT_GE(lag.m_lag_learn_mode_next_retry, before + expectedDelay);
+            EXPECT_LE(lag.m_lag_learn_mode_next_retry, after + expectedDelay);
             lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::now();
             EXPECT_TRUE(gPortsOrch->isLagLearnModeRetryDue(lag));
             lag.m_lag_learn_mode_retry_count++;
@@ -4941,7 +4936,6 @@ namespace portsorch_test
         const std::string ownerKey = lagAlias + ":Ethernet0";
         Port lag(lagAlias, Port::LAG);
         lag.m_bridge_port_id = 0x1234;
-        lag.m_lag_id = 0x5678;
         lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
         gPortsOrch->m_portList["Ethernet0"] = Port("Ethernet0", Port::PHY);
 
@@ -4960,15 +4954,11 @@ namespace portsorch_test
             return SAI_STATUS_SUCCESS;
         });
 
-        EXPECT_EQ(
-            gPortsOrch->setBridgePortLearnModeVerified(
-                lag, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW),
-            task_need_retry);
-        gPortsOrch->scheduleLagLearnModeRetry(
+        EXPECT_FALSE(gPortsOrch->tryLagLearnModeTransition(
             lag,
             SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW,
             Port::LagLearnModeRetryPhase::COMPLETE_MEMBER,
-            ownerKey);
+            ownerKey));
         gPortsOrch->m_portList[lagAlias] = lag;
 
         auto *consumer = dynamic_cast<Consumer *>(
@@ -4997,7 +4987,6 @@ namespace portsorch_test
         EXPECT_EQ(consumer->m_toSync.size(), 1u);
 
         gPortsOrch->doLagMemberTask(*consumer);
-        gPortsOrch->markLagLearnModeGuardStuck(gPortsOrch->m_portList[lagAlias]);
         EXPECT_EQ(restoreCalls, 6);
         gPortsOrch->updateLagLearnModeRetryTimer();
         EXPECT_FALSE(gPortsOrch->m_lagLearnModeRetryTimerRunning);
@@ -5092,7 +5081,6 @@ namespace portsorch_test
         const std::string lagAlias = "PortChannel1";
         Port lag(lagAlias, Port::LAG);
         lag.m_bridge_port_id = 0x1234;
-        lag.m_lag_id = 0x5678;
         lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
         lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
         lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::COMPLETE_MEMBER;
@@ -5134,15 +5122,191 @@ namespace portsorch_test
         EXPECT_EQ(setCalls, 1);
     }
 
+    TEST_F(PortsOrchLagLearnModeGuardTest, ConfigReversionSupersedesPendingConfigureRetry)
+    {
+        const std::string lagAlias = "PortChannel1";
+        Port lag(lagAlias, Port::LAG);
+        lag.m_bridge_port_id = 0x1234;
+        lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
+        lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::CONFIGURE;
+        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+        lag.m_lag_learn_mode_retry_owner = lagAlias;
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+        gPortsOrch->m_portList[lagAlias] = lag;
+
+        auto hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+        int setCalls = 0;
+        auto getSpy = SpyOn<116, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->get_bridge_port_attribute);
+        getSpy->callFake([&](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
+            attrs[0].value.s32 = hardwareMode;
+            return SAI_STATUS_SUCCESS;
+        });
+        auto setSpy = SpyOn<116, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->set_bridge_port_attribute);
+        setSpy->callFake([&](sai_object_id_t, const sai_attribute_t *attr) {
+            setCalls++;
+            hardwareMode = static_cast<sai_bridge_port_fdb_learning_mode_t>(attr->value.s32);
+            return SAI_STATUS_SUCCESS;
+        });
+
+        auto *consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_LAG_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple(
+            lagAlias, SET_COMMAND, {{"learn_mode", "hardware"}}));
+        gPortsOrch->doLagTask(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(
+            gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_guard_state,
+            Port::LagLearnModeGuardState::IDLE);
+        EXPECT_EQ(
+            gPortsOrch->m_portList[lagAlias].m_learn_mode,
+            SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW);
+        EXPECT_EQ(hardwareMode, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW);
+        EXPECT_EQ(setCalls, 1);
+    }
+
+    TEST_F(PortsOrchLagLearnModeGuardTest, OwnerDeleteBypassesPendingRestoreBackoff)
+    {
+        const std::string lagAlias = "PortChannel1";
+        const std::string ownerKey = lagAlias + ":Ethernet0";
+        auto hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+        int setCalls = 0;
+        auto getSpy = SpyOn<113, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->get_bridge_port_attribute);
+        getSpy->callFake([&](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
+            attrs[0].value.s32 = hardwareMode;
+            return SAI_STATUS_SUCCESS;
+        });
+        auto setSpy = SpyOn<113, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->set_bridge_port_attribute);
+        setSpy->callFake([&](sai_object_id_t, const sai_attribute_t *attr) {
+            setCalls++;
+            hardwareMode = static_cast<sai_bridge_port_fdb_learning_mode_t>(attr->value.s32);
+            return SAI_STATUS_SUCCESS;
+        });
+
+        int removeCalls = 0;
+        auto removeSpy = SpyOn<113, SAI_OBJECT_TYPE_LAG_MEMBER>(
+            &sai_lag_api->remove_lag_member);
+        removeSpy->callFake([&](sai_object_id_t) {
+            removeCalls++;
+            return SAI_STATUS_SUCCESS;
+        });
+
+        auto *consumer = dynamic_cast<Consumer *>(
+            gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME));
+        for (const auto phase : {
+                 Port::LagLearnModeRetryPhase::RETRY_MEMBER,
+                 Port::LagLearnModeRetryPhase::COMPLETE_MEMBER})
+        {
+            Port lag(lagAlias, Port::LAG);
+            lag.m_lag_id = 0x1234;
+            lag.m_bridge_port_id = 0x2345;
+            lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+            lag.m_members.insert("Ethernet0");
+            lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
+            lag.m_lag_learn_mode_retry_phase = phase;
+            lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+            lag.m_lag_learn_mode_retry_owner = ownerKey;
+            lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+            EXPECT_FALSE(gPortsOrch->isLagLearnModeRetryDue(lag));
+            gPortsOrch->m_portList[lagAlias] = lag;
+
+            Port member("Ethernet0", Port::PHY);
+            member.m_lag_id = lag.m_lag_id;
+            member.m_lag_member_id = 0x5678;
+            gPortsOrch->m_portList[member.m_alias] = member;
+
+            hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+            consumer->addToSync(KeyOpFieldsValuesTuple(ownerKey, DEL_COMMAND, {}));
+            gPortsOrch->doLagMemberTask(*consumer);
+
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_TRUE(gPortsOrch->m_portList[lagAlias].m_members.empty());
+            EXPECT_EQ(
+                gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_guard_state,
+                Port::LagLearnModeGuardState::IDLE);
+            EXPECT_EQ(hardwareMode, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW);
+        }
+        EXPECT_EQ(setCalls, 2);
+        EXPECT_EQ(removeCalls, 2);
+    }
+
+    TEST_F(PortsOrchLagLearnModeGuardTest, OwnerDeleteRestoreFailureRespectsRetryDeadline)
+    {
+        const std::string lagAlias = "PortChannel1";
+        const std::string ownerKey = lagAlias + ":Ethernet0";
+        Port lag(lagAlias, Port::LAG);
+        lag.m_lag_id = 0x1234;
+        lag.m_bridge_port_id = 0x2345;
+        lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        lag.m_members.insert("Ethernet0");
+        lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
+        lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::COMPLETE_MEMBER;
+        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        lag.m_lag_learn_mode_retry_owner = ownerKey;
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+        gPortsOrch->m_portList[lagAlias] = lag;
+
+        Port member("Ethernet0", Port::PHY);
+        member.m_lag_id = lag.m_lag_id;
+        member.m_lag_member_id = 0x5678;
+        gPortsOrch->m_portList[member.m_alias] = member;
+
+        auto getSpy = SpyOn<115, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->get_bridge_port_attribute);
+        getSpy->callFake([](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
+            attrs[0].value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+            return SAI_STATUS_SUCCESS;
+        });
+        int setCalls = 0;
+        auto setSpy = SpyOn<115, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->set_bridge_port_attribute);
+        setSpy->callFake([&](sai_object_id_t, const sai_attribute_t *) {
+            setCalls++;
+            return SAI_STATUS_SUCCESS;
+        });
+        int removeCalls = 0;
+        auto removeSpy = SpyOn<115, SAI_OBJECT_TYPE_LAG_MEMBER>(
+            &sai_lag_api->remove_lag_member);
+        removeSpy->callFake([&](sai_object_id_t) {
+            removeCalls++;
+            return SAI_STATUS_SUCCESS;
+        });
+
+        auto *consumer = dynamic_cast<Consumer *>(
+            gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple(ownerKey, DEL_COMMAND, {}));
+        gPortsOrch->doLagMemberTask(*consumer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(
+            gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_retry_phase,
+            Port::LagLearnModeRetryPhase::DELETE_MEMBER);
+        EXPECT_EQ(setCalls, 1);
+        EXPECT_EQ(removeCalls, 0);
+
+        gPortsOrch->doLagMemberTask(*consumer);
+        EXPECT_EQ(setCalls, 1);
+
+        gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_next_retry =
+            std::chrono::steady_clock::time_point::min();
+        gPortsOrch->doLagMemberTask(*consumer);
+
+        EXPECT_EQ(setCalls, 2);
+        EXPECT_EQ(removeCalls, 0);
+        EXPECT_EQ(gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_retry_count, 1);
+    }
+
     TEST_F(PortsOrchLagLearnModeGuardTest, ExplicitLearnModeConfigRecoversStuckLag)
     {
         const std::string lagAlias = "PortChannel1";
         Port lag(lagAlias, Port::LAG);
         lag.m_bridge_port_id = 0x1234;
-        lag.m_lag_id = 0x5678;
         lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
         lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::STUCK;
-        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
         gPortsOrch->m_portList[lagAlias] = lag;
 
         auto hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
@@ -5190,7 +5354,8 @@ namespace portsorch_test
         lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::PRE_MEMBER;
         lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
         lag.m_lag_learn_mode_retry_owner = ownerKey;
-        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::now();
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+        EXPECT_FALSE(gPortsOrch->isLagLearnModeRetryDue(lag));
         gPortsOrch->m_portList[lagAlias] = lag;
         gPortsOrch->m_portList["Ethernet0"] = Port("Ethernet0", Port::PHY);
 
@@ -5340,8 +5505,7 @@ namespace portsorch_test
         lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
         lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::COMPLETE_MEMBER;
         lag.m_lag_learn_mode_retry_owner = lagAlias + ":Ethernet4";
-        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::now() +
-            std::chrono::seconds(5);
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
         gPortsOrch->m_portList[lagAlias] = lag;
 
         Port member("Ethernet0", Port::PHY);
@@ -5378,58 +5542,6 @@ namespace portsorch_test
             Port::LagLearnModeGuardState::PENDING);
     }
 
-    TEST_F(PortsOrchLagLearnModeGuardTest, RetryTimerCoalescesLatestStateBeforeRetainedSet)
-    {
-        const std::string lagAlias = "PortChannel1";
-        const std::string ownerKey = lagAlias + ":Ethernet0";
-        Port lag(lagAlias, Port::LAG);
-        lag.m_lag_id = 0x1234;
-        lag.m_bridge_port_id = 0x2345;
-        lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
-        lag.m_members.insert("Ethernet0");
-        lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
-        lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::COMPLETE_MEMBER;
-        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
-        lag.m_lag_learn_mode_retry_owner = ownerKey;
-        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::now();
-        gPortsOrch->m_portList[lagAlias] = lag;
-
-        Port member("Ethernet0", Port::PHY);
-        member.m_lag_id = lag.m_lag_id;
-        member.m_lag_member_id = 0x5678;
-        gPortsOrch->m_portList[member.m_alias] = member;
-
-        auto getSpy = SpyOn<111, SAI_OBJECT_TYPE_BRIDGE_PORT>(
-            &sai_bridge_api->get_bridge_port_attribute);
-        getSpy->callFake([](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
-            attrs[0].value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
-            return SAI_STATUS_SUCCESS;
-        });
-        int lagSetCalls = 0;
-        auto lagSpy = SpyOn<111, SAI_OBJECT_TYPE_LAG_MEMBER>(
-            &sai_lag_api->set_lag_member_attribute);
-        lagSpy->callFake([&](sai_object_id_t, const sai_attribute_t *) {
-            lagSetCalls++;
-            return SAI_STATUS_SUCCESS;
-        });
-
-        auto *consumer = dynamic_cast<Consumer *>(
-            gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME));
-        consumer->addToSync(KeyOpFieldsValuesTuple(
-            ownerKey, SET_COMMAND, {{"status", "enabled"}}));
-        swss::ProducerStateTable memberTable(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
-        memberTable.set(ownerKey, {{"status", "disabled"}});
-
-        gPortsOrch->doTask(*gPortsOrch->m_lagLearnModeRetryTimer);
-
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_EQ(lagSetCalls, 2);
-        EXPECT_EQ(gPortsOrch->m_portList[lagAlias].m_members.count("Ethernet0"), 1u);
-        EXPECT_EQ(
-            gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_guard_state,
-            Port::LagLearnModeGuardState::IDLE);
-    }
-
     TEST_F(PortsOrchLagLearnModeGuardTest, RetryTimerDoesNotDrainBeforeDeadline)
     {
         const std::string lagAlias = "PortChannel1";
@@ -5438,8 +5550,8 @@ namespace portsorch_test
         lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
         lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::COMPLETE_MEMBER;
         lag.m_lag_learn_mode_retry_owner = ownerKey;
-        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::now() +
-            std::chrono::seconds(5);
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+        EXPECT_FALSE(gPortsOrch->isLagLearnModeRetryDue(lag));
         gPortsOrch->m_portList[lagAlias] = lag;
 
         auto *consumer = dynamic_cast<Consumer *>(
@@ -5448,6 +5560,9 @@ namespace portsorch_test
             ownerKey, SET_COMMAND, {{"status", "enabled"}}));
         swss::ProducerStateTable memberTable(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
         memberTable.set(ownerKey, {{"status", "disabled"}});
+        // Timer-driven drains still honor the normal PortsOrch readiness gate.
+        gPortsOrch->m_initDone = true;
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
 
         gPortsOrch->doTask(*gPortsOrch->m_lagLearnModeRetryTimer);
 
@@ -5468,8 +5583,10 @@ namespace portsorch_test
         lag.m_lag_learn_mode_retry_owner = ownerKey;
         gPortsOrch->m_portList[lagAlias] = lag;
 
+        int removeCalls = 0;
         auto removeSpy = SpyOn<112, SAI_OBJECT_TYPE_LAG>(&sai_lag_api->remove_lag);
-        removeSpy->callFake([](sai_object_id_t) {
+        removeSpy->callFake([&](sai_object_id_t) {
+            removeCalls++;
             return SAI_STATUS_SUCCESS;
         });
 
@@ -5486,9 +5603,152 @@ namespace portsorch_test
         EXPECT_TRUE(lagConsumer->m_toSync.empty());
         EXPECT_TRUE(memberConsumer->m_toSync.empty());
         EXPECT_EQ(gPortsOrch->m_portList.count(lagAlias), 0u);
+        EXPECT_EQ(removeCalls, 1);
     }
 
-    TEST_F(PortsOrchLagLearnModeGuardTest, MissingLagDeleteIsIdempotent)
+    TEST_F(PortsOrchLagLearnModeGuardTest, FailedLagDeletePreservesAndAdvancesConfigRetry)
+    {
+        const std::string lagAlias = "PortChannel1";
+        Port lag(lagAlias, Port::LAG);
+        lag.m_lag_id = 0x1234;
+        lag.m_bridge_port_id = 0x2345;
+        lag.m_members.insert("Ethernet0");
+        lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
+        lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::CONFIGURE;
+        lag.m_lag_learn_mode_retry_count = 2;
+        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+        lag.m_lag_learn_mode_retry_owner = lagAlias;
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::max();
+        gPortsOrch->m_portList[lagAlias] = lag;
+
+        auto hardwareMode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        bool applySet = false;
+        auto getSpy = SpyOn<114, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->get_bridge_port_attribute);
+        getSpy->callFake([&](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
+            attrs[0].value.s32 = hardwareMode;
+            return SAI_STATUS_SUCCESS;
+        });
+        int setCalls = 0;
+        auto setSpy = SpyOn<114, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->set_bridge_port_attribute);
+        setSpy->callFake([&](sai_object_id_t, const sai_attribute_t *attr) {
+            setCalls++;
+            if (applySet)
+            {
+                hardwareMode = static_cast<sai_bridge_port_fdb_learning_mode_t>(attr->value.s32);
+            }
+            return SAI_STATUS_SUCCESS;
+        });
+
+        auto *consumer = dynamic_cast<Consumer *>(
+            gPortsOrch->getExecutor(APP_LAG_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple(lagAlias, DEL_COMMAND, {}));
+        gPortsOrch->doLagTask(*consumer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        const auto &preserved = gPortsOrch->m_portList[lagAlias];
+        EXPECT_EQ(
+            preserved.m_lag_learn_mode_guard_state,
+            Port::LagLearnModeGuardState::PENDING);
+        EXPECT_EQ(
+            preserved.m_lag_learn_mode_retry_phase,
+            Port::LagLearnModeRetryPhase::CONFIGURE);
+        EXPECT_EQ(preserved.m_lag_learn_mode_retry_count, 2);
+        EXPECT_EQ(
+            preserved.m_lag_learn_mode_retry_target,
+            SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP);
+        EXPECT_EQ(preserved.m_lag_learn_mode_retry_owner, lagAlias);
+        EXPECT_EQ(
+            preserved.m_lag_learn_mode_next_retry,
+            std::chrono::steady_clock::time_point::max());
+        EXPECT_EQ(setCalls, 0);
+
+        gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_next_retry =
+            std::chrono::steady_clock::time_point::min();
+        const auto beforeRetry = std::chrono::steady_clock::now();
+        // Timer-driven drains still honor the normal PortsOrch readiness gate.
+        gPortsOrch->m_initDone = true;
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+        gPortsOrch->doTask(*gPortsOrch->m_lagLearnModeRetryTimer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        const auto &rescheduled = gPortsOrch->m_portList[lagAlias];
+        EXPECT_EQ(
+            rescheduled.m_lag_learn_mode_guard_state,
+            Port::LagLearnModeGuardState::PENDING);
+        EXPECT_EQ(
+            rescheduled.m_lag_learn_mode_retry_phase,
+            Port::LagLearnModeRetryPhase::CONFIGURE);
+        EXPECT_EQ(rescheduled.m_lag_learn_mode_retry_count, 3);
+        EXPECT_GT(rescheduled.m_lag_learn_mode_next_retry, beforeRetry);
+        EXPECT_EQ(setCalls, 1);
+
+        gPortsOrch->doTask(*gPortsOrch->m_lagLearnModeRetryTimer);
+        EXPECT_EQ(setCalls, 1);
+
+        applySet = true;
+        gPortsOrch->m_portList[lagAlias].m_lag_learn_mode_next_retry =
+            std::chrono::steady_clock::time_point::min();
+        gPortsOrch->doTask(*gPortsOrch->m_lagLearnModeRetryTimer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        const auto &configured = gPortsOrch->m_portList[lagAlias];
+        EXPECT_EQ(
+            configured.m_lag_learn_mode_guard_state,
+            Port::LagLearnModeGuardState::IDLE);
+        EXPECT_EQ(
+            configured.m_learn_mode,
+            SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP);
+        EXPECT_EQ(setCalls, 2);
+    }
+
+    TEST_F(PortsOrchLagLearnModeGuardTest, FailedLagDeleteConfigRetryStuckUpdatesDesiredMode)
+    {
+        const std::string lagAlias = "PortChannel1";
+        Port lag(lagAlias, Port::LAG);
+        lag.m_lag_id = 0x1234;
+        lag.m_bridge_port_id = 0x2345;
+        lag.m_members.insert("Ethernet0");
+        lag.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        lag.m_lag_learn_mode_guard_state = Port::LagLearnModeGuardState::PENDING;
+        lag.m_lag_learn_mode_retry_phase = Port::LagLearnModeRetryPhase::CONFIGURE;
+        lag.m_lag_learn_mode_retry_count = 4;
+        lag.m_lag_learn_mode_retry_target = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP;
+        lag.m_lag_learn_mode_retry_owner = lagAlias;
+        lag.m_lag_learn_mode_next_retry = std::chrono::steady_clock::time_point::min();
+        gPortsOrch->m_portList[lagAlias] = lag;
+
+        auto getSpy = SpyOn<117, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->get_bridge_port_attribute);
+        getSpy->callFake([](sai_object_id_t, uint32_t, sai_attribute_t *attrs) {
+            attrs[0].value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+            return SAI_STATUS_SUCCESS;
+        });
+        int setCalls = 0;
+        auto setSpy = SpyOn<117, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+            &sai_bridge_api->set_bridge_port_attribute);
+        setSpy->callFake([&](sai_object_id_t, const sai_attribute_t *) {
+            setCalls++;
+            return SAI_STATUS_SUCCESS;
+        });
+
+        auto *consumer = dynamic_cast<Consumer *>(
+            gPortsOrch->getExecutor(APP_LAG_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple(lagAlias, DEL_COMMAND, {}));
+        gPortsOrch->doLagTask(*consumer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        const auto &stuck = gPortsOrch->m_portList[lagAlias];
+        EXPECT_EQ(
+            stuck.m_lag_learn_mode_guard_state,
+            Port::LagLearnModeGuardState::STUCK);
+        EXPECT_EQ(stuck.m_learn_mode, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP);
+        EXPECT_EQ(setCalls, 1);
+    }
+
+    TEST_F(PortsOrchLagLearnModeGuardTest, MemberDeleteForMissingLagIsIdempotent)
     {
         auto *consumer = dynamic_cast<Consumer *>(
             gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME));
