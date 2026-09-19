@@ -5977,11 +5977,19 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 }
                 if (!mac_learning.empty())
                 {
-                    setVlanMacLearn(vl, mac_learning);
+                    if (!setVlanMacLearn(vl, mac_learning))
+                    {
+                        it++;
+                        continue;
+                    }
                 }
                 if (!uuc_flood.empty() || !umc_flood.empty() || !bc_flood.empty())
                 {
-                    setVlanFloodControl(vl, uuc_flood, umc_flood, bc_flood);
+                    if (!setVlanFloodControl(vl, uuc_flood, umc_flood, bc_flood))
+                    {
+                        it++;
+                        continue;
+                    }
                 }
                 if (!hostif_name.empty())
                 {
@@ -7623,6 +7631,7 @@ bool PortsOrch::setVlanFloodControl(Port &vlan, const string &uuc_flood,
      * it untouched so that feature keeps working.
      */
     if (vlan.m_vlan_info.uuc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED ||
+        vlan.m_vlan_info.umc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED ||
         vlan.m_vlan_info.bc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
     {
         SWSS_LOG_WARN("VLAN %s uses a VXLAN/EVPN flood group; skipping per-VLAN BUM flood config",

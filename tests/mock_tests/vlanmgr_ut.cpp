@@ -131,4 +131,17 @@ namespace vlanmgr_ut
         vector<FieldValueTuple> values;
         ASSERT_FALSE(appFdbHas("Vlan10:00:11:22:33:44:77", values));
     }
+
+    /* A static FDB with a non-"static" type is rejected, not published:
+     * FdbOrch asserts on the type string, so vlanmgr must not forward it. */
+    TEST_F(VlanMgrTest, FdbInvalidTypeSkipped)
+    {
+        createVlan("Vlan10");
+
+        setFdb("Vlan10|00:11:22:33:44:88",
+               { {"port", "Ethernet0"}, {"type", "bogus"} });
+
+        vector<FieldValueTuple> values;
+        ASSERT_FALSE(appFdbHas("Vlan10:00:11:22:33:44:88", values));
+    }
 }
