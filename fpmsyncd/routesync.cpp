@@ -324,6 +324,9 @@ void RouteSync::flushPendingRoutes()
 
 void RouteSync::flushRouteTables()
 {
+    static uint64_t flushCount = 0;
+    if (++flushCount == 1)
+        SWSS_LOG_NOTICE("flushRouteTables: first call (WS10 pipeline flush active)");
     m_routeTable->flush();
     m_label_routeTable->flush();
 }
