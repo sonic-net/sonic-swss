@@ -16,8 +16,10 @@
 
 /* WS8: defined in main.cpp; weak default for test binaries that don't link main.cpp */
 bool __attribute__((weak)) gEnableConflatedChannel = false;
-/* WS10: channel DB name for the conflated channel instance split */
-std::string __attribute__((weak)) gConflatedChannelDbName;
+/* WS10: channel DB name for the conflated channel instance split.
+ * NOT weak — std::string with __attribute__((weak)) creates a separate
+ * instance per TU whose constructor never sees main.cpp's assignment. */
+extern std::string gConflatedChannelDbName;
 
 using namespace swss;
 
