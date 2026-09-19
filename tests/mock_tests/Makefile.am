@@ -63,6 +63,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
+                notifier_priority_ut.cpp \
                 intfsorch_ut.cpp \
                 chassisorch_ut.cpp \
                 evpnmhorch_ut.cpp \
