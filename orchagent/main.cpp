@@ -71,7 +71,7 @@ bool gSyncMode = false;
 bool gEnableFibSuppress = false;
 bool gEnableConflatedChannel = false;
 bool gEnableDoubleBuffer = false;
-string gConflatedChannelDbName;
+extern string gConflatedChannelDbName;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 

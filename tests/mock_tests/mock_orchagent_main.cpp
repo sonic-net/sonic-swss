@@ -26,7 +26,7 @@ bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 bool gOrchUnhealthy = false;
 string gSaiErrorString;
-string gConflatedChannelDbName;
+extern string gConflatedChannelDbName;
 
 VRFOrch *gVrfOrch;
 
