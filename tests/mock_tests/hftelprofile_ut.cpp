@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 #include <memory>
 #include <algorithm>
@@ -383,6 +384,172 @@ namespace hftelprofile_ut
         EXPECT_TRUE(s.p->m_name_sai_map.empty());
     }
 
+    /*
+     * Covers §7.5's "impact of configuration changes during streaming": updating
+     * a group's stats, adding an object, or removing an object each stop the
+     * mutated object type's tel_type before applying the change. In MIXED mode
+     * mapKey() collapses every object type onto the same shared tel_type, so
+     * mutating one group's config stops streaming for the whole profile - not
+     * just the group being changed. In SINGLE mode each object type has its own
+     * tel_type, so only the mutated group is affected.
+     */
+    struct StreamingMutationTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        struct StreamingMutationStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init(sai_tam_tel_type_mode_t mode)
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+                p->m_poll_interval = 0;
+                new (const_cast<sai_tam_tel_type_mode_t*>(&p->m_tel_type_mode))
+                    sai_tam_tel_type_mode_t(mode);
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs)
+                    decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states)
+                    decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+            }
+
+            ~StreamingMutationStub()
+            {
+                if (!p) return;
+                using Groups = decay_t<decltype(p->m_groups)>;
+                using NameSaiMap = decay_t<decltype(p->m_name_sai_map)>;
+                using CounterSubscriptionObjs = decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>;
+                using TelTypeObjs = decay_t<decltype(p->m_sai_tam_tel_type_objs)>;
+                using TelTypeStates = decay_t<decltype(p->m_sai_tam_tel_type_states)>;
+
+                p->m_profile_name.~basic_string();
+                p->m_groups.~Groups();
+                p->m_name_sai_map.~NameSaiMap();
+                p->m_sai_tam_counter_subscription_objs.~CounterSubscriptionObjs();
+                p->m_sai_tam_tel_type_objs.~TelTypeObjs();
+                p->m_sai_tam_tel_type_states.~TelTypeStates();
+                p = nullptr;
+            }
+        };
+
+        // Only sai_tam_tel_type_attribute (the STATE transition) is exercised;
+        // no tel_type/report/counter-subscription is created in these tests, so
+        // nothing else needs mocking.
+        static sai_status_t mock_set_tam_tel_type_attribute(
+            sai_object_id_t /*tam_tel_type_id*/,
+            const sai_attribute_t * /*attr*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.set_tam_tel_type_attribute = mock_set_tam_tel_type_attribute;
+            sai_tam_api = &ut_api;
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+        }
+    };
+
+    TEST_F(StreamingMutationTest, Mixed_UpdatingOneGroupsStats_StopsStreamingForWholeProfile)
+    {
+        StreamingMutationStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+
+        auto guard = make_shared<sai_object_id_t>(0x700);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_NULL] = guard;
+        s.p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        ASSERT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        ASSERT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+
+        s.p->setStatsIDs("queue", {"PACKETS"});
+
+        // QUEUE was the only group mutated, but PORT's queryable state moves
+        // too: both map onto the same shared tel_type in MIXED mode.
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    TEST_F(StreamingMutationTest, Mixed_AddingObjectToOneGroup_StopsStreamingForWholeProfile)
+    {
+        StreamingMutationStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+
+        auto guard = make_shared<sai_object_id_t>(0x700);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_NULL] = guard;
+        s.p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        HFTelGroup group("queue");
+        group.updateObjects({"Ethernet0:0"});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_QUEUE, move(group));
+
+        ASSERT_TRUE(s.p->setObjectSAIID(SAI_OBJECT_TYPE_QUEUE, "Ethernet0:0", 0x1000000000010ULL));
+
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    TEST_F(StreamingMutationTest, Mixed_RemovingObjectFromOneGroup_StopsStreamingForWholeProfile)
+    {
+        StreamingMutationStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+
+        auto guard = make_shared<sai_object_id_t>(0x700);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_NULL] = guard;
+        s.p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        HFTelGroup group("queue");
+        group.updateObjects({"Ethernet0:0"});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_QUEUE, move(group));
+        s.p->m_name_sai_map[SAI_OBJECT_TYPE_QUEUE]["Ethernet0:0"] = 0x1000000000010ULL;
+
+        ASSERT_TRUE(s.p->delObjectSAIID(SAI_OBJECT_TYPE_QUEUE, "Ethernet0:0"));
+
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    TEST_F(StreamingMutationTest, Single_UpdatingOneGroupsStats_LeavesOtherGroupsStreaming)
+    {
+        StreamingMutationStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+
+        auto port_guard = make_shared<sai_object_id_t>(0x701);
+        auto queue_guard = make_shared<sai_object_id_t>(0x702);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = port_guard;
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_QUEUE] = queue_guard;
+        s.p->m_sai_tam_tel_type_states[port_guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+        s.p->m_sai_tam_tel_type_states[queue_guard] = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        s.p->setStatsIDs("queue", {"PACKETS"});
+
+        // Each object type owns its own tel_type in SINGLE mode, so mutating
+        // QUEUE must not disturb PORT.
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_QUEUE), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+    }
+
     struct SaiAttrTest : public ::testing::Test
     {
         sai_tam_api_t ut_api;
@@ -518,6 +685,204 @@ namespace hftelprofile_ut
         });
         ASSERT_NE(itr, counter_attrs.end());
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
+    }
+
+    /*
+     * Covers HFTelProfile::getTAMTelTypeObjID's per-category SWITCH_ENABLE_*_STATS
+     * gating: MIXED mode must only set the attributes for categories present in
+     * m_tel_type_supported_categories, and SINGLE mode must be unaffected.
+     */
+    struct GetTAMTelTypeObjIDTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        struct TelTypeStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init(sai_tam_tel_type_mode_t mode, unordered_set<sai_object_type_t> supported_categories)
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+                p->m_poll_interval = 100;
+                new (const_cast<sai_tam_tel_type_mode_t*>(&p->m_tel_type_mode))
+                    sai_tam_tel_type_mode_t(mode);
+                new (const_cast<unordered_set<sai_object_type_t>*>(&p->m_tel_type_supported_categories))
+                    unordered_set<sai_object_type_t>(move(supported_categories));
+                new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+                new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
+                p->m_sai_tam_telemetry_obj = make_shared<sai_object_id_t>(0x900);
+            }
+
+            ~TelTypeStub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_tel_type_states.~unordered_map();
+                p->m_sai_tam_report_objs.~unordered_map();
+                p->m_sai_tam_telemetry_obj.~shared_ptr();
+                p = nullptr;
+            }
+        };
+
+        static vector<sai_attribute_t> tel_type_attrs;
+
+        static sai_status_t mock_create_tam_tel_type(
+            sai_object_id_t *tam_tel_type_id,
+            sai_object_id_t /*switch_id*/,
+            uint32_t attr_count,
+            const sai_attribute_t *attr_list)
+        {
+            tel_type_attrs.assign(attr_list, attr_list + attr_count);
+            *tam_tel_type_id = 0x700;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove_tam_tel_type(sai_object_id_t /*tam_tel_type_id*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_tam_report(
+            sai_object_id_t *report_id,
+            sai_object_id_t /*switch_id*/,
+            uint32_t /*attr_count*/,
+            const sai_attribute_t * /*attr_list*/)
+        {
+            *report_id = 0x500;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove_tam_report(sai_object_id_t /*report_id*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        // TAM_TELEMETRY's SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST bookkeeping, exercised
+        // by HFTELUTILS_ADD_SAI_OBJECT_LIST inside getTAMTelTypeObjID.
+        static sai_status_t mock_get_tam_attribute(
+            sai_object_id_t /*tam_id*/,
+            uint32_t /*attr_count*/,
+            sai_attribute_t *attr_list)
+        {
+            attr_list[0].value.objlist.count = 0;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_set_tam_attribute(
+            sai_object_id_t /*tam_id*/,
+            const sai_attribute_t * /*attr*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.create_tam_tel_type = mock_create_tam_tel_type;
+            ut_api.remove_tam_tel_type = mock_remove_tam_tel_type;
+            ut_api.create_tam_report = mock_create_tam_report;
+            ut_api.remove_tam_report = mock_remove_tam_report;
+            ut_api.get_tam_attribute = mock_get_tam_attribute;
+            ut_api.set_tam_attribute = mock_set_tam_attribute;
+            ut_api.get_tam_telemetry_attribute = mock_get_tam_attribute;
+            ut_api.set_tam_telemetry_attribute = mock_set_tam_attribute;
+            sai_tam_api = &ut_api;
+            tel_type_attrs.clear();
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+        }
+
+        static bool hasAttr(sai_attr_id_t id)
+        {
+            return any_of(tel_type_attrs.begin(), tel_type_attrs.end(),
+                [id](const auto &attr) { return attr.id == id; });
+        }
+    };
+
+    vector<sai_attribute_t> GetTAMTelTypeObjIDTest::tel_type_attrs;
+
+    TEST_F(GetTAMTelTypeObjIDTest, MixedMode_AllCategoriesSupported_EnablesAllThreeAttrs)
+    {
+        TelTypeStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE,
+            {SAI_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_BUFFER_POOL,
+             SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP, SAI_OBJECT_TYPE_QUEUE});
+
+        s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS));
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS));
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS));
+    }
+
+    TEST_F(GetTAMTelTypeObjIDTest, MixedMode_MmuUnsupported_OmitsOnlyMmuAttr)
+    {
+        TelTypeStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE,
+            {SAI_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_QUEUE});
+
+        s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS));
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS));
+    }
+
+    TEST_F(GetTAMTelTypeObjIDTest, MixedMode_OnlyBufferPoolSupported_EnablesMmuAttrOnly)
+    {
+        TelTypeStub s;
+        // BUFFER_POOL and INGRESS_PRIORITY_GROUP share SWITCH_ENABLE_MMU_STATS;
+        // only BUFFER_POOL being supported must still be enough to enable it.
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE, {SAI_OBJECT_TYPE_BUFFER_POOL});
+
+        s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS));
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS));
+    }
+
+    TEST_F(GetTAMTelTypeObjIDTest, MixedMode_NoCategoriesSupported_OmitsAllThreeAttrs)
+    {
+        TelTypeStub s;
+        s.init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE, {});
+
+        s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS));
+    }
+
+    TEST_F(GetTAMTelTypeObjIDTest, SingleMode_UnaffectedByEmptySupportedCategories)
+    {
+        TelTypeStub s;
+        // SINGLE mode never reads m_tel_type_supported_categories; leaving it
+        // empty must not change SINGLE's existing per-type attribute selection.
+        s.init(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE, {});
+
+        s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+
+        EXPECT_TRUE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS));
+        EXPECT_FALSE(hasAttr(SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS));
     }
 
     struct LocallyNotifyStartedProfileTest : public ::testing::Test
