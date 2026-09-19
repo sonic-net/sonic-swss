@@ -96,10 +96,12 @@ public:
 
     virtual bool enable(bool update_rt);
     virtual bool disable(sai_object_id_t);
+    virtual bool enable(const MuxNeighbor& neighbors, bool update_rt);
+    virtual bool disable(const MuxNeighbor& neighbors, sai_object_id_t);
     virtual void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     virtual sai_object_id_t getNextHopId(const NextHopKey);
-    MuxNeighbor getNeighbors() const { return neighbors_; };
+    const MuxNeighbor& getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
     void clearBulkers() { gRouteBulker.clear(); };
 
@@ -123,8 +125,10 @@ public:
     MuxPrefixBasedNbrHandler() = default;
     ~MuxPrefixBasedNbrHandler() override = default;
 
-    bool enable(bool update_rt) override;
-    bool disable(sai_object_id_t) override;
+    using MuxNbrHandler::enable;
+    using MuxNbrHandler::disable;
+    bool enable(const MuxNeighbor& neighbors, bool update_rt) override;
+    bool disable(const MuxNeighbor& neighbors, sai_object_id_t) override;
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT) override;
 };
 
@@ -143,6 +147,7 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    bool isStateChangeReady(MuxState state) const;
     void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
@@ -161,6 +166,7 @@ public:
     }
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
+    void updateRoutes(const MuxNeighbor& neighbors);
     void updateRoutesForNextHop(NextHopKey nh);
 
     // Slice supernet route tracking (see refreshSliceRoute in muxorch.cpp).
@@ -177,11 +183,15 @@ public:
 
 private:
     bool stateActive();
+    bool stateActive(const MuxNeighbor& neighbors);
     bool stateInitActive();
+    bool stateInitActive(const MuxNeighbor& neighbors);
     bool stateStandby();
+    bool stateStandby(const MuxNeighbor& neighbors);
 
     bool aclHandler(sai_object_id_t port, string alias, bool add = true);
-    bool nbrHandler(bool enable, bool update_routes = true);
+    bool nbrHandler(bool enable, const MuxNeighbor& neighbors, bool update_routes = true);
+    void retainReadyNeighbors(MuxNeighbor& neighbors) const;
 
     string mux_name_;
     MuxCableType cable_type_;
@@ -189,8 +199,10 @@ private:
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     MuxState prev_state_;
+    MuxState requested_state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
+    bool neighbor_transition_started_ = false;
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;

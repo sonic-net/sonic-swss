@@ -524,9 +524,9 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
         if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
+            SWSS_LOG_ERROR("Next hop %s on %s already exists without a usable object id",
                         nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
+            return false;
         }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
@@ -884,6 +884,18 @@ sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
     }
 
     return m_syncdNextHops[nexthop].next_hop_id;
+}
+
+sai_object_id_t NeighOrch::getReadyLocalNextHopId(const NeighborEntry& neighbor) const
+{
+    auto neighborIt = m_syncdNeighbors.find(neighbor);
+    if (neighborIt == m_syncdNeighbors.end() || !neighborIt->second.hw_configured)
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    auto nextHopIt = m_syncdNextHops.find(NextHopKey(neighbor));
+    return nextHopIt == m_syncdNextHops.end() ? SAI_NULL_OBJECT_ID : nextHopIt->second.next_hop_id;
 }
 
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
@@ -1824,7 +1836,16 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
             {
                 SWSS_LOG_INFO("Neighbor exists: neighbor %s on %s, skipping: status:%s",
                            macAddress.to_string().c_str(), alias.c_str(), sai_serialize_status(status).c_str());
-                return true;
+                if (ctx.next_hop_id != SAI_NULL_OBJECT_ID)
+                {
+                    sai_status_t remove_status = sai_next_hop_api->remove_next_hop(ctx.next_hop_id);
+                    if (remove_status != SAI_STATUS_SUCCESS && remove_status != SAI_STATUS_ITEM_NOT_FOUND)
+                    {
+                        SWSS_LOG_ERROR("Failed to remove newly created next hop %s on %s, rv:%d",
+                                       ip_address.to_string().c_str(), alias.c_str(), remove_status);
+                    }
+                }
+                return false;
             }
             else
             {
@@ -2055,13 +2076,14 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         if (isHwConfigured(neighborEntry))
         {
@@ -2074,6 +2096,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
         if(!addNeighbor(*ctx))
         {
             SWSS_LOG_ERROR("Neighbor %s create entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
     }
@@ -2109,19 +2132,21 @@ bool NeighOrch::disableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
     for (auto ctx = bulk_ctx_list.begin(); ctx != bulk_ctx_list.end(); ctx++)
     {
         const NeighborEntry& neighborEntry = ctx->neighborEntry;
-        ctx->mac = m_syncdNeighbors[neighborEntry].mac;
-
-        if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+        auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+        if (neighborIt == m_syncdNeighbors.end())
         {
             SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
             continue;
         }
+        ctx->mac = neighborIt->second.mac;
 
         SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
 
         if(!removeNeighbor(*ctx, true))
         {
             SWSS_LOG_ERROR("Neighbor %s remove entry failed.", neighborEntry.ip_address.to_string().c_str());
+            ret = false;
         }
     }
 

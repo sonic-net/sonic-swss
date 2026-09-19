@@ -92,6 +92,7 @@ public:
 
     sai_object_id_t getNextHopId(const NextHopKey&);
     sai_object_id_t getLocalNextHopId(const NextHopKey&);
+    sai_object_id_t getReadyLocalNextHopId(const NeighborEntry&) const;
     int getNextHopRefCount(const NextHopKey&);
 
     void increaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
