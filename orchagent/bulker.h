@@ -845,7 +845,14 @@ private:
             sai_status_t *object_status = removing_entries[entry];
             if (object_status)
             {
-                *object_status = statuses[ir];
+                if (statuses[ir] == SAI_STATUS_NOT_EXECUTED && status != SAI_STATUS_SUCCESS)
+                {
+                    *object_status = status;
+                }
+                else
+                {
+                    *object_status = statuses[ir];
+                }
             }
         }
 
@@ -883,7 +890,14 @@ private:
             sai_status_t *object_status = creating_entries[entry].second;
             if (object_status)
             {
-                *object_status = statuses[ir];
+                if (statuses[ir] == SAI_STATUS_NOT_EXECUTED && status != SAI_STATUS_SUCCESS)
+                {
+                    *object_status = status;
+                }
+                else
+                {
+                    *object_status = statuses[ir];
+                }
             }
         }
 
@@ -923,7 +937,14 @@ private:
             if (object_status)
             {
                 SWSS_LOG_INFO("EntityBulker.flush setting_entries status[%zu]=%d(0x%8p)\n", ir, statuses[ir], object_status);
-                *object_status = statuses[ir];
+                if (statuses[ir] == SAI_STATUS_NOT_EXECUTED && status != SAI_STATUS_SUCCESS)
+                {
+                    *object_status = status;
+                }
+                else
+                {
+                    *object_status = statuses[ir];
+                }
             }
         }
 
@@ -1261,8 +1282,14 @@ private:
         for (size_t i = 0; i < count; i++)
         {
             auto const& entry = rs[i];
-            sai_status_t object_status = statuses[i];
-            *removing_entries[entry] = object_status;
+            if (statuses[i] == SAI_STATUS_NOT_EXECUTED && status != SAI_STATUS_SUCCESS)
+            {
+                *removing_entries[entry] = status;
+            }
+            else
+            {
+                *removing_entries[entry] = statuses[i];
+            }
         }
 
         rs.clear();
@@ -1296,9 +1323,14 @@ private:
 
         for (size_t i = 0; i < count; i++)
         {
-            create_statuses.emplace(object_ids[i], statuses[i]);
+            sai_status_t entry_status = statuses[i];
+            if (entry_status == SAI_STATUS_NOT_EXECUTED && status != SAI_STATUS_SUCCESS)
+            {
+                entry_status = status;
+            }
+            create_statuses.emplace(object_ids[i], entry_status);
             sai_object_id_t *pid = rs[i];
-            *pid = (statuses[i] == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
+            *pid = (entry_status == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
         }
 
         rs.clear();
