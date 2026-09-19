@@ -1195,10 +1195,10 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     state               = "ok"                      ; vrf entry exist in app_db, if yes vrf device must exist
 
 ### VRF_OBJECT_TABLE
-    ;State for vrf object status, vrf exist in vrforch
+    ;State for vrf/vnet object status, vrf/vnet exist in vrforch/vnetorch
 
-    key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
-    state               = "ok"                      ; vrf entry exist in orchagent
+    key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' or 'Vnet' prefix
+    state               = "ok"                      ; vrf/vnet entry exist in orchagent
 
 ### BUFFER_MAX_PARAM_TABLE
     ;Available only when the switch is running in dynamic buffer model
