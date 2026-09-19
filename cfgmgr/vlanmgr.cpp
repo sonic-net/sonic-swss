@@ -853,6 +853,19 @@ void VlanMgr::doFdbTask(Consumer &consumer)
                 }
             }
 
+            /*
+             * CONFIG_DB FDB entries are static by definition. FdbOrch asserts on
+             * the type value, so reject anything but "static" here instead of
+             * publishing a value that would later abort the FDB consumer.
+             */
+            if (type != "static")
+            {
+                SWSS_LOG_ERROR("Static FDB %s has unsupported type '%s', expected 'static'; skipping",
+                               key.c_str(), type.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (port.empty())
             {
                 SWSS_LOG_ERROR("Static FDB %s has no port, skipping", key.c_str());
