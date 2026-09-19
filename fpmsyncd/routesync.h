@@ -233,6 +233,11 @@ public:
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
 
+    void setTableWithWarmRestart(
+        FieldValueTupleWrapperBase &fvw,
+        ProducerStateTable &table,
+        const std::string &tableName);
+
     void setTable(
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
@@ -241,6 +246,11 @@ public:
     void delWithWarmRestart(
         FieldValueTupleWrapperBase && fvw,
         ProducerStateTable & table);
+
+    void delTableWithWarmRestart(
+        FieldValueTupleWrapperBase &&fvw,
+        ProducerStateTable &table,
+        const std::string &tableName);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
