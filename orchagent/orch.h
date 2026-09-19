@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 #include <condition_variable>
+#include <deque>
 
 extern "C" {
 #include <sai.h>
@@ -21,6 +22,7 @@ extern "C" {
 #include "zmqconsumerstatetable.h"
 #include "zmqserver.h"
 #include "notificationconsumer.h"
+#include "selectableevent.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
 #include "response_publisher.h"
@@ -48,6 +50,7 @@ const char state_db_key_delimiter  = '|';
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -55,6 +58,9 @@ const char state_db_key_delimiter  = '|';
 
 #define RING_SIZE 30
 #define SLEEP_MSECONDS 500
+
+// Max number of PFC traffic classes
+#define PFC_WD_TC_MAX 8
 
 const int default_orch_pri = 0;
 
@@ -167,11 +173,29 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
+
+    // If m_orderedQueue is set, use m_toSyncQueue instead of m_toSync.
+    // Note:
+    // * Application layer should make use of m_toSyncQueue if the flag is set.
+    // * m_toSyncQueue is a std::deque that maintains the request order. It is
+    //   possible that the same key appears in multiple requests. The
+    //   application layer should handle the request merging for the same key if
+    //   needed.
+    // * Typically application should set m_orderedQueue in the constructor by
+    //   calling setOrderedQueue(), and the implementation should use m_toSync
+    //   or m_toSyncQueue accordingly. In the rare case that an application
+    //   changes m_orderedQueue in runtime, the implementation needs to process
+    //   both m_toSync and m_toSyncQueue.
+    // * m_toSyncQueue is currently not supported in Orch2.
+    bool m_orderedQueue = false;
+    std::deque<swss::KeyOpFieldsValuesTuple> m_toSyncQueue;
 
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
@@ -196,6 +220,13 @@ public:
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
+
+    // Set the m_orderedQueue flag.
+    // This will change the ConsumerBase to use m_toSync or m_toSyncQueue.
+    void setOrderedQueue(bool orderedQueue)
+    {
+        m_orderedQueue = orderedQueue;
+    }
 
 private:
     void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
@@ -314,6 +345,11 @@ public:
     virtual void doTask(Consumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
+    virtual void doTask(swss::SelectableEvent &event) { }
+
+    virtual void setWarmbootStateOnFailure(const std::string& app_name,
+                                            bool set_on_fail);
+    virtual void setEnableNotify(bool enable);
 
     /*
      * Called once after APPLY_VIEW in warm/fast boot scenario.
@@ -356,6 +392,10 @@ public:
      * @param cst - the constraint that is resolved
      */
     virtual void notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst);
+
+    // Set the m_orderedQueue flag in each consumer.
+    // Refer to m_orderedQueue in ConsumerBase.
+    void setOrderedQueueForAllConsumers(bool orderedQueue);
 
     /**
      * @brief Flush pending responses

@@ -765,6 +765,10 @@ namespace dashhaorch_ut
     TEST_F(DashHaOrchTest, UpdatePeerIp)
     {
         CreateHaSet();
+
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute)
+        .Times(1);
+
         UpdatePeerIp("192.168.2.100");
 
         auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
@@ -800,6 +804,8 @@ namespace dashhaorch_ut
         CreateHaSet();
 
         EXPECT_CALL(*mock_sai_dash_ha_api, create_ha_set)
+        .Times(0);
+        EXPECT_CALL(*mock_sai_dash_ha_api, set_ha_set_attribute)
         .Times(0);
 
         CreateHaSet();
@@ -1243,6 +1249,25 @@ namespace dashhaorch_ut
         SetHaScopeHaRole("active");
 
         EXPECT_EQ(m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSwitchingToActiveInitializesStateAndProcessesBfdSessions)
+    {
+        CreateSwitchOwnerDpuScopeHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole("switching_to_active");
+
+        auto& scope_entry = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry.ha_state, SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE);
+        EXPECT_EQ(to_sai(scope_entry.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
         EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
 
         RemoveHaScope();

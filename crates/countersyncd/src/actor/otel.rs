@@ -1,3 +1,15 @@
+use crate::message::{otel::OtelMetrics, saistats::SAIStatsBatchMessage};
+use crate::utilities::{record_comm_stats, ChannelLabel};
+use log::{debug, error, info, warn};
+use opentelemetry::ExportError;
+use opentelemetry_proto::tonic::{
+    collector::metrics::v1::{
+        metrics_service_client::MetricsServiceClient, ExportMetricsServiceRequest,
+    },
+    common::v1::{any_value::Value, AnyValue, InstrumentationScope, KeyValue as ProtoKeyValue},
+    metrics::v1::{Gauge as ProtoGauge, Metric, ResourceMetrics, ScopeMetrics},
+    resource::v1::Resource as ProtoResource,
+};
 use std::{
     fmt::{Display, Formatter},
     pin::Pin,
@@ -8,33 +20,7 @@ use tokio::{
     sync::{mpsc::Receiver, oneshot},
     time::{sleep_until, Instant as TokioInstant, Sleep},
 };
-use log::{debug, error, info, warn};
 use tonic::transport::{Channel, Endpoint};
-use opentelemetry::ExportError;
-use opentelemetry_proto::tonic::{
-    collector::metrics::v1::{
-        metrics_service_client::MetricsServiceClient,
-        ExportMetricsServiceRequest,
-    },
-    common::v1::{
-        any_value::Value,
-        AnyValue,
-        InstrumentationScope,
-        KeyValue as ProtoKeyValue,
-    },
-    metrics::v1::{
-        Gauge as ProtoGauge,
-        Metric,
-        ResourceMetrics,
-        ScopeMetrics,
-    },
-    resource::v1::Resource as ProtoResource,
-};
-use crate::message::{
-    otel::OtelMetrics,
-    saistats::SAIStatsMessage,
-};
-use crate::utilities::{record_comm_stats, ChannelLabel};
 
 const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;
@@ -80,7 +66,7 @@ impl Display for OtelActorExportError {
 
 /// Actor that receives SAI statistics and exports to OpenTelemetry
 pub struct OtelActor {
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<SAIStatsBatchMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
     client: Option<MetricsServiceClient<Channel>>,
@@ -110,9 +96,9 @@ pub struct OtelActor {
 impl OtelActor {
     /// Creates a new OtelActor instance
     pub async fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<SAIStatsBatchMessage>,
         config: OtelActorConfig,
-        shutdown_notifier: oneshot::Sender<()>
+        shutdown_notifier: oneshot::Sender<()>,
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
         let client = None;
 
@@ -177,7 +163,7 @@ impl OtelActor {
                                 ChannelLabel::IpfixToOtel,
                                 self.stats_receiver.len(),
                             );
-                            if let Err(e) = self.handle_stats_message(stats).await {
+                            if let Err(e) = self.handle_stats_batch(stats).await {
                                 run_error = Some(e);
                                 break;
                             }
@@ -218,35 +204,43 @@ impl OtelActor {
         }
     }
 
-    /// Handle incoming SAI statistics message
-    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) -> Result<(), Box<dyn ExportError>>{
-        self.messages_received += 1;
+    /// Handle an incoming batch in record order.
+    async fn handle_stats_batch(
+        &mut self,
+        batch: SAIStatsBatchMessage,
+    ) -> Result<(), Box<dyn ExportError>> {
+        for stats in batch.iter() {
+            self.messages_received += 1;
 
-        debug!("Received SAI stats with {} entries, observation_time: {}",
-               stats.stats.len(), stats.observation_time);
+            debug!(
+                "Received SAI stats with {} entries, observation_time: {}",
+                stats.stats.len(),
+                stats.observation_time
+            );
 
-        let was_empty = self.buffer.is_empty();
+            let was_empty = self.buffer.is_empty();
 
-        // Convert to OTel format using message types and buffer
-        let otel_metrics = OtelMetrics::from_sai_stats(&stats);
-        let counters_in_message = stats.stats.len();
+            // Convert to OTel format using message types and buffer
+            let otel_metrics = OtelMetrics::from_sai_stats(stats);
+            let counters_in_message = stats.stats.len();
 
-        if log::log_enabled!(log::Level::Debug) {
-            self.print_otel_metrics(&otel_metrics).await;
-        }
+            if log::log_enabled!(log::Level::Debug) {
+                self.print_otel_metrics(&otel_metrics).await;
+            }
 
-        self.buffer.push(otel_metrics);
-        self.buffered_counters += counters_in_message;
+            self.buffer.push(otel_metrics);
+            self.buffered_counters += counters_in_message;
 
-        // Start timeout when buffer transitions from empty to non-empty
-        if was_empty {
-            self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
-        }
+            // Start timeout when buffer transitions from empty to non-empty
+            if was_empty {
+                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+            }
 
-        // Force flush when counter threshold is reached
-        if self.buffered_counters >= self.config.max_counters_per_export {
-            self.flush_buffer().await?;
-            self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+            // Force flush when counter threshold is reached
+            if self.buffered_counters >= self.config.max_counters_per_export {
+                self.flush_buffer().await?;
+                self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
+            }
         }
 
         Ok(())
@@ -292,7 +286,10 @@ impl OtelActor {
 
     // Exponential backoff
     async fn backoff(&self, attempt: u64) {
-        let delay_secs = std::cmp::min(INITIAL_BACKOFF_DELAY_SECS * 2u64.pow(attempt as u32 - 1), MAX_BACKOFF_DELAY_SECS);
+        let delay_secs = std::cmp::min(
+            INITIAL_BACKOFF_DELAY_SECS * 2u64.pow(attempt as u32 - 1),
+            MAX_BACKOFF_DELAY_SECS,
+        );
         tokio::time::sleep(Duration::from_secs(delay_secs)).await;
     }
 
@@ -322,7 +319,8 @@ impl OtelActor {
             // Ensure we have a client
             let client = match self.get_client() {
                 Some(c) => c, // Use existing or newly created client
-                _none => { // Failed to create client
+                _none => {
+                    // Failed to create client
                     self.client = None;
                     self.backoff(attempt).await; // Wait before retrying
                     continue;
@@ -331,7 +329,8 @@ impl OtelActor {
 
             // Attempt to send the request
             match client.export(request.clone()).await {
-                Ok(_) => { // Successful export
+                Ok(_) => {
+                    // Successful export
                     self.exports_performed += 1;
                     self.consecutive_failures = 0;
                     return Ok(());
@@ -346,10 +345,12 @@ impl OtelActor {
         }
 
         // All retries exhausted
-        Err(Box::new(OtelActorExportError("Max export retries exceeded".to_string())))
+        Err(Box::new(OtelActorExportError(
+            "Max export retries exceeded".to_string(),
+        )))
     }
 
-    // Export buffered metrics to OpenTelemetry collector 
+    // Export buffered metrics to OpenTelemetry collector
     async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
         if self.buffer.is_empty() {
             return Ok(());
@@ -359,9 +360,7 @@ impl OtelActor {
 
         for otel_metrics in &self.buffer {
             for gauge in &otel_metrics.gauges {
-                let proto_data_points = gauge.data_points.iter()
-                    .map(|dp| dp.to_proto())
-                    .collect();
+                let proto_data_points = gauge.data_points.iter().map(|dp| dp.to_proto()).collect();
 
                 let proto_gauge = ProtoGauge {
                     data_points: proto_data_points,
@@ -371,7 +370,9 @@ impl OtelActor {
                     name: gauge.name.clone(),
                     description: gauge.description.clone(),
                     metadata: vec![],
-                    data: Some(opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge)),
+                    data: Some(
+                        opentelemetry_proto::tonic::metrics::v1::metric::Data::Gauge(proto_gauge),
+                    ),
                     ..Default::default()
                 });
             }
@@ -440,5 +441,49 @@ impl OtelActor {
             "OtelActor shutdown complete. {} messages, {} exports, {} failures",
             self.messages_received, self.exports_performed, self.export_failures
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::saistats::{SAIStat, SAIStatsBatch};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn handles_batch_records_in_order_and_counts_records() {
+        let (_stats_sender, stats_receiver) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_receiver) = oneshot::channel();
+        let mut actor = OtelActor::new(
+            stats_receiver,
+            OtelActorConfig {
+                max_counters_per_export: usize::MAX,
+                ..OtelActorConfig::default()
+            },
+            shutdown_sender,
+        )
+        .await
+        .unwrap();
+
+        let mut batch = SAIStatsBatch::with_capacity(2, 3);
+        batch.push_record(
+            10,
+            [
+                SAIStat::new("Ethernet0", 1, 2, 3),
+                SAIStat::new("Ethernet4", 1, 2, 4),
+            ],
+        );
+        batch.push_record(20, [SAIStat::new("Ethernet8", 1, 2, 5)]);
+
+        actor.handle_stats_batch(Arc::new(batch)).await.unwrap();
+
+        assert_eq!(actor.messages_received, 2);
+        assert_eq!(actor.buffered_counters, 3);
+        assert_eq!(actor.buffer.len(), 2);
+        assert_eq!(actor.buffer[0].gauges[0].data_points[0].value, 3);
+        assert_eq!(actor.buffer[0].gauges[1].data_points[0].value, 4);
+        assert_eq!(actor.buffer[1].gauges[0].data_points[0].value, 5);
+        assert_eq!(actor.buffer[1].gauges[0].data_points[0].time_unix_nano, 20);
     }
 }

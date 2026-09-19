@@ -368,6 +368,44 @@ namespace sflow_test
             ASSERT_FALSE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
         }
     }
+
+    /* First SET for a port is not in m_sflowPortInfoMap; debug log must not deref end(). */
+    TEST_F(SflowOrchTest, SflowSessionSetOnPortNotInMapDoesNotCrash)
+    {
+        MockSflowOrch mock_orch;
+        auto enable = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "global",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"}
+                    }
+                }
+            });
+        mock_orch.doSflowTableTask(enable);
+        ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+
+        auto session = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "Ethernet0",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"},
+                        {"sample_rate", "1000"},
+                        {"sample_direction", "rx"}
+                    }
+                }
+            });
+        EXPECT_NO_THROW(mock_orch.doSflowSessionTableTask(session));
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        auto info = Portal::SflowOrchInternal::getSflowPortInfoMap(mock_orch.get());
+        EXPECT_NE(info.find(port.m_port_id), info.end());
+    }
+
     TEST_F(SflowOrchTest, SflowAddPortRejectsConflictingEgressBinding)
     {
         MockSflowOrch mock_orch;
