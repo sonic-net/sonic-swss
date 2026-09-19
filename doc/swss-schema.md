@@ -651,6 +651,11 @@ Stores rules associated with a specific ACL table on the switch.
     mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
     mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
+    tc_action     = 1*3DIGIT                   ; sets the traffic class (CoS) on matching packets; decimal uint8 [0..255].
+                                               ; Maps to SAI_ACL_ENTRY_ATTR_ACTION_SET_TC.
+                                               ; Supported only where the platform SAI advertises the action for the
+                                               ; table's ACL stage (ingress and/or egress)
+
     policer_action = 1*255VCHAR                ; name of a POLICER table entry used to
                                                ; meter/rate-limit packets matching this rule.
                                                ; The ACL table's type must advertise POLICER_ACTION
