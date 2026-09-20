@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -58,6 +58,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
                 policerorch_ut.cpp \
+                vnetorch_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
@@ -94,6 +95,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
+                zmq_route_orch_ut.cpp \
                 retrycache_ut.cpp \
                 saihelper_ut.cpp \
                 mock_saihelper.cpp \
@@ -186,6 +188,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/zmqrouteorch.cpp \
                 $(top_srcdir)/orchagent/namelabelmapper.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
@@ -219,6 +222,7 @@ tests_SOURCES = aclorch_ut.cpp \
 
 
 tests_SOURCES += common/vxlan_ut_helpers.cpp
+tests_SOURCES += common/mock_test_helpers.cpp
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
@@ -360,6 +364,24 @@ tests_fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTE
 tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
+## neighsyncd unit tests
+
+tests_neighsyncd_SOURCES = neighsyncd/neighsync_ut.cpp \
+                           fdbsyncd/fake_warmstartassist.cpp \
+                           fdbsyncd/fake_producerstatetable.cpp \
+                           fdbsyncd/fake_subscriberstatetable.cpp \
+                           mock_dbconnector.cpp \
+                           mock_table.cpp \
+                           mock_hiredis.cpp \
+                           mock_redisreply.cpp \
+                           $(top_srcdir)/neighsyncd/neighsync.cpp
+
+tests_neighsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/neighsyncd
+tests_neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
+tests_neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_neighsyncd_INCLUDES)
+tests_neighsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis \
+        -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
 ## response publisher unit tests
 
 tests_response_publisher_SOURCES = response_publisher/response_publisher_ut.cpp \
@@ -397,7 +419,8 @@ tests_nbrmgrd_SOURCES = nbrmgrd/nbrmgr_ut.cpp \
 tests_nbrmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_nbrmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_nbrmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_nbrmgrd_INCLUDES)
-tests_nbrmgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_connect -Wl,-wrap,nl_send_auto -Wl,-wrap,if_nametoindex -Wl,-wrap,nlmsg_alloc
+tests_nbrmgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_connect -Wl,-wrap,nl_send_auto \
+        -Wl,-wrap,if_nametoindex -Wl,-wrap,nlmsg_alloc
 tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 

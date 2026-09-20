@@ -54,6 +54,9 @@ constexpr char *kSetWcmpGroupId = "set_wcmp_group_id";
 constexpr char* kSetMulticastGroupId = "set_multicast_group_id";
 constexpr char* kSetSrcMac = "set_src_mac";
 constexpr char* kSetMulticastSrcMac = "set_multicast_src_mac";
+constexpr char* kSetPortAndSrcMac = "set_port_and_src_mac";
+constexpr char* kSetPortAndSrcMacAndVlanId =
+    "set_port_and_src_mac_and_vlan_id";
 constexpr char *kSetNexthopIdAndMetadata = "set_nexthop_id_and_metadata";
 constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
@@ -68,6 +71,9 @@ constexpr char* kMulticastSetSrcMac = "multicast_set_src_mac";
 constexpr char* kMulticastSetSrcMacAndVlanId = "multicast_set_src_mac_and_vlan_id";
 constexpr char* kMulticastSetSrcMacAndDstMacAndVlanId = "multicast_set_src_mac_and_dst_mac_and_vlan_id";
 constexpr char* kMulticastSetSrcMacAndPreserveIngressVlanId = "multicast_set_src_mac_and_preserve_ingress_vlan_id";
+constexpr char* kUnicastSetPortAndSrcMac = "unicast_set_port_and_src_mac";
+constexpr char* kUnicastSetPortAndSrcMacAndVlanId =
+    "unicast_set_port_and_src_mac_and_vlan_id";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
@@ -201,6 +207,8 @@ struct P4RouterInterfaceAppDbEntry
     bool is_set_port_name = false;
     bool is_set_src_mac = false;
     bool is_set_vlan_id = false;
+    bool creates_my_mac = true;
+    std::string action;
 };
 
 struct P4NeighborAppDbEntry

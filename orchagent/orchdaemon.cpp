@@ -367,7 +367,7 @@ bool OrchDaemon::init()
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
     auto enable_route_zmq = get_route_perf_zmq_enabled();
-    auto route_zmq_server = enable_route_zmq ? m_zmqServer : nullptr;
+    auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
@@ -825,8 +825,17 @@ bool OrchDaemon::init()
             }
         }
 
+        // Complete hardware recovery needs deadlock detection and recovery in
+        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        if (gSwitchOrch->checkPfcDldrEnable())
+        {
+            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+        }
+
         if(pfcDlrInit)
         {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -837,6 +846,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -890,7 +900,7 @@ bool OrchDaemon::init()
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
     m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);

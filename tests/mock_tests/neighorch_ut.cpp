@@ -11,15 +11,24 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "subscriberstatetable.h"
 
 EXTERN_MOCK_FNS
+
+extern std::string gMySwitchType;
+extern std::string gMyHostName;
+extern std::string gMyAsicName;
+extern bool gMultiAsicVoq;
 
 namespace neighorch_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
+    DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     using namespace std;
     using namespace mock_orch_test;
+    using ::testing::DoAll;
     using ::testing::Return;
+    using ::testing::SetArgPointee;
     using ::testing::Throw;
 
     static const string TEST_IP = "10.10.10.10";
@@ -28,6 +37,51 @@ namespace neighorch_test
     static const NeighborEntry VLAN2000_NEIGH = NeighborEntry(TEST_IP, VLAN_2000);
     static const NeighborEntry VLAN3000_NEIGH = NeighborEntry(TEST_IP, VLAN_3000);
     static const NeighborEntry VLAN4000_NEIGH = NeighborEntry(TEST_IP, VLAN_4000);
+
+    struct VoqGlobalsGuard
+    {
+        string switch_type = gMySwitchType;
+        string host_name = gMyHostName;
+        string asic_name = gMyAsicName;
+        bool multi_asic_voq = gMultiAsicVoq;
+
+        ~VoqGlobalsGuard()
+        {
+            gMySwitchType = switch_type;
+            gMyHostName = host_name;
+            gMyAsicName = asic_name;
+            gMultiAsicVoq = multi_asic_voq;
+        }
+    };
+
+    struct PortListGuard
+    {
+        string alias;
+        bool port_exists;
+        Port port;
+
+        explicit PortListGuard(const string &alias) : alias(alias)
+        {
+            auto port_it = gPortsOrch->m_portList.find(alias);
+            port_exists = (port_it != gPortsOrch->m_portList.end());
+            if (port_exists)
+            {
+                port = port_it->second;
+            }
+        }
+
+        ~PortListGuard()
+        {
+            if (port_exists)
+            {
+                gPortsOrch->m_portList[alias] = port;
+            }
+            else
+            {
+                gPortsOrch->m_portList.erase(alias);
+            }
+        }
+    };
 
     class NeighOrchTest : public MockOrchTest
     {
@@ -47,6 +101,45 @@ namespace neighorch_test
             gNeighOrch->addExistingData(&neigh_table);
             static_cast<Orch *>(gNeighOrch)->doTask();
             neigh_table.del(key);
+        }
+
+        std::unique_ptr<Consumer> CreateVoqSystemNeighConsumer()
+        {
+            return std::unique_ptr<Consumer>(new Consumer(
+                new swss::SubscriberStateTable(
+                    m_chassis_app_db.get(),
+                    CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME,
+                    swss::TableConsumable::DEFAULT_POP_BATCH_SIZE,
+                    0),
+                gNeighOrch,
+                CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME));
+        }
+
+        void AddVoqSystemNeighTask(Consumer &consumer, const string &alias)
+        {
+            string key = alias + consumer.getConsumerTable()->getTableNameSeparator() + TEST_IP;
+            consumer.addToSync({ key, SET_COMMAND, { { "encap_index", "1" }, { "neigh", MAC1 } } });
+        }
+
+        void SetVoqInbandPortReady()
+        {
+            string inband_alias = "Vlan4094";
+            Port inband_port;
+            inband_port.m_alias = inband_alias;
+            inband_port.m_type = Port::VLAN;
+            gPortsOrch->m_portList[inband_alias] = inband_port;
+            gPortsOrch->m_inbandPortName = inband_alias;
+        }
+
+        void AddRemoteSystemPort(const string &alias)
+        {
+            Port remote_system_port;
+            remote_system_port.m_alias = alias;
+            remote_system_port.m_type = Port::SYSTEM;
+            remote_system_port.m_rif_id = SAI_NULL_OBJECT_ID;
+            remote_system_port.m_system_port_info.alias = alias;
+            remote_system_port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+            gPortsOrch->m_portList[alias] = remote_system_port;
         }
 
         void ApplyInitialConfigs()
@@ -180,14 +273,56 @@ namespace neighorch_test
         void PostSetUp() override
         {
             INIT_SAI_API_MOCK(neighbor);
+            INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop);
         }
     };
+
+    TEST_F(NeighOrchTest, SystemNeighFromDifferentAsicOnSameHost)
+    {
+        VoqGlobalsGuard guard;
+        gMySwitchType = "voq";
+        gMyHostName = "Linecard1";
+        gMyAsicName = "Asic0";
+        gMultiAsicVoq = true;
+        SetVoqInbandPortReady();
+
+        auto consumer = CreateVoqSystemNeighConsumer();
+        string remote_asic_alias = gMyHostName + "|Asic1|Ethernet999";
+        PortListGuard port_guard(remote_asic_alias);
+        AddRemoteSystemPort(remote_asic_alias);
+        AddVoqSystemNeighTask(*consumer, remote_asic_alias);
+
+        gNeighOrch->doVoqSystemNeighTask(*consumer);
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(kfvKey(consumer->m_toSync.begin()->second),
+                  remote_asic_alias + consumer->getConsumerTable()->getTableNameSeparator() + TEST_IP);
+    }
+
+    TEST_F(NeighOrchTest, SystemNeighFromSameAsicOnSameHost)
+    {
+        VoqGlobalsGuard guard;
+        gMySwitchType = "voq";
+        gMyHostName = "Linecard1";
+        gMyAsicName = "Asic0";
+        gMultiAsicVoq = true;
+        SetVoqInbandPortReady();
+
+        auto consumer = CreateVoqSystemNeighConsumer();
+        string local_asic_alias = gMyHostName + "|asic0|Ethernet999";
+        AddVoqSystemNeighTask(*consumer, local_asic_alias);
+
+        gNeighOrch->doVoqSystemNeighTask(*consumer);
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+    }
 
     TEST_F(NeighOrchTest, MultiVlanDuplicateNeighbor)
     {
@@ -276,6 +411,132 @@ namespace neighorch_test
         LearnNeighbor("usb0", TEST_IP, MAC1);
         /* Literal "usb0" can overload-resolve to NextHopKey(str, bool overlay) vs (str, str). */
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(TEST_IP, std::string("usb0"))), 0);
+    }
+
+    /* --- IPinIP tunnel NextHopKey tests --- */
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyConstructor)
+    {
+        IpAddress ip("10.1.0.32");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+
+        EXPECT_TRUE(nh.isTunnelNextHop());
+        EXPECT_EQ(nh.ip_address, ip);
+        EXPECT_EQ(nh.tunnel_name, "MuxTunnel0");
+        EXPECT_EQ(nh.alias, "");
+        EXPECT_EQ(nh.vni, 0u);
+        EXPECT_FALSE(nh.isSrv6NextHop());
+        EXPECT_FALSE(nh.isMplsNextHop());
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyToStringRoundtrip)
+    {
+        IpAddress ip("192.168.1.1");
+        NextHopKey original(ip, string("IPINIP_TUNNEL"), true /*tunnel_nh*/, 0 /*tag*/);
+
+        string str = original.to_string();
+        EXPECT_EQ(str, "tunnel:IPINIP_TUNNEL@192.168.1.1");
+
+        NextHopKey parsed(str);
+        EXPECT_TRUE(parsed.isTunnelNextHop());
+        EXPECT_EQ(parsed.tunnel_name, "IPINIP_TUNNEL");
+        EXPECT_EQ(parsed.ip_address, ip);
+        EXPECT_EQ(original, parsed);
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyComparison)
+    {
+        NextHopKey nh_a(IpAddress("10.0.0.1"), string("TunA"), true, 0);
+        NextHopKey nh_b(IpAddress("10.0.0.1"), string("TunB"), true, 0);
+        NextHopKey nh_same(IpAddress("10.0.0.1"), string("TunA"), true, 0);
+
+        EXPECT_EQ(nh_a, nh_same);
+        EXPECT_NE(nh_a, nh_b);
+
+        NextHopKey regular_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        EXPECT_NE(nh_a, regular_nh);
+    }
+
+    TEST(NextHopKeyTunnelTest, TunnelNextHopKeyInvalidParseFails)
+    {
+        EXPECT_THROW(NextHopKey("tunnel:@10.0.0.1@extra"), std::invalid_argument);
+        EXPECT_THROW(NextHopKey("tunnel:OnlyName"), std::invalid_argument);
+    }
+
+    // Multiple producers can register the same tunnel NH key; the entry
+    // must survive until the last registrant unregisters.
+    TEST_F(NeighOrchTest, IpinipTunnelNextHopMultiProducerRegistration)
+    {
+        IpAddress ip("10.2.0.1");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+        const sai_object_id_t tunnel_id = 0x5000;
+        const sai_object_id_t oid = 0x1001;
+        sai_object_id_t nh_id;
+
+        // First producer registers the key: SAI object created.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::CREATED);
+        EXPECT_EQ(nh_id, oid);
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh].next_hop_id, oid);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 1u);
+
+        // Second producer registers the same key: reused, no SAI call.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::REUSED);
+        EXPECT_EQ(nh_id, oid);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 2u);
+
+        // First producer tears down: entry must survive, no SAI call.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::OTHER_REGISTRANTS_REMAIN);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 1u);
+
+        // Last producer tears down: SAI object deleted, entry erased.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 0);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs.count(nh), 0);
+
+        // Removing an already-gone key is idempotent and touches no SAI object.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
+    }
+
+    // create_next_hop() failing on first registration must leave nothing
+    // registered, so the caller's normal retry path can safely call again.
+    TEST_F(NeighOrchTest, IpinipTunnelNextHopCreateFailureIsRetryable)
+    {
+        IpAddress ip("10.2.0.2");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+        const sai_object_id_t tunnel_id = 0x5000;
+        const sai_object_id_t oid = 0x1002;
+        sai_object_id_t nh_id;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::SAI_FAILED);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 0);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs.count(nh), 0);
+
+        // Retry succeeds.
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_EQ(gNeighOrch->addIpinipTunnelNextHop(nh, tunnel_id, nh_id), TunnelNhOpStatus::CREATED);
+        EXPECT_EQ(nh_id, oid);
+
+        // Cleanup.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
     }
 
     TEST_F(NeighOrchTest, ProcessFDBAdd_EnableNeighbor)

@@ -50,6 +50,7 @@ const char state_db_key_delimiter  = '|';
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -172,7 +173,9 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?

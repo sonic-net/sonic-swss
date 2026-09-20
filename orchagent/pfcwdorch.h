@@ -25,6 +25,7 @@ extern "C" {
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
 #define PFC_STAT_HISTORY                "pfc_stat_history"
+#define PFC_WD_DLR_PACKET_ACTION        "DLR_PACKET_ACTION"
 
 // Default timer limits in milliseconds, overridable via getTimerRange()
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
@@ -74,7 +75,7 @@ public:
     static string serializeAction(const PfcWdAction &action);
 
     virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
-    task_process_status deleteEntry(const string& name);
+    virtual task_process_status deleteEntry(const string& name);
     PfcWdAction getPfcDlrPacketAction() { return m_pfcDlrPacketAction; }
     void setPfcDlrPacketAction(PfcWdAction action) { m_pfcDlrPacketAction = action; }
 
