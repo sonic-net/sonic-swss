@@ -608,6 +608,24 @@ bool MuxCable::isIpInSubnet(IpAddress ip)
     }
 }
 
+bool MuxCable::areAllNeighborsInNeighOrch() const
+{
+    const auto& neighbors = gNeighOrch->getNeighborTable();
+    const auto& alias = nbr_handler_->getAlias();
+    for (const auto& neighbor : nbr_handler_->getNeighbors())
+    {
+        NeighborEntry entry(neighbor.first, alias);
+        if (neighbors.find(entry) == neighbors.end())
+        {
+            SWSS_LOG_INFO("Neighbor %s on %s not found in NeighOrch",
+                          neighbor.first.to_string().c_str(), alias.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
     bool ret;
@@ -2894,6 +2912,11 @@ bool MuxCableOrch::addOperation(const Request& request)
 
     auto state = request.getAttrString("state");
     auto mux_obj = mux_orch->getMuxCable(port_name);
+
+    if (!mux_obj->areAllNeighborsInNeighOrch())
+    {
+        return false;
+    }
 
     try
     {
