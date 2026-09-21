@@ -27,10 +27,8 @@ netlink-packet-utils = { workspace = true }
 netlink-sys = { workspace = true }
 libc = "0.2"
 
-# IPFIX parser for traffic flow analysis
-ipfixrw = { workspace = true }
+# IPFIX/HFT wire decoding
 ahash = { workspace = true }
-binrw = { workspace = true }
 byteorder = { workspace = true }
 
 # Logging and error handling
@@ -39,7 +37,6 @@ env_logger = { workspace = true }
 chrono = { workspace = true }
 
 # Utilities
-rand = { workspace = true }
 once_cell = { workspace = true }
 
 # Command line utilities

@@ -57,9 +57,9 @@ const MAX_SOCKET_REGISTRATION_RETRY_SECS: u64 = 60;
 const WARNING_SUMMARY_INTERVAL_SECS: u64 = 60;
 const MAX_MEMBERSHIP_BITMAP_BYTES: usize = 1024 * 1024;
 
-/// Maximum supported size for a single netlink datagram/message.
-/// This bounds userspace allocation after peeking the datagram length.
-const MAX_NETLINK_DATAGRAM_SIZE: usize = 16 * 1024 * 1024;
+/// Admission ceiling for a single netlink datagram/message, not a preallocation size.
+/// Receive storage grows on demand after peeking the datagram length.
+const MAX_NETLINK_DATAGRAM_SIZE: usize = 64 * 1024 * 1024;
 
 /// Netlink message parser for handling multiple messages in one datagram
 #[derive(Debug)]
@@ -171,6 +171,21 @@ impl NetlinkMessageParser {
             }
 
             let remaining_data = &new_data[offset..];
+            // The full header is present; check the ceiling before validating the payload length.
+            let nl_len = NetlinkBuffer::new(remaining_data).length() as usize;
+            if nl_len > MAX_NETLINK_DATAGRAM_SIZE {
+                let error = io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid netlink message length: {} (too large)", nl_len),
+                );
+                return Self::return_parsed_or_error(
+                    complete_messages,
+                    error,
+                    offset,
+                    remaining_data.len(),
+                );
+            }
+
             let netlink = match NetlinkBuffer::new_checked(remaining_data) {
                 Ok(netlink) => netlink,
                 Err(error) => {
@@ -194,19 +209,6 @@ impl NetlinkMessageParser {
                 let error = io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid netlink message length: {} (too small)", nl_len),
-                );
-                return Self::return_parsed_or_error(
-                    complete_messages,
-                    error,
-                    offset,
-                    new_data.len() - offset,
-                );
-            }
-
-            if nl_len > MAX_NETLINK_DATAGRAM_SIZE {
-                let error = io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Invalid netlink message length: {} (too large)", nl_len),
                 );
                 return Self::return_parsed_or_error(
                     complete_messages,
@@ -1910,6 +1912,44 @@ pub mod test {
         assert!(messages[0].is_empty());
     }
 
+    #[test]
+    fn test_payload_extraction_accepts_39339520_bytes() {
+        // Synthetic generic payload matching the padded aggregate size, not an IPFIX fixture.
+        let payload_len = 640 * 61_468;
+        let datagram = create_large_mock_netlink_message(&vec![0xa5; payload_len]);
+        assert_eq!(payload_len, 39_339_520);
+        assert_eq!(datagram.len(), 39_339_540);
+        assert!(datagram.len() > 16 * 1024 * 1024);
+
+        let outcome = NetlinkMessageParser::new()
+            .parse_buffer(&datagram, 0x10)
+            .unwrap();
+
+        assert_eq!(outcome.messages.len(), 1);
+        assert_eq!(outcome.messages[0].len(), payload_len);
+        assert_eq!(outcome.messages[0].as_slice(), &datagram[20..]);
+        assert_eq!(outcome.dropped_messages, 0);
+        assert!(outcome.first_error.is_none());
+    }
+
+    #[test]
+    fn test_declared_message_length_above_64_mib_is_rejected() {
+        assert_eq!(MAX_NETLINK_DATAGRAM_SIZE, 67_108_864);
+        let mut header = [0u8; NETLINK_HEADER_LEN];
+        header[..4].copy_from_slice(&67_108_865u32.to_ne_bytes());
+        header[4..6].copy_from_slice(&0x10u16.to_ne_bytes());
+
+        let error = NetlinkMessageParser::new()
+            .parse_buffer(&header, 0x10)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            error.to_string(),
+            "Invalid netlink message length: 67108865 (too large)"
+        );
+    }
+
     /// Tests payload extraction with invalid message (too small).
     #[test]
     fn test_payload_extraction_invalid_message() {
@@ -2055,6 +2095,25 @@ pub mod test {
             DataNetlinkActor::recv_datagram_fd(rx.as_raw_fd(), MAX_NETLINK_DATAGRAM_SIZE).unwrap();
 
         assert_eq!(received, payload);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_recv_small_datagram_does_not_preallocate_64_mib() {
+        let (tx, rx) = UnixDatagram::pair().unwrap();
+        let datagram = create_large_mock_netlink_message(b"SMALL");
+        tx.send(&datagram).unwrap();
+        let mut buffer = Vec::new();
+
+        DataNetlinkActor::recv_datagram_fd_into(
+            rx.as_raw_fd(),
+            MAX_NETLINK_DATAGRAM_SIZE,
+            &mut buffer,
+        )
+        .unwrap();
+
+        assert_eq!(buffer, datagram);
+        assert!(buffer.capacity() <= 1024, "capacity: {}", buffer.capacity());
     }
 
     #[cfg(target_os = "linux")]
