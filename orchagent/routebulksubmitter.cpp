@@ -48,7 +48,7 @@ void RouteBulkSubmitter::stop()
 
 void RouteBulkSubmitter::threadFunc()
 {
-    pthread_setname_np("route_submit");
+    pthread_setname_np(pthread_self(), "route_submit");
     SWSS_LOG_NOTICE("RouteBulkSubmitter thread started");
 
     while (true)
