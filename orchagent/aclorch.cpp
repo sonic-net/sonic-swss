@@ -34,6 +34,7 @@ extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
 extern PolicerOrch *gPolicerOrch;
+extern AclOrch *gAclOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -4488,6 +4489,12 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+    // MuxOrch is destroyed later and its MuxAclHandler instances may
+    // outlive this object. Prevent them from dereferencing a stale pointer.
+    if (gAclOrch == this)
+    {
+        gAclOrch = nullptr;
+    }
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -6286,7 +6293,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {

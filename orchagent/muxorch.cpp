@@ -1430,6 +1430,14 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    if (gAclOrch == nullptr)
+    {
+        SWSS_LOG_NOTICE("Skipping ACL unbind for port %" PRIx64
+                        ": AclOrch is already destroyed", port_);
+        return;
+    }
+
     string table_name = is_ingress_acl_ ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 

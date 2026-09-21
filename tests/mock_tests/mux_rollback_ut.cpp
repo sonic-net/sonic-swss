@@ -723,4 +723,16 @@ namespace mux_rollback_test
         m_MuxOrch->mux_tunnel_nh_.erase(tunnel_dst);
     }
 
+
+    // AclOrch is destroyed before MuxOrch in the production orch list.
+    // MuxAclHandler must therefore tolerate the ACL global being cleared
+    // when MuxOrch later destroys its mux cables.
+    TEST_F(MuxRollbackTest, MuxTeardownAfterAclOrchDestructionIsSafe)
+    {
+        ASSERT_NE(gAclOrch, nullptr);
+
+        delete gAclOrch;
+
+        EXPECT_EQ(gAclOrch, nullptr);
+    }
 }
