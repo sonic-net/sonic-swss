@@ -174,6 +174,123 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanHostNetdevMtu(self, dvs):
+        """Verify that writing mtu to CONFIG_DB VLAN table is applied to the
+        kernel Vlan<id> netdev and reflected in APPL_DB — and that when the
+        kernel rejects the MTU, neither the kernel netdev nor APPL_DB get
+        the bogus value (mirrors PortMgr::setPortMtu's "APPL_DB only on
+        kernel success" behaviour). Regression test for the long-standing
+        TODO in VlanMgr::doVlanTask where the host VLAN mtu was parsed but
+        never pushed through `ip link set Vlan<id> mtu <v>`.
+        """
+        dvs.setup_db()
+
+        vlan = "42"
+        vlan_interface = "Vlan{}".format(vlan)
+        good_mtu = "1500"
+        # Exceeds any reasonable netdev maxmtu (2^16-1 = 65535); kernel
+        # returns -ERANGE via vlan_dev_change_mtu().
+        bad_mtu = "99999"
+
+        def read_kernel_mtu():
+            _, out = dvs.runcmd(['sh', '-c', "cat /sys/class/net/{}/mtu".format(vlan_interface)])
+            return out.strip()
+
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+
+        # After create, kernel Vlan netdev inherits bridge default (9100).
+        assert read_kernel_mtu() == "9100"
+
+        # Happy path: write mtu to CONFIG_DB VLAN table — vlanmgrd should
+        # run `ip link set Vlan<id> mtu <v>` and echo the value into APPL_DB.
+        dvs.set_mtu(vlan_interface, good_mtu)
+
+        wait_for_result(lambda: (read_kernel_mtu() == good_mtu, None),
+                        PollingConfig(polling_interval=0.2, timeout=5, strict=True))
+        self.dvs_vlan.app_db.wait_for_field_match("VLAN_TABLE", vlan_interface, {"mtu": good_mtu})
+
+        # Failure path: push a value the kernel will reject. Kernel and
+        # APPL_DB must both remain at good_mtu, and vlanmgrd must log WARN.
+        marker = dvs.add_log_marker()
+        dvs.set_mtu(vlan_interface, bad_mtu)
+
+        # Poll for 2s to ensure vlanmgrd never applies the bad value.
+        # A fixed sleep would be flaky on loaded CI runners; polling keeps
+        # the invariant explicit (MTU must never become bad_mtu).
+        poll_end = time.time() + 2.0
+        while time.time() < poll_end:
+            assert read_kernel_mtu() == good_mtu, \
+                "kernel MTU changed to bad value despite rejection"
+            time.sleep(0.2)
+
+        fvs = self.dvs_vlan.app_db.get_entry("VLAN_TABLE", vlan_interface)
+        assert fvs.get("mtu") == good_mtu, \
+            "APPL_DB mtu was updated to bad value {} (expected {})".format(
+                fvs.get("mtu"), good_mtu)
+
+        self.check_syslog(dvs, marker, "vlanmgrd", "Failed to set MTU", vlan_interface, 1)
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+        # isNewVlan path: create a VLAN with mtu already present in the initial
+        # CONFIG_DB entry (as opposed to updating mtu on an existing VLAN).
+        # The first SET event goes through addHostVlan followed immediately by
+        # setHostVlanMtu with the operator-supplied value.
+        create_vlan = "43"
+        create_vlan_interface = "Vlan{}".format(create_vlan)
+        create_mtu = "1500"
+
+        def read_create_kernel_mtu():
+            _, out = dvs.runcmd(['sh', '-c', "cat /sys/class/net/{}/mtu".format(create_vlan_interface)])
+            return out.strip()
+
+        self.dvs_vlan.config_db.create_entry(
+            "VLAN", create_vlan_interface, {"vlanid": create_vlan, "mtu": create_mtu})
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+
+        wait_for_result(lambda: (read_create_kernel_mtu() == create_mtu, None),
+                        PollingConfig(polling_interval=0.2, timeout=5, strict=True))
+        self.dvs_vlan.app_db.wait_for_field_match(
+            "VLAN_TABLE", create_vlan_interface, {"mtu": create_mtu})
+
+        self.dvs_vlan.remove_vlan(create_vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
+        # Overflow path: value parses as unsigned long long but exceeds
+        # uint32_t::max. The explicit bounds check in doVlanTask must throw
+        # std::out_of_range, the catch block must log SWSS_LOG_ERROR with
+        # "Invalid MTU", and neither the kernel netdev nor APPL_DB are
+        # touched.
+        overflow_vlan = "44"
+        overflow_vlan_interface = "Vlan{}".format(overflow_vlan)
+        overflow_mtu = "5000000000"  # > 2^32-1 = 4294967295
+
+        def read_overflow_kernel_mtu():
+            _, out = dvs.runcmd(['sh', '-c',
+                                 "cat /sys/class/net/{}/mtu".format(overflow_vlan_interface)])
+            return out.strip()
+
+        self.dvs_vlan.create_vlan(overflow_vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+        assert read_overflow_kernel_mtu() == "9100"
+
+        marker = dvs.add_log_marker()
+        dvs.set_mtu(overflow_vlan_interface, overflow_mtu)
+
+        # Poll for 2s confirming the kernel MTU never picks up the bogus value.
+        poll_end = time.time() + 2.0
+        while time.time() < poll_end:
+            assert read_overflow_kernel_mtu() == "9100", \
+                "kernel MTU changed despite overflow"
+            time.sleep(0.2)
+
+        self.check_syslog(dvs, marker, "vlanmgrd", "Invalid MTU", overflow_vlan_interface, 1)
+
+        self.dvs_vlan.remove_vlan(overflow_vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
