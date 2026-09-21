@@ -264,7 +264,8 @@ void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
         }
         else
         {
-            table.del(fvw.key);
+            std::vector<std::string> keys = {fvw.key};
+            table.del(keys);
         }
     } else {
         m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
