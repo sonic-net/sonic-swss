@@ -32,6 +32,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch *gAclOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -4239,6 +4240,8 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+
+    gAclOrch = nullptr;
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -5875,7 +5878,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {

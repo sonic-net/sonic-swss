@@ -26,6 +26,7 @@ extern sai_object_id_t  gSwitchId;
 extern CrmOrch *        gCrmOrch;
 extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
+extern FdbOrch*         gFdbOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -97,7 +98,16 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
 FdbOrch::~FdbOrch()
 {
-    m_portsOrch->detach(this);
+    gFdbOrch = nullptr;
+}
+
+void FdbOrch::detachObservers()
+{
+    if (m_portsOrch)
+    {
+        m_portsOrch->detach(this);
+        m_portsOrch = nullptr;
+    }
 }
 
 bool FdbOrch::bake()
