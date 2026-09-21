@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
@@ -2417,6 +2418,8 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
+        && (h->nlmsg_type != RTM_NEWNEIGH)
+        && (h->nlmsg_type != RTM_DELNEIGH)
         && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
     {
         return;
@@ -2447,6 +2450,10 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         hdr_len = sizeof(struct evpn_backup_nhg_msg);
         break;
+    case RTM_FPM_MAC_REPLAY_END:
+        /* Marker only; the generation travels in nlmsg_seq. */
+        hdr_len = 0;
+        break;
     default:
         hdr_len = sizeof(struct ndmsg);
         break;
@@ -2465,6 +2472,13 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     {
     case RTM_NEWNEXTHOP:
     case RTM_DELNEXTHOP:
+        /* An FDB nexthop names an EVPN Ethernet Segment destination, not an L3
+         * nexthop. Letting it reach onNextHopMsg() would publish it as a real
+         * NEXTHOP_GROUP. */
+        if (m_macsync && m_macsync->onFdbNhgMsg(h, len))
+        {
+            return;
+        }
         onNextHopMsg(h, len);
         return;
     case RTM_NEWPICCONTEXT:
@@ -2494,6 +2508,19 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         onEvpnEsBackupNhgMsg(h, len);
+        return;
+    case RTM_NEWNEIGH:
+    case RTM_DELNEIGH:
+        if (m_macsync)
+        {
+            m_macsync->onMacMsg(h, len);
+        }
+        return;
+    case RTM_FPM_MAC_REPLAY_END:
+        if (m_macsync)
+        {
+            m_macsync->onRemoteReplayEnd();
+        }
         return;
     default:
         break;
