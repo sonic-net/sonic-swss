@@ -968,9 +968,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
     if (m_hasPendingBulk)
     {
         m_submitter->waitForFlush();
-        processRouteBulkResults(consumer, m_pendingToBulk);
+        m_prevPendingToBulk = std::move(m_pendingToBulk);
         m_pendingToBulk.clear();
         m_hasPendingBulk = false;
+        m_hasPrevResults = true;
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
@@ -993,6 +994,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
             string key = kfvKey(t);
             string op = kfvOp(t);
+
+            if (m_hasPrevResults &&
+                m_prevPendingToBulk.count(std::make_pair(key, op)) > 0)
+            {
+                it++;
+                continue;
+            }
 
             auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
@@ -1469,12 +1477,26 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             std::swap(m_pendingToBulk, toBulk);
             m_hasPendingBulk = true;
             m_submitter->submit(m_spareBulker);
+
+            if (m_hasPrevResults)
+            {
+                processRouteBulkResults(consumer, m_prevPendingToBulk);
+                m_prevPendingToBulk.clear();
+                m_hasPrevResults = false;
+            }
         }
         else
         {
             gRouteBulker.flush();
             processRouteBulkResults(consumer, toBulk);
         }
+    }
+
+    if (m_hasPrevResults)
+    {
+        processRouteBulkResults(consumer, m_prevPendingToBulk);
+        m_prevPendingToBulk.clear();
+        m_hasPrevResults = false;
     }
 }
 
@@ -1611,6 +1633,12 @@ void RouteOrch::waitForBulkSubmitter()
 
 void RouteOrch::drainPendingBulk(ConsumerBase& consumer)
 {
+    if (m_hasPrevResults)
+    {
+        processRouteBulkResults(consumer, m_prevPendingToBulk);
+        m_prevPendingToBulk.clear();
+        m_hasPrevResults = false;
+    }
     if (m_hasPendingBulk)
     {
         m_submitter->waitForFlush();

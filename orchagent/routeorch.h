@@ -362,6 +362,8 @@ private:
     using BulkMap = std::map<std::pair<std::string, std::string>, RouteBulkContext>;
     BulkMap                                 m_pendingToBulk;
     bool                                    m_hasPendingBulk = false;
+    BulkMap                                 m_prevPendingToBulk;
+    bool                                    m_hasPrevResults = false;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 

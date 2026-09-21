@@ -1,5 +1,6 @@
 #include "routebulksubmitter.h"
 #include "logger.h"
+#include <pthread.h>
 
 RouteBulkSubmitter::RouteBulkSubmitter()
 {
@@ -47,6 +48,7 @@ void RouteBulkSubmitter::stop()
 
 void RouteBulkSubmitter::threadFunc()
 {
+    pthread_setname_np("route_submit");
     SWSS_LOG_NOTICE("RouteBulkSubmitter thread started");
 
     while (true)
