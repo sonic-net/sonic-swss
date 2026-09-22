@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <set>
 #include <string>
 
@@ -35,12 +36,30 @@ private:
 
     std::set<std::string> m_lagList;
 
+    /* MACsec member gate: what the running teamd currently holds for
+     * ports.<member>.runner.macsec_gate, keyed [lag][member]. An absent entry
+     * means open (true), teamd's fail-open default for every added port, so a
+     * member whose MACsec session never drops costs no teamdctl call. */
+    std::map<std::string, std::map<std::string, bool>> m_macsecGate;
+
     MacAddress m_mac;
 
     void doTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
     void doPortUpdateTask(Consumer &consumer);
+    void doMacsecIngressSaTask(Consumer &consumer);
+    void doMacsecPortTask(Consumer &consumer);
+
+    /* MACsec member pull: drive teamd's per-member runner.macsec_gate from
+     * STATE_DB MACsec SA presence, so a member whose MACsec session is down is
+     * taken out of the LACP distributor by teamd itself, on both ends, without
+     * touching the link. */
+    bool hasMACsecIngressSA(const std::string &port);
+    bool setLagMemberMacsecGate(const std::string &lag, const std::string &member, bool gate);
+    void applyMacsecMemberGate(const std::string &lag, const std::string &member, bool gate);
+    void evaluateMacsecMemberGate(const std::string &port);
+    void forgetMacsecMemberGate(const std::string &lag, const std::string &member);
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);
