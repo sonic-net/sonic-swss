@@ -216,11 +216,11 @@ int cb(const std::string &cmd, std::string &stdout)
     {
         pidFiles["/var/run/teamd/PortChannel198.pid"] = NULL;
     }
-    else if (cmd.find("ip link set dev Ethernet64 down") != std::string::npos)
+    else if (cmd.find("ip link set dev \"Ethernet64\" down") != std::string::npos)
     {
         return 1;
     }
-    else if (cmd.find("port config update Ethernet68") != std::string::npos)
+    else if (cmd.find("port config update \"Ethernet68\"") != std::string::npos)
     {
         return 1;
     }
@@ -536,8 +536,8 @@ namespace teammgr_ut
         bool port_config_update_called = false;
         for (auto &c : mockCallArgs)
         {
-            if (c.find("ip link set dev Ethernet64 down") != std::string::npos) down_called = true;
-            if (c.find("port config update Ethernet64") != std::string::npos) port_config_update_called = true;
+            if (c.find("ip link set dev \"Ethernet64\" down") != std::string::npos) down_called = true;
+            if (c.find("port config update \"Ethernet64\"") != std::string::npos) port_config_update_called = true;
         }
         // The "down" command must be attempted and, since it fails, the
         // subsequent "port config update" must not be executed (retry).
@@ -563,9 +563,9 @@ namespace teammgr_ut
         bool port_add_called = false;
         for (auto &c : mockCallArgs)
         {
-            if (c.find("ip link set dev Ethernet68 down") != std::string::npos) down_called = true;
-            if (c.find("port config update Ethernet68") != std::string::npos) port_config_update_called = true;
-            if (c.find("port add Ethernet68") != std::string::npos) port_add_called = true;
+            if (c.find("ip link set dev \"Ethernet68\" down") != std::string::npos) down_called = true;
+            if (c.find("port config update \"Ethernet68\"") != std::string::npos) port_config_update_called = true;
+            if (c.find("port add \"Ethernet68\"") != std::string::npos) port_add_called = true;
         }
         // "down" succeeds, "port config update" fails, so "port add" must not run.
         EXPECT_TRUE(down_called);
