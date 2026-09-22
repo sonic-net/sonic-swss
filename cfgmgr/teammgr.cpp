@@ -32,6 +32,11 @@ namespace
 
 bool parseLagMemberKey(const string &key, string &lag, string &member)
 {
+    if (count(key.begin(), key.end(), config_db_key_delimiter) != 1)
+    {
+        return false;
+    }
+
     auto tokens = tokenize(key, config_db_key_delimiter);
     if (
         tokens.size() != 2 ||

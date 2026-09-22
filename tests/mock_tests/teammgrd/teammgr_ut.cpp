@@ -321,6 +321,23 @@ namespace teammgr_ut
         EXPECT_TRUE(mockCallArgs.empty());
     }
 
+    TEST_F(TeamMgrTest, testTrailingDelimiterLagMemberKeyIsRejected)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member_table.set("PortChannel1|Ethernet0|", {});
+        teammgr.addExistingData(&cfg_lag_member_table);
+        mockCallArgs.clear();
+        auto consumer = dynamic_cast<Consumer *>(teammgr.getExecutor(CFG_LAG_MEMBER_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+
+        teammgr.doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
     TEST_F(TeamMgrTest, testInvalidPortStateNameIsRejected)
     {
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
