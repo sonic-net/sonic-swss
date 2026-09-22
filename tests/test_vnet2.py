@@ -477,6 +477,108 @@ class TestVnet2Orch(object):
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
 
+    '''
+    Test VNET route replay idempotency.
+        A config reload or an fpmsyncd resync re-delivers VNET routes that are
+        already programmed. Replaying a subnet route must converge onto the
+        existing SAI entry instead of failing the create, and a repeated delete
+        must be a no-op.
+    '''
+    def test_vnet_orch_route_replay_is_idempotent(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_replay'
+        vnet_name = 'VnetReplay'
+        ifname = 'Ethernet20'
+        subnet = '10.10.0.8/31'
+
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '32.32.32.32')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5032', "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5032')
+
+        create_phy_interface(dvs, ifname, vnet_name, subnet)
+        vnet_obj.check_router_interface(dvs, ifname, vnet_name)
+        self.set_admin_status(ifname, "up")
+
+        marker = dvs.add_log_marker()
+
+        # The first SET programs the subnet route through add_route().
+        create_vnet_local_routes(dvs, subnet, vnet_name, ifname)
+        assert count_asic_routes(dvs, subnet) == 1, \
+            "subnet route was not programmed"
+
+        # Replay it the way a resync does. Going straight to APPL_DB means the
+        # producer always enqueues the SET, so the replay is guaranteed to reach
+        # VNetRouteOrch instead of relying on CONFIG_DB re-firing an event for an
+        # unchanged entry. doRouteTask() does not dedup, so add_route() runs
+        # again and SAI returns SAI_STATUS_ITEM_ALREADY_EXISTS. Before the fix
+        # that logged "SAI failed to create route" and failed the task.
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        for _ in range(2):
+            create_entry_pst(
+                app_db, "VNET_ROUTE_TABLE", ':',
+                "%s:%s" % (vnet_name, subnet),
+                [("ifname", ifname), ("nexthop", "")]
+            )
+            time.sleep(1)
+
+        assert syslog_match_count(dvs, marker, "SAI failed to create route") == 0, \
+            "route replay re-created an existing SAI route"
+        assert count_asic_routes(dvs, subnet) == 1, \
+            "route replay duplicated the SAI route entry"
+
+        # fpmsyncd sends DEL to both VNET route tables when the previous route
+        # type is unknown, so a repeated delete has to be harmless. Before the
+        # fix the second one logged "Failed to find route" and asserted.
+        delete_vnet_local_routes(dvs, subnet, vnet_name)
+        delete_vnet_local_routes(dvs, subnet, vnet_name)
+
+        assert syslog_match_count(dvs, marker, "Failed to find route") == 0, \
+            "duplicate delete reported a missing route as an error"
+        assert orchagent_is_running(dvs), \
+            "orchagent died or hung while handling duplicate route events"
+
+        self.set_admin_status(ifname, "down")
+        delete_phy_interface(dvs, ifname, subnet)
+        vnet_obj.check_del_router_interface(dvs, ifname)
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+
+def syslog_match_count(dvs, marker, pattern):
+    """Number of lines matching pattern in the syslog written since marker."""
+    (_, out) = dvs.runcmd(
+        ["sh", "-c",
+         "awk '/%s/,ENDFILE {print;}' /var/log/syslog | grep -c '%s' || true"
+         % (marker, pattern)]
+    )
+    return int(out.strip() or 0)
+
+
+def orchagent_is_running(dvs):
+    (_, out) = dvs.runcmd(["sh", "-c", "supervisorctl status orchagent || true"])
+    return "RUNNING" in out
+
+
+def count_asic_routes(dvs, prefix):
+    """Number of ASIC_DB route entries whose destination is prefix."""
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    total = 0
+    for key in tbl.getKeys():
+        try:
+            if json.loads(key)["dest"] == prefix:
+                total += 1
+        except (ValueError, KeyError):
+            continue
+    return total
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
