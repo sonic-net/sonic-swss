@@ -8,6 +8,7 @@
 #include "copporch.h"
 #include "sfloworch.h"
 #include "twamporch.h"
+#include "vnetorch.h"
 #include "directory.h"
 
 #undef protected
@@ -152,6 +153,25 @@ struct Portal
         static TwampStatsTable getTwampSessionStatistics(TwampOrch &obj)
         {
             return obj.m_twampStatistics;
+        }
+    };
+
+    struct VNetRouteOrchInternal
+    {
+        static void addRoute(VNetRouteOrch &obj, const std::string &vnet,
+                             const IpPrefix &ipPrefix, const nextHop &nh)
+        {
+            obj.addRoute(vnet, ipPrefix, nh);
+        }
+
+        static void delRoute(VNetRouteOrch &obj, const IpPrefix &ipPrefix)
+        {
+            obj.delRoute(ipPrefix);
+        }
+
+        static VNetNextHopObserverTable &getNextHopObservers(VNetRouteOrch &obj)
+        {
+            return obj.next_hop_observers_;
         }
     };
 
