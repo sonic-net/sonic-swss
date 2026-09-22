@@ -1704,4 +1704,66 @@ namespace routeorch_test
         // desired_nhg_key is empty: route now directly points to NHG (no longer a temp route)
         ASSERT_EQ(it->second.desired_nhg_key.getSize(), 0);
     }
+
+    TEST_F(RouteOrchTest, RemoveNhgAfterAllMembersInvalidatedWithoutReplacement)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Add ECMP route with 2 nexthops (both already resolved in SetUp)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // Verify the NHG was created
+        NextHopGroupKey nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_NE(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG not found after adding ECMP route";
+
+        // Invalidate both nexthops without calling validnexthop afterward.
+        // This is the exact sequence MuxPrefixBasedNbrHandler::disable() performs:
+        // it removes NHG members from SAI but does not add tunnel replacements.
+        NextHopKey nh1(IpAddress("10.0.0.2"), "Ethernet0");
+        NextHopKey nh2(IpAddress("10.0.0.3"), "Ethernet0");
+        uint32_t count = 0;
+
+        // Capture nexthop refcounts before invalidation
+        auto refcount1_before = gNeighOrch->getNextHopRefCount(nh1);
+        auto refcount2_before = gNeighOrch->getNextHopRefCount(nh2);
+        ASSERT_GT(refcount1_before, 0);
+        ASSERT_GT(refcount2_before, 0);
+
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh1, count));
+        ASSERT_EQ(count, 1u);
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh2, count));
+        ASSERT_EQ(count, 1u);
+
+        // invalidnexthopinNextHopGroup only removes SAI members;
+        // NeighOrch refcounts must remain unchanged until the NHG is destroyed.
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before);
+
+        // Delete the route — triggers removeNextHopGroup which decrements refcounts
+        auto fail_before = sai_fail_count;
+
+        entries.clear();
+        entries.push_back({"9.9.9.0/24", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_EQ(sai_fail_count, fail_before)
+            << "Route deletion should not trigger any SAI failures";
+
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG should be removed after route deletion";
+
+        // After NHG destruction, refcounts must be decremented
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
+    }
 }
