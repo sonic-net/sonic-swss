@@ -52,7 +52,11 @@ class ResponsePublisher : public ResponsePublisherInterface
     void writeToDB(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
                    const std::string &op, bool replace = false) override;
 
-    void setEnableDbWriteAndNotify(bool enable_db_write_and_notify) override;
+    void setWarmbootStateOnFailure(const std::string& app_name, bool set_on_fail) override;
+
+    void setEnableDbWrite(bool enable) override;
+
+    void setEnableNotify(bool enable) override;
 
     // With a state update thread: append to m_async_publish_pending; caller must call
     // publishAsyncBatch() then flush() to enqueue work (batch + flush marker).
@@ -142,5 +146,8 @@ class ResponsePublisher : public ResponsePublisherInterface
     std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
     std::condition_variable m_signal;
-    bool m_enable_db_write_and_notify{true};
+    std::string m_app_name;
+    bool m_set_warmboot_state_fail{false};
+    bool m_enable_db_write{true};
+    bool m_enable_notify{true};
 };

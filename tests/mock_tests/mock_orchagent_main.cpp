@@ -21,6 +21,7 @@ string gMyAsicName = "Asic0";
 bool gTraditionalFlexCounter = false;
 bool gRouteStateAsyncPublish = false;
 bool gSyncMode = false;
+bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
 VRFOrch *gVrfOrch;
@@ -28,7 +29,7 @@ VRFOrch *gVrfOrch;
 void syncd_apply_view() {}
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }

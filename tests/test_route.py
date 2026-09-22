@@ -6,7 +6,7 @@ import pytest
 import ipaddress
 
 from swsscommon import swsscommon
-from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 class TestRouteBase(object):
     def setup_db(self, dvs):
@@ -1077,22 +1077,55 @@ class TestFpmSyncResponse(TestRouteBase):
         route_entry = json.loads(output)
         return bool(route_entry[route][0].get('offloaded'))
 
-    @pytest.mark.xfail(reason="BGP suppress FIB disabled on master/202405 - https://github.com/sonic-net/sonic-buildimage/issues/19092")
+    def wait_for_nexthop_reachable(self, dvs, nexthop):
+        # Poll until the interface IP is reprogrammed and the peer is reachable again.
+        def _nexthop_reachable():
+            rc, _ = dvs.runcmd(f"ping -c 1 -W 1 {nexthop}")
+            return (rc == 0, None)
+
+        wait_for_result(
+            _nexthop_reachable,
+            PollingConfig(polling_interval=1, timeout=60, strict=True),
+            failure_message=f"Nexthop {nexthop} not reachable after swss/fpmsyncd restart",
+        )
+
+    def configure_orchagent_fib_suppress(self, dvs, suppress_state):
+        # Until sonic-buildimage#26151 lands, the DVS image does not read
+        # suppress-fib-pending from CONFIG_DB and pass -F to orchagent at startup.
+        # Patch orchagent.sh here (same pattern as test_zmq.py flag coverage tests).
+        ORCHAGENT_SH_BACKUP = "/usr/bin/orchagent.sh_fib_suppress_ut_backup"
+        if suppress_state == "enabled":
+            rc, _ = dvs.runcmd(["sh", "-c", f"test -f {ORCHAGENT_SH_BACKUP} || cp /usr/bin/orchagent.sh {ORCHAGENT_SH_BACKUP}"])
+            assert rc == 0, "Failed to back up orchagent.sh"
+            rc, _ = dvs.runcmd("sed -i.bak 's|/usr/bin/orchagent |/usr/bin/orchagent -F |g' /usr/bin/orchagent.sh")
+            assert rc == 0, "Failed to patch orchagent.sh with -F flag"
+        else:
+            rc, _ = dvs.runcmd(["sh", "-c", f"test -f {ORCHAGENT_SH_BACKUP}"])
+            if rc == 0:
+                rc, _ = dvs.runcmd(f"cp {ORCHAGENT_SH_BACKUP} /usr/bin/orchagent.sh")
+                assert rc == 0, "Failed to restore orchagent.sh"
+
     @pytest.mark.parametrize("suppress_state", ["enabled", "disabled"])
     def test_offload(self, suppress_state, setup, dvs):
         route = "1.1.1.0/24"
 
-        # enable route suppression
-        rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
-        assert rc == 0, "Failed to configure suppress-fib-pending"
-
-        time.sleep(5)
-
         try:
+            rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
+            assert rc == 0, "Failed to configure suppress-fib-pending"
+
+            self.configure_orchagent_fib_suppress(dvs, suppress_state)
+
+            rc, _ = dvs.runcmd("config save -y")
+            assert rc == 0, "Failed to save config"
+
+            dvs.restart()
+
+            self.wait_for_nexthop_reachable(dvs, "10.0.0.1")
+
             rc, _ = dvs.runcmd("bash -c 'kill -SIGSTOP $(pidof orchagent)'")
             assert rc == 0, "Failed to suspend orchagent"
 
-            rc, _ = dvs.runcmd(f"ip route add {route} via 10.0.0.1 proto bgp")
+            rc, _ = dvs.runcmd(f'vtysh -c "configure terminal" -c "ip route {route} 10.0.0.1"')
             assert rc == 0, "Failed to configure route"
 
             time.sleep(5)
@@ -1112,10 +1145,17 @@ class TestFpmSyncResponse(TestRouteBase):
             wait_for_result(check_offloaded, failure_message=f"{route} is expected to be offloaded after orchagent resume")
         finally:
             dvs.runcmd("bash -c 'kill -SIGCONT $(pidof orchagent)'")
-            dvs.runcmd(f"ip route del {route}")
+            dvs.runcmd(f'vtysh -c "configure terminal" -c "no ip route {route} 10.0.0.1"')
 
-            # make sure route suppression is disabled
-            dvs.runcmd("config suppress-fib-pending disabled")
+            rc, _ = dvs.runcmd("config suppress-fib-pending disabled")
+            assert rc == 0, "Failed to disable suppress-fib-pending during cleanup"
+
+            self.configure_orchagent_fib_suppress(dvs, "disabled")
+
+            rc, _ = dvs.runcmd("config save -y")
+            assert rc == 0, "Failed to save config during cleanup"
+
+            dvs.restart()
 
 
 class TestSubnetDecapVipRoute(TestRouteBase):

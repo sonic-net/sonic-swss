@@ -116,7 +116,9 @@ for i = n, 1, -1 do
                             (debug_storm == "enabled")
                             -- DEBUG CODE END.
                             then
-                            if time_left <= effective_poll_time then
+                            -- Allow up to 1% deviation from the configured detection time.
+                            local accumulated_detection_time = detection_time - time_left + effective_poll_time
+                            if accumulated_detection_time > detection_time * 0.99 then
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                                 local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'

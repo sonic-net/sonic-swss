@@ -36,6 +36,7 @@ extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
 extern QosOrch *gQosOrch;
+extern MuxOrch *gMuxOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -361,85 +362,6 @@ static sai_object_id_t create_tunnel(
     }
 
     return tunnel_id;
-}
-
-static sai_object_id_t create_nh_tunnel(sai_object_id_t tunnel_id, IpAddress& ipAddr)
-{
-    std::vector<sai_attribute_t> next_hop_attrs;
-    sai_attribute_t next_hop_attr;
-
-    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
-    next_hop_attrs.push_back(next_hop_attr);
-
-    sai_ip_address_t host_ip;
-    swss::copy(host_ip, ipAddr);
-
-    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
-    next_hop_attr.value.ipaddr = host_ip;
-    next_hop_attrs.push_back(next_hop_attr);
-
-    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
-    next_hop_attr.value.oid = tunnel_id;
-    next_hop_attrs.push_back(next_hop_attr);
-
-    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
-    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId,
-                                            static_cast<uint32_t>(next_hop_attrs.size()),
-                                            next_hop_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Tunnel NH create failed for ip %s", ipAddr.to_string().c_str());
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Tunnel NH created for ip %s", ipAddr.to_string().c_str());
-
-        if (ipAddr.isV4())
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-        }
-        else
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-        }
-    }
-
-    return next_hop_id;
-}
-
-static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
-{
-    sai_status_t status = sai_next_hop_api->remove_next_hop(nh_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("Failed to locate next hop %s rv:%d",
-                            ipAddr.to_string().c_str(), status);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop %s  rv:%d",
-                            ipAddr.to_string().c_str(), status);
-            return false;
-        }
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Tunnel NH removed for ip %s",ipAddr.to_string().c_str());
-
-        if (ipAddr.isV4())
-        {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-        }
-        else
-        {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-        }
-    }
-
-    return true;
 }
 
 MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type, IpPrefix slice_ip6)
@@ -1509,6 +1431,13 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    if (gAclOrch == nullptr)
+    {
+        SWSS_LOG_NOTICE("AclOrch already destroyed, skipping ACL cleanup for port %s", alias_.c_str());
+        return;
+    }
+
     string table_name = is_ingress_acl_ ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
@@ -1605,17 +1534,28 @@ sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddr
     auto it = mux_tunnel_nh_.find(ipAddr);
     if (it != mux_tunnel_nh_.end())
     {
-        return it->second.nh_id;
+        return it->second;
     }
 
-    sai_object_id_t nh = create_nh_tunnel(mux_tunnel_id_, ipAddr);
+    NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
 
-    if (SAI_NULL_OBJECT_ID != nh)
+    sai_object_id_t nh_id;
+    if (!gNeighOrch)
     {
-        mux_tunnel_nh_[ipAddr] = { nh, 1 };
+        return SAI_NULL_OBJECT_ID;
     }
 
-    return nh;
+    switch (gNeighOrch->addIpinipTunnelNextHop(nhKey, mux_tunnel_id_, nh_id))
+    {
+        case TunnelNhOpStatus::CREATED:
+        case TunnelNhOpStatus::REUSED:
+            mux_tunnel_nh_[ipAddr] = nh_id;
+            return nh_id;
+        default:
+            SWSS_LOG_ERROR("Failed to create/register IPinIP tunnel NH %s ip %s",
+                           tunnelKey.c_str(), ipAddr.to_string().c_str());
+            return SAI_NULL_OBJECT_ID;
+    }
 }
 
 bool MuxOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
@@ -1627,21 +1567,31 @@ bool MuxOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr
         return true;
     }
 
-    auto ref_cnt = --it->second.ref_count;
+    NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
 
-    if (it->second.ref_count == 0)
+    if (!gNeighOrch)
     {
-        if (!remove_nh_tunnel(it->second.nh_id, ipAddr))
-        {
-            SWSS_LOG_INFO("NH tunnel remove failed %s, ip %s",
-                           tunnelKey.c_str(), ipAddr.to_string().c_str());
-        }
-        mux_tunnel_nh_.erase(ipAddr);
+        return false;
     }
 
-    SWSS_LOG_INFO("NH tunnel removed  %s, ip %s or decremented to ref count %d",
-                   tunnelKey.c_str(), ipAddr.to_string().c_str(), ref_cnt);
-    return true;
+    switch (gNeighOrch->removeIpinipTunnelNextHop(nhKey))
+    {
+        case TunnelNhOpStatus::STILL_REFERENCED:
+            SWSS_LOG_NOTICE("NH tunnel %s ip %s still referenced, deferring removal",
+                            tunnelKey.c_str(), ipAddr.to_string().c_str());
+            return false;
+
+        case TunnelNhOpStatus::OTHER_REGISTRANTS_REMAIN:
+        case TunnelNhOpStatus::REMOVED:
+            mux_tunnel_nh_.erase(ipAddr);
+            SWSS_LOG_INFO("NH tunnel removed %s, ip %s", tunnelKey.c_str(), ipAddr.to_string().c_str());
+            return true;
+
+        default:
+            SWSS_LOG_ERROR("NH tunnel remove failed %s, ip %s, deferring removal",
+                           tunnelKey.c_str(), ipAddr.to_string().c_str());
+            return false;
+    }
 }
 
 sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr)
@@ -1653,7 +1603,7 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
         return SAI_NULL_OBJECT_ID;
     }
 
-    return it->second.nh_id;
+    return it->second;
 }
 
 sai_object_id_t MuxOrch::getTunnelNextHopId()
@@ -1663,7 +1613,7 @@ sai_object_id_t MuxOrch::getTunnelNextHopId()
         auto it = mux_tunnel_nh_.find(mux_peer_switch_);
         if (it != mux_tunnel_nh_.end())
         {
-            return it->second.nh_id;
+            return it->second;
         }
     }
 
@@ -2502,6 +2452,25 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
 
     std::unique_ptr<DBConnector> state_db = std::make_unique<DBConnector>("STATE_DB", 0);
     state_mux_cable_table_ = std::make_unique<Table>(state_db.get(), STATE_MUX_CABLE_TABLE_NAME);
+}
+
+MuxOrch::~MuxOrch()
+{
+    gMuxOrch = nullptr;
+}
+
+void MuxOrch::detachObservers()
+{
+    if (neigh_orch_)
+    {
+        neigh_orch_->detach(this);
+        neigh_orch_ = nullptr;
+    }
+    if (fdb_orch_)
+    {
+        fdb_orch_->detach(this);
+        fdb_orch_ = nullptr;
+    }
 }
 
 bool MuxOrch::handleMuxCfg(const Request& request)
