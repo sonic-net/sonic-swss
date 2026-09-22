@@ -1524,7 +1524,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
                 portList.at(i).key.c_str(), statusList.at(i)
             );
 
-            auto handle_status = handleSaiCreateStatus(SAI_API_PORT, statusList.at(i));
+            auto handle_status = handleSaiCreateStatus(SAI_API_PORT, statusList.at(i), &oidList.at(i));
             if (handle_status != task_process_status::task_success)
             {
                 SWSS_LOG_THROW("PortsOrch bulk create failure");
@@ -2906,7 +2906,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &group_oid_ref);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -3024,7 +3024,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     {
         SWSS_LOG_ERROR("Failed to create member in ACL table group %" PRIx64 " for ACL table %" PRIx64 ", rv:%d",
                 group_oid, table_oid, status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &group_member_oid);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -7272,7 +7272,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status, &host_intfs_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -7466,7 +7466,7 @@ bool PortsOrch::addBridgePort(Port &port)
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_BRIDGE, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_BRIDGE, status, &port.m_bridge_port_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -7589,7 +7589,7 @@ bool PortsOrch::addVlan(string vlan_alias)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t vlan_oid;
+    sai_object_id_t vlan_oid = SAI_NULL_OBJECT_ID;
 
     sai_vlan_id_t vlan_id = (uint16_t)stoi(vlan_alias.substr(4));
     sai_attribute_t attr;
@@ -7601,7 +7601,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status, &vlan_oid);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -7764,13 +7764,13 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         attrs.push_back(attr);
     }
 
-    sai_object_id_t vlan_member_id;
+    sai_object_id_t vlan_member_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%" PRIx64,
                 port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status, &vlan_member_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -7862,7 +7862,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create l2mc flood group");
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status, &l2mc_group_id);
             if (handle_status != task_success)
             {
                 m_portList[vlan.m_alias] = vlan;
@@ -7945,7 +7945,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     {
         SWSS_LOG_ERROR("Failed to create l2mc group member for adding tunnel %s to vlan %hu",
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status, &l2mc_group_member);
         if (handle_status != task_success)
         {
             m_portList[vlan.m_alias] = vlan;
@@ -8205,13 +8205,13 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
         lag_attrs.push_back(attr);
     }
 
-    sai_object_id_t lag_id;
+    sai_object_id_t lag_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, static_cast<uint32_t>(lag_attrs.size()), lag_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status, &lag_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -8383,14 +8383,14 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
         attrs.push_back(attr);
     }
 
-    sai_object_id_t lag_member_id;
+    sai_object_id_t lag_member_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%" PRIx64 " pid:%" PRIx64,
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status, &lag_member_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -10486,7 +10486,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
     {
         SWSS_LOG_ERROR("Failed to create port serdes for port 0x%" PRIx64,
                        port_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status, &port_serdes_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -10696,9 +10696,9 @@ bool PortsOrch::initGearboxPort(Port &port)
     vector<uint32_t> lanes;
     vector<uint32_t> vals;
     sai_attribute_t attr;
-    sai_object_id_t systemPort;
-    sai_object_id_t linePort;
-    sai_object_id_t connector;
+    sai_object_id_t systemPort = SAI_NULL_OBJECT_ID;
+    sai_object_id_t linePort = SAI_NULL_OBJECT_ID;
+    sai_object_id_t connector = SAI_NULL_OBJECT_ID;
     sai_object_id_t phyOid;
     sai_status_t status;
     string phyOidStr;
@@ -10793,7 +10793,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             {
                 SWSS_LOG_ERROR("BOX: Failed to create Gearbox system-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
                         port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status, &systemPort);
                 if (handle_status != task_success)
                 {
                     return parseHandleSaiStatusFailure(handle_status);
@@ -10901,7 +10901,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             {
                 SWSS_LOG_ERROR("BOX: Failed to create Gearbox line-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
                    port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status, &linePort);
                 if (handle_status != task_success)
                 {
                     return parseHandleSaiStatusFailure(handle_status);
@@ -10924,7 +10924,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("BOX: Failed to connect Gearbox system-side:0x%" PRIx64 " to line-side:0x%" PRIx64 "; status:%d", systemPort, linePort, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status, &connector);
                 if (handle_status != task_success)
                 {
                     return parseHandleSaiStatusFailure(handle_status);
@@ -11853,7 +11853,7 @@ bool PortsOrch::createPtTam()
     /* First, create a TAM report */
     if (m_ptTamReport == SAI_NULL_OBJECT_ID)
     {
-        sai_object_id_t tam_report_id;
+        sai_object_id_t tam_report_id = SAI_NULL_OBJECT_ID;
 
         attr.id = SAI_TAM_REPORT_ATTR_TYPE;
         attr.value.s32 = SAI_TAM_REPORT_TYPE_VENDOR_EXTN;
@@ -11863,7 +11863,7 @@ bool PortsOrch::createPtTam()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create TAM Report object for Path Tracing, rv:%d", status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status, &tam_report_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -11877,7 +11877,7 @@ bool PortsOrch::createPtTam()
     /* Second, create a TAM INT object */
     if (m_ptTamInt == SAI_NULL_OBJECT_ID)
     {
-        sai_object_id_t tam_int_id;
+        sai_object_id_t tam_int_id = SAI_NULL_OBJECT_ID;
 
         attrs.clear();
 
@@ -11905,7 +11905,7 @@ bool PortsOrch::createPtTam()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create TAM INT object for Path Tracing, rv:%d", status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status, &tam_int_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -11919,7 +11919,7 @@ bool PortsOrch::createPtTam()
     /* Finally, create a TAM object */
     if (m_ptTam == SAI_NULL_OBJECT_ID)
     {
-        sai_object_id_t tam_id;
+        sai_object_id_t tam_id = SAI_NULL_OBJECT_ID;
 
         attrs.clear();
 
@@ -11932,7 +11932,7 @@ bool PortsOrch::createPtTam()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create TAM object for Path Tracing, rv:%d", status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_TAM, status, &tam_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);

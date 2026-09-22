@@ -31,7 +31,7 @@ bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create sample packet session with rate %d", rate);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, sai_rc);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, sai_rc, &session_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

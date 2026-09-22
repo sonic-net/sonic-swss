@@ -38,7 +38,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
-        if (handleSaiCreateStatus(SAI_API_DTEL, status) != task_success)
+        if (handleSaiCreateStatus(SAI_API_DTEL, status, &dtelId) != task_success)
         {
             return;
         }
@@ -1097,7 +1097,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        sai_object_id_t report_session_oid;
+        sai_object_id_t report_session_oid = SAI_NULL_OBJECT_ID;
 
         KeyOpFieldsValuesTuple t = it->second;
         string report_session_id = kfvKey(t);
@@ -1184,7 +1184,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT EP report session %s", report_session_id.c_str());
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status, &report_session_oid);
                 if (handle_status != task_success)
                 {
                     if (parseHandleSaiStatusFailure(handle_status))
@@ -1272,7 +1272,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        sai_object_id_t int_session_oid;
+        sai_object_id_t int_session_oid = SAI_NULL_OBJECT_ID;
 
         KeyOpFieldsValuesTuple t = it->second;
         string int_session_id = kfvKey(t);
@@ -1338,7 +1338,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT session %s", int_session_id.c_str());
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status, &int_session_oid);
                 if (handle_status != task_success)
                 {
                     if (parseHandleSaiStatusFailure(handle_status))
@@ -1443,7 +1443,7 @@ sai_status_t DTelOrch::enableQueueReport(const string& port, DTelQueueReportEntr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %d", port.c_str(), qreport.q_ind);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status, &qreport.queueReportOid);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1605,7 +1605,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        sai_object_id_t event_oid;
+        sai_object_id_t event_oid = SAI_NULL_OBJECT_ID;
         string report_session_id;
 
         KeyOpFieldsValuesTuple t = it->second;
@@ -1662,7 +1662,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event.c_str());
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status, &event_oid);
                 if (handle_status != task_success)
                 {
                     if (parseHandleSaiStatusFailure(handle_status))

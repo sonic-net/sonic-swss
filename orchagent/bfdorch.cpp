@@ -653,7 +653,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_BFD, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_BFD, status, &bfd_session_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

@@ -168,7 +168,7 @@ private:
     dTelReportSessionTable_t m_dTelReportSessionTable;
     dTelPortTable_t m_dTelPortTable;
     dtelEventTable_t m_dtelEventTable;
-    sai_object_id_t dtelId;
+    sai_object_id_t dtelId = SAI_NULL_OBJECT_ID;
     dtelSinkPortList_t sinkPortList;
 };
 

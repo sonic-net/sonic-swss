@@ -426,6 +426,7 @@ bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& origina
         nhgm_attr.value.oid = m_neighOrch->getNextHopId(it);
         nhgm_attrs.push_back(nhgm_attr);
 
+        nexthop_group_member_id = SAI_NULL_OBJECT_ID;
         status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_group_member_id, gSwitchId,
                                                                      (uint32_t)nhgm_attrs.size(),
                                                                      nhgm_attrs.data());
@@ -434,7 +435,7 @@ bool RouteOrch::addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& origina
         {
             SWSS_LOG_ERROR("Default Route Swap Failed to add next hop member to group %" PRIx64 ": %d\n",
                            original_next_hop_group.next_hop_group_id, status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &nexthop_group_member_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -502,15 +503,14 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             nhgm_attrs.push_back(nhgm_attr);
         }
 
-        status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
-                                                                      (uint32_t)nhgm_attrs.size(),
-                                                                      nhgm_attrs.data());
+        nexthop_id = SAI_NULL_OBJECT_ID;
+        status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId, (uint32_t)nhgm_attrs.size(), nhgm_attrs.data());
 
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to add next hop member to group %" PRIx64 ": %d\n",
                            nhopgroup->second.next_hop_group_id, status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &nexthop_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -1436,7 +1436,7 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create next hop group rv:%d", status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &next_hop_group_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1559,7 +1559,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
     nhg_attrs.push_back(nhg_attr);
 
-    sai_object_id_t next_hop_group_id;
+    sai_object_id_t next_hop_group_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
                                                                         gSwitchId,
                                                                         (uint32_t)nhg_attrs.size(),
@@ -1569,7 +1569,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     {
         SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                        nexthops.to_string().c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &next_hop_group_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

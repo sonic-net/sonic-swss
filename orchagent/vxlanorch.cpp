@@ -137,7 +137,7 @@ create_tunnel_map(MAP_T map_t)
 
     tunnel_map_attrs.push_back(attr);
 
-    sai_object_id_t tunnel_map_id;
+    sai_object_id_t tunnel_map_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_tunnel_api->create_tunnel_map(
                                 &tunnel_map_id,
                                 gSwitchId,
@@ -146,7 +146,7 @@ create_tunnel_map(MAP_T map_t)
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &tunnel_map_id);
         if (handle_status != task_success)
         {
             SWSS_LOG_ERROR("Can't create tunnel map object");
@@ -181,7 +181,7 @@ static sai_object_id_t create_tunnel_map_entry(
     )
 {
     sai_attribute_t attr;
-    sai_object_id_t tunnel_map_entry_id;
+    sai_object_id_t tunnel_map_entry_id = SAI_NULL_OBJECT_ID;
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
@@ -214,7 +214,7 @@ static sai_object_id_t create_tunnel_map_entry(
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &tunnel_map_entry_id);
         if (handle_status != task_success)
         {
             SWSS_LOG_ERROR("Can't create a tunnel map entry object");
@@ -393,7 +393,7 @@ create_tunnel(
         tunnel_attrs.push_back(attr);
     }
 
-    sai_object_id_t tunnel_id;
+    sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_tunnel_api->create_tunnel(
                                 &tunnel_id,
                                 gSwitchId,
@@ -402,7 +402,7 @@ create_tunnel(
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &tunnel_id);
         if (handle_status != task_success)
         {
             SWSS_LOG_ERROR("Can't create a tunnel object");
@@ -478,7 +478,7 @@ create_tunnel_termination(
     attr.value.oid = tunnel_oid;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t term_table_id;
+    sai_object_id_t term_table_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(
                                 &term_table_id,
                                 gSwitchId,
@@ -487,7 +487,7 @@ create_tunnel_termination(
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &term_table_id);
         if (handle_status != task_success)
         {
             SWSS_LOG_ERROR("Can't create a tunnel term table object");
@@ -1441,7 +1441,7 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
     }
 
     auto tunnel_obj = getVxlanTunnel(tunnelName);
-    sai_object_id_t nh_id, tunnel_id = tunnel_obj->getTunnelId();
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID, tunnel_id = tunnel_obj->getTunnelId();
 
     if ((nh_id = tunnel_obj->getNextHop(ipAddr, macAddress, vni)) != SAI_NULL_OBJECT_ID)
     {
@@ -1466,7 +1466,7 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
     sai_status_t status = create_nexthop_tunnel(host_ip, vni, macptr, tunnel_id, &nh_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status, &nh_id);
         if (handle_status != task_success)
         {
             SWSS_LOG_ERROR("NH vxlan tunnel create failed for %s, ip %s, mac %s, vni %d",

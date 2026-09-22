@@ -528,7 +528,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status, &sai_object);
                 if (handle_status != task_process_status::task_success)
                 {
                     return handle_status;
@@ -803,7 +803,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status, &sai_object);
                 if (handle_status != task_process_status::task_success)
                 {
                     return handle_status;

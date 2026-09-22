@@ -39,7 +39,7 @@ class DashHaOrch;
 
 struct EniEntry
 {
-    sai_object_id_t eni_id;
+    sai_object_id_t eni_id = SAI_NULL_OBJECT_ID;
     dash::eni::Eni metadata;
     sai_object_id_t getOid() const { return eni_id; }
 };

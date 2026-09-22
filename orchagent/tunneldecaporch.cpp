@@ -734,7 +734,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     // adding tunnel attributes to array and writing to ASIC_DB
     sai_attribute_t attr;
     vector<sai_attribute_t> tunnel_attrs;
-    sai_object_id_t overlayIfId;
+    sai_object_id_t overlayIfId = SAI_NULL_OBJECT_ID;
 
     // create the overlay router interface to create a LOOPBACK type router interface (decap)
     vector<sai_attribute_t> overlay_intf_attrs;
@@ -756,7 +756,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status, &overlayIfId);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -847,12 +847,12 @@ bool TunnelDecapOrch::addDecapTunnel(
     }
 
     // write attributes to ASIC_DB
-    sai_object_id_t tunnel_id;
+    sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
     status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel");
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &tunnel_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -977,12 +977,12 @@ bool TunnelDecapOrch::addDecapTunnelTermEntry(
     }
 
     // create the tunnel table entry
-    sai_object_id_t tunnel_term_table_entry_id;
+    sai_object_id_t tunnel_term_table_entry_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel decap term entry %s.", dst_ip.to_string().c_str());
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status, &tunnel_term_table_entry_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
