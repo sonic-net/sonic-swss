@@ -345,6 +345,70 @@ class TestVxlan(object):
             delete_entry_tbl(config_db, "VXLAN_TUNNEL", tunnel_name)
             delete_entry_tbl(config_db, "VLAN", vlan_name)
 
+    def test_restore_rejects_invalid_tunnel_source_address(self, dvs, testlog):
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        tunnel_name = "tunnel_restore_invalid"
+        map_name = "{}:entry".format(tunnel_name)
+        vlan_name = "Vlan60"
+        vxlan_device = "{}-60".format(tunnel_name)
+        warm_restart_table = swsscommon.Table(state_db, "WARM_RESTART_ENABLE_TABLE")
+        had_warm_restart, previous_warm_restart = warm_restart_table.get("swss")
+        warm_restart_state_table = swsscommon.Table(state_db, "WARM_RESTART_TABLE")
+        had_vlanmgrd_state, previous_vlanmgrd_state = warm_restart_state_table.get("vlanmgrd")
+        marker = dvs.add_log_marker()
+
+        try:
+            create_entry_tbl(
+                app_db,
+                "VXLAN_TUNNEL_TABLE", ':', tunnel_name,
+                [("src_ip", "invalid_address")],
+            )
+            create_entry_tbl(
+                app_db,
+                "VXLAN_TUNNEL_MAP_TABLE", ':', map_name,
+                [("vni", "860"), ("vlan", vlan_name)],
+            )
+            warm_restart_table.set(
+                "swss", swsscommon.FieldValuePairs([("enable", "true")])
+            )
+            warm_restart_state_table.set(
+                "vlanmgrd", swsscommon.FieldValuePairs([("state", "reconciled")])
+            )
+
+            status, output = dvs.runcmd(["systemctl", "restart", "vxlanmgrd"])
+            assert status == 0, output
+
+            def restore_rejection_was_logged():
+                _, output = dvs.runcmd([
+                    "sh", "-c",
+                    "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | "
+                    "grep -c 'Rejecting VXLAN netdevice for tunnel {}'".format(
+                        marker, tunnel_name
+                    ),
+                ])
+                return int(output.strip()) >= 1, output
+
+            wait_for_result(
+                restore_rejection_was_logged,
+                failure_message="vxlanmgrd restore did not reject {}".format(map_name),
+            )
+
+            status, _ = dvs.runcmd(["ip", "link", "show", vxlan_device])
+            assert status != 0
+        finally:
+            delete_entry_tbl(app_db, "VXLAN_TUNNEL_MAP_TABLE", map_name)
+            delete_entry_tbl(app_db, "VXLAN_TUNNEL_TABLE", tunnel_name)
+            if had_warm_restart:
+                warm_restart_table.set("swss", previous_warm_restart)
+            else:
+                warm_restart_table._del("swss")
+            if had_vlanmgrd_state:
+                warm_restart_state_table.set("vlanmgrd", previous_vlanmgrd_state)
+            else:
+                warm_restart_state_table._del("vlanmgrd")
+            dvs.runcmd(["systemctl", "restart", "vxlanmgrd"])
+
     def test_vxlan_term_orch(self, dvs, testlog):
         tunnel_map_ids       = set()
         tunnel_map_entry_ids = set()
