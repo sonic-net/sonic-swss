@@ -481,6 +481,30 @@ static const vector<sai_port_stat_t> llr_port_stat_ids =
     SAI_PORT_STAT_LLR_RX_REPLAY
 };
 
+// LLR operational TX/RX status port attributes, polled by syncd's flex-counter
+// engine (CounterType::PORT_LLR_ATTR) into COUNTERS_DB.
+static const vector<sai_port_attr_t> llr_port_attr_ids =
+{
+    static_cast<sai_port_attr_t>(SAI_PORT_ATTR_LLR_TX_STATUS),
+    static_cast<sai_port_attr_t>(SAI_PORT_ATTR_LLR_RX_STATUS),
+};
+
+// One-time probe: only ports whose SAI implements the LLR status attribute are
+// polled, so syncd never queries the status on unsupported ports.
+static bool verifyPortSupportsLlrStatus(sai_object_id_t port_id, const char* port_name)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_LLR_TX_STATUS;
+    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("LLR_ATTR: Port %s does not support LLR status attributes (status=%d); skipping",
+                        port_name, status);
+        return false;
+    }
+    return true;
+}
+
 static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
     [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
@@ -4360,6 +4384,12 @@ void PortsOrch::registerPort(Port &p)
     {
         auto llr_port_stats = generateCounterStats(llr_port_stat_ids, sai_serialize_port_stat);
         llr_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, llr_port_stats);
+
+        if (verifyPortSupportsLlrStatus(p.m_port_id, p.m_alias.c_str()))
+        {
+            auto llr_port_attrs = generateCounterStats(llr_port_attr_ids, sai_serialize_port_attr);
+            llr_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT_LLR_ATTR, llr_port_attrs);
+        }
     }
 
     //Add the Queue Counters
@@ -9772,6 +9802,14 @@ void PortsOrch::generateLlrPortCounterMap()
             continue;
         }
         llr_port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, llr_port_stats);
+
+        // Poll the LLR operational TX/RX status attributes in the same group,
+        // only on ports whose SAI implements them.
+        if (verifyPortSupportsLlrStatus(it.second.m_port_id, it.second.m_alias.c_str()))
+        {
+            auto llr_port_attrs = generateCounterStats(llr_port_attr_ids, sai_serialize_port_attr);
+            llr_port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT_LLR_ATTR, llr_port_attrs);
+        }
     }
 
     m_isLlrPortCounterMapGenerated = true;
