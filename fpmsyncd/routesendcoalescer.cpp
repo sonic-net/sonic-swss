@@ -108,13 +108,13 @@ void RouteSendCoalescer::start()
     m_thread = std::thread(&RouteSendCoalescer::sendLoop, this);
 }
 
-void RouteSendCoalescer::stop()
+bool RouteSendCoalescer::stop()
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_running)
         {
-            return;
+            return false;
         }
         m_stop = true;
     }
@@ -125,6 +125,7 @@ void RouteSendCoalescer::stop()
     }
     std::lock_guard<std::mutex> lock(m_mutex);
     m_running = false;
+    return true;
 }
 
 RouteSendCoalescer::CoalesceMap &RouteSendCoalescer::mapForLocked(TableId tbl)

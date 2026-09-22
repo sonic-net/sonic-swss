@@ -277,6 +277,13 @@ public:
         return m_warmStartHelper;
     }
 
+    /* Launch the coalescing send thread. Idempotent; no-op without ZMQ. */
+    void startRouteCoalescer();
+
+    /* Drain and retire the coalescing send thread, handing the route tables to
+     * warm-restart reconcile for the rest of the process. */
+    void retireRouteCoalescer();
+
 private:
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
@@ -436,8 +443,8 @@ private:
      * the table is not one of the two ZMQ-backed route tables. */
     bool zmqTableId(const ProducerStateTable & table, RouteSendCoalescer::TableId & id) const;
 
-    /* True when the steady-state write should funnel through the coalescing send
-     * thread (ZMQ enabled, coalescer constructed, and not mid warm-restart). */
+    /* True when the steady-state write should funnel through the coalescing
+     * send thread. */
     bool coalescerActive() const;
 
 };

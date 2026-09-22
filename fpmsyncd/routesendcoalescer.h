@@ -33,12 +33,13 @@ namespace swss {
  * re-convergence. Recovery rests on topology redundancy, which is why this
  * path ships on T1 and above only.
  *
- * The send thread is the sole writer of the two ZMQ tables it owns, by
- * construction rather than by handshake. ZmqProducerStateTable::set(vector<KCO>)
- * touches only the ZmqClient socket and AsyncDBUpdater's queue, each under its
- * own mutex, never the RedisPipeline the main thread uses for other tables.
- * Warm restart is the only other writer of these tables and is mutually
- * exclusive with the ZMQ route path (swss::route_perf_zmq_conflict).
+ * The send thread is the sole writer of the two ZMQ tables it owns.
+ * ZmqProducerStateTable::set(vector<KCO>) touches only the ZmqClient socket and
+ * AsyncDBUpdater's queue, each under its own mutex, never the RedisPipeline the
+ * main thread uses for other tables. Warm-restart reconcile writes the same
+ * tables on the main thread, so fpmsyncd retires the coalescer before opening
+ * the warm-restart window: stop() drains to empty and joins the send thread,
+ * transferring ownership.
  */
 class RouteSendCoalescer
 {
@@ -82,7 +83,7 @@ public:
     void upsertDel(TableId tbl, const std::string &key);
 
     void start();   // launch the send thread (idempotent)
-    void stop();     // signal + join the send thread (idempotent; drains best-effort)
+    bool stop();     // signal + join the send thread; false if it was not running
 
     // Drive exactly one fair drain cycle synchronously (no thread). Returns true
     // if it attempted a flush (map was non-empty). Exposed for deterministic tests.

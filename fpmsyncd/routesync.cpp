@@ -13,7 +13,6 @@
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
-#include <cassert>
 #include <string.h>
 #include <arpa/inet.h>
 #include <linux/pkt_cls.h>
@@ -208,7 +207,28 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
         }
         m_routeCoalescer = std::make_shared<RouteSendCoalescer>(
             m_routeTable.get(), m_label_routeTable.get(), m_zmqClient.get(), m_stateDb.get());
+    }
+}
+
+void RouteSync::startRouteCoalescer()
+{
+    if (m_routeCoalescer)
+    {
         m_routeCoalescer->start();
+    }
+}
+
+void RouteSync::retireRouteCoalescer()
+{
+    if (m_routeCoalescer)
+    {
+        // stop() drains to empty before joining, so no coalesced write can land
+        // after reconcile has decided the delta.
+        if (m_routeCoalescer->stop())
+        {
+            SWSS_LOG_NOTICE("route send coalescer drained and retired for warm restart");
+        }
+        m_routeCoalescer.reset();
     }
 }
 
@@ -229,9 +249,8 @@ bool RouteSync::zmqTableId(const ProducerStateTable & table, RouteSendCoalescer:
 
 bool RouteSync::coalescerActive() const
 {
-    // No warm-restart term: the ZMQ route path refuses to start when warm or
-    // fast restart is armed, so a reconcile cannot be in progress while the
-    // coalescer exists (swss::route_perf_zmq_conflict).
+    // Null once warm restart starts (retireRouteCoalescer), so reconcile owns
+    // the route tables for the rest of the process.
     return m_routeCoalescer != nullptr;
 }
 
@@ -272,9 +291,11 @@ void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
     }
     else
     {
-        // Warm restart implies the ZMQ route path is disabled, so this is the
-        // non-ZMQ wrapper layout: [0] is the DEL, [1] the SET.
-        m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[1]);
+        if(isNbZmqEnabled()) {
+            m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[0]);
+        } else {
+            m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVector()[1]);
+        }
     }
 }
 
@@ -3886,9 +3907,8 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
 
     if (m_warmStartHelper.inProgress())
     {
-        // Reconcile writes the route tables directly on this thread. Warm
-        // restart and the ZMQ route path are mutually exclusive, so the coalescer
-        // does not exist here and there is no send thread to race.
+        // Reconcile writes the route tables directly on this thread; the
+        // coalescer was retired when the warm-restart window opened.
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
     }

@@ -1,8 +1,6 @@
 #include <iostream>
 #include <fstream>
 #include <regex>
-#include <string>
-#include <vector>
 
 #include "dbconnector.h"
 #include "logger.h"
@@ -121,42 +119,6 @@ bool swss::get_feature_status(std::string feature, bool default_value)
     return *enabled == "true";
 }
 
-bool swss::warm_or_fast_restart_enabled(std::string &scope)
-{
-    // Warm restart is armed per docker and system-wide; fast-reboot arms its own
-    // key as well. Both dockers on the ZMQ route path are checked, so fpmsyncd
-    // and orchagent read the same answer.
-    static const std::vector<std::string> keys = {
-        std::string(STATE_WARM_RESTART_ENABLE_KEY_PREFIX) + "system",
-        std::string(STATE_WARM_RESTART_ENABLE_KEY_PREFIX) + "bgp",
-        std::string(STATE_WARM_RESTART_ENABLE_KEY_PREFIX) + "swss",
-        STATE_FAST_RESTART_ENABLE_KEY,
-    };
-
-    try
-    {
-        swss::DBConnector state_db("STATE_DB", 0);
-        for (const auto &key : keys)
-        {
-            auto value = state_db.hget(key, STATE_RESTART_ENABLE_FIELD);
-            if (value && *value == "true")
-            {
-                scope = key;
-                return true;
-            }
-        }
-    }
-    catch (const std::runtime_error &e)
-    {
-        // STATE_DB unreachable: report not-armed rather than blocking startup
-        // on a transport error.
-        SWSS_LOG_ERROR("Failed to read warm/fast restart state: %s", e.what());
-    }
-
-    scope.clear();
-    return false;
-}
-
 bool swss::get_route_perf_zmq_enabled()
 {
     std::shared_ptr<std::string> value = nullptr;
@@ -180,17 +142,6 @@ bool swss::get_route_perf_zmq_enabled()
 
     SWSS_LOG_NOTICE("swss_zmq status: %s", value->c_str());
     return *value == "enabled";
-}
-
-bool swss::route_perf_zmq_conflict(std::string &scope)
-{
-    scope.clear();
-    if (!get_route_perf_zmq_enabled())
-    {
-        return false;
-    }
-
-    return warm_or_fast_restart_enabled(scope);
 }
 
 std::shared_ptr<swss::ZmqClient> swss::create_route_perf_zmq_client()

@@ -202,15 +202,6 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
-
-    // Orch constructors below configure the ZMQ route path.
-    std::string restart_scope;
-    if (route_perf_zmq_conflict(restart_scope))
-    {
-        SWSS_LOG_ERROR(ROUTE_PERF_ZMQ_CONFLICT_MSG, restart_scope.c_str());
-        return false;
-    }
-
     gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";

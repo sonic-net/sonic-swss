@@ -21,13 +21,6 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
     DBConnector db("APPL_DB", 0);
 
-    std::string restartScope;
-    if (route_perf_zmq_conflict(restartScope))
-    {
-        SWSS_LOG_ERROR(ROUTE_PERF_ZMQ_CONFLICT_MSG, restartScope.c_str());
-        exit(EXIT_FAILURE);
-    }
-
     // When route_performance zmq is enabled, route events must be sent to orchagent via the ZMQ channel.
     std::shared_ptr<ZmqClient> zmqClient = create_route_perf_zmq_client();
     std::shared_ptr<ProducerStateTable> r = createProducerStateTable(&db, APP_ROUTE_TABLE_NAME, zmqClient);

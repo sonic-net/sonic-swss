@@ -570,11 +570,13 @@ TEST_F(RouteSendCoalescerTest, EmptyDrainIsNoop)
     EXPECT_EQ(m_label->setCalls(), 0u);
 }
 
-// 7. start()/stop() are idempotent and the thread joins cleanly; a pre-loaded
-//    map is drained by the send thread before stop returns.
+// 7. start()/stop() are idempotent and the thread joins cleanly. stop() reports
+//    whether it drained a running thread and leaves the map empty, which is the
+//    guarantee retireRouteCoalescer() relies on at warm-restart start.
 TEST_F(RouteSendCoalescerTest, ThreadStartStopDrains)
 {
     auto co = makeCoalescer(baseConfig());
+    EXPECT_FALSE(co->stop()); // never started
     co->upsertSet(RouteSendCoalescer::TableId::Route, "7.7.7.0/24", nh("1"));
     co->start();
     co->start(); // idempotent
@@ -584,9 +586,12 @@ TEST_F(RouteSendCoalescerTest, ThreadStartStopDrains)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     EXPECT_EQ(co->mapDepth(), 0u);
-    co->stop();
-    co->stop(); // idempotent
-    EXPECT_GE(m_route->deliveredRows(), 1u);
+    // Queue one more and stop without waiting: stop() must drain it before joining.
+    co->upsertSet(RouteSendCoalescer::TableId::Route, "7.7.8.0/24", nh("1"));
+    EXPECT_TRUE(co->stop());
+    EXPECT_EQ(co->mapDepth(), 0u);
+    EXPECT_FALSE(co->stop()); // idempotent
+    EXPECT_GE(m_route->deliveredRows(), 2u);
 }
 
 // 8. The STATE_DB telemetry record carries the operator-readable schema --
