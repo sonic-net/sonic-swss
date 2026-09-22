@@ -2590,6 +2590,25 @@ namespace vnetorch_test
         checkStateDbRouteRemoved("Vnet15", "fd:8:10::32/128");
     }
 
+    TEST_F(VNetOrchTest, VnetDefaultBfdSharedNextHopGroupCleanup)
+    {
+        setVxlanTunnel("tunnel_shared_bfd", "9.9.9.9");
+        setVnet("VnetSharedBfd", "tunnel_shared_bfd", "10001", "");
+
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32", "9.1.0.1", "9.2.0.1");
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32", "9.1.0.1", "9.2.0.1");
+        ASSERT_TRUE(bfdSessionExists("9.2.0.1"));
+
+        // Default BFD is owned by the shared NHG, not by each route.
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32");
+        EXPECT_TRUE(bfdSessionExists("9.2.0.1"));
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.2.0.1"));
+
+        delVnet("VnetSharedBfd");
+        delVxlanTunnel("tunnel_shared_bfd");
+    }
+
     // BFD-monitored ECMP VNET route lifecycle -- the mock equivalent of
     // test_vnet_orch_9 (IPv4). With default BFD monitoring an endpoint only
     // joins the route's group while its monitor's BFD session is UP:
@@ -4276,6 +4295,28 @@ namespace vnetorch_test
         // 9.1.0.1 is a directly-connected local endpoint on Ethernet4 (/32).
         createL3Interface("Ethernet4", "9.1.0.1/32");
         addNeighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05");
+
+        // Recreating a local-only route must recreate its custom BFD session,
+        // even though the directly-connected next-hop group is reused.
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
+
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
 
         // Priority route: primary 9.1.0.1 (local), secondary 9.1.0.2 (remote),
         // custom_bfd monitoring with per-endpoint monitor timers.
