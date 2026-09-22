@@ -407,6 +407,39 @@ namespace neighorch_test
         EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count, initial_rif_ref_count);
     }
 
+    TEST_F(NeighOrchTest, BulkNextHopAlreadyExistsWithoutOidFails)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopSuccessWithoutOidFails)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_SUCCESS;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopPermanentFailureDoesNotCompleteEnable)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_FAILURE;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
+    }
+
     TEST_F(NeighOrchTest, MultiVlanUnableToRemoveNeighbor)
     {
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);

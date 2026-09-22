@@ -283,11 +283,17 @@ namespace mux_rollback_test
     {
         if (!IsPrefixBasedMuxNeighbor())
         {
-            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            std::vector<sai_object_id_t> returned_ids{0x101};
+            std::vector<sai_status_t> returned_statuses{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(1);
             EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+                .WillOnce(DoAll(
+                    SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                    SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                    Return(SAI_STATUS_FAILURE)));
         }
-        SetAndAssertMuxState(ACTIVE_STATE);
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(IsPrefixBasedMuxNeighbor() ? ACTIVE_STATE : STANDBY_STATE, m_MuxCable->getState());
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyNextHopNotFound)

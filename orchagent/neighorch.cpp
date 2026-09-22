@@ -531,9 +531,15 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
         sai_status_t bulker_status = ctx.nexthop_status;
         if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
-                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
+            SWSS_LOG_ERROR("Next hop %s on %s already exists but no usable object ID was returned",
+                           nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return false;
+        }
+        if (bulker_status == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Next hop %s on %s reported success without a usable object ID",
+                           nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return false;
         }
         if (bulker_status == SAI_STATUS_NOT_EXECUTED)
         {
@@ -543,11 +549,8 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
         }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
+        return false;
     }
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
