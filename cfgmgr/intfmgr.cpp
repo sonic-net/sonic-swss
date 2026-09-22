@@ -1,4 +1,7 @@
 #include <string.h>
+#include <arpa/inet.h>
+#include <algorithm>
+#include <cctype>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -30,6 +33,53 @@ using namespace swss;
 #define DEFAULT_MTU_STR 9100
 extern MacAddress gMacAddress;
 extern MacAddress gSagMacAddress;
+
+namespace
+{
+
+bool isStrictIpPrefix(const string &prefix)
+{
+    const auto separator = prefix.find('/');
+    if (separator == string::npos || separator == 0 ||
+        separator == prefix.size() - 1 ||
+        prefix.find('/', separator + 1) != string::npos)
+    {
+        return false;
+    }
+
+    const string address = prefix.substr(0, separator);
+    const string length = prefix.substr(separator + 1);
+    if (!all_of(length.begin(), length.end(), [](unsigned char c) { return isdigit(c); }))
+    {
+        return false;
+    }
+
+    unsigned int maxLength;
+    struct in6_addr addressBuffer;
+    if (inet_pton(AF_INET, address.c_str(), &addressBuffer) == 1)
+    {
+        maxLength = 32;
+    }
+    else if (inet_pton(AF_INET6, address.c_str(), &addressBuffer) == 1)
+    {
+        maxLength = 128;
+    }
+    else
+    {
+        return false;
+    }
+
+    try
+    {
+        return stoul(length) <= maxLength;
+    }
+    catch (const exception &)
+    {
+        return false;
+    }
+}
+
+}
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -1256,6 +1306,12 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
 
     IpPrefix ip_prefix;
+    if (!isStrictIpPrefix(keys[1]))
+    {
+        SWSS_LOG_ERROR("Invalid interface prefix for %s: %s", alias.c_str(), keys[1].c_str());
+        return true;
+    }
+
     try
     {
         ip_prefix = IpPrefix(keys[1]);

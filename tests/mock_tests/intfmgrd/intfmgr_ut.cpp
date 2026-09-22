@@ -115,7 +115,15 @@ namespace intfmgr_ut
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         mockCallArgs.clear();
 
-        EXPECT_TRUE(intfmgr.doIntfAddrTask({"Ethernet0", "not-a-prefix"}, {}, SET_COMMAND));
+        const std::vector<std::string> invalidPrefixes = {
+            "not-a-prefix",
+            "192.0.2.1/24junk",
+            "/24",
+        };
+        for (const auto &prefix : invalidPrefixes)
+        {
+            EXPECT_TRUE(intfmgr.doIntfAddrTask({"Ethernet0", prefix}, {}, SET_COMMAND));
+        }
         EXPECT_TRUE(mockCallArgs.empty());
     }
 
