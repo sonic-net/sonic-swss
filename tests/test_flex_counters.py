@@ -768,6 +768,45 @@ class TestFlexCounters(TestFlexCountersBase):
         self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_enable)
         assert(counter_oid)
 
+    def test_llr_port_status_attr(self, dvs):
+        """
+        Verify the LLR operational TX/RX status port attributes are polled by
+        the LLR flex-counter group into COUNTERS_DB.
+
+        Test steps:
+            1. Enable the LLR port flex counter group.
+            2. Resolve Ethernet0's counter OID from the name map.
+            3. Wait for COUNTERS:<oid> to carry SAI_PORT_ATTR_LLR_TX_STATUS and
+               SAI_PORT_ATTR_LLR_RX_STATUS. On the virtual switch the default
+               value is the OFF enum.
+
+        Args:
+            dvs (object): virtual switch object
+        """
+        counter_type = 'llr_port_counter'
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0')
+        assert counter_oid, "No COUNTERS_PORT_NAME_MAP entry for Ethernet0"
+
+        tx_status = None
+        rx_status = None
+        for _ in range(NUMBER_OF_RETRIES):
+            tx_status = self.counters_db.db_connection.hget(
+                "COUNTERS:" + counter_oid, "SAI_PORT_ATTR_LLR_TX_STATUS")
+            rx_status = self.counters_db.db_connection.hget(
+                "COUNTERS:" + counter_oid, "SAI_PORT_ATTR_LLR_RX_STATUS")
+            if tx_status and rx_status:
+                break
+            time.sleep(1)
+
+        assert tx_status == "SAI_PORT_LLR_TX_STATUS_OFF", \
+            "Unexpected LLR TX status: {}".format(tx_status)
+        assert rx_status == "SAI_PORT_LLR_RX_STATUS_OFF", \
+            "Unexpected LLR RX status: {}".format(rx_status)
+
     def test_create_remove_buffer_queue_counter(self, dvs):
         """
         Test steps:

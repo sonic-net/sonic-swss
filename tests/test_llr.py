@@ -21,10 +21,11 @@ INTF4 = "Ethernet4"
 
 class TestLlr:
     def setup_db(self, dvs):
-        self.app_db    = dvs.get_app_db()
-        self.config_db = dvs.get_config_db()
-        self.state_db  = dvs.get_state_db()
-        self.asic_db   = dvs.get_asic_db()
+        self.app_db      = dvs.get_app_db()
+        self.config_db   = dvs.get_config_db()
+        self.state_db    = dvs.get_state_db()
+        self.asic_db     = dvs.get_asic_db()
+        self.counters_db = dvs.get_counters_db()
 
     def set_cable_length(self, port, cable_len):
         self.config_db.update_entry("CABLE_LENGTH", "AZURE", {port: cable_len})
@@ -121,6 +122,52 @@ class TestLlr:
             except Exception:
                 # Best-effort restore; port entry may not exist.
                 pass
+
+    def test_hw_status_polled_to_counters_db(self, dvs, testlog):
+        """
+        1. Bring LLR up on INTF0 (cable_length + both directions enabled) so the
+           port is published and LLR modes are set in the ASIC.
+        2. Enable the LLR flex-counter group.
+        3. Verify the LLR operational TX/RX status attributes are polled into
+           COUNTERS_DB (default OFF enum on the virtual switch).
+        """
+        # Bring LLR up on INTF0.
+        self.set_cable_length(INTF0, CABLE)
+        self.set_llr_port(INTF0, llr_local="enabled", llr_remote="enabled")
+        self.app_db.wait_for_entry("LLR_PORT_TABLE", INTF0)
+
+        # Enable the LLR flex-counter group so syncd polls the status attrs.
+        self.config_db.update_entry(
+            "FLEX_COUNTER_TABLE", "LLR", {"FLEX_COUNTER_STATUS": "enable"})
+
+        oid = None
+        for _ in range(30):
+            oid = self.counters_db.db_connection.hget(
+                "COUNTERS_PORT_NAME_MAP", INTF0)
+            if oid:
+                break
+            time.sleep(1)
+        assert oid, "No COUNTERS_PORT_NAME_MAP entry for {}".format(INTF0)
+
+        tx_status = None
+        rx_status = None
+        for _ in range(30):
+            tx_status = self.counters_db.db_connection.hget(
+                "COUNTERS:" + oid, "SAI_PORT_ATTR_LLR_TX_STATUS")
+            rx_status = self.counters_db.db_connection.hget(
+                "COUNTERS:" + oid, "SAI_PORT_ATTR_LLR_RX_STATUS")
+            if tx_status and rx_status:
+                break
+            time.sleep(1)
+
+        assert tx_status == "SAI_PORT_LLR_TX_STATUS_OFF", \
+            "Unexpected LLR TX status in COUNTERS_DB: {}".format(tx_status)
+        assert rx_status == "SAI_PORT_LLR_RX_STATUS_OFF", \
+            "Unexpected LLR RX status in COUNTERS_DB: {}".format(rx_status)
+
+        # Cleanup flex-counter group so it does not leak into other tests.
+        self.config_db.update_entry(
+            "FLEX_COUNTER_TABLE", "LLR", {"FLEX_COUNTER_STATUS": "disable"})
 
     def test_capability_written_to_state_db(self, dvs, testlog):
         """
