@@ -766,10 +766,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_phy_serdes_attr_manager(PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager(true,
-<<<<<<< HEAD
-                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-=======
                 GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 GB_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_phy_attr_manager(true,
@@ -778,7 +774,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         gb_port_phy_serdes_attr_manager(true,
                 PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
->>>>>>> fdf0a890 (Support new gearbox port phy attributes)
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -11280,11 +11275,6 @@ bool PortsOrch::initGearboxPort(Port &port)
             fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
             m_gbcounterTable->set("", fields);
 
-<<<<<<< HEAD
-            /* Set serdes tx taps on system and line side */
-            map<sai_port_serdes_attr_t, SerdesValue> serdes_attr;
-            typedef pair<sai_port_serdes_attr_t, SerdesValue> serdes_attr_pair;
-=======
             /* Create PORT_SERDES objects for system/line (optional TX FIR attrs).
              * Always create even when gearbox config has no tx_firs — FlexCounter
              * PORT_PHY_SERDES_ATTR (RX_FFE/RX_VGA) requires a serdes OID mapped
@@ -11292,7 +11282,6 @@ bool PortsOrch::initGearboxPort(Port &port)
              */
             map<sai_attr_id_t, SerdesValue> serdes_attr;
             typedef pair<sai_attr_id_t, SerdesValue> serdes_attr_pair;
->>>>>>> fdf0a890 (Support new gearbox port phy attributes)
             vector<uint32_t> attr_val;
             for (auto pair: tx_fir_strings_system_side) {
                 if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {

@@ -42,13 +42,8 @@ namespace portphyattr_test
         _Inout_ sai_attribute_t *attr_list)
     {
         if ((attr_list[0].id == SAI_PORT_ATTR_RX_SIGNAL_DETECT
-<<<<<<< HEAD
-             || attr_list[0].id == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK)
-            && attr_list[0].value.portlanelatchstatuslist.count == 0)
-=======
              || attr_list[0].id == SAI_PORT_ATTR_RX_LOCK_STATUS
              || attr_list[0].id == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK))
->>>>>>> fdf0a890 (Support new gearbox port phy attributes)
         {
             g_phy_attr_queried_port_ids.insert(port_id);
             attr_list[0].value.portlanelatchstatuslist.count = 8;
