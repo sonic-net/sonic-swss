@@ -376,7 +376,7 @@ class TestVxlan(object):
                 "vlanmgrd", swsscommon.FieldValuePairs([("state", "reconciled")])
             )
 
-            status, output = dvs.runcmd(["systemctl", "restart", "vxlanmgrd"])
+            status, output = dvs.runcmd(["supervisorctl", "restart", "vxlanmgrd"])
             assert status == 0, output
 
             def restore_rejection_was_logged():
@@ -407,7 +407,7 @@ class TestVxlan(object):
                 warm_restart_state_table.set("vlanmgrd", previous_vlanmgrd_state)
             else:
                 warm_restart_state_table._del("vlanmgrd")
-            dvs.runcmd(["systemctl", "restart", "vxlanmgrd"])
+            dvs.runcmd(["supervisorctl", "restart", "vxlanmgrd"])
 
     def test_vxlan_term_orch(self, dvs, testlog):
         tunnel_map_ids       = set()
