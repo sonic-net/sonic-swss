@@ -167,6 +167,7 @@ public:
     bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    bool setVlanProxyArpFloodType(Port &vlan, bool enabled);
     void increasePortRefCount(const string &alias);
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);

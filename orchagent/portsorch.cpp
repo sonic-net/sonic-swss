@@ -7596,10 +7596,48 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_
     return true;
 }
 
+bool PortsOrch::setVlanProxyArpFloodType(Port &vlan, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    sai_vlan_flood_control_type_t flood_type =
+        enabled ? SAI_VLAN_FLOOD_CONTROL_TYPE_NONE : SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+
+    for (auto attr_id : { SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE,
+                          SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE })
+    {
+        sai_attribute_t attr;
+        attr.id = attr_id;
+        attr.value.s32 = flood_type;
+
+        sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set proxy-ARP flood attr %d on VLAN %s, rv:%d",
+                           attr_id, vlan.m_alias.c_str(), status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+
+    vlan.m_vlan_info.bc_flood_type = flood_type;
+    vlan.m_vlan_info.umc_flood_type = flood_type;
+    vlan.m_vlan_info.proxy_arp_flood = enabled;
+    m_portList[vlan.m_alias] = vlan;
+
+    SWSS_LOG_NOTICE("%s proxy-ARP BUM flood suppression on VLAN %s",
+                    enabled ? "Enabled" : "Disabled", vlan.m_alias.c_str());
+    return true;
+}
+
 bool PortsOrch::setVlanMacLearn(Port &vlan, const string &mac_learning)
 {
     SWSS_LOG_ENTER();
 
+    // Removing mac_learning from CONFIG_DB leaves the last value (no reset to default).
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_LEARN_DISABLE;
     attr.value.booldata = (mac_learning == "disabled");
@@ -7639,9 +7677,18 @@ bool PortsOrch::setVlanFloodControl(Port &vlan, const string &uuc_flood,
         return true;
     }
 
+    // Proxy ARP (routed through setVlanProxyArpFloodType) owns BC/UMC flood; don't overwrite it.
+    if (vlan.m_vlan_info.proxy_arp_flood)
+    {
+        SWSS_LOG_WARN("VLAN %s has proxy ARP flood suppression; skipping per-VLAN BUM flood config",
+                      vlan.m_alias.c_str());
+        return true;
+    }
+
     auto applyFlood = [&](const string &value, sai_vlan_attr_t attr_id,
                           sai_vlan_flood_control_type_t &field) -> bool
     {
+        // Empty value = field absent from CONFIG_DB: leave flood type unchanged (no reset to default).
         if (value.empty())
         {
             return true;
@@ -7665,6 +7712,8 @@ bool PortsOrch::setVlanFloodControl(Port &vlan, const string &uuc_flood,
             {
                 return parseHandleSaiStatusFailure(handle_status);
             }
+            // Failure handled as retryable; do not cache a value the ASIC may not have.
+            return true;
         }
 
         field = flood_type;
