@@ -42,8 +42,13 @@ namespace portphyattr_test
         _Inout_ sai_attribute_t *attr_list)
     {
         if ((attr_list[0].id == SAI_PORT_ATTR_RX_SIGNAL_DETECT
+<<<<<<< HEAD
              || attr_list[0].id == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK)
             && attr_list[0].value.portlanelatchstatuslist.count == 0)
+=======
+             || attr_list[0].id == SAI_PORT_ATTR_RX_LOCK_STATUS
+             || attr_list[0].id == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK))
+>>>>>>> fdf0a890 (Support new gearbox port phy attributes)
         {
             g_phy_attr_queried_port_ids.insert(port_id);
             attr_list[0].value.portlanelatchstatuslist.count = 8;
@@ -55,6 +60,30 @@ namespace portphyattr_test
             g_phy_attr_queried_port_ids.insert(port_id);
             attr_list[0].value.portsnrlist.count = 8;
             return SAI_STATUS_BUFFER_OVERFLOW;
+        }
+        else if (attr_list[0].id == SAI_PORT_ATTR_PAM4_EYE_VALUES)
+        {
+            g_phy_attr_queried_port_ids.insert(port_id);
+            if (attr_list[0].value.portpam4eyevalues.count == 0)
+            {
+                attr_list[0].value.portpam4eyevalues.count = 8;
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+            if (failing_attrs.count(static_cast<sai_port_attr_t>(attr_list[0].id)))
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
+        else if (attr_list[0].id == SAI_PORT_ATTR_ERROR_STATUS
+                 || attr_list[0].id == SAI_PORT_ATTR_PCS_RX_LINK_STATUS)
+        {
+            g_phy_attr_queried_port_ids.insert(port_id);
+            if (failing_attrs.count(static_cast<sai_port_attr_t>(attr_list[0].id)))
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            return SAI_STATUS_SUCCESS;
         }
         else if (attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
         {

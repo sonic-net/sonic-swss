@@ -374,7 +374,8 @@ namespace portphyserdesattr_test
         for (const auto& attr : gPortsOrch->m_supported_phy_serdes_attrs)
         {
             EXPECT_TRUE(attr == SAI_PORT_SERDES_ATTR_RX_VGA ||
-                       attr == SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST);
+                       attr == SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST ||
+                       attr == SAI_PORT_SERDES_ATTR_RX_FFE_TAPS_LIST);
         }
     }
 
