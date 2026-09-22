@@ -495,6 +495,55 @@ namespace saihelper_test
         _unhook_sai_apis();
     }
 
+    TEST_F(SaihelperTest, TestCreateAlreadyExistsObjectId) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        // Entry-keyed create (no object id)
+        status = handleSaiCreateStatus(SAI_API_ROUTE, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        // Object-id create with a valid object id
+        sai_object_id_t oid = 0x1234;
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_ITEM_ALREADY_EXISTS, &oid);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        // Object-id create with a null object id
+        oid = SAI_NULL_OBJECT_ID;
+        status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, SAI_STATUS_ITEM_ALREADY_EXISTS, &oid);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 1);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_EQ(status, task_failed);
+
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_SUCCESS, &oid);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_ITEM_NOT_FOUND, &oid);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_TABLE_FULL, &oid);
+        ASSERT_EQ(status, task_need_retry);
+
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_INSUFFICIENT_RESOURCES, &oid);
+        ASSERT_EQ(status, task_need_retry);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 1);
+
+        status = handleSaiCreateStatus(SAI_API_VLAN, SAI_STATUS_FAILURE, &oid);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 2);
+        ASSERT_EQ(status, task_failed);
+
+        _unhook_sai_apis();
+    }
+
     TEST_F(SaihelperTest, TestCreateSetResourceFailure) {
         _hook_sai_apis();
         initSwitchOrch();
