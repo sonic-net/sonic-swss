@@ -219,8 +219,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             return task_process_status::task_failed;
         }
 
-        sai_object_id_t policer_id;
-        // Create a new policer
+        sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
         if (!update)
         {
             sai_status_t status = sai_policer_api->create_policer(
@@ -229,9 +228,10 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             {
                 SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
                         storm_policer_name.c_str(), status);
-                if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, status, &policer_id);
+                if (handle_status != task_success)
                 {
-                    return task_process_status::task_need_retry;
+                    return handle_status;
                 }
             }
 
@@ -494,16 +494,23 @@ void PolicerOrch::doTask(Consumer &consumer)
                             missing mandatory fields", key.c_str());
                 }
 
-                sai_object_id_t policer_id;
+                sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
                 sai_status_t status = sai_policer_api->create_policer(
                     &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
                             key.c_str(), status);
-                    if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, status, &policer_id);
+                    if (handle_status == task_need_retry)
                     {
                         it++;
+                        continue;
+                    }
+                    if (handle_status != task_success)
+                    {
+                        // Non-retryable failure: drop the task without recording a policer.
+                        it = consumer.m_toSync.erase(it);
                         continue;
                     }
                 }

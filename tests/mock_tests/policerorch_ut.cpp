@@ -177,4 +177,30 @@ namespace policerorch_test
         doPolicerConfig(policer, DEL_COMMAND, {});
         EXPECT_EQ(m_policerMock->removed_oid, kPolicerOid);
     }
+
+    TEST_F(PolicerOrchTest, CreatePolicer_OnPermanentFailure_ErasesTaskWithoutRecordingOid)
+    {
+        const string policer_name = "POLICER_FAIL";
+
+        EXPECT_CALL(*mock_sai_policer_api, create_policer)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        doPolicerConfig(policer_name, SET_COMMAND,
+                        {
+                            {"meter_type", "packets"},
+                            {"mode", "sr_tcm"},
+                            {"cir", "600"},
+                            {"cbs", "600"},
+                            {"red_packet_action", "drop"},
+                        });
+
+        auto *policer_table_consumer = dynamic_cast<Consumer *>(
+            static_cast<Orch *>(gPolicerOrch)->getExecutor(CFG_POLICER_TABLE_NAME));
+        ASSERT_NE(policer_table_consumer, nullptr);
+        EXPECT_TRUE(policer_table_consumer->m_toSync.empty());
+        EXPECT_FALSE(gPolicerOrch->policerExists(policer_name));
+
+        sai_object_id_t recorded_policer_oid = SAI_NULL_OBJECT_ID;
+        EXPECT_FALSE(gPolicerOrch->getPolicerOid(policer_name, recorded_policer_oid));
+    }
 }

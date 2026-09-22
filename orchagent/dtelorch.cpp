@@ -40,7 +40,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
         if (handleSaiCreateStatus(SAI_API_DTEL, status, &dtelId) != task_success)
         {
-            return;
+            throw runtime_error("DTelOrch initialization failure (failed to create dtel object)");
         }
     }
 

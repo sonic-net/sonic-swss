@@ -248,4 +248,78 @@ namespace hftelorch_test
         auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
         orch.reset();
     }
+
+    namespace tam_create_failure_ut
+    {
+        sai_tam_api_t *original_sai_tam_api = nullptr;
+        sai_tam_api_t stub_sai_tam_api{};
+        unsigned removed_transport_count = 0;
+
+        sai_status_t stub_create_tam_collector_already_exists(
+            _Out_ sai_object_id_t *,
+            _In_ sai_object_id_t,
+            _In_ uint32_t,
+            _In_ const sai_attribute_t *)
+        {
+            return SAI_STATUS_ITEM_ALREADY_EXISTS;
+        }
+
+        sai_status_t count_and_forward_remove_tam_transport(_In_ sai_object_id_t tam_transport_id)
+        {
+            removed_transport_count++;
+            return original_sai_tam_api->remove_tam_transport(tam_transport_id);
+        }
+
+        void installSaiTamApiStubs()
+        {
+            stub_sai_tam_api = *sai_tam_api;
+            original_sai_tam_api = sai_tam_api;
+            stub_sai_tam_api.create_tam_collector = stub_create_tam_collector_already_exists;
+            stub_sai_tam_api.remove_tam_transport = count_and_forward_remove_tam_transport;
+            sai_tam_api = &stub_sai_tam_api;
+            removed_transport_count = 0;
+        }
+
+        void restoreSaiTamApi()
+        {
+            sai_tam_api = original_sai_tam_api;
+            original_sai_tam_api = nullptr;
+        }
+    }
+
+    class HFTelOrchTamCreateFailureTest : public HFTelOrchShutdownTest
+    {
+    protected:
+        void SetUp() override
+        {
+            HFTelOrchShutdownTest::SetUp();
+            if (HasFatalFailure())
+            {
+                return;
+            }
+            tam_create_failure_ut::installSaiTamApiStubs();
+        }
+
+        void TearDown() override
+        {
+            tam_create_failure_ut::restoreSaiTamApi();
+            HFTelOrchShutdownTest::TearDown();
+        }
+    };
+
+    TEST_F(HFTelOrchTamCreateFailureTest, HFTelOrchConstructor_OnTamCollectorFailure_ThrowsAndCleansUpTransport)
+    {
+        const vector<string> telemetry_config_table_names = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME,
+        };
+
+        EXPECT_THROW(
+            {
+                HFTelOrch orch_under_test(m_config_db.get(), m_state_db.get(), telemetry_config_table_names);
+                (void)orch_under_test;
+            },
+            runtime_error);
+        EXPECT_EQ(tam_create_failure_ut::removed_transport_count, 1u);
+    }
 }

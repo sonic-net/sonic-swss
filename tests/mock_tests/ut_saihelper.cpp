@@ -3,6 +3,8 @@
 
 #include <saiicmpecho.h>
 
+extern sai_dash_acl_api_t* sai_dash_acl_api;
+
 namespace ut_helper
 {
     map<string, string> gProfileMap;
@@ -113,6 +115,7 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI, (void**)&sai_dash_trusted_vni_api);
         sai_api_query(SAI_API_STP, (void**)&sai_stp_api);
         sai_api_query((sai_api_t)SAI_API_DASH_METER, (void**)&sai_dash_meter_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_ACL, (void**)&sai_dash_acl_api);
         return SAI_STATUS_SUCCESS;
     }
 
@@ -154,6 +157,7 @@ namespace ut_helper
         sai_dash_flow_api = nullptr;
         sai_stp_api = nullptr;
         sai_dash_meter_api = nullptr;
+        sai_dash_acl_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
     }

@@ -650,7 +650,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
         return *itr->second;
     }
 
-    sai_object_id_t sai_object;
+    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
 
@@ -679,13 +679,19 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_report(
-            &sai_object,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_report(
+                &sai_object,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &sai_object) != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM report object for %s",
+                       sai_serialize_object_type(object_type).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     m_sai_tam_report_objs[object_type] = move(
         sai_guard_t(
@@ -711,7 +717,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
         return *itr->second;
     }
 
-    sai_object_id_t sai_object;
+    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
 
@@ -752,15 +758,25 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_REPORT_ID;
     attr.value.oid = getTAMReportObjID(object_type);
+    if (attr.value.oid == SAI_NULL_OBJECT_ID)
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_tel_type(
-            &sai_object,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_tel_type(
+                &sai_object,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &sai_object) != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM telemetry type object for %s",
+                       sai_serialize_object_type(object_type).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     m_sai_tam_tel_type_objs[object_type] = move(
         sai_guard_t(
@@ -797,7 +813,7 @@ void HFTelProfile::initTelemetry()
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t sai_object;
+    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
     sai_object_id_t sai_tam_collector_obj = m_sai_tam_collector_obj;
@@ -808,12 +824,16 @@ void HFTelProfile::initTelemetry()
     attr.value.objlist.list = &sai_tam_collector_obj;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_telemetry(
-            &sai_object,
-            gSwitchId, static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_telemetry(
+                &sai_object,
+                gSwitchId, static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &sai_object) != task_success)
+    {
+        SWSS_LOG_THROW("Failed to create TAM telemetry object for profile %s", m_profile_name.c_str());
+    }
 
     HFTELUTILS_ADD_SAI_OBJECT_LIST(
         m_sai_tam_obj,
@@ -862,6 +882,10 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE;
     attr.value.oid = getTAMTelTypeObjID(object_type);
+    if (attr.value.oid == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID;
@@ -880,15 +904,23 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attr.value.s32 = HFTelUtils::get_stats_mode(object_type, stat_id);
     attrs.push_back(attr);
 
-    sai_object_id_t counter_id;
+    sai_object_id_t counter_id = SAI_NULL_OBJECT_ID;
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_counter_subscription(
-            &counter_id,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_counter_subscription(
+                &counter_id,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &counter_id) != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM counter subscription for %s object %s stat %u",
+                       sai_serialize_object_type(object_type).c_str(),
+                       sai_serialize_object_id(sai_obj).c_str(),
+                       static_cast<uint32_t>(stat_id));
+        return;
+    }
 
     m_sai_tam_counter_subscription_objs[object_type][sai_obj][stat_id] = move(
         sai_guard_t(

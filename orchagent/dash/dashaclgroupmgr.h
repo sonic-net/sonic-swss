@@ -114,10 +114,10 @@ public:
 
 private:
     void init(DashAclGroup& group);
-    void create(DashAclGroup& group);
+    task_process_status create(DashAclGroup& group);
     void remove(DashAclGroup& group);
 
-    DashAclRuleInfo createRule(DashAclGroup& group, DashAclRule& rule);
+    task_process_status createRule(DashAclGroup& group, DashAclRule& rule);
 
     void bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
     void unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
