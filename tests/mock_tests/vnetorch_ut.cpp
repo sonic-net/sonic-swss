@@ -15,6 +15,7 @@
 #include <cstring>
 #include <deque>
 #include <set>
+#include <unistd.h>
 
 EXTERN_MOCK_FNS
 
@@ -262,6 +263,14 @@ namespace vnetorch_test
         // create -- used by the duplicate-route regression test to prove the
         // conflicting create actually hit an ITEM_ALREADY_EXISTS/NOT_EXECUTED.
         vector<sai_status_t> lastBulkCreateStatuses;
+        // Statuses the non-bulk create_route_entry returned. VNetRouteOrch's own
+        // add_route() uses that call, so this is what proves the connected-route
+        // replay really collided with an existing entry.
+        vector<sai_status_t> lastCreateStatuses;
+        // In-place repoints and the last NEXT_HOP_ID written, which distinguish a
+        // converge-onto-existing from a plain create.
+        int setAttrCount = 0;
+        sai_object_id_t lastSetNextHop = SAI_NULL_OBJECT_ID;
     };
 
     // Captured SAI BFD sessions gBfdOrch programs for a monitored VNET route's
@@ -305,6 +314,8 @@ namespace vnetorch_test
         if (g_activeRouteCaptures && e && attr &&
             attr->id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
         {
+            g_activeRouteCaptures->setAttrCount++;
+            g_activeRouteCaptures->lastSetNextHop = attr->value.oid;
             for (auto &r : g_activeRouteCaptures->routes)
             {
                 if (r.vr == e->vr_id && saiIpPrefixEquals(r.dest, e->destination))
@@ -935,6 +946,7 @@ namespace vnetorch_test
                 .WillByDefault(Invoke([this](const sai_route_entry_t *e, uint32_t n,
                                              const sai_attribute_t *l) {
                     sai_status_t st = old_sai_route_api->create_route_entry(e, n, l);
+                    m_rt.lastCreateStatuses.push_back(st);
                     if (st == SAI_STATUS_SUCCESS)
                     {
                         RouteCaptures::Route r;
@@ -4812,5 +4824,121 @@ namespace vnetorch_test
         EXPECT_TRUE(removed);
 
         delVxlanTunnel("tunnel_ip2me");
+    }
+
+    // Stands in for the orchs that register interest in a VNET next hop. The
+    // observer-walk regression only needs an observer to be present.
+    class NullObserver : public Observer
+    {
+    public:
+        void update(SubjectType, void *) override {}
+    };
+
+    // The connected route for an interface assigned to a VNET is programmed by
+    // RouteOrch; IntfsOrch contributes only the ip2me host route. A config
+    // reload replays that same prefix to VNetRouteOrch as a subnet route -- a
+    // VNET_ROUTE carrying an ifname and no nexthop, so doRouteTask() takes the
+    // is_subnet path with nh_id set to the port's RIF. The CREATE then lands on
+    // a route libsaivs already holds and returns SAI_STATUS_ITEM_ALREADY_EXISTS,
+    // and add_route() has to converge onto the existing entry with a SET. Before
+    // the fix it logged "SAI failed to create route" and failed the task on
+    // every replay. The duplicate is real rather than injected: the route is
+    // programmed first and libsaivs rejects the second create.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteReplayConverges)
+    {
+        setVxlanTunnel("tunnel_replay", "40.40.40.40");
+        // scope=default keeps the VNET on gVirtualRouterId, which is the VR
+        // gRouteOrch programs the connected route into, so both writes target
+        // the same (VR, prefix) exactly as they do on a box.
+        setVnet("Vnet_replay", "tunnel_replay", "6000", "", false, "", "default");
+
+        createVnetL3Interface("Ethernet20", "Vnet_replay", "10.10.0.1/24");
+        addNeighbor("Ethernet20", "10.10.0.2", "00:01:02:03:04:05");
+
+        const sai_object_id_t rif = rifOf("Ethernet20");
+        ASSERT_NE(rif, SAI_NULL_OBJECT_ID);
+
+        // The connected route as fpmsyncd delivers it: IntfsOrch has no
+        // addSubnetRoute, so a VNET interface's prefix reaches the ASIC through
+        // gRouteOrch like any other route.
+        setRoute("10.10.0.0/24", "10.10.0.2", "Ethernet20");
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+        m_rt.lastSetNextHop = SAI_NULL_OBJECT_ID;
+
+        // The replay: the prefix that is already programmed, with no nexthop.
+        setVnetLocalRoute("Vnet_replay", "10.10.0.0/24", "Ethernet20", "");
+
+        bool sawDuplicate = false;
+        for (auto s : m_rt.lastCreateStatuses)
+            if (s == SAI_STATUS_ITEM_ALREADY_EXISTS) sawDuplicate = true;
+        ASSERT_TRUE(sawDuplicate)
+            << "the replayed create did not collide with the connected route, so "
+               "this test is not exercising the regression";
+
+        EXPECT_GE(m_rt.setAttrCount, 1)
+            << "replay did not converge onto the already programmed route";
+        EXPECT_EQ(m_rt.lastSetNextHop, rif);
+    }
+
+    // The plain create path still has to work: a subnet route for a prefix no
+    // one else owns is created outright, with no in-place repoint.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteFirstCreateHasNoUpdate)
+    {
+        setVxlanTunnel("tunnel_first", "41.41.41.41");
+        setVnet("Vnet_first", "tunnel_first", "6001", "");
+        createVnetL3Interface("Ethernet20", "Vnet_first", "10.10.0.8/31");
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+
+        for (auto s : m_rt.lastCreateStatuses)
+            EXPECT_NE(s, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a fresh subnet route should be created, not updated";
+    }
+
+    // VNetRouteOrch::delRoute() walks next_hop_observers_ and advances the
+    // iterator only at the bottom of the loop body. An observer covered by the
+    // prefix but holding no route state for it -- what a replay leaves behind --
+    // hit a `continue` that skipped the advance, so the walk never terminated.
+    // mock_tests builds with -DNDEBUG, so the assert(false) on that branch
+    // compiles away and the spin is unbounded. Run it in a child under alarm(2)
+    // so a regression fails the expectation instead of hanging the suite.
+    TEST_F(VNetOrchTest, VnetReplayedDeleteDoesNotSpinInObserverWalk)
+    {
+        // The fixture leaves libsaivs threads running, and the default
+        // fork-without-exec death test style is unsafe alongside them.
+        GTEST_FLAG_SET(death_test_style, "threadsafe");
+
+        setVxlanTunnel("tunnel_spin", "42.42.42.42");
+        setVnet("Vnet_spin", "tunnel_spin", "6002", "");
+        createVnetL3Interface("Ethernet20", "Vnet_spin", "10.10.0.8/31");
+
+        IpPrefix prefix("10.10.0.8/31");
+        nextHop nh;
+        nh.ifname = "Ethernet20";
+
+        NullObserver observer;
+        m_vnetRouteOrch->attach(&observer, IpAddress("10.10.0.9"));
+        Portal::VNetRouteOrchInternal::addRoute(*m_vnetRouteOrch, "Vnet_spin",
+                                                prefix, nh);
+
+        // An observer inside the prefix that never received route state. It
+        // sorts before 10.10.0.9, so the walk reaches it first.
+        Portal::VNetRouteOrchInternal::getNextHopObservers(*m_vnetRouteOrch)
+            [IpAddress("10.10.0.8")].observers.push_back(&observer);
+
+        EXPECT_EXIT(
+            {
+                alarm(10);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                _exit(0);
+            },
+            ::testing::ExitedWithCode(0), "");
     }
 }

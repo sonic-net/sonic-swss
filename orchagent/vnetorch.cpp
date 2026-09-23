@@ -686,6 +686,8 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     return true;
 }
 
+static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
+
 static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
 {
     sai_route_entry_t route_entry;
@@ -699,7 +701,21 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     route_attr.value.oid = nh_id;
 
     sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+    {
+        /*
+         * The prefix can already be programmed: the connected route for an
+         * interface assigned to a VNET arrives through RouteOrch, and a config
+         * reload or an fpmsyncd replay re-delivers it here as a subnet route.
+         * Converge onto the existing entry instead of failing the task, the way
+         * del_route() already tolerates SAI_STATUS_ITEM_NOT_FOUND.
+         * The CRM counter is deliberately not incremented: the entry was
+         * accounted for when it was first programmed.
+         */
+        SWSS_LOG_INFO("Route already programmed, updating next hop instead");
+        return update_route(vr_id, ip_pfx, nh_id);
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("SAI failed to create route");
         return false;
@@ -2071,8 +2087,8 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
     auto route_itr = syncd_routes_.find(ipPrefix);
     if (route_itr == syncd_routes_.end())
     {
-        SWSS_LOG_ERROR("Failed to find route %s.", ipPrefix.to_string().c_str());
-        assert(false);
+        SWSS_LOG_INFO("Route %s already absent from the VNET route table",
+                      ipPrefix.to_string().c_str());
         return;
     }
     auto next_hop_observer = next_hop_observers_.begin();
@@ -2083,15 +2099,16 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
             auto itr = next_hop_observer->second.routeTable.find(ipPrefix);
             if ( itr == next_hop_observer->second.routeTable.end())
             {
-                SWSS_LOG_ERROR(
-                    "Failed to find any ip(%s) belong to this route(%s).",
+                SWSS_LOG_INFO(
+                    "Observer ip(%s) holds no state for replayed route(%s)",
                     next_hop_observer->first.to_string().c_str(),
                     ipPrefix.to_string().c_str());
-                assert(false);
+                ++next_hop_observer;
                 continue;
             }
             if (itr->second.empty())
             {
+                ++next_hop_observer;
                 continue;
             }
             for (auto& observer : next_hop_observer->second.observers)
