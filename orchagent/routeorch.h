@@ -15,6 +15,7 @@
 #include "producerstatetable.h"
 #include "routebulksubmitter.h"
 #include <map>
+#include <set>
 #include <unordered_map>
 
 // #include "switchorch.h"
@@ -366,6 +367,7 @@ private:
     bool                                    m_hasPendingBulk = false;
     BulkMap                                 m_prevPendingToBulk;
     bool                                    m_hasPrevResults = false;
+    std::set<std::pair<std::string, std::string>> m_inFlightKeys;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 

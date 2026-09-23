@@ -538,4 +538,172 @@ namespace routebulk_race_test
         EXPECT_EQ(routeConsumer->m_toSync.count("4.4.4.0/24"), 0u);
         EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.0/24"), 0u);
     }
+
+    TEST_F(BulkRaceTest, InFlightKeySkip)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Create 6.6.6.0/24 via normal doTask so it exists in m_syncdRoutes.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "6.6.6.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("6.6.6.0/24"), 0u);
+
+        // Simulate an in-flight bulk containing 6.6.6.0/24 SET.
+        gRouteOrch->m_hasPendingBulk = true;
+        gRouteOrch->m_inFlightKeys.insert(std::make_pair(std::string("6.6.6.0/24"),
+                                                          std::string("SET")));
+        gRouteOrch->m_submitter = std::make_unique<RouteBulkSubmitter>();
+
+        // Queue an update to the same route.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "6.6.6.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.3"} }});
+            routeConsumer->addToSync(entries);
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("6.6.6.0/24"), 1u);
+
+        // doTask should skip the in-flight key; the entry stays in m_toSync.
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(routeConsumer->m_toSync.count("6.6.6.0/24"), 1u);
+
+        // Clean up in-flight state.
+        gRouteOrch->m_hasPendingBulk = false;
+        gRouteOrch->m_inFlightKeys.clear();
+        gRouteOrch->m_submitter.reset();
+    }
+
+    TEST_F(BulkRaceTest, ReapBeforeSubmit)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Create 7.7.7.0/24 via normal doTask.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "7.7.7.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("7.7.7.0/24"), 0u);
+
+        // Populate m_pendingToBulk as if a previous submit is in-flight.
+        gRouteOrch->m_pendingToBulk.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple("7.7.7.0/24", std::string("SET")),
+            std::forward_as_tuple("7.7.7.0/24", true));
+        {
+            auto &ctx = gRouteOrch->m_pendingToBulk.begin()->second;
+            ctx.captured_fvs = { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} };
+            ctx.vrf_id = gVirtualRouterId;
+            ctx.ip_prefix = IpPrefix("7.7.7.0/24");
+            ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        }
+        gRouteOrch->m_hasPendingBulk = true;
+        gRouteOrch->m_inFlightKeys.insert(
+            std::make_pair(std::string("7.7.7.0/24"), std::string("SET")));
+        gRouteOrch->m_submitter = std::make_unique<RouteBulkSubmitter>();
+
+        // Re-add 7.7.7.0/24 to m_toSync (update after the in-flight version).
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "7.7.7.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+        }
+        // Also add a new route 8.8.8.0/24 to give the pops loop work to do.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "8.8.8.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+        }
+
+        // doTask: 7.7.7.0/24 skipped (in-flight), 8.8.8.0/24 built into toBulk,
+        // reap-before-submit fires for 7.7.7.0/24 results, then 8.8.8.0/24 submitted.
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // 7.7.7.0/24 was reaped (matching FVs + success) → erased from m_toSync.
+        EXPECT_EQ(routeConsumer->m_toSync.count("7.7.7.0/24"), 0u);
+        // 8.8.8.0/24 was submitted and is now pending (no results yet, stays in m_toSync
+        // or was processed if sync path — either way the bulk state is consistent).
+        EXPECT_TRUE(gRouteOrch->m_hasPendingBulk);
+        EXPECT_FALSE(gRouteOrch->m_hasPrevResults);
+        EXPECT_TRUE(gRouteOrch->m_prevPendingToBulk.empty());
+
+        // Clean up.
+        gRouteOrch->m_hasPendingBulk = false;
+        gRouteOrch->m_pendingToBulk.clear();
+        gRouteOrch->m_inFlightKeys.clear();
+        gRouteOrch->m_submitter.reset();
+    }
+
+    TEST_F(BulkRaceTest, BackpressureWhenAllInFlight)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Create 9.9.9.0/24 via normal doTask.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "9.9.9.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("9.9.9.0/24"), 0u);
+
+        // Simulate an in-flight bulk with 9.9.9.0/24: the flush is complete
+        // (waitForFlush returns immediately) but results haven't been reaped.
+        gRouteOrch->m_pendingToBulk.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple("9.9.9.0/24", std::string("SET")),
+            std::forward_as_tuple("9.9.9.0/24", true));
+        {
+            auto &ctx = gRouteOrch->m_pendingToBulk.begin()->second;
+            ctx.captured_fvs = { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} };
+            ctx.vrf_id = gVirtualRouterId;
+            ctx.ip_prefix = IpPrefix("9.9.9.0/24");
+            ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        }
+        gRouteOrch->m_hasPendingBulk = true;
+        gRouteOrch->m_inFlightKeys.insert(
+            std::make_pair(std::string("9.9.9.0/24"), std::string("SET")));
+        gRouteOrch->m_submitter = std::make_unique<RouteBulkSubmitter>();
+
+        // Re-add 9.9.9.0/24 to m_toSync — it's the ONLY entry, so the pops loop
+        // will skip it (in-flight) and produce an empty toBulk.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "9.9.9.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("9.9.9.0/24"), 1u);
+
+        // doTask: pops loop skips 9.9.9.0/24 → empty toBulk → no submit →
+        // backpressure handler fires → reaps 9.9.9.0/24 → retries pops loop →
+        // builds 9.9.9.0/24 into second toBulk → submits.
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // The in-flight result was reaped (matching FVs), so the old entry is erased.
+        EXPECT_EQ(routeConsumer->m_toSync.count("9.9.9.0/24"), 0u);
+        EXPECT_TRUE(gRouteOrch->m_inFlightKeys.size() > 0);
+        EXPECT_TRUE(gRouteOrch->m_hasPendingBulk);
+        EXPECT_FALSE(gRouteOrch->m_hasPrevResults);
+
+        // Clean up.
+        gRouteOrch->m_hasPendingBulk = false;
+        gRouteOrch->m_pendingToBulk.clear();
+        gRouteOrch->m_inFlightKeys.clear();
+        gRouteOrch->m_submitter.reset();
+    }
 }

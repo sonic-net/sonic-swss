@@ -965,17 +965,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         }
     }
 
-    if (m_hasPendingBulk)
-    {
-        m_submitter->waitForFlush();
-        m_prevPendingToBulk = std::move(m_pendingToBulk);
-        m_pendingToBulk.clear();
-        m_hasPendingBulk = false;
-        m_hasPrevResults = true;
-    }
-
     /* Default handling is for APP_ROUTE_TABLE_NAME */
+    bool submittedThisPass = false;
     auto it = consumer.m_toSync.begin();
+retry_pops:
     while (it != consumer.m_toSync.end())
     {
         // Route bulk results will be stored in a map
@@ -995,8 +988,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             string key = kfvKey(t);
             string op = kfvOp(t);
 
-            if (m_hasPrevResults &&
-                m_prevPendingToBulk.count(std::make_pair(key, op)) > 0)
+            if ((m_hasPrevResults &&
+                 m_prevPendingToBulk.count(std::make_pair(key, op)) > 0) ||
+                (m_hasPendingBulk &&
+                 m_inFlightKeys.count(std::make_pair(key, op)) > 0))
             {
                 it++;
                 continue;
@@ -1474,11 +1469,25 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
         if (m_submitter)
         {
-            std::swap(gRouteBulker, m_spareBulker);
-            std::swap(m_pendingToBulk, toBulk);
-            m_hasPendingBulk = true;
-            m_submitter->submit(m_spareBulker);
-
+            if (!toBulk.empty())
+            {
+                if (m_hasPendingBulk)
+                {
+                    m_submitter->waitForFlush();
+                    m_prevPendingToBulk = std::move(m_pendingToBulk);
+                    m_pendingToBulk.clear();
+                    m_hasPendingBulk = false;
+                    m_inFlightKeys.clear();
+                    m_hasPrevResults = true;
+                }
+                std::swap(gRouteBulker, m_spareBulker);
+                std::swap(m_pendingToBulk, toBulk);
+                m_hasPendingBulk = true;
+                for (const auto& kv : m_pendingToBulk)
+                    m_inFlightKeys.insert(kv.first);
+                m_submitter->submit(m_spareBulker);
+                submittedThisPass = true;
+            }
             if (m_hasPrevResults)
             {
                 processRouteBulkResults(consumer, m_prevPendingToBulk);
@@ -1493,6 +1502,21 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         }
     }
 
+    if (!submittedThisPass && m_hasPendingBulk && !consumer.m_toSync.empty())
+    {
+        m_submitter->waitForFlush();
+        m_prevPendingToBulk = std::move(m_pendingToBulk);
+        m_pendingToBulk.clear();
+        m_hasPendingBulk = false;
+        m_inFlightKeys.clear();
+        m_hasPrevResults = true;
+        processRouteBulkResults(consumer, m_prevPendingToBulk);
+        m_prevPendingToBulk.clear();
+        m_hasPrevResults = false;
+        submittedThisPass = true;
+        it = consumer.m_toSync.begin();
+        goto retry_pops;
+    }
     if (m_hasPrevResults)
     {
         processRouteBulkResults(consumer, m_prevPendingToBulk);
@@ -1657,6 +1681,7 @@ void RouteOrch::drainPendingBulk()
         processRouteBulkResults(*consumer, m_pendingToBulk);
         m_pendingToBulk.clear();
         m_hasPendingBulk = false;
+        m_inFlightKeys.clear();
     }
 }
 
