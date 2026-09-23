@@ -1012,6 +1012,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             {
                 ctx.clear();
             }
+            ctx.captured_fvs = kfvFieldsValues(t);
 
             /* Get notification from application */
             /* resync application:
@@ -1522,6 +1523,13 @@ void RouteOrch::processRouteBulkResults(ConsumerBase& consumer, BulkMap& toBulk)
         }
 
         const auto& ctx = found->second;
+
+        if (kfvFieldsValues(t) != ctx.captured_fvs)
+        {
+            it_prev++;
+            continue;
+        }
+
         const auto& object_statuses = ctx.object_statuses;
         if (object_statuses.empty())
         {

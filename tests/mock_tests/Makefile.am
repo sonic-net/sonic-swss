@@ -47,6 +47,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
                 vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
+                routebulk_race_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
                 buffermgrdyn_ut.cpp \

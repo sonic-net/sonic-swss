@@ -162,6 +162,7 @@ struct RouteBulkContext
     std::string                         key;       // Key in database table
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
+    std::vector<FieldValueTuple>        captured_fvs;
 
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
@@ -185,6 +186,7 @@ struct RouteBulkContext
         key.clear();
         protocol.clear();
         fallback_to_default_route = false;
+        captured_fvs.clear();
     }
 };
 
