@@ -1960,22 +1960,26 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for port in mux_ports:
             self.set_mux_state(appdb, port, "active")
 
+        # Wait for neighbors to be resolved in ASIC DB before adding the route.
+        # RouteOrch defers NHG creation if nexthops aren't resolved yet.
+        for nexthop in nexthops:
+            self.check_neigh_in_asic_db(asicdb, nexthop)
+
         nhg_members_before = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
 
         self.add_route(dvs, route, nexthops)
 
-        def _check_new_nhg_members():
-            current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
-            new = current - nhg_members_before
-            return (len(new) >= 2, new)
-
-        status, new_members = wait_for_result(
-            _check_new_nhg_members,
-            PollingConfig(polling_interval=1, timeout=20.0, strict=True),
-            failure_message="Expected at least 2 new NHG members after adding ECMP route"
-        )
-
         try:
+            def _check_new_nhg_members():
+                current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+                new = current - nhg_members_before
+                return (len(new) >= 2, new)
+
+            status, new_members = wait_for_result(
+                _check_new_nhg_members,
+                PollingConfig(polling_interval=1, timeout=20.0, strict=True),
+                failure_message="Expected at least 2 new NHG members after adding ECMP route"
+            )
             for port in mux_ports:
                 self.set_mux_state(appdb, port, "standby")
 
@@ -1986,7 +1990,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
             wait_for_result(
                 _check_nhg_members_removed,
-                PollingConfig(polling_interval=0.1, timeout=20.0, strict=True),
+                PollingConfig(polling_interval=1, timeout=20.0, strict=True),
                 failure_message="NHG members should be removed from ASIC DB after all mux standby"
             )
 
