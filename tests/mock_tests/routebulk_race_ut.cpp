@@ -466,4 +466,76 @@ namespace routebulk_race_test
         // Matching FVs + successful status → entry erased from m_toSync.
         EXPECT_EQ(routeConsumer->m_toSync.count("3.3.3.0/24"), 0u);
     }
+
+    TEST_F(BulkRaceTest, DrainPendingBulkSettlesBothMaps)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Create routes 4.4.4.0/24 and 5.5.5.0/24 via normal doTask.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "4.4.4.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            entries.push_back({ "5.5.5.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("4.4.4.0/24"), 0u);
+        ASSERT_EQ(routeConsumer->m_toSync.count("5.5.5.0/24"), 0u);
+
+        // Populate m_prevPendingToBulk with 4.4.4.0/24 (already-reaped results).
+        gRouteOrch->m_prevPendingToBulk.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple("4.4.4.0/24", std::string("SET")),
+            std::forward_as_tuple("4.4.4.0/24", true));
+        {
+            auto &ctx = gRouteOrch->m_prevPendingToBulk.begin()->second;
+            ctx.captured_fvs = { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} };
+            ctx.vrf_id = gVirtualRouterId;
+            ctx.ip_prefix = IpPrefix("4.4.4.0/24");
+            ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        }
+        gRouteOrch->m_hasPrevResults = true;
+
+        // Populate m_pendingToBulk with 5.5.5.0/24 (flush still outstanding).
+        gRouteOrch->m_pendingToBulk.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple("5.5.5.0/24", std::string("SET")),
+            std::forward_as_tuple("5.5.5.0/24", true));
+        {
+            auto &ctx = gRouteOrch->m_pendingToBulk.begin()->second;
+            ctx.captured_fvs = { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} };
+            ctx.vrf_id = gVirtualRouterId;
+            ctx.ip_prefix = IpPrefix("5.5.5.0/24");
+            ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        }
+        gRouteOrch->m_hasPendingBulk = true;
+
+        // Attach a submitter — waitForFlush returns immediately when idle.
+        gRouteOrch->m_submitter = std::make_unique<RouteBulkSubmitter>();
+
+        // Re-add both routes to m_toSync with matching FVs.
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ "4.4.4.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            entries.push_back({ "5.5.5.0/24", "SET",
+                            { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+            routeConsumer->addToSync(entries);
+        }
+        ASSERT_EQ(routeConsumer->m_toSync.count("4.4.4.0/24"), 1u);
+        ASSERT_EQ(routeConsumer->m_toSync.count("5.5.5.0/24"), 1u);
+
+        // Warm-restart freeze path: drain all pending bulk work.
+        gRouteOrch->drainPendingBulk();
+
+        EXPECT_FALSE(gRouteOrch->m_hasPrevResults);
+        EXPECT_FALSE(gRouteOrch->m_hasPendingBulk);
+        EXPECT_TRUE(gRouteOrch->m_prevPendingToBulk.empty());
+        EXPECT_TRUE(gRouteOrch->m_pendingToBulk.empty());
+        EXPECT_EQ(routeConsumer->m_toSync.count("4.4.4.0/24"), 0u);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.0/24"), 0u);
+    }
 }

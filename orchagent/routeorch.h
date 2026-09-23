@@ -239,7 +239,7 @@ public:
 
     void flushRouteBulker() { gRouteBulker.flush(); }
     void waitForBulkSubmitter();
-    void drainPendingBulk(ConsumerBase& consumer);
+    void drainPendingBulk();
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
 

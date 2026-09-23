@@ -1257,7 +1257,7 @@ void OrchDaemon::start(long heartBeatInterval)
                 }
                 if (gRouteOrch)
                 {
-                    gRouteOrch->waitForBulkSubmitter();
+                    gRouteOrch->drainPendingBulk();
                 }
 
                 // Should sleep here or continue handling timers and etc.??

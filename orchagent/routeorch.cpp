@@ -1639,18 +1639,22 @@ void RouteOrch::waitForBulkSubmitter()
     }
 }
 
-void RouteOrch::drainPendingBulk(ConsumerBase& consumer)
+void RouteOrch::drainPendingBulk()
 {
+    auto *consumer = static_cast<ConsumerBase *>(getExecutor(APP_ROUTE_TABLE_NAME));
+    if (!consumer)
+        return;
+
     if (m_hasPrevResults)
     {
-        processRouteBulkResults(consumer, m_prevPendingToBulk);
+        processRouteBulkResults(*consumer, m_prevPendingToBulk);
         m_prevPendingToBulk.clear();
         m_hasPrevResults = false;
     }
     if (m_hasPendingBulk)
     {
         m_submitter->waitForFlush();
-        processRouteBulkResults(consumer, m_pendingToBulk);
+        processRouteBulkResults(*consumer, m_pendingToBulk);
         m_pendingToBulk.clear();
         m_hasPendingBulk = false;
     }
