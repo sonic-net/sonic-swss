@@ -116,6 +116,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
     { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_TC,                               SAI_ACL_ENTRY_ATTR_ACTION_SET_TC },
     { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
 };
 
@@ -2221,6 +2222,19 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    else if (attr_name == ACTION_TC)
+    {
+        try
+        {
+            actionData.parameter.u8 = to_uint<uint8_t>(attr_value);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid traffic class value '%s' for action %s: %s",
+                           attr_value.c_str(), attr_name.c_str(), e.what());
+            return false;
+        }
+    }
     // SET_POLICER attaches a policer (by name -> OID) to the ACL entry.
     else if (attr_name == ACTION_POLICER_ACTION)
     {
@@ -2357,16 +2371,21 @@ bool AclRulePacket::validate()
         return false;
     }
 
-    size_t nonPolicerActions = 0;
+    // SET_TC and SET_POLICER are composable QoS actions: each may accompany a single
+    // forwarding/terminating action (e.g. FORWARD/DROP/REDIRECT) rather than being exclusive.
+    // Exclude both from the single exclusive-action check so a rule may forward and also set the
+    // traffic class and/or attach a policer. (COUNTER is tracked separately and always composes.)
+    size_t nonComposableActions = 0;
     for (const auto& action : m_actions)
     {
-        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_TC &&
+            action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
         {
-            nonPolicerActions++;
+            nonComposableActions++;
         }
     }
 
-    if (nonPolicerActions > 1)
+    if (nonComposableActions > 1)
     {
         return false;
     }
