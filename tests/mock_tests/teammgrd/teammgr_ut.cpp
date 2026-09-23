@@ -414,6 +414,21 @@ namespace teammgr_ut
         EXPECT_EQ(mock_kernel_mac_updates[0], "01:23:45:67:89:ab");
     }
 
+    TEST_F(TeamMgrTest, testSetLagSysmacRejectsInvalidInput)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+
+        std::string sys_mac = "not-a-mac";
+        EXPECT_FALSE(teammgr.setLagSysmac("PortChannel104", sys_mac));
+        EXPECT_TRUE(mock_kernel_mac_updates.empty());
+
+        swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
+        swss::Table stateLagTable(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_FALSE(appLagTable.get("PortChannel104", values));
+        EXPECT_FALSE(stateLagTable.get("PortChannel104", values));
+    }
+
     TEST_F(TeamMgrTest, testSetLagSysmacKernelFailureDoesNotPublish)
     {
         mock_rtnl_link_change_result = -1;
