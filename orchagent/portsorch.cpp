@@ -90,6 +90,7 @@ extern bool gMultiAsicVoq;
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define GB_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
@@ -761,8 +762,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_phy_serdes_attr_manager(PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager(true,
-                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+                GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                GB_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -857,9 +858,10 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
             string gbportRateLuaScript = swss::loadLuaScript(portRatePluginName);
             gbPortRateSha = swss::loadRedisScript(m_gb_counter_db.get(), gbportRateLuaScript);
 
-            // Register plugin for gearbox flex counter group
-            setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
-                                        PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+            /* The plugin must be registered on the same group the gearbox port
+             * counters are polled in, otherwise it never sees any object. */
+            setFlexCounterGroupParameter(GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                        to_string(GB_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS),
                                         STATS_MODE_READ,
                                         PORT_PLUGIN_FIELD,
                                         gbPortRateSha,
