@@ -1963,52 +1963,63 @@ class TestMuxTunnel(TestMuxTunnelBase):
         nhg_members_before = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
 
         self.add_route(dvs, route, nexthops)
-        time.sleep(2)
 
-        nhg_members_after_add = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
-        new_members = nhg_members_after_add - nhg_members_before
-        assert len(new_members) >= 2, \
-            "Expected at least 2 new NHG members after adding ECMP route"
+        def _check_new_nhg_members():
+            current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+            new = current - nhg_members_before
+            return (len(new) >= 2, new)
 
-        for port in mux_ports:
-            self.set_mux_state(appdb, port, "standby")
-        time.sleep(2)
+        status, new_members = wait_for_result(
+            _check_new_nhg_members,
+            PollingConfig(polling_interval=1, timeout=20.0, strict=True),
+            failure_message="Expected at least 2 new NHG members after adding ECMP route"
+        )
 
-        nhg_members_after_standby = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
-        remaining_new = nhg_members_after_standby & new_members
-        assert len(remaining_new) == 0, \
-            "NHG members should be removed from ASIC DB after all mux standby"
+        try:
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "standby")
 
-        # Place a syslog marker before route deletion
-        (_, marker) = dvs.runcmd(['sh', '-c', 'date +"%b %e %H:%M:%S"'])
-        marker = marker.strip()
-        time.sleep(1)
+            def _check_nhg_members_removed():
+                current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+                remaining = current & new_members
+                return (len(remaining) == 0, remaining)
 
-        self.del_route(dvs, route)
-        time.sleep(2)
+            wait_for_result(
+                _check_nhg_members_removed,
+                PollingConfig(polling_interval=0.1, timeout=20.0, strict=True),
+                failure_message="NHG members should be removed from ASIC DB after all mux standby"
+            )
 
-        dvs_route.check_asicdb_deleted_route_entries([route])
+            # Place a syslog marker before route deletion
+            (_, marker) = dvs.runcmd(['sh', '-c', 'date +"%b %e %H:%M:%S"'])
+            marker = marker.strip()
+            time.sleep(1)
 
-        # Verify no NHG member removal failures were logged during route deletion.
-        # removeNextHopGroup() logs this ERROR for any non-SUCCESS SAI status.
-        (_, cnt) = dvs.runcmd(['sh', '-c',
-            "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
-            "grep -c 'Failed to remove next hop group member' "
-            "|| true" % marker])
-        assert cnt.strip() == "0", \
-            "No NHG member removal failures should be logged"
+            self.del_route(dvs, route)
 
-        # Verify orchagent is still healthy (SAI_STATUS_NOT_EXECUTED from
-        # STOP_ON_ERROR bulk mode would set the persistent unhealthy flag)
-        health_entry = statedb.get_entry("PROCESS_HEALTH", "orchagent")
-        assert health_entry.get("unhealthy", "false") != "true", \
-            "Orchagent should remain healthy after NHG cleanup"
+            dvs_route.check_asicdb_deleted_route_entries([route])
 
-        # Cleanup
-        for port in mux_ports:
-            self.set_mux_state(appdb, port, "active")
-        for nexthop in nexthops:
-            self.del_neighbor(dvs, nexthop)
+            # Verify no NHG member removal failures were logged during route deletion.
+            # removeNextHopGroup() logs this ERROR for any non-SUCCESS SAI status.
+            (_, cnt) = dvs.runcmd(['sh', '-c',
+                "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
+                "grep -c 'Failed to remove next hop group member' "
+                "|| true" % marker])
+            assert cnt.strip() == "0", \
+                "No NHG member removal failures should be logged"
+
+            # Verify orchagent is still healthy (SAI_STATUS_NOT_EXECUTED from
+            # STOP_ON_ERROR bulk mode would set the persistent unhealthy flag)
+            health_entry = statedb.get_entry("PROCESS_HEALTH", "orchagent")
+            assert health_entry.get("unhealthy", "false") != "true", \
+                "Orchagent should remain healthy after NHG cleanup"
+
+        finally:
+            self.del_route(dvs, route)
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "active")
+            for nexthop in nexthops:
+                self.del_neighbor(dvs, nexthop)
 
     def test_acl(self, dvs, dvs_acl, testlog):
         """ test acl and mux state change """
