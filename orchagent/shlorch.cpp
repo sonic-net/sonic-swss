@@ -90,6 +90,14 @@ ShlOrch::doShlTblTask(Consumer &consumer)
         vector<string> keys = tokenize(kfvKey(t), ':', 1);
         string op = kfvOp(t);
 
+        if (keys.size() != 2 || keys[0].empty() || keys[1].empty())
+        {
+            SWSS_LOG_ERROR("Invalid EVPN_SPLIT_HORIZON_TABLE key '%s', expected <VLAN_name>:<Ifname>",
+                           kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         Port port;
 
         if (!gPortsOrch->getPort(keys[1], port))
