@@ -1955,21 +1955,21 @@ class TestMuxTunnel(TestMuxTunnelBase):
         nexthops = [self.SERV1_IPV4, self.SERV2_IPV4]
         mux_ports = ["Ethernet0", "Ethernet4"]
 
-        for i, mac in enumerate(macs):
-            self.add_neighbor(dvs, nexthops[i], mac)
-        for port in mux_ports:
-            self.set_mux_state(appdb, port, "active")
-
-        # Wait for neighbors to be resolved in ASIC DB before adding the route.
-        # RouteOrch defers NHG creation if nexthops aren't resolved yet.
-        for nexthop in nexthops:
-            self.check_neigh_in_asic_db(asicdb, nexthop)
-
-        nhg_members_before = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
-
-        self.add_route(dvs, route, nexthops)
-
         try:
+            for i, mac in enumerate(macs):
+                self.add_neighbor(dvs, nexthops[i], mac)
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "active")
+
+            # Wait for neighbors to be resolved in ASIC DB before adding the route.
+            # RouteOrch defers NHG creation if nexthops aren't resolved yet.
+            for nexthop in nexthops:
+                self.check_neigh_in_asic_db(asicdb, nexthop)
+
+            nhg_members_before = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+
+            self.add_route(dvs, route, nexthops)
+
             def _check_new_nhg_members():
                 current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
                 new = current - nhg_members_before
