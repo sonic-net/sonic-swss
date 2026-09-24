@@ -2381,6 +2381,47 @@ namespace vnetorch_test
         EXPECT_TRUE(saiMacEquals(nh.mac, "00:12:34:56:78:9A"));
     }
 
+    // A tunnel next hop create that fails with a status handleSaiCreateStatus()
+    // treats as "handled" (ITEM_NOT_FOUND) must not be cached. sairedis releases
+    // the object id it allocated but leaves it in the out parameter, which the
+    // injected failure imitates; caching it would hand every later user of this
+    // endpoint an id that does not exist.
+    TEST_F(VNetOrchTest, VnetTunnelNextHopCreateFailureIsNotCached)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnet("Vnet_2000", "tunnel_v4", "2000", "");
+
+        IpAddress endpoint("10.10.10.1");
+        const sai_object_id_t releasedOid = 0x5000000000abcULL;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([releasedOid](sai_object_id_t *id, sai_object_id_t,
+                                                uint32_t, const sai_attribute_t *) {
+                *id = releasedOid;
+                return SAI_STATUS_ITEM_NOT_FOUND;
+            }));
+
+        EXPECT_EQ(m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0),
+                  SAI_NULL_OBJECT_ID);
+        VxlanTunnel *tunnel = m_VxlanTunnelOrch->getVxlanTunnel("tunnel_v4");
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), SAI_NULL_OBJECT_ID);
+
+        // Once the SAI accepts the next hop, the next request creates and caches it.
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([](sai_object_id_t *id, sai_object_id_t sw,
+                                     uint32_t n, const sai_attribute_t *l) {
+                return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            }));
+
+        const sai_object_id_t nhOid =
+            m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0);
+        EXPECT_NE(nhOid, SAI_NULL_OBJECT_ID);
+        EXPECT_NE(nhOid, releasedOid);
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), nhOid);
+
+        EXPECT_TRUE(m_VxlanTunnelOrch->removeNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0));
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), SAI_NULL_OBJECT_ID);
+    }
+
     // A multi-endpoint route programs one tunnel encap next hop per endpoint, a
     // next hop group binding them, and a route entry pointing at the group --
     // the mock equivalent of vnet_lib.check_vnet_ecmp_routes().

@@ -1466,14 +1466,13 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
     sai_status_t status = create_nexthop_tunnel(host_ip, vni, macptr, tunnel_id, &nh_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
-        if (handle_status != task_success)
-        {
-            SWSS_LOG_ERROR("NH vxlan tunnel create failed for %s, ip %s, mac %s, vni %d",
-                        tunnelName.c_str(), ipAddr.to_string().c_str(),
-                        macAddress.to_string().c_str(), vni);
-            return SAI_NULL_OBJECT_ID;
-        }
+        // handleSaiCreateStatus() maps some statuses (e.g. ITEM_NOT_FOUND) to task_success,
+        // but no next hop exists and sairedis has already released nh_id, so never cache it.
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        SWSS_LOG_ERROR("NH vxlan tunnel create failed for %s, ip %s, mac %s, vni %d, rv:%d",
+                    tunnelName.c_str(), ipAddr.to_string().c_str(),
+                    macAddress.to_string().c_str(), vni, status);
+        return SAI_NULL_OBJECT_ID;
     }
 
     //Store the nh tunnel id
