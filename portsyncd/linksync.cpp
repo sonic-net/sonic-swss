@@ -20,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
+#include <cinttypes>
 
 using namespace std;
 using namespace swss;
@@ -137,6 +138,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     int master = rtnl_link_get_master(link);
     char *type = rtnl_link_get_type(link);
     unsigned int mtu = rtnl_link_get_mtu(link);
+    string       value;
 
     if (type)
     {
@@ -176,6 +178,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    /* Check if this is a new interface (not seen before) */
+    bool isNewInterface = (m_ifindexNameMap.find(ifindex) == m_ifindexNameMap.end());
+
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
 
@@ -183,9 +188,35 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         m_statePortTable.del(key);
         SWSS_LOG_NOTICE("Delete %s(ok) from state db", key.c_str());
+
+        /* Update port count only if system is initialized */
+        if (g_init)
+        {
+            if (m_portTable.hget("PortConfigDone", "count", value))
+            {
+                uintmax_t portCount = strtoumax(value.c_str(), nullptr, 0);
+                if (portCount > 0)
+                {
+                    portCount = portCount - 1;
+                    m_portTable.hset("PortConfigDone", "count", to_string(portCount));
+                    SWSS_LOG_NOTICE("Port %s deleted at runtime, updated PortConfigDone count to %ju", key.c_str(), portCount);
+                }
+            }
+        }
         return;
     }
 
+    if (g_init && isNewInterface)
+    {
+        /* Update PortConfigDone count to reflect new port addition */
+        if (m_portTable.hget("PortConfigDone", "count", value))
+        {
+            uintmax_t portCount = strtoumax(value.c_str(), nullptr, 0);
+            portCount = portCount + 1;
+            m_portTable.hset("PortConfigDone", "count", to_string(portCount));
+            SWSS_LOG_NOTICE("Port %s added at runtime, updated PortConfigDone count to %ju", key.c_str(), portCount);
+        }
+    }
     /* front panel interfaces: Check if the port is in the PORT_TABLE
      * non-front panel interfaces such as eth0, lo which are not in the
      * PORT_TABLE are ignored. */
