@@ -612,12 +612,49 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     status = sai_switch_api->create_switch(&phyOid, (uint32_t)attrs.size(), attrs.data());
 
-    if (status != SAI_STATUS_SUCCESS)
+    /*
+     * If gbsyncd already owns this PHY (e.g. orchagent restart without
+     * gbsyncd cold-boot), create returns ITEM_ALREADY_EXISTS and does not
+     * publish phy_oid. Reconnect with INIT_SWITCH=false so we recover the
+     * deterministic OID and can still bring up gearbox ports / name maps.
+     */
+    if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+    {
+        vector<sai_attribute_t> connect_attrs;
+        sai_attribute_t cattr;
+
+        SWSS_LOG_NOTICE("BOX: PHY:%d already exists, connecting with INIT_SWITCH=false", phy->phy_id);
+
+        cattr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+        cattr.value.booldata = false;
+        connect_attrs.push_back(cattr);
+
+        cattr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+        cattr.value.s8list.count = (uint32_t) phy->hwinfo.length();
+        cattr.value.s8list.list = (int8_t *) hwinfo;
+        connect_attrs.push_back(cattr);
+
+        cattr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+        cattr.value.u64 = phy->context_id;
+        connect_attrs.push_back(cattr);
+
+        status = sai_switch_api->create_switch(&phyOid, (uint32_t)connect_attrs.size(), connect_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("BOX: Failed to connect existing PHY:%d rtn:%d", phy->phy_id, status);
+            return status;
+        }
+        SWSS_LOG_NOTICE("BOX: Connected existing PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("BOX: Failed to create PHY:%d rtn:%d", phy->phy_id, status);
         return status;
     }
-    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
+    else
+    {
+        SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
+    }
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 
