@@ -252,8 +252,21 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
+            bool configured = m_lagList.find(alias) != m_lagList.end();
+            auto config_values = kfvFieldsValues(t);
 
-            for (auto i : kfvFieldsValues(t))
+            if (!configured)
+            {
+                // Startup notifications may contain only the last field written.
+                // Read the complete desired state before applying defaults.
+                vector<FieldValueTuple> current_config;
+                if (m_cfgLagTable.get(alias, current_config))
+                {
+                    config_values = current_config;
+                }
+            }
+
+            for (auto i : config_values)
             {
                 // min_links and fallback attributes cannot be changed
                 // after the LAG is created.
@@ -298,7 +311,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
             }
 
-            if (m_lagList.find(alias) == m_lagList.end())
+            if (!configured)
             {
                 if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {

@@ -166,6 +166,7 @@ void PortMgr::doTask(Consumer &consumer)
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
+            auto config_values = kfvFieldsValues(t);
 
             /* If this is the first time we set port settings
              * assign default admin status and mtu
@@ -175,6 +176,14 @@ void PortMgr::doTask(Consumer &consumer)
                 admin_status = DEFAULT_ADMIN_STATUS_STR;
                 mtu = DEFAULT_MTU_STR;
 
+                // Startup notifications may contain only the last field written.
+                // Read the complete desired state before applying defaults.
+                vector<FieldValueTuple> current_config;
+                if (m_cfgPortTable.get(alias, current_config))
+                {
+                    config_values = current_config;
+                }
+
                 m_portList.insert(alias);
             }
             else if (!portOk)
@@ -183,7 +192,7 @@ void PortMgr::doTask(Consumer &consumer)
                 continue;
             }
 
-            for (auto i : kfvFieldsValues(t))
+            for (auto i : config_values)
             {
                 if (fvField(i) == "mtu")
                 {
