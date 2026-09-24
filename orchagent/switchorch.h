@@ -159,6 +159,8 @@ private:
     bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
+    void saveVxlanSwitchAttrDefault(sai_switch_attr_t attr_id);
+    bool restoreVxlanSwitchAttrs();
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
 
 
@@ -192,6 +194,9 @@ private:
     bool m_sensorsMaxTempSupported = true;
     bool m_sensorsAvgTempSupported = true;
     bool m_vxlanSportUserModeEnabled = false;
+    // Values to restore on an APP_DB SWITCH_TABLE DEL for the VxLAN switch attributes
+    // that SWITCH_TABLE has set.
+    std::map<sai_switch_attr_t, sai_attribute_t> m_vxlanSwitchAttrDefaults;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
     bool m_PfcDldrEnable = false;
