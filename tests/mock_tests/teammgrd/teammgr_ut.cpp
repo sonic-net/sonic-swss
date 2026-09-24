@@ -831,10 +831,13 @@ namespace teammgr_ut
     TEST_F(TeamMgrTest, testMacsecGate_EnslavedMemberWithoutSaIsHeld)
     {
         /* teammgrd comes back with the member already enslaved and MACsec down:
-         * no SA event is coming to release a deferred add, so the member task
-         * has to hold it through the gate. */
+         * no SA event is coming to release a deferred add, so creating the LAG
+         * has to hold the member through the gate. */
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
         setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel120", "Ethernet1", true, false);
+
+        EXPECT_TRUE(findCommandWith({"teamdctl", "PortChannel120", "state item set",
+                                     "ports.Ethernet1.runner.macsec_gate", "false"}));
 
         swss::Table state_port(m_state_db.get(), STATE_PORT_TABLE_NAME);
         state_port.set("Ethernet1", { { "state", "ok" } });
@@ -846,14 +849,8 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_member);
         teammgr.doTask();
 
-        EXPECT_TRUE(findCommandWith({"teamdctl", "PortChannel120", "state item set",
-                                     "ports.Ethernet1.runner.macsec_gate", "false"}));
-        EXPECT_FALSE(findCommandWith({"PortChannel120", "port add", "Ethernet1"}));
-
-        // The task is consumed: a later sweep re-pushes nothing.
-        mockCallArgs.clear();
-        teammgr.doTask();
         EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+        EXPECT_FALSE(findCommandWith({"PortChannel120", "port add", "Ethernet1"}));
     }
 
     TEST_F(TeamMgrTest, testMacsecGate_EventAfterFailedPushRetries)
@@ -874,6 +871,54 @@ namespace teammgr_ut
         pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
                 saKey("Ethernet1", 1), DEL_COMMAND, {});
         EXPECT_TRUE(findCommandWith({"PortChannel121", "ports.Ethernet1.runner.macsec_gate", "false"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_SweepRetriesFailedPush)
+    {
+        /* A failed teamdctl on the last SA delete must be retried from the
+         * one-second doTask() sweep, with no further STATE_DB event. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel131", "Ethernet1", true, true);
+
+        failMacsecGatePush = true;
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        ASSERT_EQ(countCommandsWith({"PortChannel131", "ports.Ethernet1.runner.macsec_gate", "false"}), 1);
+        mockCallArgs.clear();
+
+        failMacsecGatePush = false;
+        teammgr.doTask();
+        EXPECT_TRUE(findCommandWith({"PortChannel131", "ports.Ethernet1.runner.macsec_gate", "false"}));
+
+        mockCallArgs.clear();
+        teammgr.doTask();
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_SaEventBeforeLagCreateIsAppliedAfter)
+    {
+        /* An SA DEL for an already-enslaved member can be processed before the
+         * LAG is in m_lagList. Creating the LAG must still close the gate. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+
+        swss::Table cfg_port(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        cfg_port.set("Ethernet1", { { "admin_status", "up" }, { "mtu", "9100" },
+                                    { "macsec", "macsec-profile-1" } });
+        swss::Table cfg_lag_member(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member.set("PortChannel132|Ethernet1", { { "NULL", "NULL" } });
+        mockEnslavedPorts.insert("Ethernet1");
+
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+
+        mockCallArgs.clear();
+        swss::Table cfg_lag(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag.set("PortChannel132", { { "admin_status", "up" }, { "mtu", "9100" },
+                                        { "lacp_key", "auto" }, { "min_links", "1" } });
+        teammgr.addExistingData(&cfg_lag);
+        teammgr.doTask();
+        EXPECT_TRUE(findCommandWith({"PortChannel132", "ports.Ethernet1.runner.macsec_gate", "false"}));
     }
 
     TEST_F(TeamMgrTest, testMacsecGate_LagDeleteForgetsState)
@@ -910,16 +955,15 @@ namespace teammgr_ut
 
         pushRow(teammgr, m_config_db.get(), CFG_LAG_TABLE_NAME, "PortChannel124", DEL_COMMAND, {});
 
-        // Recreate the same LAG; the member config and a downed SA remain.
+        // Recreate the same LAG; the member is still enslaved with no SA, so
+        // the post-create re-evaluation must close the gate rather than
+        // inherit a stale "already false" from the previous life.
         swss::Table cfg_lag(m_config_db.get(), CFG_LAG_TABLE_NAME);
         cfg_lag.set("PortChannel124", { { "admin_status", "up" }, { "mtu", "9100" },
                                         { "lacp_key", "auto" }, { "min_links", "1" } });
+        mockCallArgs.clear();
         teammgr.addExistingData(&cfg_lag);
         teammgr.doTask();
-        mockCallArgs.clear();
-
-        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
-                saKey("Ethernet1", 0), DEL_COMMAND, {});
         EXPECT_TRUE(findCommandWith({"PortChannel124", "ports.Ethernet1.runner.macsec_gate", "false"}));
     }
 
@@ -995,9 +1039,12 @@ namespace teammgr_ut
     {
         /* doPortUpdateTask (STATE_PORT_TABLE, the port-recreate path) must gate
          * an enslaved MACsec member whose SA is down instead of retaining the
-         * update forever. */
+         * update forever. The SA is removed from STATE_DB without a
+         * notification so this path, not the SA consumer, is what closes. */
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
-        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel129", "Ethernet1", true, false);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel129", "Ethernet1", true, true);
+        swss::Table sa(m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME);
+        sa.del(saKey("Ethernet1", 0));
         mockCallArgs.clear();
 
         pushRow(teammgr, m_state_db.get(), STATE_PORT_TABLE_NAME,

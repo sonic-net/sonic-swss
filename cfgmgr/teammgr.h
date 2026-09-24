@@ -18,7 +18,7 @@ public:
     TeamMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *staDb,
             const std::vector<TableConnector> &tables);
 
-    using Orch::doTask;
+    void doTask() override;
     void cleanTeamProcesses();
     bool setLagSysmac(const std::string &alias, std::string &sys_mac);
 
@@ -36,15 +36,16 @@ private:
 
     std::set<std::string> m_lagList;
 
-    /* MACsec member gate: what the running teamd currently holds for
-     * ports.<member>.runner.macsec_gate, keyed [lag][member]. An absent entry
-     * means open (true), teamd's fail-open default for every added port, so a
-     * member whose MACsec session never drops costs no teamdctl call. */
-    std::map<std::string, std::map<std::string, bool>> m_macsecGate;
+    /* Desired per-member macsec_gate, derived from CONFIG_DB + STATE_DB.
+     * Closed (false) while MACsec is attached and the member has no ingress SA.
+     * m_macsecGatePushed is the last value teamd accepted. An absent pushed
+     * entry counts as open: teamd starts every added port fail-open. */
+    std::map<std::string, std::map<std::string, bool>> m_macsecMemberGate;
+    std::map<std::string, std::map<std::string, bool>> m_macsecGatePushed;
 
     MacAddress m_mac;
 
-    void doTask(Consumer &consumer);
+    void doTask(Consumer &consumer) override;
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
     void doPortUpdateTask(Consumer &consumer);
@@ -59,7 +60,10 @@ private:
     bool setLagMemberMacsecGate(const std::string &lag, const std::string &member, bool gate);
     void applyMacsecMemberGate(const std::string &lag, const std::string &member, bool gate);
     void evaluateMacsecMemberGate(const std::string &port);
+    void evaluateMacsecMembersOfLag(const std::string &lag);
+    void retryMacsecMemberGates();
     void forgetMacsecMemberGate(const std::string &lag, const std::string &member);
+    void forgetMacsecPortGates(const std::string &port);
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);
