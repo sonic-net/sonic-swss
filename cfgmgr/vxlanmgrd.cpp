@@ -74,6 +74,33 @@ int main(int argc, char **argv)
         }
         gMacAddress = MacAddress(it->second);
 
+        /*
+         * Replay VXLAN port settings from DEVICE_METADATA to APP_DB SWITCH_TABLE
+         * so that orchagent/SAI picks them up on restart/reload.
+         * These fields (vxlan_port, vxlan_sport, vxlan_mask) are persisted in
+         * DEVICE_METADATA by the CLI but orchagent only subscribes to APP_DB
+         * SWITCH_TABLE, so we bridge the gap here at startup.
+         */
+        const vector<string> vxlan_fields = {"vxlan_port", "vxlan_sport", "vxlan_mask"};
+        vector<FieldValueTuple> switchFvs;
+        for (const auto &field : vxlan_fields)
+        {
+            auto fit = std::find_if(ovalues.begin(), ovalues.end(),
+                [&field](const FieldValueTuple& t){ return t.first == field; });
+            if (fit != ovalues.end())
+            {
+                switchFvs.emplace_back(fit->first, fit->second);
+                SWSS_LOG_NOTICE("Replaying DEVICE_METADATA field %s=%s to APP_DB SWITCH_TABLE",
+                                fit->first.c_str(), fit->second.c_str());
+            }
+        }
+        if (!switchFvs.empty())
+        {
+            ProducerStateTable appSwitchTable(&appDb, APP_SWITCH_TABLE_NAME);
+            appSwitchTable.set("switch", switchFvs);
+            SWSS_LOG_NOTICE("Replayed %zu VXLAN port field(s) to APP_DB SWITCH_TABLE", switchFvs.size());
+        }
+
         auto in_recon = true;
         vxlanmgr.beginReconcile(true);
 
