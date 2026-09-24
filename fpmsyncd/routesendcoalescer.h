@@ -38,8 +38,9 @@ namespace swss {
  * AsyncDBUpdater's queue, each under its own mutex, never the RedisPipeline the
  * main thread uses for other tables. Warm-restart reconcile writes the same
  * tables on the main thread, so fpmsyncd retires the coalescer before opening
- * the warm-restart window: stop() drains to empty and joins the send thread,
- * transferring ownership.
+ * the warm-restart window: stop() drains best-effort and joins the send thread,
+ * transferring ownership. Entries left undelivered are counted in
+ * routes_lost_total.
  */
 class RouteSendCoalescer
 {

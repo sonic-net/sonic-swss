@@ -222,11 +222,12 @@ void RouteSync::retireRouteCoalescer()
 {
     if (m_routeCoalescer)
     {
-        // stop() drains to empty before joining, so no coalesced write can land
-        // after reconcile has decided the delta.
+        // stop() joins the send thread, so no coalesced write can land after
+        // reconcile has decided the delta. Entries it cannot deliver are
+        // counted in routes_lost_total.
         if (m_routeCoalescer->stop())
         {
-            SWSS_LOG_NOTICE("route send coalescer drained and retired for warm restart");
+            SWSS_LOG_NOTICE("route send coalescer retired for warm restart");
         }
         m_routeCoalescer.reset();
     }

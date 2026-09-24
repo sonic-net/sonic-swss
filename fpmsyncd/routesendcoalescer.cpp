@@ -94,6 +94,11 @@ RouteSendCoalescer::RouteSendCoalescer(ProducerStateTable *routeTable,
 RouteSendCoalescer::~RouteSendCoalescer()
 {
     stop();
+    // Restore the default retry caps on the shared client.
+    if (m_zmqClient != nullptr)
+    {
+        m_zmqClient->setSendRetryConfig(-1, -1);
+    }
 }
 
 void RouteSendCoalescer::start()
