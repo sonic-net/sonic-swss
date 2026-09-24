@@ -467,6 +467,11 @@ task_process_status DebugCounterOrch::addDropReason(const string& counter_name, 
     }
 
     DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
+    if (!counter)
+    {
+        SWSS_LOG_ERROR("Debug counter %s is not a drop counter", counter_name.c_str());
+        return task_process_status::task_failed;
+    }
     counter->addDropReason(drop_reason);
 
     SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
@@ -481,7 +486,7 @@ task_process_status DebugCounterOrch::removeDropReason(const string& counter_nam
 
     if (!isDropReasonValid(drop_reason))
     {
-        return task_failed;
+        return task_process_status::task_failed;
     }
 
     auto it = debug_counters.find(counter_name);
@@ -492,6 +497,11 @@ task_process_status DebugCounterOrch::removeDropReason(const string& counter_nam
     }
 
     DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
+    if (!counter)
+    {
+        SWSS_LOG_ERROR("Debug counter %s is not a drop counter", counter_name.c_str());
+        return task_process_status::task_failed;
+    }
     const unordered_set<string>& drop_reasons = counter->getDropReasons();
 
     if (drop_reasons.size() <= 1)

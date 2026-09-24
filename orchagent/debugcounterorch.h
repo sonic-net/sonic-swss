@@ -22,6 +22,11 @@ extern "C" {
 
 using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
 
+namespace portsorch_test
+{
+class PortsOrchTest;
+}
+
 // DebugCounterOrch is an orchestrator for managing debug counters. It handles
 // the creation, deletion, and modification of debug counters.
 class DebugCounterOrch: public Orch, public Observer
@@ -113,6 +118,8 @@ private:
     // cannot add drop reasons to a counter that doesn't exist yet,
     // we keep track of the reasons in this table.
     std::unordered_map<std::string, std::unordered_set<std::string>> free_drop_reasons;
+
+    friend class portsorch_test::PortsOrchTest;
 };
 
 #endif
