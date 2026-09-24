@@ -1106,6 +1106,48 @@ void VxlanTunnel::updateRemoteEndPointRefCnt(bool inc, tunnel_refcnt_t& tnl_refc
     }
 }
 
+void VxlanTunnel::updateRemoteEndPointRef(const std::string remote_vtep, bool inc,
+                                          tunnel_user_t usr)
+{
+    tunnel_refcnt_t tnl_refcnts;
+
+    auto it = tnl_users_.find(remote_vtep);
+    if (inc)
+    {
+        if (it == tnl_users_.end())
+        {
+            memset(&tnl_refcnts, 0, sizeof(tunnel_refcnt_t));
+        }
+        else
+        {
+            tnl_refcnts = it->second;
+        }
+
+        updateRemoteEndPointRefCnt(true, tnl_refcnts, usr);
+        tnl_users_[remote_vtep] = tnl_refcnts;
+        SWSS_LOG_DEBUG("Incrementing remote end point %s user %d reference to %d [imr:%d ip:%d]",
+                       remote_vtep.c_str(), usr,
+                       tnl_refcnts.imr_refcnt + tnl_refcnts.mac_refcnt + tnl_refcnts.ip_refcnt,
+                       tnl_refcnts.imr_refcnt, tnl_refcnts.ip_refcnt);
+    }
+    else
+    {
+        if (it == tnl_users_.end())
+        {
+            SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
+            return;
+        }
+
+        tnl_refcnts = it->second;
+        updateRemoteEndPointRefCnt(false, tnl_refcnts, usr);
+        it->second = tnl_refcnts;
+        SWSS_LOG_DEBUG("Decrementing remote end point %s user %d reference to %d [imr:%d ip:%d]",
+                       remote_vtep.c_str(), usr,
+                       tnl_refcnts.imr_refcnt + tnl_refcnts.mac_refcnt + tnl_refcnts.ip_refcnt,
+                       tnl_refcnts.imr_refcnt, tnl_refcnts.ip_refcnt);
+    }
+}
+
 void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc)
 {
     tunnel_refcnt_t tnl_refcnts;
@@ -1185,6 +1227,36 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
     }
 
     return true;
+}
+
+void VxlanTunnel::updateStateDbForP2MP(const string vtep, bool add)
+{
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    string tunnel_name;
+    string port_tunnel_name;
+    auto dst_addr = IpAddress(vtep);
+
+    tunnel_orch->getTunnelNameFromDIP(vtep, tunnel_name);
+
+    if (add)
+    {
+        tunnel_orch->addRemoveStateTableEntry(tunnel_name, src_ip_, dst_addr,
+            TNL_CREATION_SRC_EVPN, true);
+        // Always set the tunnel oper status to up for P2MP tunnels
+        // as they are not created in HW and are used for state tracking of remote VTEPs
+        port_tunnel_name = tunnel_orch->getTunnelPortName(dst_addr.to_string(), false);
+        tunnel_orch->updateDbTunnelOperStatus(port_tunnel_name,
+            SAI_PORT_OPER_STATUS_UP);
+    }
+    else
+    {
+        tunnel_orch->addRemoveStateTableEntry(tunnel_name, src_ip_, dst_addr,
+            TNL_CREATION_SRC_EVPN, false);
+    }
+
+    SWSS_LOG_DEBUG("P2MP Tunnel state db updated for remote VTEP %s, add %d", vtep.c_str(), add);
+
+    return;
 }
 
 bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t usr, 
@@ -1737,7 +1809,18 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
 
     if (!isDipTunnelsSupported())
     {
-        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, true);
+        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) <= 0)
+        {
+            vtep_ptr->updateStateDbForP2MP(remote_vtep, true);
+        }
+
+        vtep_ptr->updateRemoteEndPointRef(remote_vtep, true, usr);
+
+        SWSS_LOG_NOTICE("refcnt for remote %s = %d [imr:%d ip:%d]",
+                         remote_vtep.c_str(),
+                         vtep_ptr->getRemoteEndPointRefCnt(remote_vtep),
+                         vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
+                         vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep));
         return true;
     }
 
@@ -1788,10 +1871,18 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     {
         port_tunnel_name = getTunnelPortName(vtep_ptr->getSrcIP().to_string(), true);
         gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
+        vtep_ptr->updateRemoteEndPointRef(remote_vtep, false, usr);
+
+        SWSS_LOG_NOTICE("refcnt for remote %s = %d [imr:%d ip:%d]",
+                         remote_vtep.c_str(),
+                         vtep_ptr->getRemoteEndPointRefCnt(remote_vtep),
+                         vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
+                         vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep));
+
         // Clean up tnl_users_ entry if refcount reaches zero
-        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 0)
+        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) <= 0)
         {
+            vtep_ptr->updateStateDbForP2MP(remote_vtep, false);
             vtep_ptr->eraseRemoteEndPoint(remote_vtep);
         }
         if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
@@ -2735,6 +2826,8 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
         return false;
     }
 
+    tunnel_orch->addTunnelUser(end_point_ip, vni_id, vlan_id, TUNNEL_USER_IMR);
+
     // SAI Call to add tunnel to the VLAN flood domain
     // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
@@ -2807,21 +2900,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
         return false;
     }
 
-    if (vtep_ptr->del_tnl_hw_pending &&
-        !vtep_ptr->isTunnelReferenced())
-    {
-        bool ret = gPortsOrch->removeBridgePort(tunnelPort);
-        if (!ret)
-        {
-            SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
-                           src_vtep.c_str(), tunnelPort.m_fdb_count);
-            return true;
-        }
-        gPortsOrch->removeTunnel(tunnelPort);
-        vtep_ptr->deletePendingSIPTunnel();
-    }
-
-    return true;
+    return tunnel_orch->delTunnelUser(end_point_ip, vni_id, vlan_id, TUNNEL_USER_IMR);
 }
 
 //------------------- EVPN_NVO Table --------------------------//
@@ -2897,4 +2976,3 @@ void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_i
     SWSS_LOG_NOTICE("name %s\n", vniVlanMapName.c_str());
     vxlan_tunnel_map_table_[vniVlanMapName].map_entry_id = tunnel_map_id;
 }
-
