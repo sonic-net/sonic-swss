@@ -13,6 +13,8 @@ extern "C" {
 #include <dbconnector.h>
 #include <table.h>
 
+#include "switch_types.h"
+
 class SwitchCapabilities final
 {
 public:
@@ -25,10 +27,17 @@ public:
     bool isSwitchEcmpHashAlgorithmSupported() const;
     bool isSwitchLagHashAlgorithmSupported() const;
 
+    bool isSwitchEcmpPktTypeHashSupported() const;
+    bool isSwitchLagPktTypeHashSupported() const;
+
     bool validateSwitchHashFieldCap(const std::set<sai_native_hash_field_t> &hfSet) const;
 
     bool validateSwitchEcmpHashAlgorithmCap(sai_hash_algorithm_t haValue) const;
     bool validateSwitchLagHashAlgorithmCap(sai_hash_algorithm_t haValue) const;
+
+    bool validatePktTypeHashCap(const std::set<HashPktType> &supportedTypes, HashPktType pktType) const;
+    bool validateSwitchEcmpPktTypeHashCap(HashPktType pktType) const;
+    bool validateSwitchLagPktTypeHashCap(HashPktType pktType) const;
 
 private:
     template<typename T>
@@ -38,6 +47,11 @@ private:
 
     swss::FieldValueTuple makeEcmpHashCapDbEntry() const;
     swss::FieldValueTuple makeLagHashCapDbEntry() const;
+
+    swss::FieldValueTuple makeEcmpPktTypeHashCapDbEntry() const;
+    swss::FieldValueTuple makeLagPktTypeHashCapDbEntry() const;
+    swss::FieldValueTuple makeEcmpPktTypeListDbEntry() const;
+    swss::FieldValueTuple makeLagPktTypeListDbEntry() const;
 
     std::vector<swss::FieldValueTuple> makeEcmpHashAlgorithmCapDbEntry() const;
     std::vector<swss::FieldValueTuple> makeLagHashAlgorithmCapDbEntry() const;
@@ -55,6 +69,10 @@ private:
     void querySwitchEcmpHashAlgorithmAttrCapabilities();
     void querySwitchLagHashAlgorithmEnumCapabilities();
     void querySwitchLagHashAlgorithmAttrCapabilities();
+
+    bool isHashObjectPktTypeCapable() const;
+    void querySwitchEcmpHashPktTypeCapabilities();
+    void querySwitchLagHashPktTypeCapabilities();
 
     void queryHashCapabilities();
     void querySwitchCapabilities();
@@ -92,6 +110,18 @@ private:
             bool isEnumSupported = false;
             bool isAttrSupported = false;
         } lagHashAlgorithm;
+
+        // ECMP packet type hash capable
+        bool ecmpPktTypeHashCapable = false;
+
+        // LAG packet type hash capable
+        bool lagPktTypeHashCapable = false;
+
+        // Supported packet type capabilities for ECMP
+        std::set<HashPktType> ecmpPktTypeList;
+
+        // Supported packet type capabilities for LAG
+        std::set<HashPktType> lagPktTypeList;
     } switchCapabilities;
 
     static swss::DBConnector stateDb;
