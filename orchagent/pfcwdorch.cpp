@@ -15,6 +15,7 @@ extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
+extern sai_buffer_api_t *sai_buffer_api;
 
 extern event_handle_t g_events_handle;
 
@@ -31,6 +32,8 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_stateDb(new DBConnector("STATE_DB", 0)),
+    m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
@@ -39,6 +42,10 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("Platform environment variable is not defined");
         return;
     }
+
+    // Add PfcDlrPacketAction to state table
+    string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
+    this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
 }
 
 
@@ -57,6 +64,25 @@ bool PfcWdBaseOrch::getTimerRange(PfcWdTimerRange& range) const
     range.restorationMax = PFC_WD_RESTORATION_TIME_MAX;
 
     return true;
+}
+
+task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    // A port with no lossless TCs is not ready for the PFC watchdog yet, so the entry stays pending and starts once the port becomes PFC-ready.
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        if (m_pfcwdPendingPorts.insert(port.m_alias).second)
+        {
+            SWSS_LOG_INFO("Deferring PFC Watchdog on port %s: no lossless TC yet", port.m_alias.c_str());
+        }
+        return task_process_status::task_need_retry;
+    }
+
+    SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+    return task_process_status::task_need_retry;
 }
 
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
