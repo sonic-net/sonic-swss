@@ -59,9 +59,27 @@ namespace
             CollectorCreateNotImplemented,
             SwitchNotifySetNotImplemented,
             AllSupported,
+            MixedEnableAttrsAllUnsupported,
+            MixedEnableAttrsMmuUnsupported,
         };
 
         thread_local Hook g_hook = Hook::None;
+
+        // Independent hook driving the SAI_TAM_TEL_TYPE_ATTR_MODE
+        // enum-values capability response. Drives the four advertisement
+        // outcomes plus a NOT_SUPPORTED variant that mirrors saivs's
+        // current behavior.
+        enum class ModeHook
+        {
+            None = 0,
+            SingleOnly,
+            MixedOnly,
+            Both,
+            Neither,
+            QueryNotSupported,
+        };
+
+        thread_local ModeHook g_mode_hook = ModeHook::None;
     }
 }
 
@@ -156,6 +174,69 @@ extern "C"
             return SAI_STATUS_SUCCESS;
         }
 
+        // HFTel SAI_TAM_TEL_TYPE_ATTR_MODE enum-values capability.
+        const bool is_hftel_tel_type_mode =
+                (object_type == SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+                && (attr_id == SAI_TAM_TEL_TYPE_ATTR_MODE);
+        if (is_hftel_tel_type_mode && hftel::g_mode_hook != hftel::ModeHook::None)
+        {
+            if (hftel::g_mode_hook == hftel::ModeHook::QueryNotSupported)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+
+            int32_t values[2];
+            uint32_t needed = 0;
+            switch (hftel::g_mode_hook)
+            {
+            case hftel::ModeHook::SingleOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                break;
+            case hftel::ModeHook::MixedOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Both:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Neither:
+                break;
+            case hftel::ModeHook::QueryNotSupported:
+            case hftel::ModeHook::None:
+                // Handled above / unreachable.
+                break;
+            }
+
+            if (needed == 0)
+            {
+                // Empty capability set (ModeHook::Neither): return SUCCESS
+                // with count = 0 regardless of how the caller passed the list.
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = 0;
+                }
+                return SAI_STATUS_SUCCESS;
+            }
+
+            if (!enum_values_capability
+                    || !enum_values_capability->list
+                    || enum_values_capability->count < needed)
+            {
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = needed;
+                }
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+
+            for (uint32_t i = 0; i < needed; ++i)
+            {
+                enum_values_capability->list[i] = values[i];
+            }
+            enum_values_capability->count = needed;
+            return SAI_STATUS_SUCCESS;
+        }
+
         return __real_sai_query_attribute_enum_values_capability(
                 switch_id, object_type, attr_id, enum_values_capability);
     }
@@ -227,6 +308,32 @@ extern "C"
             }
 
             return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
+        }
+
+        if (hftel::g_hook == hftel::Hook::MixedEnableAttrsAllUnsupported ||
+            hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            // Everything but the TAM_TEL_TYPE enable attributes behaves as
+            // AllSupported, so isSupportedHFTel reaches the category probe.
+            if (object_type != SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->create_implemented = true;
+                attr_capability->set_implemented = true;
+                attr_capability->get_implemented = true;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
+            attr_capability->create_implemented =
+                (hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+                    && (attr_id != SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS);
+            return SAI_STATUS_SUCCESS;
         }
 
         if (hftel::g_hook == hftel::Hook::SwitchNotifySetNotImplemented)
@@ -316,6 +423,7 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookNone()
     {
         hftel::g_hook = hftel::Hook::None;
+        hftel::g_mode_hook = hftel::ModeHook::None;
     }
 
     void setSaiHookStatsStFail()
@@ -341,6 +449,41 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookAllSupported()
     {
         hftel::g_hook = hftel::Hook::AllSupported;
+    }
+
+    void setSaiHookMixedEnableAttrsAllUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsAllUnsupported;
+    }
+
+    void setSaiHookMixedEnableAttrsMmuUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsMmuUnsupported;
+    }
+
+    void setSaiHookModeAdvertisedSingleOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::SingleOnly;
+    }
+
+    void setSaiHookModeAdvertisedMixedOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::MixedOnly;
+    }
+
+    void setSaiHookModeAdvertisedBoth()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Both;
+    }
+
+    void setSaiHookModeAdvertisedNeither()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Neither;
+    }
+
+    void setSaiHookModeQueryNotSupported()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::QueryNotSupported;
     }
 
     HFTelSaiHookGuard::HFTelSaiHookGuard(void (*apply)())
