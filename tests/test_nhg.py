@@ -1409,6 +1409,44 @@ class TestNextHopGroup(TestNextHopGroupBase):
         mainline_labeled_nhs_test()
         routeorch_nhgorch_interop_test()
 
+    def test_nhgorch_reentrant_sync_no_duplicate_member(self, dvs, testlog):
+        # Test scenario:
+        # - create a NHG from already-resolved NHs so it becomes a synced group
+        # - update a member to a new label, whose NH creation reenters
+        #   syncMembers() for this same group, and assert no duplicate NHG
+        #   member is created and the group is still removable
+        #
+        # Only an update can trigger this: validateNextHop() reenters a group
+        # only once it is in NhgOrch's synced-groups map.
+        self.init_test(dvs, 2)
+
+        # 10.0.0.1/10.0.0.3 already have a SAI NH from init_test()'s static
+        # ARP, so this group syncs without creating any NH.
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ('ifname', 'Ethernet0,Ethernet4')])
+        self.nhg_ps.set('group1', fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+
+        # Give the first member a label with no SAI NH yet.  update() adds it
+        # to m_members before syncMembers(), so getNhId() -> addNextHop()
+        # reenters validateNextHop() for this group mid-sync.
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ('mpls_nh', 'push1,na'),
+                                        ('ifname', 'Ethernet0,Ethernet4')])
+        self.nhg_ps.set('group1', fvs)
+
+        # Only the labeled NH is new, and the group keeps exactly 2 members -
+        # a leaked duplicate member would make it 3.
+        self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 1)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+        assert len(self.get_nhgm_ids('group1')) == 2
+
+        # A leaked member would pin the refcount and time this out.
+        self.nhg_ps._del('group1')
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+
     def test_nhgorch_excp_group_cases(self, dvs, testlog):
         # Test scenario:
         # - remove a NHG that does not exist and assert the number of NHGs in ASIC DB remains the same
