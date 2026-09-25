@@ -107,3 +107,4 @@ orchagent/p4orch/tests/*_tr.xml
 
 build-env/.env
 build-env/custom-setup.sh
+.azure-pipelines/docker-sonic-vs/debs/
