@@ -55,11 +55,18 @@ int main(int argc, char **argv)
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
         TableConnector state_port_table(&state_db, STATE_PORT_TABLE_NAME);
+        /* MACsec data-plane state written by macsecorch: drives each member's
+         * teamd runner.macsec_gate so a member whose MACsec session is down is
+         * pulled out of the LAG distributor by teamd itself. */
+        TableConnector state_macsec_ingress_sa_table(&state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME);
+        TableConnector state_macsec_port_table(&state_db, STATE_MACSEC_PORT_TABLE_NAME);
 
         vector<TableConnector> tables = {
             conf_lag_table,
             conf_lag_member_table,
-            state_port_table
+            state_port_table,
+            state_macsec_ingress_sa_table,
+            state_macsec_port_table
         };
 
         TeamMgr teammgr(&conf_db, &app_db, &state_db, tables);
