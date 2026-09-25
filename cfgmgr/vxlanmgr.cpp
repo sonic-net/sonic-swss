@@ -364,11 +364,41 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     info.m_vxlan = getVxlanName(info);
     info.m_vxlanIf = getVxlanIfName(info);
 
+    // Multiple VNETs may share the same VNI, in which case the kernel
+    // netdev name (Vxlan{vni}/Brvxlan{vni}) is the same. Detect that the
+    // existing netdev is already owned by another VNET and just share it
+    // instead of attempting to create a duplicate kernel device.
+    bool owned_by_other_vnet = false;
+    for (const auto & kv : m_vnetCache)
+    {
+        if (kv.first != info.m_vnet && kv.second.m_vxlan == info.m_vxlan)
+        {
+            owned_by_other_vnet = true;
+            break;
+        }
+    }
+
     // If this vxlan has been created
     if (isVxlanStateOk(info.m_vxlan))
     {
-        // Because the vxlan has been create, so this message is to update
-        // the information of vxlan.
+        if (owned_by_other_vnet)
+        {
+            // This vnet may already own a different netdev (e.g. its vni
+            // changed). Release it before attaching to the shared one.
+            auto old = m_vnetCache.find(info.m_vnet);
+            if (old != m_vnetCache.end() && old->second.m_vxlan != info.m_vxlan)
+            {
+                doVxlanDeleteTask(t);
+            }
+
+            m_vnetCache[info.m_vnet] = info;
+            SWSS_LOG_NOTICE("Vxlan %s already created by another vnet; sharing for vnet %s",
+                            info.m_vxlan.c_str(), info.m_vnet.c_str());
+            return true;
+        }
+
+        // Because the vxlan has been create, so this message is to update 
+        // the information of vxlan. 
         // This program just delete the old vxlan and create a new one
         // according to this message.
         doVxlanDeleteTask(t);
@@ -398,7 +428,28 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
         return true;
     }
 
-    const VxlanInfo & info = it->second;
+    const VxlanInfo info = it->second;
+
+    // The kernel netdev may be shared by multiple VNETs that have the same
+    // VNI. Only tear it down when this is the last VNET referencing it.
+    bool shared_with_other_vnet = false;
+    for (const auto & kv : m_vnetCache)
+    {
+        if (kv.first != vnetName && kv.second.m_vxlan == info.m_vxlan)
+        {
+            shared_with_other_vnet = true;
+            break;
+        }
+    }
+
+    if (shared_with_other_vnet)
+    {
+        SWSS_LOG_NOTICE("Vxlan %s still in use by another vnet; not deleting kernel netdev for vnet %s",
+                        info.m_vxlan.c_str(), vnetName.c_str());
+        m_vnetCache.erase(it);
+        return true;
+    }
+
     if (isVxlanStateOk(info.m_vxlan))
     {
         if ( ! deleteVxlan(info))
