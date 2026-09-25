@@ -122,7 +122,7 @@ def create_vlan(dvs, vlan_name, vlan_ids):
     return
 
 
-def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, decap_ttl_mode="not_set"):
+def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, decap_ttl_mode="pipe"):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     tunnel_map_id  = get_created_entry_mapid(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
     tunnel_id      = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_ids)
