@@ -4,6 +4,7 @@
 #include <cstring>
 #include <inttypes.h>
 #include <unistd.h>
+#include <vector>
 
 using namespace swss;
 
@@ -89,8 +90,11 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
     {
         return;
     }
-    struct timeval received_time;
-    gettimeofday(&received_time, nullptr);
+
+    AsyncSwssRecordEntry staged;
+    gettimeofday(&staged.received_time, nullptr);
+    staged.prefix = prefix;
+    staged.tuple = tuple;
 
     {
         std::unique_lock<std::mutex> stateLock(m_stateMutex);
@@ -102,15 +106,14 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
         if (!m_asyncEnabled.load(std::memory_order_relaxed))
         {
             stateLock.unlock();
-            AsyncSwssRecordEntry entry = {{}, prefix, tuple};
-            record(serialize(entry));
+            record(serialize(staged));
             return;
         }
 
         ensureAsyncWorkerLocked();
 
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_queue.push_back({received_time, prefix, tuple});
+        m_queue.push_back(std::move(staged));
         onEnqueue(1);
     }
 
@@ -151,13 +154,19 @@ void SwSSRec::recordTuplesAsync(const std::string& prefix, const std::deque<KeyO
 
         ensureAsyncWorkerLocked();
 
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::vector<AsyncSwssRecordEntry> staged;
+        staged.reserve(entries.size());
         for (const auto& entry : entries)
         {
             struct timeval received_time;
             gettimeofday(&received_time, nullptr);
-            m_queue.push_back({received_time, prefix, entry});
+            staged.push_back({received_time, prefix, entry});
         }
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_queue.insert(m_queue.end(),
+                       std::make_move_iterator(staged.begin()),
+                       std::make_move_iterator(staged.end()));
         onEnqueue(entries.size());
     }
 
@@ -240,6 +249,7 @@ void SwSSRec::stopAsyncWorker()
      * above), so platforms running with async disabled stay silent.
      */
     auto stats = getAsyncDebugStats();
+    m_pendingWarnActive.store(false, std::memory_order_relaxed);
     SWSS_LOG_NOTICE(
         "AsyncSwssRecorder graceful shutdown: pending_after_shutdown=%" PRIu64
         " drained_total=%" PRIu64 " high_watermark=%" PRIu64,
@@ -258,12 +268,31 @@ void SwSSRec::onEnqueue(size_t count)
            !m_highWatermark.compare_exchange_weak(current, depth, std::memory_order_relaxed))
     {
     }
+
+    if (!m_pendingWarnActive.load(std::memory_order_relaxed) &&
+        depth >= ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD)
+    {
+        m_pendingWarnActive.store(true, std::memory_order_relaxed);
+        SWSS_LOG_WARN(
+            "AsyncSwssRecorder queue depth exceeded threshold: pending=%" PRIu64
+            " threshold=%" PRIu64 " high_watermark=%" PRIu64 " enqueued_total=%" PRIu64,
+            depth,
+            static_cast<uint64_t>(ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD),
+            m_highWatermark.load(std::memory_order_relaxed),
+            m_enqueuedTotal.load(std::memory_order_relaxed));
+    }
 }
 
 void SwSSRec::onDrain()
 {
-    m_pendingCount.fetch_sub(1, std::memory_order_relaxed);
+    auto depth = m_pendingCount.fetch_sub(1, std::memory_order_relaxed) - 1;
     m_drainedTotal.fetch_add(1, std::memory_order_relaxed);
+
+    if (m_pendingWarnActive.load(std::memory_order_relaxed) &&
+        depth <= ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD / 2)
+    {
+        m_pendingWarnActive.store(false, std::memory_order_relaxed);
+    }
 }
 
 std::string SwSSRec::formatTimestamp(const struct timeval& tv) const
