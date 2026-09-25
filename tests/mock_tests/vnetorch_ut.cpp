@@ -2152,6 +2152,159 @@ namespace vnetorch_test
         }
     };
 
+    TEST_F(VNetOrchTest, VnetLoopbackIp2MeRoutes)
+    {
+        setVxlanTunnel("tunnel_v4", "10.1.0.32");
+        setVnet("Vnet1", "tunnel_v4", "10001", "");
+
+        sai_object_id_t vrf_id = SAI_NULL_OBJECT_ID;
+        ASSERT_TRUE(m_vnetOrch->getVrfIdByVnetName("Vnet1", vrf_id));
+        ASSERT_NE(vrf_id, gVirtualRouterId);
+
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync({
+            {"Loopback100", SET_COMMAND, {{"vnet_name", "Vnet1"}}},
+            {"Loopback100:198.51.100.1/32", SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}},
+            {"Loopback100:2001:db8::1/128", SET_COMMAND, {{"scope", "global"}, {"family", "IPv6"}}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Loopback100"), syncd.end());
+        ASSERT_EQ(syncd.at("Loopback100").vrf_id, vrf_id);
+        ASSERT_EQ(syncd.at("Loopback100").ip_addresses.size(), 2U);
+
+        Port cpu_port;
+        gPortsOrch->getCpuPort(cpu_port);
+        for (const auto &prefix : {string("198.51.100.1/32"), string("2001:db8::1/128")})
+        {
+            const auto *route = findRoute(prefix.substr(0, prefix.find('/')));
+            ASSERT_NE(route, nullptr);
+            ASSERT_EQ(route->vr, vrf_id);
+            ASSERT_EQ(sai_serialize_ip_prefix(route->dest), prefix);
+            ASSERT_EQ(route->next_hop_id, cpu_port.m_port_id);
+            ASSERT_EQ(route->packet_action, SAI_PACKET_ACTION_FORWARD);
+        }
+
+        consumer->addToSync({{"Loopback100", DEL_COMMAND, {}}});
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 1U);
+        ASSERT_NE(gIntfsOrch->getSyncdIntfses().count("Loopback100"), 0U);
+
+        EXPECT_CALL(*mock_sai_route_api,
+                    remove_route_entry(testing::Field(&sai_route_entry_t::vr_id, vrf_id)))
+            .Times(2);
+        consumer->addToSync({
+            {"Loopback100:198.51.100.1/32", DEL_COMMAND, {}},
+            {"Loopback100:2001:db8::1/128", DEL_COMMAND, {}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(findRoute("198.51.100.1"), nullptr);
+        ASSERT_EQ(findRoute("2001:db8::1"), nullptr);
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_route_api));
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Loopback100"), 0U);
+        delVnet("Vnet1");
+        ASSERT_FALSE(m_vnetOrch->isVnetExists("Vnet1"));
+        delVxlanTunnel("tunnel_v4");
+    }
+
+    TEST_F(VNetOrchTest, VnetLoopbackWaitsForVnet)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync({
+            {"Loopback100", SET_COMMAND, {{"vnet_name", "Vnet1"}}},
+            {"Loopback100:198.51.100.1/32", SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(consumer->m_toSync.size(), 2U);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Loopback100"), 0U);
+        ASSERT_EQ(findRoute("198.51.100.1"), nullptr);
+
+        setVxlanTunnel("tunnel_v4", "10.1.0.32");
+        setVnet("Vnet1", "tunnel_v4", "10001", "");
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        sai_object_id_t vrf_id = SAI_NULL_OBJECT_ID;
+        ASSERT_TRUE(m_vnetOrch->getVrfIdByVnetName("Vnet1", vrf_id));
+        ASSERT_NE(vrf_id, gVirtualRouterId);
+        const auto *route = findRoute("198.51.100.1");
+        ASSERT_NE(route, nullptr);
+        ASSERT_EQ(route->vr, vrf_id);
+
+        consumer->addToSync({
+            {"Loopback100:198.51.100.1/32", DEL_COMMAND, {}},
+            {"Loopback100", DEL_COMMAND, {}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(findRoute("198.51.100.1"), nullptr);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Loopback100"), 0U);
+        delVnet("Vnet1");
+        ASSERT_FALSE(m_vnetOrch->isVnetExists("Vnet1"));
+        delVxlanTunnel("tunnel_v4");
+    }
+
+    TEST_F(VNetOrchTest, VnetLoopbackBindWaitsForIpRemoval)
+    {
+        setVxlanTunnel("tunnel_v4", "10.1.0.32");
+        setVnet("Vnet1", "tunnel_v4", "10001", "");
+        sai_object_id_t vrf_id = SAI_NULL_OBJECT_ID;
+        ASSERT_TRUE(m_vnetOrch->getVrfIdByVnetName("Vnet1", vrf_id));
+        ASSERT_NE(vrf_id, gVirtualRouterId);
+
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync({
+            {"Loopback100", SET_COMMAND, {}},
+            {"Loopback100:198.51.100.1/32", SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Loopback100").vrf_id, gVirtualRouterId);
+
+        // The bare interface SET is processed before the address DEL in this batch.
+        consumer->addToSync({
+            {"Loopback100", SET_COMMAND, {{"vnet_name", "Vnet1"}}},
+            {"Loopback100:198.51.100.1/32", DEL_COMMAND, {}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.size(), 1U);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Loopback100").vrf_id, gVirtualRouterId);
+        ASSERT_EQ(findRoute("198.51.100.1"), nullptr);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Loopback100").vrf_id, vrf_id);
+        consumer->addToSync({
+            {"Loopback100:198.51.100.1/32", SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        const auto *route = findRoute("198.51.100.1");
+        ASSERT_NE(route, nullptr);
+        ASSERT_EQ(route->vr, vrf_id);
+
+        consumer->addToSync({
+            {"Loopback100", DEL_COMMAND, {}},
+            {"Loopback100:198.51.100.1/32", DEL_COMMAND, {}}
+        });
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(findRoute("198.51.100.1"), nullptr);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Loopback100"), 0U);
+        delVnet("Vnet1");
+        ASSERT_FALSE(m_vnetOrch->isVnetExists("Vnet1"));
+        delVxlanTunnel("tunnel_v4");
+    }
+
     // Minimal end-to-end check that the fixture drives VNetOrch: creating a VNET
     // that references a VXLAN tunnel programs a SAI virtual router for the VNET
     // (the mock-test equivalent of check_vnet_entry() asserting a new
