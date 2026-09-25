@@ -25,6 +25,11 @@ void NotificationConsumerStatsOrch::registerConsumer(const std::string &,
 {
 }
 
+void NotificationConsumerStatsOrch::registerSaiNotificationQueue(const std::string &,
+                                                                  SaiNotificationQueue *)
+{
+}
+
 void NotificationConsumerStatsOrch::doTask(swss::SelectableTimer &)
 {
 }

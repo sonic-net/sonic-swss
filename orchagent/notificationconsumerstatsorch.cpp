@@ -1,6 +1,7 @@
 #include "notificationconsumerstatsorch.h"
 
 #include "logger.h"
+#include "notifications.h"
 #include "select.h"
 #include "table.h"
 #include "timer.h"
@@ -49,53 +50,114 @@ void NotificationConsumerStatsOrch::registerConsumer(const std::string &name,
                     name.c_str(), consumer->getChannel().c_str());
 }
 
+void NotificationConsumerStatsOrch::registerSaiNotificationQueue(const std::string &name,
+                                                                 SaiNotificationQueue *queue)
+{
+    if (queue == nullptr)
+    {
+        SWSS_LOG_WARN("NotificationConsumerStatsOrch::registerSaiNotificationQueue: null queue for %s",
+                      name.c_str());
+        return;
+    }
+    m_saiQueues.push_back({name, queue});
+    SWSS_LOG_NOTICE("NotificationConsumerStatsOrch: registered ZMQ queue %s (channel=%s)",
+                    name.c_str(), queue->getChannel().c_str());
+}
+
+void NotificationConsumerStatsOrch::publishConsumerStats(const Entry &entry)
+{
+    // dropped_allowlist is expected to be high in the presence of a storm,
+    // as each NOTIFICATION gets delivered to ALL consumers, and all
+    // consumers except the intended recipient will drop the message.
+    auto admit_stats = entry.consumer->getStats();
+    uint64_t admitted = admit_stats.received >= admit_stats.dropped_allowlist
+                        ? admit_stats.received - admit_stats.dropped_allowlist
+                        : 0;
+    uint64_t admit_ratio = admit_stats.received
+                           ? (100 * admitted / admit_stats.received)
+                           : 0;
+
+    std::vector<FieldValueTuple> fvs;
+    fvs.emplace_back("channel", entry.consumer->getChannel());
+    fvs.emplace_back("received",          std::to_string(admit_stats.received));
+    fvs.emplace_back("dropped_allowlist", std::to_string(admit_stats.dropped_allowlist));
+    fvs.emplace_back("admitted",          std::to_string(admitted));
+    fvs.emplace_back("admit_ratio_pct",   std::to_string(admit_ratio));
+
+    // If the consumer uses LruDedup, also publish the queue-side
+    // dedup counters.  FIFO queues have no equivalent.
+    if (auto *lru = entry.consumer->getLruDedupQueue())
+    {
+        auto qs = lru->getStats();
+        // Integer percent for consistency: redis-cli scrapers see
+        // a stable type ("0".."100") instead of a mix of "0" and
+        // "75.000000".  Sub-integer granularity isn't useful here
+        // (the counter is updated once per push and the publish
+        // tick is 10 s).
+        uint64_t ratio = qs.pushed ? (100 * qs.dedup_hits / qs.pushed) : 0;
+        fvs.emplace_back("lru_pushed",          std::to_string(qs.pushed));
+        fvs.emplace_back("lru_dedup_hits",      std::to_string(qs.dedup_hits));
+        fvs.emplace_back("lru_dedup_ratio_pct", std::to_string(ratio));
+        fvs.emplace_back("lru_current_depth",   std::to_string(qs.current_depth));
+        fvs.emplace_back("lru_high_watermark",  std::to_string(qs.high_watermark));
+        fvs.emplace_back("queue_policy", "LruDedup");
+    }
+    else
+    {
+        fvs.emplace_back("queue_policy", "Fifo");
+    }
+
+    m_table->set(entry.name, fvs);
+}
+
+void NotificationConsumerStatsOrch::publishSaiQueueStats(const SaiQueueEntry &entry)
+{
+    auto admit_stats = entry.queue->getStats();
+    uint64_t admitted = admit_stats.received >= admit_stats.dropped_allowlist
+                        ? admit_stats.received - admit_stats.dropped_allowlist
+                        : 0;
+    uint64_t admit_ratio = admit_stats.received
+                           ? (100 * admitted / admit_stats.received)
+                           : 0;
+
+    std::vector<FieldValueTuple> fvs;
+    fvs.emplace_back("channel", entry.queue->getChannel());
+    fvs.emplace_back("received",          std::to_string(admit_stats.received));
+    fvs.emplace_back("dropped_allowlist", std::to_string(admit_stats.dropped_allowlist));
+    fvs.emplace_back("admitted",          std::to_string(admitted));
+    fvs.emplace_back("admit_ratio_pct",   std::to_string(admit_ratio));
+
+    if (auto *lru = entry.queue->getLruDedupQueue())
+    {
+        auto qs = lru->getStats();
+        uint64_t ratio = qs.pushed ? (100 * qs.dedup_hits / qs.pushed) : 0;
+        fvs.emplace_back("lru_pushed",          std::to_string(qs.pushed));
+        fvs.emplace_back("lru_dedup_hits",      std::to_string(qs.dedup_hits));
+        fvs.emplace_back("lru_dedup_ratio_pct", std::to_string(ratio));
+        fvs.emplace_back("lru_current_depth",   std::to_string(qs.current_depth));
+        fvs.emplace_back("lru_high_watermark",  std::to_string(qs.high_watermark));
+        fvs.emplace_back("queue_policy", "LruDedup");
+    }
+    else
+    {
+        fvs.emplace_back("dropped_overflow", std::to_string(admit_stats.dropped_overflow));
+        fvs.emplace_back("queue_policy", "Fifo");
+    }
+
+    m_table->set(entry.name, fvs);
+}
+
 void NotificationConsumerStatsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
     for (const auto &entry : m_consumers)
     {
-        // dropped_allowlist is expected to be high in the presence of a storm,
-        // as each NOTIFICATION gets delivered to ALL consumers, and all
-        // consumers except the intended recipient will drop the message.
-        auto admit_stats = entry.consumer->getStats();
-        uint64_t admitted = admit_stats.received >= admit_stats.dropped_allowlist
-                            ? admit_stats.received - admit_stats.dropped_allowlist
-                            : 0;
-        uint64_t admit_ratio = admit_stats.received
-                               ? (100 * admitted / admit_stats.received)
-                               : 0;
+        publishConsumerStats(entry);
+    }
 
-        std::vector<FieldValueTuple> fvs;
-        fvs.emplace_back("channel", entry.consumer->getChannel());
-        fvs.emplace_back("received",          std::to_string(admit_stats.received));
-        fvs.emplace_back("dropped_allowlist", std::to_string(admit_stats.dropped_allowlist));
-        fvs.emplace_back("admitted",          std::to_string(admitted));
-        fvs.emplace_back("admit_ratio_pct",   std::to_string(admit_ratio));
-
-        // If the consumer uses LruDedup, also publish the queue-side
-        // dedup counters.  FIFO queues have no equivalent.
-        if (auto *lru = entry.consumer->getLruDedupQueue())
-        {
-            auto qs = lru->getStats();
-            // Integer percent for consistency: redis-cli scrapers see
-            // a stable type ("0".."100") instead of a mix of "0" and
-            // "75.000000".  Sub-integer granularity isn't useful here
-            // (the counter is updated once per push and the publish
-            // tick is 10 s).
-            uint64_t ratio = qs.pushed ? (100 * qs.dedup_hits / qs.pushed) : 0;
-            fvs.emplace_back("lru_pushed",          std::to_string(qs.pushed));
-            fvs.emplace_back("lru_dedup_hits",      std::to_string(qs.dedup_hits));
-            fvs.emplace_back("lru_dedup_ratio_pct", std::to_string(ratio));
-            fvs.emplace_back("lru_current_depth",   std::to_string(qs.current_depth));
-            fvs.emplace_back("lru_high_watermark",  std::to_string(qs.high_watermark));
-            fvs.emplace_back("queue_policy", "LruDedup");
-        }
-        else
-        {
-            fvs.emplace_back("queue_policy", "Fifo");
-        }
-
-        m_table->set(entry.name, fvs);
+    for (const auto &entry : m_saiQueues)
+    {
+        publishSaiQueueStats(entry);
     }
 }
