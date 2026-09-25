@@ -1,10 +1,13 @@
+#include "schema.h"
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
 #undef private
 
 #include "json.h"
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 #include "mock_orch_test.h"
 #include "dashorch.h"
 #include "dashmeterorch.h"
@@ -22,6 +25,7 @@
 #include <sstream>
 
 extern bool gTraditionalFlexCounter;
+extern std::vector<sai_object_id_t> gGearboxOids;
 
 namespace flexcounter_test
 {
@@ -34,6 +38,7 @@ namespace flexcounter_test
     shared_ptr<swss::Table> mockFlexCounterGroupTable;
     shared_ptr<swss::Table> mockFlexCounterTable;
     sai_set_switch_attribute_fn mockOldSaiSetSwitchAttribute;
+    uint32_t mockSecondaryPollFactorOperationCallCount;
 
     void mock_counter_init(sai_set_switch_attribute_fn old)
     {
@@ -42,6 +47,7 @@ namespace flexcounter_test
         mockFlexCounterTable = make_shared<swss::Table>(mockFlexCounterDb.get(), "FLEX_COUNTER_TABLE");
 
         mockOldSaiSetSwitchAttribute = old;
+        mockSecondaryPollFactorOperationCallCount = 0;
     }
 
     uint32_t mockFlexCounterOperationCallCount;
@@ -138,6 +144,32 @@ namespace flexcounter_test
             }
             mockFlexCounterGroupTable->del(key);
         }
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t mockFlexCounterGroupSecondaryPollFactorOperation(
+        sai_object_id_t objectId,
+        const sai_attribute_t *attr)
+    {
+        if (objectId != gSwitchId)
+        {
+            return SAI_STATUS_FAILURE;
+        }
+
+        auto *param = reinterpret_cast<
+            sai_redis_flex_counter_group_secondary_poll_factor_parameter_t *>(attr->value.ptr);
+        std::string key(
+            reinterpret_cast<const char *>(param->counter_group_name.list),
+            param->counter_group_name.count);
+        std::string factor(
+            reinterpret_cast<const char *>(param->secondary_poll_factor.list),
+            param->secondary_poll_factor.count);
+
+        mockFlexCounterGroupTable->set(
+            key,
+            {{SECONDARY_POLL_FACTOR_FIELD, factor}});
+        mockSecondaryPollFactorOperationCallCount++;
 
         return SAI_STATUS_SUCCESS;
     }
@@ -252,6 +284,10 @@ namespace flexcounter_test
         if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP)
         {
             mockFlexCounterGroupOperation(switch_id, attr);
+        }
+        else if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP_SECONDARY_POLL_FACTOR)
+        {
+            mockFlexCounterGroupSecondaryPollFactorOperation(switch_id, attr);
         }
         else if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER)
         {
@@ -528,6 +564,22 @@ namespace flexcounter_test
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"},
+                                              {PORT_PLUGIN_FIELD, ""}
+                                          }));
+
+        // Invalid factors must not replace the PORT group's startup default.
+        setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, "invalid");
+        setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, "2147483648");
+        setFlexCounterGroupSecondaryPollFactor(
+            PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+            "9999999999999999999999999999999999999999");
+        ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS},
+                                              {SECONDARY_POLL_FACTOR_FIELD, PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR},
                                               {FLEX_COUNTER_STATUS_FIELD, "disable"},
                                               {PORT_PLUGIN_FIELD, ""}
                                           }));
@@ -640,11 +692,17 @@ namespace flexcounter_test
         flexCounterCfg.set("QUEUE", values);
         flexCounterCfg.set("PORT_BUFFER_DROP", values);
         flexCounterCfg.set("PG_DROP", values);
-        flexCounterCfg.set("PORT", values);
+        flexCounterCfg.set("PORT", {
+            {FLEX_COUNTER_STATUS_FIELD, "enable"},
+            {SECONDARY_POLL_FACTOR_FIELD, "240"}
+        });
         flexCounterCfg.set("BUFFER_POOL_WATERMARK", values);
         flexCounterCfg.set("PFCWD", values);
 
         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+        auto secondaryPollFactorCallCount = mockSecondaryPollFactorOperationCallCount;
+        gPortsOrch->m_gearboxEnabled = true;
+        gGearboxOids.push_back(gSwitchId);
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
@@ -653,6 +711,43 @@ namespace flexcounter_test
             // Expire timer
             flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
             static_cast<Orch *>(flexCounterOrch)->doTask();
+        }
+
+        bool gearboxFactorPresent = false;
+        bool gearboxStatusPresent = false;
+        string gearboxFactor;
+        string gearboxStatus;
+        if (gTraditionalFlexCounter)
+        {
+            auto gearboxFlexCounterDb = make_shared<DBConnector>("GB_FLEX_COUNTER_DB", 0);
+            Table gearboxFlexCounterGroupTable(
+                gearboxFlexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE);
+            gearboxFactorPresent = gearboxFlexCounterGroupTable.hget(
+                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                SECONDARY_POLL_FACTOR_FIELD,
+                gearboxFactor);
+            gearboxStatusPresent = gearboxFlexCounterGroupTable.hget(
+                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                FLEX_COUNTER_STATUS_FIELD,
+                gearboxStatus);
+        }
+
+        auto updatedSecondaryPollFactorCallCount = mockSecondaryPollFactorOperationCallCount;
+        gGearboxOids.clear();
+        gPortsOrch->m_gearboxEnabled = false;
+
+        if (gTraditionalFlexCounter)
+        {
+            ASSERT_TRUE(gearboxFactorPresent);
+            ASSERT_EQ("240", gearboxFactor);
+            ASSERT_TRUE(gearboxStatusPresent);
+            ASSERT_EQ("enable", gearboxStatus);
+        }
+        else
+        {
+            // One update targets the switch and one targets its gearbox PHY.
+            ASSERT_EQ(secondaryPollFactorCallCount + 2,
+                      updatedSecondaryPollFactorCallCount);
         }
 
         isNoPendingCounterObjects();
@@ -699,6 +794,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "1000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, "240"},
                                               {STATS_MODE_FIELD, STATS_MODE_READ},
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {PORT_PLUGIN_FIELD, ""}
