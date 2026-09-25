@@ -1302,7 +1302,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot initialize MACsec egress object at the switch 0x%" PRIx64, switch_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &macsec_obj.first->second.m_egress_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1334,7 +1334,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot initialize MACsec ingress object at the switch 0x%" PRIx64, switch_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &macsec_obj.first->second.m_ingress_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1606,7 +1606,7 @@ bool MACsecOrch::createMACsecPort(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &macsec_port_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1877,7 +1877,7 @@ bool MACsecOrch::createMACsecFlow(
                             attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &flow_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -2179,7 +2179,7 @@ bool MACsecOrch::createMACsecSC(
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot create MACsec egress SC %s", MACsecSCI(sci).str().c_str());
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &sc_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -2650,7 +2650,7 @@ bool MACsecOrch::createMACsecSA(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status, &sa_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -2955,7 +2955,7 @@ bool MACsecOrch::createMACsecACLTable(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &table_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -3079,7 +3079,7 @@ bool MACsecOrch::createMACsecACLEAPOLEntry(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &entry_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -3128,7 +3128,7 @@ bool MACsecOrch::createMACsecACLDataEntry(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &entry_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -3308,7 +3308,7 @@ bool MACsecOrch::createPFCEntry(
                                     attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status, &entry_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

@@ -154,7 +154,7 @@ void DashAclGroupMgr::init(DashAclGroup& group)
 
 }
 
-void DashAclGroupMgr::create(DashAclGroup& group)
+task_process_status DashAclGroupMgr::create(DashAclGroup& group)
 {
     SWSS_LOG_ENTER();
 
@@ -168,12 +168,18 @@ void DashAclGroupMgr::create(DashAclGroup& group)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ACL group: %d, %s", status, sai_serialize_status(status).c_str());
-        handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status, &group.m_dash_acl_group_id);
+        if (handle_status != task_success)
+        {
+            return handle_status;
+        }
     }
 
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
     gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
+
+    return task_success;
 }
 
 task_process_status DashAclGroupMgr::create(const string& group_id, DashAclGroup& group)
@@ -185,7 +191,11 @@ task_process_status DashAclGroupMgr::create(const string& group_id, DashAclGroup
         return task_failed;
     }
 
-    create(group);
+    auto status = create(group);
+    if (status != task_success)
+    {
+        return status;
+    }
 
     m_groups_table.emplace(group_id, group);
 
@@ -253,7 +263,7 @@ bool DashAclGroupMgr::exists(const string& group_id) const
     return m_groups_table.find(group_id) != m_groups_table.end();
 }
 
-DashAclRuleInfo DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
+task_process_status DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
 {
     SWSS_LOG_ENTER();
 
@@ -368,14 +378,18 @@ DashAclRuleInfo DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& ru
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ACL rule: %d, %s", status, sai_serialize_status(status).c_str());
-        handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status, &rule_info.m_dash_acl_rule_id);
+        if (handle_status != task_success)
+        {
+            return handle_status;
+        }
     }
 
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
             CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
     gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
 
-    return rule_info;
+    return task_success;
 }
 
 task_process_status DashAclGroupMgr::createRule(const string& group_id, const string& rule_id, DashAclRule& rule)
@@ -408,7 +422,11 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
         }
     }
 
-    auto rule_info = createRule(group, rule);
+    auto status = createRule(group, rule);
+    if (status != task_success)
+    {
+        return status;
+    }
 
     group.m_rule_count++;
     attachTags(group_id, group.m_tags);

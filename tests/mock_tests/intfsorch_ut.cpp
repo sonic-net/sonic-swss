@@ -20,6 +20,8 @@ namespace intfsorch_test
     bool fail_next_rif_set = false;
     int loopback_action_set_count = 0;
     sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
+    sai_status_t forced_create_rif_status = SAI_STATUS_SUCCESS;
+    int null_oid_set_count = 0;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
@@ -30,6 +32,10 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
+        if (forced_create_rif_status != SAI_STATUS_SUCCESS)
+        {
+            return forced_create_rif_status;
+        }
         return pold_sai_rif_api->create_router_interface(
             router_interface_id, switch_id, attr_count, attr_list);
     }
@@ -45,6 +51,10 @@ namespace intfsorch_test
             _In_ sai_object_id_t router_interface_id,
             _In_ const sai_attribute_t *attr)
     {
+        if (router_interface_id == SAI_NULL_OBJECT_ID)
+        {
+            ++null_oid_set_count;
+        }
         if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
         {
             ++loopback_action_set_count;
@@ -91,6 +101,8 @@ namespace intfsorch_test
             fail_next_rif_set = false;
             loopback_action_set_count = 0;
             last_loopback_action = SAI_PACKET_ACTION_FORWARD;
+            forced_create_rif_status = SAI_STATUS_SUCCESS;
+            null_oid_set_count = 0;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
@@ -575,5 +587,42 @@ namespace intfsorch_test
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_EQ(port.m_nat_zone_id, 7u);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchRifCreateAlreadyExistsWithoutOid)
+    {
+        forced_create_rif_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // Nothing is recorded and the task stays queued for retry.
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Ethernet0"), 0u);
+        ASSERT_EQ(gIntfsOrch->getRouterIntfsId("Ethernet0"), SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+
+        // A follow-up attribute update must not be programmed on a null RIF id.
+        entries = {
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(null_oid_set_count, 0);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Ethernet0"), 0u);
+
+        // Once SAI creates the RIF normally, the queued task recovers.
+        forced_create_rif_status = SAI_STATUS_SUCCESS;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Ethernet0"), 1u);
+        ASSERT_NE(gIntfsOrch->getRouterIntfsId("Ethernet0"), SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(null_oid_set_count, 0);
     }
 }

@@ -426,7 +426,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     next_hop_attr.value.oid = rif_id;
     next_hop_attrs.push_back(next_hop_attr);
 
-    sai_object_id_t next_hop_id;
+    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
 
     if (ctx.bulk_op)
     {
@@ -437,15 +437,8 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-        {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
-                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
-        }
-        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
-                       nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d", nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status, &next_hop_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -529,15 +522,8 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
     {
         sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
-        if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-        {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
-                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
-        }
-        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
-                       nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
+        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d", nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status, &ctx.next_hop_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -2269,7 +2255,7 @@ TunnelNhOpStatus NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_obj
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IPinIP tunnel NH %s, rv:%d", nh.to_string().c_str(), status);
-        handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, status, &nh_id);
         return TunnelNhOpStatus::SAI_FAILED;
     }
 

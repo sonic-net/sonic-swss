@@ -1462,7 +1462,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
             {
                 SWSS_LOG_ERROR("Failed to create scheduler profile [%s:%s], rv:%d",
                                qos_map_type_name.c_str(), qos_object_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_SCHEDULER, sai_status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_SCHEDULER, sai_status, &sai_object);
                 if (handle_status != task_process_status::task_success)
                 {
                     return handle_status;

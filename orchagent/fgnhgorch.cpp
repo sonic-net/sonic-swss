@@ -270,7 +270,7 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
     nhg_attr.value.s32 = fgNhgEntry->configured_bucket_size;
     nhg_attrs.push_back(nhg_attr);
 
-    sai_object_id_t next_hop_group_id;
+    sai_object_id_t next_hop_group_id = SAI_NULL_OBJECT_ID;
 
     if (!gRouteOrch->createFineGrainedNextHopGroup(next_hop_group_id, nhg_attrs))
     {
@@ -1165,7 +1165,7 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
         nhgm_attr.value.s32 = bucket_idx;
         nhgm_attrs.push_back(nhgm_attr);
 
-        sai_object_id_t next_hop_group_member_id;
+        sai_object_id_t next_hop_group_member_id = SAI_NULL_OBJECT_ID;
         status = sai_next_hop_group_api->create_next_hop_group_member(
                                                           &next_hop_group_member_id,
                                                           gSwitchId,
@@ -1180,7 +1180,7 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
                 SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
             }
 
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &next_hop_group_member_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);

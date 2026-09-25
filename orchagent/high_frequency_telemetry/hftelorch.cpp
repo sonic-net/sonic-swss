@@ -679,10 +679,10 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
 
     if (handleSaiCreateStatus(
             SAI_API_HOSTIF,
-            sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+            sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()), &m_sai_hostif_obj) != task_success)
     {
         deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
-        return;                 // LCOV_EXCL_LINE
+        throw runtime_error("HFTelOrch initialization failure (failed to create hostif)"); // LCOV_EXCL_LINE
     }
 
     // Create hostif user defined trap object
@@ -694,10 +694,10 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
 
     if (handleSaiCreateStatus(
             SAI_API_HOSTIF,
-            sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+            sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()), &m_sai_hostif_user_defined_trap_obj) != task_success)
     {
         deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
-        return;                 // LCOV_EXCL_LINE
+        throw runtime_error("HFTelOrch initialization failure (failed to create hostif user defined trap)"); // LCOV_EXCL_LINE
     }
 
     // Create hostif table entry object
@@ -721,10 +721,10 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
 
     if (handleSaiCreateStatus(
             SAI_API_HOSTIF,
-            sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+            sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()), &m_sai_hostif_table_entry_obj) != task_success)
     {
         deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
-        return;                 // LCOV_EXCL_LINE
+        throw runtime_error("HFTelOrch initialization failure (failed to create hostif table entry)"); // LCOV_EXCL_LINE
     }
 }
 
@@ -769,13 +769,18 @@ void HFTelOrch::createTAM()
     attr.value.s32 = SAI_TAM_TRANSPORT_TYPE_NONE;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_transport(
-            &m_sai_tam_transport_obj,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_transport(
+                &m_sai_tam_transport_obj,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &m_sai_tam_transport_obj) != task_success)
+    {
+        deleteTAM();
+        throw runtime_error("HFTelOrch initialization failure (failed to create tam transport)");
+    }
 
     // Create TAM collector object
     attrs.clear();
@@ -806,13 +811,18 @@ void HFTelOrch::createTAM()
     attr.value.u8 = 0;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_collector(
-            &m_sai_tam_collector_obj,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_collector(
+                &m_sai_tam_collector_obj,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &m_sai_tam_collector_obj) != task_success)
+    {
+        deleteTAM();
+        throw runtime_error("HFTelOrch initialization failure (failed to create tam collector)");
+    }
 
     // Create TAM object
     attrs.clear();
@@ -824,13 +834,18 @@ void HFTelOrch::createTAM()
     attr.value.s32list.list = bind_point_types.data();
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam(
-            &m_sai_tam_obj,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam(
+                &m_sai_tam_obj,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data()),
+            &m_sai_tam_obj) != task_success)
+    {
+        deleteTAM();
+        throw runtime_error("HFTelOrch initialization failure (failed to create tam)");
+    }
 
     // Bind the TAM object to switch
     // FIX: There is a bug for config reload

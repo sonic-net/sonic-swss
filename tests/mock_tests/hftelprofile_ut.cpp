@@ -387,6 +387,8 @@ namespace hftelprofile_ut
     {
         sai_tam_api_t ut_api;
         sai_tam_api_t *orig_api = nullptr;
+        sai_switch_api_t stub_switch_api;
+        sai_switch_api_t *original_switch_api = nullptr;
 
         struct SaiAttrStub
         {
@@ -425,6 +427,7 @@ namespace hftelprofile_ut
 
         static vector<sai_attribute_t> report_attrs;
         static vector<sai_attribute_t> counter_attrs;
+        static sai_status_t injected_tam_report_status;
 
         static sai_status_t mock_create_tam_report(
             sai_object_id_t *report_id,
@@ -432,6 +435,10 @@ namespace hftelprofile_ut
             uint32_t attr_count,
             const sai_attribute_t *attr_list)
         {
+            if (injected_tam_report_status != SAI_STATUS_SUCCESS)
+            {
+                return injected_tam_report_status;
+            }
             report_attrs.assign(attr_list, attr_list + attr_count);
             *report_id = 0x500;
             return SAI_STATUS_SUCCESS;
@@ -459,6 +466,11 @@ namespace hftelprofile_ut
             return SAI_STATUS_SUCCESS;
         }
 
+        static sai_status_t mock_set_switch_attribute(sai_object_id_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
         void SetUp() override
         {
             if (sai_tam_api == nullptr)
@@ -473,18 +485,32 @@ namespace hftelprofile_ut
             ut_api.create_tam_counter_subscription = mock_create_tam_counter_subscription;
             ut_api.remove_tam_counter_subscription = mock_remove_tam_counter_subscription;
             sai_tam_api = &ut_api;
+
+            if (sai_switch_api == nullptr)
+            {
+                static sai_switch_api_t default_switch_api{};
+                sai_switch_api = &default_switch_api;
+            }
+            stub_switch_api = *sai_switch_api;
+            original_switch_api = sai_switch_api;
+            stub_switch_api.set_switch_attribute = mock_set_switch_attribute;
+            sai_switch_api = &stub_switch_api;
+
             report_attrs.clear();
             counter_attrs.clear();
+            injected_tam_report_status = SAI_STATUS_SUCCESS;
         }
 
         void TearDown() override
         {
             sai_tam_api = orig_api;
+            sai_switch_api = original_switch_api;
         }
     };
 
     vector<sai_attribute_t> SaiAttrTest::report_attrs;
     vector<sai_attribute_t> SaiAttrTest::counter_attrs;
+    sai_status_t SaiAttrTest::injected_tam_report_status = SAI_STATUS_SUCCESS;
 
     TEST_F(SaiAttrTest, GetTAMReportAddsIntervalUnit)
     {
@@ -518,6 +544,31 @@ namespace hftelprofile_ut
         });
         ASSERT_NE(itr, counter_attrs.end());
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
+    }
+
+    TEST_F(SaiAttrTest, CreateTamReport_OnNullOidStatus_SkipsCachingAndSubscriptions)
+    {
+        const sai_object_id_t port_oid = 0x1000000000001ULL;
+        const uint16_t counter_label = 7;
+
+        SaiAttrStub profile_stub;
+        profile_stub.init();
+        HFTelProfile *profile_under_test = profile_stub.p;
+        profile_under_test->m_sai_tam_tel_type_objs.clear();
+        injected_tam_report_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+
+        EXPECT_EQ(profile_under_test->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(profile_under_test->m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(profile_under_test->m_sai_tam_tel_type_objs.empty());
+
+        profile_under_test->deployCounterSubscription(
+            SAI_OBJECT_TYPE_PORT,
+            port_oid,
+            SAI_PORT_STAT_IF_IN_OCTETS,
+            counter_label);
+
+        EXPECT_TRUE(counter_attrs.empty());
+        EXPECT_TRUE(profile_under_test->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT].empty());
     }
 
     struct LocallyNotifyStartedProfileTest : public ::testing::Test

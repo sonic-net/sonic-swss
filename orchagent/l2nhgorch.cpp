@@ -75,7 +75,7 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create an L2 Next Hop Group of type Bridge port: rc: %d", status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &nhg_oid);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);
@@ -201,7 +201,7 @@ pair<sai_object_id_t, sai_object_id_t> L2NhgOrch::createSaiNextHop(sai_object_id
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create an L2 Next Hop of type Bridge port: rc: %d", status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status, &nh_oid);
         if (handle_status != task_success)
         {
             parseHandleSaiStatusFailure(handle_status);

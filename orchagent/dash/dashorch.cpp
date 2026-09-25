@@ -192,7 +192,7 @@ bool DashOrch::createApplianceSaiObjects(const string& appliance_id, const dash:
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
-            task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status, &sai_appliance_id);
             if (handle_status != task_success)
             {
                 return false;
@@ -797,7 +797,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ENI object for %s", eni.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status, &eni_id);
         if (handle_status != task_success)
         {
             return false;

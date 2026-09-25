@@ -98,7 +98,7 @@ sai_l2mc_group_api_t* sai_l2mc_group_api;
 sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
 
-task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, const sai_object_id_t *object_id)
 {
     return task_success;
 }

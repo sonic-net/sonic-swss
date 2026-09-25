@@ -359,7 +359,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create HA Set object in SAI for %s", key.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status, &sai_ha_set_oid);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -645,7 +645,7 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create HA Scope object in SAI for %s", key.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_HA, status, &sai_ha_scope_oid);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

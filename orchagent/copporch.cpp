@@ -306,7 +306,7 @@ void CoppOrch::initDefaultHostIntfTable()
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t default_hostif_table_id;
+    sai_object_id_t default_hostif_table_id = SAI_NULL_OBJECT_ID;
     vector<sai_attribute_t> attrs;
 
     sai_attribute_t attr;
@@ -323,7 +323,7 @@ void CoppOrch::initDefaultHostIntfTable()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create default host interface table, rv:%d", status);
-        if (handleSaiCreateStatus(SAI_API_HOSTIF, status) != task_success)
+        if (handleSaiCreateStatus(SAI_API_HOSTIF, status, &default_hostif_table_id) != task_success)
         {
             throw "CoppOrch initialization failure";
         }
@@ -460,7 +460,7 @@ bool CoppOrch::createGenetlinkHostIfTable(vector<sai_hostif_trap_type_t> &trap_i
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create hostif table entry failed, rv %d", status);
-                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status, &hostif_table_entry);
                     if (handle_status != task_success)
                     {
                         return parseHandleSaiStatusFailure(handle_status);
@@ -514,12 +514,12 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
 
         attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
 
-        sai_object_id_t hostif_trap_id;
+        sai_object_id_t hostif_trap_id = SAI_NULL_OBJECT_ID;
         sai_status_t status = sai_hostif_api->create_hostif_trap(&hostif_trap_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status, &hostif_trap_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -601,14 +601,14 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t policer_id;
+    sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
     sai_status_t sai_status;
 
     sai_status = sai_policer_api->create_policer(&policer_id, gSwitchId, (uint32_t)policer_attribs.size(), policer_attribs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create policer trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, sai_status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, sai_status, &policer_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -661,7 +661,7 @@ bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribut
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t hostif_id;
+    sai_object_id_t hostif_id = SAI_NULL_OBJECT_ID;
     sai_status_t sai_status;
 
     sai_status = sai_hostif_api->create_hostif(&hostif_id, gSwitchId,
@@ -671,7 +671,7 @@ bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribut
     {
         SWSS_LOG_ERROR("Failed to create genetlink hostif for trap group %s, rc=%d",
                        trap_group_name.c_str(), sai_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status, &hostif_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -778,13 +778,13 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         /* Create host interface trap group */
         else
         {
-            sai_object_id_t new_trap;
+            sai_object_id_t new_trap = SAI_NULL_OBJECT_ID;
 
             sai_status = sai_hostif_api->create_hostif_trap_group(&new_trap, gSwitchId, (uint32_t)trap_gr_attribs.size(), trap_gr_attribs.data());
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create host interface trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status, &new_trap);
                 if (handle_status != task_process_status::task_success)
                 {
                     return handle_status;

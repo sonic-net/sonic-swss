@@ -201,7 +201,7 @@ bool DashMeterOrch::addMeterPolicy(const string& meter_policy, MeterPolicyContex
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create Meter policy %s", meter_policy.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_METER, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_METER, status, &meter_policy_oid);
         if (handle_status != task_success)
         {
             return false;

@@ -337,7 +337,7 @@ SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::create
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("%s, SAI create offload session failed %s, rv:%d", name.c_str(), m_key.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(atype, status);
+        task_process_status handle_status = handleSaiCreateStatus(atype, status, &m_session_id);
         if (handle_status != task_success)
         {
             // check for retries

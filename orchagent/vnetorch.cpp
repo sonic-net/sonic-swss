@@ -2865,7 +2865,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 {
                     SWSS_LOG_ERROR("Failed to add next hop member to group %" PRIx64 ": %d\n",
                                     nhg_info.next_hop_group_id, status);
-                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &next_hop_group_member_id);
                     if (handle_status != task_success)
                     {
                         continue;

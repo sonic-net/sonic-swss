@@ -797,7 +797,7 @@ bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_g
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create route group %s", route_group.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status, &route_group_oid);
         if (handle_status != task_success)
         {
             return false;

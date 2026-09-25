@@ -642,7 +642,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     return status;
 }
 
-task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, const sai_object_id_t *object_id)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis create
@@ -650,10 +650,9 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
      * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
      *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
      *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
-     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
-     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     * TODO: 1. Develop fine-grain failure handling mechanisms and replace this coarse handling
      *          in each orch.
-     *       3. Take the type of sai api into consideration.
+     *       2. Take the type of sai api into consideration.
      */
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
@@ -669,6 +668,13 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                             s_status.c_str(), s_api.c_str());
             return task_success;
         case SAI_STATUS_ITEM_ALREADY_EXISTS:
+            if (object_id != nullptr && *object_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("Object already exists but no object id was returned for create operation, SAI API: %s, status: %s",
+                                s_api.c_str(), s_status.c_str());
+                handleSaiFailure(api, "create", status, false);
+                return task_failed;
+            }
             SWSS_LOG_NOTICE("Returning success for create operation, SAI API: %s, status: %s",
                                 s_api.c_str(), s_status.c_str());
             return task_success;

@@ -1210,7 +1210,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
 
-        task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status);
+        task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status, &session.sessionId);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1475,7 +1475,7 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to create samplepacket for session %s, status %d",
                        name.c_str(), status);
         session.samplepacketId = SAI_NULL_OBJECT_ID;
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status, &session.samplepacketId);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);

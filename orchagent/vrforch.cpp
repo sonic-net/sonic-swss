@@ -95,7 +95,7 @@ bool VRFOrch::addOperation(const Request& request)
     if (it == std::end(vrf_table_))
     {
         // Create a new vrf
-        sai_object_id_t router_id;
+        sai_object_id_t router_id = SAI_NULL_OBJECT_ID;
         sai_status_t status = sai_virtual_router_api->create_virtual_router(&router_id,
                                                                             gSwitchId,
                                                                             static_cast<uint32_t>(attrs.size()),
@@ -103,7 +103,7 @@ bool VRFOrch::addOperation(const Request& request)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv: %d", vrf_name.c_str(), status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_VIRTUAL_ROUTER, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_VIRTUAL_ROUTER, status, &router_id);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);

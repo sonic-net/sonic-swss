@@ -343,7 +343,7 @@ bool CbfNhg::sync()
         SWSS_LOG_ERROR("Failed to create CBF next hop group %s, rv %d",
                         m_key.c_str(),
                         status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status, &m_id);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
