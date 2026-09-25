@@ -126,6 +126,10 @@ private:
                                     const function<bool(const string&)>& handleFailure);
     void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
 
+    // Report the ASIC's advertised limits rather than the base class defaults,
+    // so anything asking the orch for the valid range gets the real one.
+    bool getTimerRange(PfcWdTimerRange& range) const override;
+
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;
 

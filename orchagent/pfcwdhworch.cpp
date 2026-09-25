@@ -64,9 +64,41 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     SWSS_LOG_NOTICE("Hardware-based PFC watchdog initialization complete");
 }
 
+bool PfcWdHwOrch::getTimerRange(PfcWdTimerRange& range) const
+{
+    SWSS_LOG_ENTER();
+
+    // Fall back to the base class defaults if the range query failed, so a
+    // caller never sees a zero-width range.
+    if (m_detectionTimeMin == 0 || m_detectionTimeMax == 0 ||
+        m_restorationTimeMin == 0 || m_restorationTimeMax == 0)
+    {
+        return PfcWdBaseOrch::getTimerRange(range);
+    }
+
+    range.detectionMin = m_detectionTimeMin;
+    range.detectionMax = m_detectionTimeMax;
+    range.restorationMin = m_restorationTimeMin;
+    range.restorationMax = m_restorationTimeMax;
+
+    return true;
+}
+
 PfcWdHwOrch::~PfcWdHwOrch(void)
 {
     SWSS_LOG_ENTER();
+
+    // Clear the deadlock notification pointer we installed. Leaving it set
+    // would have SAI call into an object that is going away.
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY;
+    attr.value.ptr = NULL;
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to clear the PFC deadlock notification handler: %d", status);
+    }
 
     g_pfcWdHwOrch = nullptr;
 }
@@ -269,6 +301,11 @@ PfcWdHwOrch::PfcWdQueueStats PfcWdHwOrch::getQueueStats(const string &queueIdStr
         const auto field = fvField(fv);
         const auto value = fvValue(fv);
 
+        // A malformed value must not throw out of here: this runs from the
+        // deadlock notification and from the counter timer, where an uncaught
+        // exception takes orchagent down. Skip the field and keep its default.
+        try
+        {
         if (field == "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED")
         {
             stats.detectCount = stoul(value);
@@ -312,6 +349,12 @@ PfcWdHwOrch::PfcWdQueueStats PfcWdHwOrch::getQueueStats(const string &queueIdStr
         else if (field == "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST")
         {
             stats.rxDropPktLast = stoul(value);
+        }
+        }
+        catch (const exception &e)
+        {
+            SWSS_LOG_WARN("Ignoring unparsable value '%s' for %s on queue %s: %s",
+                          value.c_str(), field.c_str(), queueIdStr.c_str(), e.what());
         }
     }
 
@@ -534,44 +577,44 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
 task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
-	Port port;
-	if (!gPortsOrch->getPort(key, port))
-	{
-		SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
-		return task_process_status::task_invalid_entry;
-	}
+    Port port;
+    if (!gPortsOrch->getPort(key, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
 
-	// If hardware watchdog is configured on this port, disallow deletion
-	// while any lossless queue is still in stormed state.
-	if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
-	{
-		if (isPortInStormedState(port))
-		{
-			SWSS_LOG_ERROR(
-				"Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
-				"Wait for storm to pass before making changes.",
-				port.m_alias.c_str());
-			return task_process_status::task_invalid_entry;
-		}
-	}
+    // If hardware watchdog is configured on this port, disallow deletion
+    // while any lossless queue is still in stormed state.
+    if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
+    {
+        if (isPortInStormedState(port))
+        {
+            SWSS_LOG_ERROR(
+                "Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
+                "Wait for storm to pass before making changes.",
+                port.m_alias.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
 
-	// Delegate to base implementation to stop watchdog on the port and
-	// update common bookkeeping.
-	return PfcWdBaseOrch::deleteEntry(key);
+    // Delegate to base implementation to stop watchdog on the port and
+    // update common bookkeeping.
+    return PfcWdBaseOrch::deleteEntry(key);
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,
-	    uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
-	// For hardware-based watchdog, all hardware programming and flex counter
-	// registration are handled in configureHwWatchdog()/initializeQueueStats().
-	// Any existing configuration is cleaned up via stopWdOnPort() before this
-	// function is invoked from createEntry().
-	return configureHwWatchdog(port, detectionTime, restorationTime, action);
+    // For hardware-based watchdog, all hardware programming and flex counter
+    // registration are handled in configureHwWatchdog()/initializeQueueStats().
+    // Any existing configuration is cleaned up via stopWdOnPort() before this
+    // function is invoked from createEntry().
+    return configureHwWatchdog(port, detectionTime, restorationTime, action);
 }
 
 bool PfcWdHwOrch::stopWdOnPort(const Port& port)
@@ -1157,13 +1200,21 @@ bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, uint8_t queueIndex, Pf
         const auto field = fvField(fv);
         const auto value = fvValue(fv);
 
-        if (field == "SAI_QUEUE_STAT_PACKETS")
+        try
         {
-            counters.txPkt = stoull(value);
+            if (field == "SAI_QUEUE_STAT_PACKETS")
+            {
+                counters.txPkt = stoull(value);
+            }
+            else if (field == "SAI_QUEUE_STAT_DROPPED_PACKETS")
+            {
+                counters.txDropPkt = stoull(value);
+            }
         }
-        else if (field == "SAI_QUEUE_STAT_DROPPED_PACKETS")
+        catch (const exception &e)
         {
-            counters.txDropPkt = stoull(value);
+            SWSS_LOG_WARN("Ignoring unparsable value '%s' for %s: %s",
+                          value.c_str(), field.c_str(), e.what());
         }
     }
 
@@ -1199,13 +1250,21 @@ bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, uint8_t queueIndex, Pf
             const auto field = fvField(fv);
             const auto value = fvValue(fv);
 
-            if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS")
+            try
             {
-                counters.rxPkt = stoull(value);
+                if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS")
+                {
+                    counters.rxPkt = stoull(value);
+                }
+                else if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS")
+                {
+                    counters.rxDropPkt = stoull(value);
+                }
             }
-            else if (field == "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS")
+            catch (const exception &e)
             {
-                counters.rxDropPkt = stoull(value);
+                SWSS_LOG_WARN("Ignoring unparsable value '%s' for %s: %s",
+                              value.c_str(), field.c_str(), e.what());
             }
         }
     }
