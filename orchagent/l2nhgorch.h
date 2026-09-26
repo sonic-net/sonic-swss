@@ -23,6 +23,7 @@ public:
     unsigned long getL2NhVtepRefCount(const std::string &nhg_id);
     bool hasActiveL2Nhg(const std::string &nhg_id);
     bool isL2NextHop(const std::string &nhg_id);
+    bool isBridgePortNhgSupported();
 
 private:
     vector<Table*> m_appTables;
@@ -53,7 +54,11 @@ private:
     };
     unordered_map<string, l2nhg_nh_info> m_nhg_nh;
 
-    /* Cleared once the SAI rejects SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT itself. */
+    /*
+     * Whether SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT can be used. Taken from the NHG TYPE
+     * enum capability on first use, and cleared if the SAI rejects the type anyway.
+     */
+    bool m_bridgePortNhgCapChecked = false;
     bool m_bridgePortNhgSupported = true;
     /* A refusal after a successful create is a real failure, not a missing feature. */
     bool m_bridgePortNhgCreated = false;

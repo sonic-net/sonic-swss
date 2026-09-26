@@ -45,6 +45,59 @@ L2NhgOrch::~L2NhgOrch()
     }
 }
 
+bool L2NhgOrch::isBridgePortNhgSupported()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_bridgePortNhgCapChecked)
+    {
+        return m_bridgePortNhgSupported;
+    }
+    m_bridgePortNhgCapChecked = true;
+
+    /*
+     * The virtual switch creates bridge port groups but does not list the type in
+     * its NHG TYPE capability, so its answer cannot be used as the gate.
+     */
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == VS_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT assumed supported on the virtual switch");
+        return m_bridgePortNhgSupported;
+    }
+
+    const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                      SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_NOTICE("No enum metadata for SAI_NEXT_HOP_GROUP_ATTR_TYPE");
+        return m_bridgePortNhgSupported;
+    }
+
+    vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                                     SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                                     SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                                                     &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        /* Unknown: the first create is still sent, and a refusal turns the groups off. */
+        SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
+        return m_bridgePortNhgSupported;
+    }
+
+    m_bridgePortNhgSupported = find(values.list, values.list + values.count,
+                                    SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT) != values.list + values.count;
+    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT is %s",
+                    m_bridgePortNhgSupported ? "supported" :
+                    "not supported: L2 next hop groups are not programmed, MACs behind them flood");
+    return m_bridgePortNhgSupported;
+}
+
 sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
 {
     SWSS_LOG_ENTER();
@@ -753,7 +806,7 @@ bool L2NhgOrch::updateL2Nhg(string& key, KeyOpFieldsValuesTuple& t, Consumer& co
                 m_nhg_vtep[nhg_id].source_vtep = source_vtep;
             }
         }
-        else if (!m_bridgePortNhgSupported)
+        else if (!isBridgePortNhgSupported())
         {
             SWSS_LOG_INFO("updateL2Nhg: skipping L2 next hop group %s, not supported", nhg_id.c_str());
         }
@@ -804,7 +857,7 @@ bool L2NhgOrch::deleteL2Nhg(string& key, Consumer& consumer)
         }
 
     }
-    else if (m_bridgePortNhgSupported)
+    else if (isBridgePortNhgSupported())
     {
         SWSS_LOG_ERROR("Can't delete L2NHG '%s': does not exist", nh_id.c_str());
     }

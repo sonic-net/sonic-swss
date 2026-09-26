@@ -1187,6 +1187,20 @@ void FdbOrch::doTask(Consumer& consumer)
                     /* get the port_name from l2nhgorch so that we can populate the port structure  */
                     if (!gL2NhgOrch->hasActiveL2Nhg(dest_value))
                     {
+                        if (!gL2NhgOrch->isBridgePortNhgSupported())
+                        {
+                            /* The group never becomes active: drop the MAC instead of keeping it
+                             * pending, which would also fail a warm restore. */
+                            auto existing = m_entries.find(entry);
+                            if (existing != m_entries.end() && existing->second.origin == origin)
+                            {
+                                removeFdbEntry(entry, origin);
+                            }
+                            SWSS_LOG_INFO("L2 Next Hop Group %s not supported, remote MAC %s not programmed",
+                                          dest_value.c_str(), entry.mac.to_string().c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
                         SWSS_LOG_INFO("L2 Next Hop Group %s is not known/active yet", dest_value.c_str());
                         it++;
                         continue;
