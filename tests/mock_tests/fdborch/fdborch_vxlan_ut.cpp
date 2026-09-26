@@ -618,6 +618,124 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
     }
 
+    static int nhg_create_calls;
+
+    static sai_status_t _ut_reject_bridge_port_nhg_create(
+        _Out_ sai_object_id_t *next_hop_group_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        nhg_create_calls++;
+        /* What Broadcom XGS returns for SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT. */
+        return SAI_STATUS_INVALID_ATTR_VALUE_0;
+    }
+
+    TEST_F(VxlanFdbOrchTest, L2NhgNotRetriedWhenBridgePortNhgUnsupported)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        sai_next_hop_group_api_t ut_nhg_api = *sai_next_hop_group_api;
+        sai_next_hop_group_api_t *old_nhg_api = sai_next_hop_group_api;
+        ut_nhg_api.create_next_hop_group = _ut_reject_bridge_port_nhg_create;
+        sai_next_hop_group_api = &ut_nhg_api;
+        nhg_create_calls = 0;
+
+        auto consumer = dynamic_cast<Consumer *>(gL2NhgOrch->getExecutor(APP_L2_NEXTHOP_GROUP_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "100", "SET", { { "nexthop_group", "10,11" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+
+        ASSERT_EQ(nhg_create_calls, 1);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(gL2NhgOrch->hasActiveL2Nhg("100"));
+
+        /* Later groups are not offered to the SAI again, and their deletes are quiet. */
+        entries.clear();
+        entries.push_back({ "101", "SET", { { "nexthop_group", "12,13" } } });
+        entries.push_back({ "100", "DEL", { {} } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+
+        ASSERT_EQ(nhg_create_calls, 1);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        sai_next_hop_group_api = old_nhg_api;
+    }
+
+    static sai_next_hop_group_api_t *saved_nhg_api;
+
+    static sai_status_t _ut_refuse_after_first_nhg_create(
+        _Out_ sai_object_id_t *next_hop_group_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        if (nhg_create_calls++ == 0)
+        {
+            return saved_nhg_api->create_next_hop_group(next_hop_group_id, switch_id, attr_count, attr_list);
+        }
+        return SAI_STATUS_INVALID_ATTR_VALUE_0;
+    }
+
+    /* Once a group was created, a refusal is a failure of that group, not a missing feature. */
+    TEST_F(VxlanFdbOrchTest, L2NhgRefusalAfterACreatedGroupKeepsGroupsEnabled)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        saved_nhg_api = sai_next_hop_group_api;
+        sai_next_hop_group_api_t ut_nhg_api = *sai_next_hop_group_api;
+        ut_nhg_api.create_next_hop_group = _ut_refuse_after_first_nhg_create;
+        sai_next_hop_group_api = &ut_nhg_api;
+        nhg_create_calls = 0;
+
+        auto consumer = dynamic_cast<Consumer *>(gL2NhgOrch->getExecutor(APP_L2_NEXTHOP_GROUP_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "100", "SET", { { "nexthop_group", "10,11" } } });
+        entries.push_back({ "101", "SET", { { "nexthop_group", "12,13" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        int after_first_pass = nhg_create_calls;
+
+        /* A new group is still offered to the SAI after the refusal, and retried when refused. */
+        consumer->m_toSync.clear();
+        entries.clear();
+        entries.push_back({ "102", "SET", { { "nexthop_group", "14,15" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        int after_second_pass = nhg_create_calls;
+        bool retry_queued = !consumer->m_toSync.empty();
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        int after_third_pass = nhg_create_calls;
+
+        sai_next_hop_group_api = saved_nhg_api;
+        consumer->m_toSync.clear();
+
+        ASSERT_EQ(after_first_pass, 2);
+        ASSERT_EQ(after_second_pass, 3);
+        ASSERT_TRUE(retry_queued);
+        ASSERT_EQ(after_third_pass, 4);
+    }
+
     TEST_F(VxlanFdbOrchTest, DISABLED_RemoteMacLearnAddDeleteForNhg)
     {
         // TODO: Enable once L2NhgOrch test setup covers the required
