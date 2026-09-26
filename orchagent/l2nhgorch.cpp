@@ -72,6 +72,17 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
                                                                         gSwitchId,
                                                                         (uint32_t)nhg_attrs.size(),
                                                                         nhg_attrs.data());
+    /* TYPE is the only attribute: refusing it before any group exists means the platform has none. */
+    if (!m_bridgePortNhgCreated &&
+        (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+         SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+         SAI_STATUS_IS_INVALID_ATTR_VALUE(status)))
+    {
+        m_bridgePortNhgSupported = false;
+        SWSS_LOG_WARN("L2 Next Hop Group of type Bridge port is not supported (rc: %d): L2 next hop "
+                      "groups are not programmed, MACs behind them stay unresolved and flood", status);
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create an L2 Next Hop Group of type Bridge port: rc: %d", status);
@@ -83,6 +94,7 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
         return SAI_NULL_OBJECT_ID;
     }
 
+    m_bridgePortNhgCreated = true;
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     return nhg_oid;
 }
@@ -741,12 +753,16 @@ bool L2NhgOrch::updateL2Nhg(string& key, KeyOpFieldsValuesTuple& t, Consumer& co
                 m_nhg_vtep[nhg_id].source_vtep = source_vtep;
             }
         }
+        else if (!m_bridgePortNhgSupported)
+        {
+            SWSS_LOG_INFO("updateL2Nhg: skipping L2 next hop group %s, not supported", nhg_id.c_str());
+        }
         else
         {
             //Adding L2 Next hop members to the next hop group
             if (!addL2NextHopGroupEntry(nhg_id, nh_value, source_vtep))
             {
-                return false;
+                return !m_bridgePortNhgSupported;
             }
         }
     }
@@ -788,7 +804,7 @@ bool L2NhgOrch::deleteL2Nhg(string& key, Consumer& consumer)
         }
 
     }
-    else
+    else if (m_bridgePortNhgSupported)
     {
         SWSS_LOG_ERROR("Can't delete L2NHG '%s': does not exist", nh_id.c_str());
     }
