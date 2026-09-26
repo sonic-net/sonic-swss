@@ -1,13 +1,19 @@
 #include "gtest/gtest.h"
 
 #include <arpa/inet.h>
+#include <cerrno>
 #include <cstring>
+#include <linux/netlink.h>
 #include <linux/neighbour.h>
 #include <memory>
 #include <net/if.h>
 #include <netlink/addr.h>
+#include <netlink/attr.h>
+#include <netlink/errno.h>
+#include <netlink/handlers.h>
 #include <netlink/msg.h>
 #include <netlink/route/neighbour.h>
+#include <poll.h>
 #include <string>
 #include <vector>
 
@@ -16,6 +22,171 @@
 #include "redisutility.h"
 
 using namespace swss;
+
+namespace
+{
+
+enum class DumpResponse
+{
+    Done,
+    Interrupted,
+    KernelError,
+};
+
+struct CapturedDumpRequest
+{
+    int type = 0;
+    int flags = 0;
+    int family = 0;
+    int headerIfindex = 0;
+    bool hasIfindexAttribute = false;
+    uint32_t ifindexAttribute = 0;
+};
+
+bool mockInterfaceLookup = false;
+unsigned int mockIfindex = 42;
+int mockSendResult = 1;
+int mockPollResult = 1;
+int mockReceiveResult = 0;
+uint32_t mockSequence = 1234;
+DumpResponse mockDumpResponse = DumpResponse::Done;
+CapturedDumpRequest capturedDumpRequest;
+int dumpRequestCount = 0;
+nl_recvmsg_msg_cb_t validCallback = nullptr;
+void *validCallbackArg = nullptr;
+nl_recvmsg_msg_cb_t finishCallback = nullptr;
+void *finishCallbackArg = nullptr;
+nl_recvmsg_err_cb_t errorCallback = nullptr;
+void *errorCallbackArg = nullptr;
+
+void resetDumpMocks()
+{
+    mockInterfaceLookup = false;
+    mockIfindex = 42;
+    mockSendResult = 1;
+    mockPollResult = 1;
+    mockReceiveResult = 0;
+    mockSequence = 1234;
+    mockDumpResponse = DumpResponse::Done;
+    capturedDumpRequest = {};
+    dumpRequestCount = 0;
+    validCallback = nullptr;
+    validCallbackArg = nullptr;
+    finishCallback = nullptr;
+    finishCallbackArg = nullptr;
+    errorCallback = nullptr;
+    errorCallbackArg = nullptr;
+}
+
+}
+
+extern "C"
+{
+
+unsigned int __real_if_nametoindex(const char *ifname);
+int __real_nl_cb_set(
+    struct nl_cb *cb,
+    enum nl_cb_type type,
+    enum nl_cb_kind kind,
+    nl_recvmsg_msg_cb_t func,
+    void *arg);
+int __real_nl_cb_err(
+    struct nl_cb *cb,
+    enum nl_cb_kind kind,
+    nl_recvmsg_err_cb_t func,
+    void *arg);
+
+unsigned int __wrap_if_nametoindex(const char *ifname)
+{
+    return mockInterfaceLookup ? mockIfindex : __real_if_nametoindex(ifname);
+}
+
+int __wrap_nl_send_auto(struct nl_sock *, struct nl_msg *message)
+{
+    ++dumpRequestCount;
+    auto *header = nlmsg_hdr(message);
+    auto *neighbor = static_cast<struct ndmsg *>(NLMSG_DATA(header));
+    auto *ifindex = nlmsg_find_attr(header, sizeof(*neighbor), NDA_IFINDEX);
+    capturedDumpRequest.type = header->nlmsg_type;
+    capturedDumpRequest.flags = header->nlmsg_flags;
+    capturedDumpRequest.family = neighbor->ndm_family;
+    capturedDumpRequest.headerIfindex = neighbor->ndm_ifindex;
+    capturedDumpRequest.hasIfindexAttribute = ifindex != nullptr;
+    if (ifindex)
+    {
+        capturedDumpRequest.ifindexAttribute = nla_get_u32(ifindex);
+    }
+    header->nlmsg_seq = mockSequence;
+    return mockSendResult;
+}
+
+int __wrap_nl_cb_set(
+    struct nl_cb *cb,
+    enum nl_cb_type type,
+    enum nl_cb_kind kind,
+    nl_recvmsg_msg_cb_t func,
+    void *arg)
+{
+    if (type == NL_CB_VALID)
+    {
+        validCallback = func;
+        validCallbackArg = arg;
+    }
+    else if (type == NL_CB_FINISH)
+    {
+        finishCallback = func;
+        finishCallbackArg = arg;
+    }
+    return __real_nl_cb_set(cb, type, kind, func, arg);
+}
+
+int __wrap_nl_cb_err(
+    struct nl_cb *cb,
+    enum nl_cb_kind kind,
+    nl_recvmsg_err_cb_t func,
+    void *arg)
+{
+    errorCallback = func;
+    errorCallbackArg = arg;
+    return __real_nl_cb_err(cb, kind, func, arg);
+}
+
+int __wrap_poll(struct pollfd *, nfds_t, int)
+{
+    return mockPollResult;
+}
+
+int __wrap_nl_recvmsgs(struct nl_sock *, struct nl_cb *)
+{
+    if (mockReceiveResult < 0)
+    {
+        return mockReceiveResult;
+    }
+
+    if (mockDumpResponse == DumpResponse::KernelError)
+    {
+        struct sockaddr_nl address = {};
+        struct nlmsgerr error = {};
+        error.error = -EINVAL;
+        return errorCallback(&address, &error, errorCallbackArg);
+    }
+
+    std::unique_ptr<struct nl_msg, decltype(&nlmsg_free)> message(nlmsg_alloc(), nlmsg_free);
+    int flags = NLM_F_MULTI;
+    if (mockDumpResponse == DumpResponse::Interrupted)
+    {
+        flags |= NLM_F_DUMP_INTR;
+    }
+    auto *header = nlmsg_put(
+        message.get(), NL_AUTO_PORT, mockSequence, NLMSG_DONE, 0, flags);
+    if (!header)
+    {
+        return -NLE_NOMEM;
+    }
+    return finishCallback(message.get(), finishCallbackArg);
+}
+
+}
 
 namespace
 {
@@ -103,6 +274,7 @@ class NeighSyncTest : public ::testing::Test
   protected:
     void SetUp() override
     {
+        resetDumpMocks();
         testing_db::reset();
         m_appDb = std::make_shared<DBConnector>("APPL_DB", 0);
         m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
@@ -241,6 +413,71 @@ TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8::6"));
+}
+
+TEST_F(NeighSyncTest, SendsInterfaceFilteredIpv6NeighborDump)
+{
+    mockInterfaceLookup = true;
+
+    EXPECT_TRUE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+
+    EXPECT_EQ(dumpRequestCount, 1);
+    EXPECT_EQ(capturedDumpRequest.type, RTM_GETNEIGH);
+    EXPECT_EQ(capturedDumpRequest.flags & (NLM_F_REQUEST | NLM_F_DUMP),
+              NLM_F_REQUEST | NLM_F_DUMP);
+    EXPECT_EQ(capturedDumpRequest.family, AF_INET6);
+    EXPECT_EQ(capturedDumpRequest.headerIfindex, 0);
+    EXPECT_TRUE(capturedDumpRequest.hasIfindexAttribute);
+    EXPECT_EQ(capturedDumpRequest.ifindexAttribute, mockIfindex);
+}
+
+TEST_F(NeighSyncTest, DoesNotSendDumpForUnknownInterface)
+{
+    mockInterfaceLookup = true;
+    mockIfindex = 0;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+    EXPECT_EQ(dumpRequestCount, 0);
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpSendFails)
+{
+    mockInterfaceLookup = true;
+    mockSendResult = -NLE_FAILURE;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpReceiveFails)
+{
+    mockInterfaceLookup = true;
+    mockReceiveResult = -NLE_AGAIN;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpReceiveTimesOut)
+{
+    mockInterfaceLookup = true;
+    mockPollResult = 0;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpIsInterrupted)
+{
+    mockInterfaceLookup = true;
+    mockDumpResponse = DumpResponse::Interrupted;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenKernelRejectsDump)
+{
+    mockInterfaceLookup = true;
+    mockDumpResponse = DumpResponse::KernelError;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
 }
 
 } // namespace
