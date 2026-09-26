@@ -42,6 +42,7 @@ public:
 
     // Remove the Isolation group from bind port
     shl_isolation_group_status_t unbind(string vtep, bool do_fwd_ref=false);
+    shl_isolation_group_status_t unbind(Port &port, bool do_fwd_ref=false);
 
     long unsigned int getNumOfMembers();
     long unsigned int getNumOfPendingMembers();

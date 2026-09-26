@@ -622,8 +622,6 @@ shl_isolation_group_status_t
 ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
 {
     SWSS_LOG_ENTER();
-    sai_attribute_t attr;
-    sai_status_t status = SAI_STATUS_SUCCESS;
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     auto tunnel_port_name = tunnel_orch->getTunnelPortName(vtep);
@@ -634,6 +632,16 @@ ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
                         m_name.c_str());
         return SHL_ISO_GRP_STATUS_FAIL;
     }
+
+    return unbind(port, do_fwd_ref);
+}
+
+shl_isolation_group_status_t
+ShlIsolationGroup::unbind(Port &port, bool do_fwd_ref)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status = SAI_STATUS_SUCCESS;
 
     if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) == m_bind_ports.end())
     {
@@ -650,13 +658,19 @@ ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
     attr.id = SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP;
-    status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
+    }
 
     if (SAI_STATUS_SUCCESS != status)
     {
         SWSS_LOG_ERROR("Unable to set attribute %d value 0x%" PRIx64 "to %s", attr.id, attr.value.oid, port.m_alias.c_str());
     }
-    else
+
+    /* A port whose bridge port is going (do_fwd_ref) is no longer bound either way:
+     * it waits in the pending list to bind its next bridge port. */
+    if (SAI_STATUS_SUCCESS == status || do_fwd_ref)
     {
         m_bind_ports.erase(find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias));
         SWSS_LOG_NOTICE("Unbind function, port = %s, removed port in m_bind_ports for iso grp: %s", port.m_alias.c_str(), m_name.c_str());
@@ -697,7 +711,7 @@ ShlIsolationGroup::update(SubjectType, void *cntx)
         auto bind_node = find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias);
         if (bind_node != m_bind_ports.end())
         {
-            unbind(port.m_alias, true);
+            unbind(port, true);
         }
 
         auto mem_node = m_members.find(port.m_alias);
