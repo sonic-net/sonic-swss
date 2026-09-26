@@ -584,7 +584,17 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
     struct rtnl_link *orig_link;
     int err = 0;
     struct nl_addr *nl_addr;
-    MacAddress sys_mac(system_mac);
+    MacAddress sys_mac;
+    try
+    {
+        sys_mac = MacAddress(system_mac);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Invalid system_mac '%s' for %s: %s",
+                       system_mac.c_str(), alias.c_str(), e.what());
+        return -EINVAL;
+    }
     struct nl_sock * sockk = nl_socket_alloc();
     uint32_t ifindex = if_nametoindex(alias.c_str());
     uint8_t *addr = const_cast<uint8_t *>(sys_mac.getMac());
@@ -653,11 +663,19 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
 
 bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
 {
-    vector<FieldValueTuple> fvs;
-    stringstream    cmd;
     if (sys_mac == "None") {
         sys_mac = m_mac.to_string();
     }
+
+    uint8_t mac_bin[ETHER_ADDR_LEN];
+    if (!MacAddress::parseMacString(sys_mac, mac_bin))
+    {
+        SWSS_LOG_ERROR("Invalid system_mac '%s' for %s",
+                       sys_mac.c_str(), alias.c_str());
+        return false;
+    }
+
+    vector<FieldValueTuple> fvs;
     FieldValueTuple fv("system_mac", sys_mac);
     fvs.push_back(fv);
 
