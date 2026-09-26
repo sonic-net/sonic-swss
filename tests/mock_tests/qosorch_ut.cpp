@@ -1632,4 +1632,17 @@ namespace qosorch_test
         static_cast<Orch *>(tunnel_decap_orch)->doTask();
         entries.clear();
     }
+
+    TEST_F(QosOrchTest, MalformedMapDoesNotBlockNextMap)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"BAD", SET_COMMAND, {{"not-a-number", "1"}}});
+        entries.push_back({"GOOD", SET_COMMAND, {{"0", "1"}}});
+
+        auto *consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        EXPECT_NO_THROW(static_cast<Orch *>(gQosOrch)->doTask(*consumer));
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
 }
