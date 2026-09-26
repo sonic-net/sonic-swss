@@ -58,6 +58,19 @@ namespace switchorch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    // Last value set for each VxLAN switch attribute, and the vendor default the
+    // get stub reports for SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC.
+    map<sai_attr_id_t, sai_attribute_t> _ut_vxlan_switch_attrs_set;
+    bool _ut_vxlan_router_mac_get_fails;
+    const swss::MacAddress _ut_vxlan_router_mac_default("00:aa:bb:cc:dd:ee");
+    sai_object_id_t _ut_removed_switch_tunnel;
+
+    sai_status_t _ut_stub_remove_switch_tunnel(_In_ sai_object_id_t switch_tunnel_id)
+    {
+        _ut_removed_switch_tunnel = switch_tunnel_id;
+        return SAI_STATUS_SUCCESS;
+    }
+
     sai_status_t _ut_stub_set_switch_tunnel_attribute(
         _In_ sai_object_id_t switch_tunnel_id,
         _In_ const sai_attribute_t *attr)
@@ -71,6 +84,10 @@ namespace switchorch_test
     {
         switch (attr[0].id)
         {
+        case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+        case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
+            _ut_vxlan_switch_attrs_set[attr[0].id] = attr[0];
+            return SAI_STATUS_SUCCESS;
         case SAI_SWITCH_ATTR_SWITCH_ASIC_SDK_HEALTH_EVENT_NOTIFY:
             if (_ut_reg_event_unsupported)
             {
@@ -93,6 +110,23 @@ namespace switchorch_test
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
+    sai_status_t _ut_stub_sai_get_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC)
+        {
+            if (_ut_vxlan_router_mac_get_fails)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            memcpy(attr_list[0].value.mac, _ut_vxlan_router_mac_default.getMac(), sizeof(sai_mac_t));
+            return SAI_STATUS_SUCCESS;
+        }
+        return pold_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
     void _hook_sai_apis()
     {
         ut_sai_switch_api = *sai_switch_api;
@@ -100,6 +134,8 @@ namespace switchorch_test
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
         ut_sai_switch_api.create_switch_tunnel = _ut_stub_create_switch_tunnel;
         ut_sai_switch_api.set_switch_tunnel_attribute = _ut_stub_set_switch_tunnel_attribute;
+        ut_sai_switch_api.remove_switch_tunnel = _ut_stub_remove_switch_tunnel;
+        ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
     }
 
@@ -124,6 +160,9 @@ namespace switchorch_test
             _ut_reg_event_unsupported = false;
             _ut_create_switch_tunnel_called = false;
             _ut_create_switch_tunnel_has_security_attr = false;
+            _ut_vxlan_switch_attrs_set.clear();
+            _ut_vxlan_router_mac_get_fails = false;
+            _ut_removed_switch_tunnel = SAI_NULL_OBJECT_ID;
 
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -419,6 +458,134 @@ namespace switchorch_test
         ASSERT_TRUE(_ut_create_switch_tunnel_called);
         ASSERT_TRUE(consumer->m_toSync.empty());
 
+        _unhook_sai_apis();
+    }
+    // A SWITCH_TABLE DEL returns the VxLAN switch attributes the table set to
+    // their defaults: the SAI default UDP port, the router MAC the SAI reported
+    // before it was first changed, and the default UDP source port mode (by
+    // removing the switch tunnel object).
+    TEST_F(SwitchOrchTest, SwitchTableDelRestoresVxlanDefaults)
+    {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync({{"switch", SET_COMMAND,
+                              {
+                                  {"vxlan_port", "13330"},
+                                  {"vxlan_router_mac", "00:12:34:56:78:9a"},
+                                  {"vxlan_sport", "1024"}
+                              }}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(_ut_create_switch_tunnel_called);
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT].value.u16, 13330);
+        ASSERT_EQ(swss::MacAddress(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC].value.mac),
+                  swss::MacAddress("00:12:34:56:78:9a"));
+
+        // A second SET must not overwrite the saved defaults with configured values.
+        consumer->addToSync({{"switch", SET_COMMAND,
+                              {
+                                  {"vxlan_port", "4790"},
+                                  {"vxlan_router_mac", "00:12:34:56:78:9b"}
+                              }}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        _ut_vxlan_switch_attrs_set.clear();
+        consumer->addToSync({{"switch", DEL_COMMAND, {}}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT), 1U);
+        EXPECT_EQ(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT].value.u16, 4789);
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC), 1U);
+        EXPECT_EQ(swss::MacAddress(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC].value.mac),
+                  _ut_vxlan_router_mac_default);
+        EXPECT_EQ(_ut_removed_switch_tunnel, 0x5678U);
+
+        // Nothing is left to restore: another DEL makes no SAI calls.
+        _ut_vxlan_switch_attrs_set.clear();
+        _ut_removed_switch_tunnel = SAI_NULL_OBJECT_ID;
+        consumer->addToSync({{"switch", DEL_COMMAND, {}}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(_ut_vxlan_switch_attrs_set.empty());
+        EXPECT_EQ(_ut_removed_switch_tunnel, SAI_NULL_OBJECT_ID);
+
+        // After a DEL the switch tunnel is created again on the next vxlan_sport SET.
+        _ut_create_switch_tunnel_called = false;
+        consumer->addToSync({{"switch", SET_COMMAND, {{"vxlan_sport", "2048"}}}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        EXPECT_TRUE(_ut_create_switch_tunnel_called);
+
+        _unhook_sai_apis();
+    }
+
+    // If the SAI cannot report the vendor default router MAC, a DEL restores
+    // the router MAC to the switch MAC, along with the UDP port.
+    TEST_F(SwitchOrchTest, SwitchTableDelRouterMacFallsBackToSwitchMac)
+    {
+        const swss::MacAddress savedSwitchMac = gMacAddress;
+        const swss::MacAddress switchMac("00:11:22:33:44:55");
+        gMacAddress = switchMac;
+        _ut_vxlan_router_mac_get_fails = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync({{"switch", SET_COMMAND,
+                              {
+                                  {"vxlan_port", "13330"},
+                                  {"vxlan_router_mac", "00:12:34:56:78:9a"}
+                              }}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _ut_vxlan_switch_attrs_set.clear();
+        consumer->addToSync({{"switch", DEL_COMMAND, {}}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT), 1U);
+        EXPECT_EQ(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT].value.u16, 4789);
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC), 1U);
+        EXPECT_EQ(swss::MacAddress(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC].value.mac),
+                  switchMac);
+
+        gMacAddress = savedSwitchMac;
+        _unhook_sai_apis();
+    }
+
+    // If neither the SAI default nor the switch MAC is known, a DEL still
+    // restores the UDP port and leaves the router MAC as configured.
+    TEST_F(SwitchOrchTest, SwitchTableDelWithoutRouterMacDefault)
+    {
+        const swss::MacAddress savedSwitchMac = gMacAddress;
+        gMacAddress = swss::MacAddress();
+        _ut_vxlan_router_mac_get_fails = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync({{"switch", SET_COMMAND,
+                              {
+                                  {"vxlan_port", "13330"},
+                                  {"vxlan_router_mac", "00:12:34:56:78:9a"}
+                              }}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _ut_vxlan_switch_attrs_set.clear();
+        consumer->addToSync({{"switch", DEL_COMMAND, {}}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT), 1U);
+        EXPECT_EQ(_ut_vxlan_switch_attrs_set[SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT].value.u16, 4789);
+        EXPECT_EQ(_ut_vxlan_switch_attrs_set.count(SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC), 0U);
+        EXPECT_EQ(_ut_removed_switch_tunnel, SAI_NULL_OBJECT_ID);
+
+        gMacAddress = savedSwitchMac;
         _unhook_sai_apis();
     }
 }

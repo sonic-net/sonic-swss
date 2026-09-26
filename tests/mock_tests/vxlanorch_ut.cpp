@@ -868,4 +868,311 @@ namespace vxlanorch_test
         EXPECT_FALSE(result);
     }
 
+    // EVPN remote VNI handling driven through the APP_DB tables, with a P2P
+    // (per remote VTEP) tunnel as used when the SAI supports DIP tunnels.
+    static bool g_failTunnelVlanMember = false;
+    static int g_tunnelVlanMemberCreates = 0;
+    static bool g_failP2pTunnel = false;
+    static decltype(sai_vlan_api->create_vlan_member) g_savedCreateVlanMember = nullptr;
+    static decltype(sai_tunnel_api->create_tunnel) g_savedCreateTunnel = nullptr;
+
+    static sai_status_t stubCreateVlanMember(sai_object_id_t *id, sai_object_id_t sw,
+                                             uint32_t n, const sai_attribute_t *attrs)
+    {
+        g_tunnelVlanMemberCreates++;
+        if (g_failTunnelVlanMember)
+        {
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        }
+        return g_savedCreateVlanMember(id, sw, n, attrs);
+    }
+
+    static sai_status_t stubCreateTunnel(sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *attrs)
+    {
+        for (uint32_t i = 0; i < n; i++)
+        {
+            if (g_failP2pTunnel && attrs[i].id == SAI_TUNNEL_ATTR_PEER_MODE &&
+                attrs[i].value.s32 == SAI_TUNNEL_PEER_MODE_P2P)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        }
+        return g_savedCreateTunnel(id, sw, n, attrs);
+    }
+
+    class EvpnRemoteVniTest : public MockOrchTest
+    {
+    protected:
+        VxlanTunnelMapOrch *m_tunnelMapOrch = nullptr;
+        EvpnNvoOrch *m_nvoOrch = nullptr;
+        EvpnRemoteVnip2pOrch *m_remoteVniOrch = nullptr;
+
+        const string m_remoteVtep = "10.1.1.2";
+        const string m_remoteVniKey = "Vlan100:10.1.1.2";
+
+        void ApplyInitialConfigs() override
+        {
+            Table port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            auto ports = ut_helper::getInitialSaiPorts();
+            for (const auto &it : ports)
+            {
+                port_table.set(it.first, it.second);
+            }
+            port_table.set("PortConfigDone", {{"count", to_string(ports.size())}});
+            port_table.set("PortInitDone", {{}});
+            gPortsOrch->addExistingData(&port_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+
+        void PostSetUp() override
+        {
+            g_failTunnelVlanMember = false;
+            g_tunnelVlanMemberCreates = 0;
+            g_failP2pTunnel = false;
+            g_savedCreateVlanMember = sai_vlan_api->create_vlan_member;
+            sai_vlan_api->create_vlan_member = stubCreateVlanMember;
+            g_savedCreateTunnel = sai_tunnel_api->create_tunnel;
+            sai_tunnel_api->create_tunnel = stubCreateTunnel;
+
+            m_VxlanTunnelOrch->is_dip_tunnel_supported = true;
+
+            m_tunnelMapOrch = new VxlanTunnelMapOrch(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
+            gDirectory.set(m_tunnelMapOrch);
+            m_nvoOrch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            gDirectory.set(m_nvoOrch);
+            m_remoteVniOrch = new EvpnRemoteVnip2pOrch(m_app_db.get(), APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+            gDirectory.set(m_remoteVniOrch);
+
+            Table vlan(m_app_db.get(), APP_VLAN_TABLE_NAME);
+            vlan.set("Vlan100", {{"admin_status", "up"}, {"mtu", "9100"}});
+            gPortsOrch->addExistingData(&vlan);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            Table tunnel(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            tunnel.set("vtep1", {{"src_ip", "10.1.1.1"}});
+            m_VxlanTunnelOrch->addExistingData(&tunnel);
+            static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+
+            Table nvo(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            nvo.set("nvo1", {{"source_vtep", "vtep1"}});
+            m_nvoOrch->addExistingData(&nvo);
+            static_cast<Orch *>(m_nvoOrch)->doTask();
+
+            Table tunnelMap(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
+            tunnelMap.set("vtep1:map_1000_Vlan100", {{"vni", "1000"}, {"vlan", "Vlan100"}});
+            m_tunnelMapOrch->addExistingData(&tunnelMap);
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+
+            ASSERT_NE(m_nvoOrch->getEVPNVtep(), nullptr);
+            ASSERT_TRUE(m_nvoOrch->getEVPNVtep()->isActive());
+        }
+
+        void PreTearDown() override
+        {
+            delete m_remoteVniOrch;
+            m_remoteVniOrch = nullptr;
+            delete m_nvoOrch;
+            m_nvoOrch = nullptr;
+            delete m_tunnelMapOrch;
+            m_tunnelMapOrch = nullptr;
+
+            sai_vlan_api->create_vlan_member = g_savedCreateVlanMember;
+            sai_tunnel_api->create_tunnel = g_savedCreateTunnel;
+        }
+
+        Consumer *remoteVniConsumer()
+        {
+            return dynamic_cast<Consumer *>(m_remoteVniOrch->getExecutor(APP_VXLAN_REMOTE_VNI_TABLE_NAME));
+        }
+
+        void setRemoteVni()
+        {
+            remoteVniConsumer()->addToSync({{m_remoteVniKey, SET_COMMAND, {{"vni", "1000"}}}});
+            static_cast<Orch *>(m_remoteVniOrch)->doTask();
+        }
+
+        // A DEL carries no attributes, as ConsumerStateTable delivers it.
+        void delRemoteVni()
+        {
+            remoteVniConsumer()->addToSync({{m_remoteVniKey, DEL_COMMAND, {}}});
+            static_cast<Orch *>(m_remoteVniOrch)->doTask();
+        }
+
+        void retryRemoteVni()
+        {
+            static_cast<Orch *>(m_remoteVniOrch)->doTask();
+        }
+
+        int imrRefCount()
+        {
+            return m_nvoOrch->getEVPNVtep()->getRemoteEndPointIMRRefCnt(m_remoteVtep);
+        }
+
+        bool tunnelPortExists()
+        {
+            Port tunnelPort;
+            return m_VxlanTunnelOrch->getTunnelPort(m_remoteVtep, tunnelPort);
+        }
+
+        bool isFloodMember()
+        {
+            Port vlanPort, tunnelPort;
+            if (!gPortsOrch->getVlanByVlanId(100, vlanPort) ||
+                !m_VxlanTunnelOrch->getTunnelPort(m_remoteVtep, tunnelPort))
+            {
+                return false;
+            }
+            return gPortsOrch->isVlanMember(vlanPort, tunnelPort);
+        }
+
+        bool dipTunnelExists()
+        {
+            string name;
+            m_VxlanTunnelOrch->getTunnelNameFromDIP(m_remoteVtep, name);
+            return m_VxlanTunnelOrch->isTunnelExists(name);
+        }
+    };
+
+    // Baseline: the remote VTEP is added to and removed from the VLAN flood list.
+    TEST_F(EvpnRemoteVniTest, RemoteVniAddDel)
+    {
+        setRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_TRUE(isFloodMember());
+        EXPECT_EQ(imrRefCount(), 1);
+
+        delRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_FALSE(tunnelPortExists());
+        EXPECT_FALSE(dipTunnelExists());
+        EXPECT_EQ(imrRefCount(), -1);
+    }
+
+    // A refused VLAN member keeps the request queued for retry. The retry adds
+    // only the VLAN member: it neither takes another tunnel reference nor
+    // rebuilds the tunnel. Once the SAI accepts the member the entry completes,
+    // and a later DEL removes everything.
+    TEST_F(EvpnRemoteVniTest, VlanMemberFailureIsRetried)
+    {
+        g_failTunnelVlanMember = true;
+        setRemoteVni();
+
+        EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+        EXPECT_EQ(g_tunnelVlanMemberCreates, 1);
+        EXPECT_FALSE(isFloodMember());
+        EXPECT_TRUE(tunnelPortExists());
+        EXPECT_EQ(imrRefCount(), 1);
+
+        retryRemoteVni();
+        EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+        EXPECT_EQ(g_tunnelVlanMemberCreates, 2);
+        EXPECT_EQ(imrRefCount(), 1);
+
+        g_failTunnelVlanMember = false;
+        retryRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_TRUE(isFloodMember());
+        EXPECT_EQ(imrRefCount(), 1);
+
+        delRemoteVni();
+        EXPECT_FALSE(tunnelPortExists());
+        EXPECT_FALSE(dipTunnelExists());
+        EXPECT_EQ(imrRefCount(), -1);
+    }
+
+    // A VLAN member add that keeps failing is logged at ERROR once per entry, not
+    // on every retry. Success or a DEL ends the entry, and the next failure is
+    // logged again.
+    TEST_F(EvpnRemoteVniTest, VlanMemberFailureLoggedOnce)
+    {
+        const string retryLog = "Failed to add remote VTEP " + m_remoteVtep + " to the flood list of vid 100 (vni 1000), will retry";
+        auto countRetryErrors = [&retryLog](const string &out) {
+            size_t count = 0;
+            for (size_t pos = out.find(retryLog); pos != string::npos; pos = out.find(retryLog, pos + 1))
+            {
+                count++;
+            }
+            return count;
+        };
+
+        swss::Logger::swssOutputNotify("orchagent", "STDERR");
+        testing::internal::CaptureStderr();
+
+        g_failTunnelVlanMember = true;
+        setRemoteVni();
+        retryRemoteVni();
+        retryRemoteVni();
+        EXPECT_EQ(g_tunnelVlanMemberCreates, 3);
+        EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+        string out = testing::internal::GetCapturedStderr();
+        EXPECT_EQ(countRetryErrors(out), 1U);
+
+        // Once the add succeeds, a later failure of the same entry is logged again.
+        testing::internal::CaptureStderr();
+        g_failTunnelVlanMember = false;
+        retryRemoteVni();
+        EXPECT_TRUE(isFloodMember());
+        delRemoteVni();
+        g_failTunnelVlanMember = true;
+        setRemoteVni();
+        retryRemoteVni();
+        out = testing::internal::GetCapturedStderr();
+        EXPECT_EQ(countRetryErrors(out), 1U);
+
+        // A DEL while the add is still failing also resets it.
+        testing::internal::CaptureStderr();
+        delRemoteVni();
+        setRemoteVni();
+        out = testing::internal::GetCapturedStderr();
+        EXPECT_EQ(countRetryErrors(out), 1U);
+
+        const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+        swss::Logger::swssOutputNotify("orchagent",
+            (syslogStdout != nullptr && string(syslogStdout) == "1") ? "STDOUT" : "SYSLOG");
+    }
+
+    // A DEL for an entry whose VLAN member was never added releases the tunnel
+    // taken for it instead of being dropped as spurious.
+    TEST_F(EvpnRemoteVniTest, DelAfterVlanMemberFailureReleasesTunnel)
+    {
+        g_failTunnelVlanMember = true;
+        setRemoteVni();
+        ASSERT_TRUE(tunnelPortExists());
+        ASSERT_TRUE(dipTunnelExists());
+
+        delRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_FALSE(tunnelPortExists());
+        EXPECT_FALSE(dipTunnelExists());
+        EXPECT_EQ(imrRefCount(), -1);
+
+        // The entry can be added again from scratch.
+        g_failTunnelVlanMember = false;
+        setRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_TRUE(isFloodMember());
+        EXPECT_EQ(imrRefCount(), 1);
+    }
+
+    // If the P2P tunnel to the remote VTEP cannot be created, nothing is
+    // recorded for it and the request is retried.
+    TEST_F(EvpnRemoteVniTest, DipTunnelFailureIsRetried)
+    {
+        g_failP2pTunnel = true;
+        setRemoteVni();
+
+        EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+        EXPECT_FALSE(dipTunnelExists());
+        EXPECT_FALSE(tunnelPortExists());
+        EXPECT_EQ(imrRefCount(), -1);
+        EXPECT_EQ(g_tunnelVlanMemberCreates, 0);
+
+        g_failP2pTunnel = false;
+        retryRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_TRUE(isFloodMember());
+        EXPECT_EQ(imrRefCount(), 1);
+    }
+
 } // namespace vxlanorch_test

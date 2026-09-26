@@ -22,6 +22,7 @@ extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 extern sai_hash_api_t *sai_hash_api;
+extern MacAddress gMacAddress;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
@@ -738,10 +739,12 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+                        saveVxlanSwitchAttrDefault(SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT);
                         attr.value.u16 = to_uint<uint16_t>(value);
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
+                        saveVxlanSwitchAttrDefault(SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC);
                         mac_addr = value;
                         gVxlanMacAddress = mac_addr;
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
@@ -836,12 +839,123 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
             }
         }
+        else if (op == DEL_COMMAND)
+        {
+            /*
+             * A DEL removes every field of the SWITCH_TABLE key. The VxLAN attributes are
+             * set and removed at runtime, so return the ones this table set to their
+             * defaults. The other attributes keep their values, as they have no
+             * meaningful "unset" state (e.g. fdb_aging_time 0 disables aging).
+             */
+            if (restoreVxlanSwitchAttrs())
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
         else
         {
             SWSS_LOG_WARN("Unsupported operation");
             it = consumer.m_toSync.erase(it);
         }
     }
+}
+
+void SwitchOrch::saveVxlanSwitchAttrDefault(sai_switch_attr_t attr_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_vxlanSwitchAttrDefaults.find(attr_id) != m_vxlanSwitchAttrDefaults.end())
+    {
+        return;
+    }
+
+    sai_attribute_t attr;
+    attr.id = attr_id;
+
+    if (attr_id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT)
+    {
+        // SAI default for SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT
+        attr.value.u16 = 4789;
+    }
+    else
+    {
+        // The default router MAC is vendor defined, so read it before it is first changed.
+        sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            // Not every SAI implements GET for it; the switch MAC is the router MAC VxLAN uses by default.
+            if (!gMacAddress)
+            {
+                SWSS_LOG_WARN("Failed to get default of switch attribute %d, rv:%d, and no switch MAC is known; "
+                              "it will not be restored when SWITCH_TABLE is deleted", attr_id, status);
+                return;
+            }
+            SWSS_LOG_NOTICE("Failed to get default of switch attribute %d, rv:%d; "
+                            "the switch MAC %s will be restored when SWITCH_TABLE is deleted",
+                            attr_id, status, gMacAddress.to_string().c_str());
+            memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+        }
+    }
+
+    m_vxlanSwitchAttrDefaults[attr_id] = attr;
+}
+
+bool SwitchOrch::restoreVxlanSwitchAttrs()
+{
+    SWSS_LOG_ENTER();
+
+    bool retry = false;
+
+    for (auto it = m_vxlanSwitchAttrDefaults.begin(); it != m_vxlanSwitchAttrDefaults.end();)
+    {
+        sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &it->second);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to restore default of switch attribute %d, rv:%d", it->first, status);
+            if (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry)
+            {
+                retry = true;
+                it++;
+                continue;
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Restored default of switch attribute %d", it->first);
+            if (it->first == SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC)
+            {
+                gVxlanMacAddress = MacAddress();
+            }
+        }
+        it = m_vxlanSwitchAttrDefaults.erase(it);
+    }
+
+    if (m_vxlanSportUserModeEnabled)
+    {
+        // Removing the switch tunnel returns the VxLAN UDP source port to its default mode.
+        sai_status_t status = sai_switch_api->remove_switch_tunnel(m_switchTunnelId);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch tunnel %" PRIx64 ", rv:%d", m_switchTunnelId, status);
+            if (handleSaiRemoveStatus(SAI_API_SWITCH, status) == task_need_retry)
+            {
+                retry = true;
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Removed switch tunnel %" PRIx64 ", VxLAN UDP source port mode restored",
+                            m_switchTunnelId);
+            m_switchTunnelId = SAI_NULL_OBJECT_ID;
+            m_vxlanSportUserModeEnabled = false;
+        }
+    }
+
+    return !retry;
 }
 
 bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const

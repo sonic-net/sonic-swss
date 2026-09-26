@@ -1168,13 +1168,18 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         dip_tunnel = (new VxlanTunnel(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN));
         tunnel_orch->addTunnel(tunnel_name,dip_tunnel);
 
+        TUNNELMAP_SET_VLAN(mapper_list);
+        TUNNELMAP_SET_VRF(mapper_list);
+        if (!dip_tunnel->createTunnelHw(mapper_list,TUNNEL_MAP_USE_COMMON_ENCAP_DECAP, false))
+        {
+            SWSS_LOG_ERROR("Failed to create P2P Tunnel remote IP %s", dip.c_str());
+            tunnel_orch->delTunnel(tunnel_name);
+            return false;
+        }
+
         memset(&tnl_refcnts,0,sizeof(tunnel_refcnt_t));
         updateRemoteEndPointRefCnt(true,tnl_refcnts,usr);
         tnl_users_[dip] = tnl_refcnts;
-
-        TUNNELMAP_SET_VLAN(mapper_list);
-        TUNNELMAP_SET_VRF(mapper_list);
-        dip_tunnel->createTunnelHw(mapper_list,TUNNEL_MAP_USE_COMMON_ENCAP_DECAP, false);
         SWSS_LOG_NOTICE("Created P2P Tunnel remote IP %s ", dip.c_str());
     }
     else 
@@ -1741,7 +1746,10 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         return true;
     }
 
-    vtep_ptr->createDynamicDIPTunnel(remote_vtep, usr);
+    if (!vtep_ptr->createDynamicDIPTunnel(remote_vtep, usr))
+    {
+        return false;
+    }
 
     getTunnelNameFromDIP(remote_vtep, tunnel_name);
     dip_tunnel = getVxlanTunnel(tunnel_name);
@@ -1758,7 +1766,13 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         auto port_tunnel_name = getTunnelPortName(remote_vtep);
         gPortsOrch->addTunnel(port_tunnel_name,dip_tunnel->getTunnelId(), false);
         gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-        gPortsOrch->addBridgePort(tunnelPort);
+        if (!gPortsOrch->addBridgePort(tunnelPort))
+        {
+            SWSS_LOG_ERROR("Failed to add bridge port for remote VTEP %s", remote_vtep.c_str());
+            gPortsOrch->removeTunnel(tunnelPort);
+            vtep_ptr->deleteDynamicDIPTunnel(remote_vtep, usr);
+            return false;
+        }
     }
 
     return true;
@@ -2567,7 +2581,21 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
         }
     }
 
-    tunnel_orch->addTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    /*
+     * The tunnel user reference is taken once per entry and kept while the VLAN member
+     * add is retried, so a retry does not take another reference or rebuild the tunnel.
+     */
+    auto pending_key = make_pair(vlan_id, remote_vtep);
+    if (m_pendingVlanMembers.find(pending_key) == m_pendingVlanMembers.end())
+    {
+        if (!tunnel_orch->addTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR))
+        {
+            SWSS_LOG_WARN("Remote VNI add: tunnel to remote VTEP %s not available, vni %d vid %d",
+                          remote_vtep.c_str(), vni_id, vlan_id);
+            return false;
+        }
+        m_pendingVlanMembers.insert(pending_key);
+    }
 
     if (!tunnel_orch->getTunnelPort(remote_vtep,tunnelPort))
     {
@@ -2578,7 +2606,23 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     // SAI Call to add tunnel to the VLAN flood domain
     // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
-    gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode);
+    if (!gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode))
+    {
+        // A refused add is retried on every pass, so only the first failure of an entry is an ERROR.
+        if (m_vlanMemberFailureLogged.insert(pending_key).second)
+        {
+            SWSS_LOG_ERROR("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), will retry",
+                           remote_vtep.c_str(), vlan_id, vni_id);
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), still retrying",
+                           remote_vtep.c_str(), vlan_id, vni_id);
+        }
+        return false;
+    }
+    m_pendingVlanMembers.erase(pending_key);
+    m_vlanMemberFailureLogged.erase(pending_key);
 
     SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
                    remote_vtep.c_str(), vni_id, vlan_id);
@@ -2609,6 +2653,17 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     // SAI Call to add tunnel to the VLAN flood domain
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    m_vlanMemberFailureLogged.erase(make_pair(vlan_id, remote_vtep));
+
+    // The add took a tunnel user reference but never added the VLAN member: release it.
+    if (m_pendingVlanMembers.erase(make_pair(vlan_id, remote_vtep)))
+    {
+        SWSS_LOG_NOTICE("Remote VNI del: remote VTEP %s was never added to vid %d, releasing its tunnel",
+                        remote_vtep.c_str(), vlan_id);
+        return tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    }
+
     Port vlanPort, tunnelPort;
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
@@ -2738,7 +2793,23 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     // SAI Call to add tunnel to the VLAN flood domain
     // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
-    gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip);
+    auto entry_key = make_pair(vlan_id, end_point_ip);
+    if (!gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip))
+    {
+        // A refused add is retried on every pass, so only the first failure of an entry is an ERROR.
+        if (m_vlanMemberFailureLogged.insert(entry_key).second)
+        {
+            SWSS_LOG_ERROR("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), will retry",
+                           end_point_ip.c_str(), vlan_id, vni_id);
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), still retrying",
+                           end_point_ip.c_str(), vlan_id, vni_id);
+        }
+        return false;
+    }
+    m_vlanMemberFailureLogged.erase(entry_key);
 
     SWSS_LOG_INFO("end_point_ip=%s vni=%d vlanid=%d ",
                    end_point_ip.c_str(), vni_id, vlan_id);
@@ -2769,6 +2840,8 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     Port vlanPort, tunnelPort;
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+
+    m_vlanMemberFailureLogged.erase(make_pair(vlan_id, end_point_ip));
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
