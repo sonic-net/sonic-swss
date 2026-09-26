@@ -728,3 +728,66 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnDfRoleChange)
         }
     }
 }
+
+extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
+
+/**
+ * @brief EVPN MH entries received during a bgp warm restart
+ *
+ * They must be held for reconciliation into their own tables. If they land in the
+ * ROUTE_TABLE refresh map, reconciliation publishes keys like "Vlan10:unknown" as
+ * routes and orchagent aborts parsing them as IP prefixes.
+ */
+TEST_F(FpmsyncdEvpnMhTest, EvpnEntriesDeferredToOwnTablesDuringWarmRestart)
+{
+    resetMockWarmStartHelper();
+    m_routeSync->getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    ASSERT_TRUE(m_routeSync->getWarmStartHelper().inProgress());
+
+    unsigned char shlBuf[4096] = {0};
+    fpm_msg_hdr_t* fpm_hdr = buildFpmHeader(shlBuf);
+    nlmsghdr* nl_hdr = addNlmsgHeader(fpm_hdr, shlBuf + FPM_MSG_HDR_LEN, RTM_FPM_ADD_EVPN_SHL,
+                                      NLM_F_CREATE | NLM_F_REPLACE, sizeof(evpn_shl_msg));
+    evpn_shl_msg* shl_msg = reinterpret_cast<evpn_shl_msg*>(NLMSG_DATA(nl_hdr));
+    shl_msg->esm_ifindex = 0;
+    shl_msg->esm_vid = 10;
+    struct in_addr vtep;
+    inet_pton(AF_INET, "10.0.0.1", &vtep);
+    addRtattr(nl_hdr, FPM_SHL_IPV4_ADDR, &vtep, sizeof(vtep));
+    m_routeSync->onEvpnShlMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_shl_msg))));
+
+    unsigned char dfBuf[4096] = {0};
+    fpm_hdr = buildFpmHeader(dfBuf);
+    nl_hdr = addNlmsgHeader(fpm_hdr, dfBuf + FPM_MSG_HDR_LEN, RTM_FPM_ADD_EVPN_DF,
+                            NLM_F_CREATE | NLM_F_REPLACE, sizeof(evpn_df_msg));
+    evpn_df_msg* df_msg = reinterpret_cast<evpn_df_msg*>(NLMSG_DATA(nl_hdr));
+    df_msg->edm_ifindex = 0;
+    df_msg->edm_vid = 10;
+    df_msg->edm_non_df = 0;
+    m_routeSync->onEvpnDfMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_df_msg))));
+
+    unsigned char nhgBuf[4096] = {0};
+    fpm_hdr = buildFpmHeader(nhgBuf);
+    nl_hdr = addNlmsgHeader(fpm_hdr, nhgBuf + FPM_MSG_HDR_LEN, RTM_FPM_ADD_EVPN_ES_BACKUP_NHG,
+                            NLM_F_CREATE | NLM_F_REPLACE, sizeof(evpn_backup_nhg_msg));
+    evpn_backup_nhg_msg* nhg_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
+    nhg_msg->ebnm_ifindex = 0;
+    nhg_msg->ebnm_backup_nhg_id = 5000;
+    m_routeSync->onEvpnEsBackupNhgMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg))));
+
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
+
+    KeyOpFieldsValuesTuple kfv;
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry("EVPN_SPLIT_HORIZON_TABLE", "Vlan10:unknown", kfv));
+    EXPECT_EQ(kfvOp(kfv), SET_COMMAND);
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry("EVPN_DF_TABLE", "Vlan10:unknown", kfv));
+    EXPECT_EQ(kfvFieldsValues(kfv), std::vector<FieldValueTuple>({{"df", "true"}}));
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry("EVPN_ES_BACKUP_NHG_TABLE", "unknown", kfv));
+    EXPECT_EQ(kfvFieldsValues(kfv), std::vector<FieldValueTuple>({{"nexthop_group", "5000"}}));
+
+    resetMockWarmStartHelper();
+}
