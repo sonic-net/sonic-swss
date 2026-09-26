@@ -53,6 +53,11 @@ private:
     };
     unordered_map<string, l2nhg_nh_info> m_nhg_nh;
 
+    /* Cleared once the SAI rejects SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT itself. */
+    bool m_bridgePortNhgSupported = true;
+    /* A refusal after a successful create is a real failure, not a missing feature. */
+    bool m_bridgePortNhgCreated = false;
+
     bool deleteL2NextHop(string nhg_id);
     bool deleteL2NextHopGroup(string nhg_id);
     bool addL2NextHopGroupEntry(string nhg_id, string nh_ids, string source_vtep = "");
