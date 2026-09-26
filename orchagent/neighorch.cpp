@@ -430,7 +430,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 
     if (ctx.bulk_op)
     {
-        gNextHopBulker.create_entry(&ctx.next_hop_id , (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
+        gNextHopBulker.create_entry(&ctx.next_hop_id, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data(), &ctx.nexthop_status);
         return true;
     }
 
@@ -528,20 +528,29 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     NextHopKey nexthop(nh);
     if (ctx.next_hop_id == SAI_NULL_OBJECT_ID)
     {
-        sai_status_t bulker_status = gNextHopBulker.create_status(ctx.next_hop_id);
+        sai_status_t bulker_status = ctx.nexthop_status;
         if (bulker_status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
-                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
-            return true;
+            SWSS_LOG_ERROR("Next hop %s on %s already exists but no usable object ID was returned",
+                           nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return false;
+        }
+        if (bulker_status == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Next hop %s on %s reported success without a usable object ID",
+                           nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return false;
+        }
+        if (bulker_status == SAI_STATUS_NOT_EXECUTED)
+        {
+            SWSS_LOG_ERROR("Next hop %s on %s was not created because its bulk request was not executed",
+                           nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return false;
         }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), bulker_status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, bulker_status);
+        return false;
     }
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",

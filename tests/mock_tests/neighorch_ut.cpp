@@ -29,6 +29,7 @@ namespace neighorch_test
     using ::testing::DoAll;
     using ::testing::Return;
     using ::testing::SetArgPointee;
+    using ::testing::SetArrayArgument;
     using ::testing::Throw;
 
     static const string TEST_IP = "10.10.10.10";
@@ -86,6 +87,8 @@ namespace neighorch_test
     class NeighOrchTest : public MockOrchTest
     {
     protected:
+        sai_bulk_object_create_fn old_object_create;
+
         void SetAndAssertMuxState(std::string interface, std::string state)
         {
             MuxCable *muxCable = m_MuxOrch->getMuxCable(interface);
@@ -275,11 +278,14 @@ namespace neighorch_test
             INIT_SAI_API_MOCK(neighbor);
             INIT_SAI_API_MOCK(next_hop);
             MockSaiApis();
+            old_object_create = gNeighOrch->gNextHopBulker.create_entries;
+            gNeighOrch->gNextHopBulker.create_entries = mock_create_next_hops;
         }
 
         void PreTearDown() override
         {
             RestoreSaiApis();
+            gNeighOrch->gNextHopBulker.create_entries = old_object_create;
             DEINIT_SAI_API_MOCK(next_hop);
         }
     };
@@ -341,6 +347,97 @@ namespace neighorch_test
         LearnNeighbor(VLAN_1000, TEST_IP, MAC3);
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 0);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopFailureDoesNotInstallOrAccountNullNextHop)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        NextHopKey nexthop(VLAN1000_NEIGH);
+        auto& counter = gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_IPV4_NEXTHOP)
+                            .countersMap["STATS"].usedCounter;
+        uint32_t initial_counter = counter;
+        int initial_rif_ref_count = gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count;
+        std::vector<sai_object_id_t> returned_ids = {0x101};
+        std::vector<sai_status_t> returned_statuses = {SAI_STATUS_TABLE_FULL};
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        ASSERT_TRUE(gNeighOrch->addNextHop(ctx));
+        EXPECT_EQ(ctx.nexthop_status, SAI_STATUS_NOT_EXECUTED);
+
+        gNeighOrch->gNextHopBulker.flush();
+
+        EXPECT_EQ(ctx.next_hop_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(ctx.nexthop_status, SAI_STATUS_TABLE_FULL);
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nexthop), 0);
+        EXPECT_EQ(counter, initial_counter);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count, initial_rif_ref_count);
+    }
+
+    TEST_F(NeighOrchTest, UnwrittenBulkNextHopStatusDoesNotFinalizeNeighbor)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        NextHopKey nexthop(VLAN1000_NEIGH);
+        auto& counter = gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_IPV4_NEXTHOP)
+                            .countersMap["STATS"].usedCounter;
+        uint32_t initial_counter = counter;
+        int initial_rif_ref_count = gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count;
+        std::vector<sai_object_id_t> returned_ids = {0x101};
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        ASSERT_TRUE(gNeighOrch->addNextHop(ctx));
+        gNeighOrch->gNextHopBulker.flush();
+
+        EXPECT_EQ(ctx.next_hop_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(ctx.nexthop_status, SAI_STATUS_NOT_EXECUTED);
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nexthop), 0);
+        EXPECT_EQ(counter, initial_counter);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count, initial_rif_ref_count);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopAlreadyExistsWithoutOidFails)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopSuccessWithoutOidFails)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_SUCCESS;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
+    }
+
+    TEST_F(NeighOrchTest, BulkNextHopPermanentFailureDoesNotCompleteEnable)
+    {
+        NeighborContext ctx(VLAN1000_NEIGH, true);
+        ctx.mac = MacAddress(MAC1);
+        ctx.next_hop_id = SAI_NULL_OBJECT_ID;
+        ctx.nexthop_status = SAI_STATUS_FAILURE;
+
+        EXPECT_FALSE(gNeighOrch->processBulkAddNextHop(ctx));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(NextHopKey(VLAN1000_NEIGH)), 0);
     }
 
     TEST_F(NeighOrchTest, MultiVlanUnableToRemoveNeighbor)
