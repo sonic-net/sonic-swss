@@ -151,6 +151,28 @@ void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
     return;
 }
 
+/*
+ * Called when the kernel reports the neighbor again (SET with a MAC) or it is
+ * removed: either way the refresh requested by processFDBResolve() is done.
+ */
+void NeighOrch::clearNeighborRefresh(const NeighborEntry &entry)
+{
+    if (m_neighborToRefresh.erase(entry) == 0)
+    {
+        return;
+    }
+
+    // A next hop resolve shares the key; addNextHop() clears it.
+    if (m_neighborToResolve.find(entry) != m_neighborToResolve.end())
+    {
+        return;
+    }
+
+    clearResolvedNeighborEntry(entry);
+    SWSS_LOG_INFO("Refreshed neighbor %s on %s",
+                  entry.ip_address.to_string().c_str(), entry.alias.c_str());
+}
+
 /**
  * @brief Process FDB add notification to re-enable neighbor entries
  *
@@ -257,6 +279,7 @@ void NeighOrch::processFDBResolve(const FdbEntry &entry)
             neighborEntry.second.mac == entry.mac)
         {
             resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
+            m_neighborToRefresh.insert(neighborEntry.first);
         }
     }
     return;
@@ -1126,6 +1149,7 @@ void NeighOrch::doTask(Consumer &consumer)
                 }
                 else if (addNeighbor(ctx))
                 {
+                    clearNeighborRefresh(neighbor_entry);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -1137,6 +1161,7 @@ void NeighOrch::doTask(Consumer &consumer)
             else
             {
                 /* Duplicate entry */
+                clearNeighborRefresh(neighbor_entry);
                 it = consumer.m_toSync.erase(it);
             }
 
@@ -1774,6 +1799,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     }
 
     m_syncdNeighbors.erase(neighborEntry);
+    clearNeighborRefresh(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
