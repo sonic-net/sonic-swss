@@ -463,4 +463,64 @@ namespace evpnmhorch_test
 
         _unhook_sai_vlan_api();
     }
+
+    TEST_F(EvpnMhOrchTest, ESDfEntryNotRetriedWhenUnsupported)
+    {
+        _hook_sai_vlan_api();
+
+        ApplyDualTorConfigs();
+        Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+        evpnEsIntfTable.set("Ethernet1", { { "df_pref", "32767" },
+                                           { "esi", "AUTO" },
+                                           { "type", "TYPE_3_MAC_BASED" } });
+        gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        /* What a platform without the DF attribute returns for any VLAN member set. */
+        int set_calls = 0;
+        auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        vlanSpy->callFake([&](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+            set_calls++;
+            return SAI_STATUS_NOT_IMPLEMENTED;
+        });
+
+        /* Vlan0 is the port-level entry zebra sends; no such VLAN exists. */
+        auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "true" } } });
+        entries.push_back({ "Vlan0:Ethernet1", "SET", { { "df", "true" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_calls, 1);
+        ASSERT_TRUE(consumer_df->m_toSync.empty());
+        ASSERT_TRUE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+
+        /* A port that does not exist yet: its segment and DF entries are consumed, nothing is set. */
+        auto consumer_es = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ETHERNET_SEGMENT"));
+        ASSERT_NE(consumer_es, nullptr);
+        consumer_es->addToSync(std::deque<KeyOpFieldsValuesTuple>{
+            { "Ethernet999", "SET", { { "df_pref", "32767" }, { "esi", "AUTO" }, { "type", "TYPE_3_MAC_BASED" } } } });
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_TRUE(consumer_es->m_toSync.empty());
+
+        entries.clear();
+        entries.push_back({ "Vlan10:Ethernet999", "SET", { { "df", "false" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls, 1);
+        ASSERT_TRUE(consumer_df->m_toSync.empty());
+
+        entries.clear();
+        entries.push_back({ "Vlan10:Ethernet1", "DEL", { {} } });
+        entries.push_back({ "Vlan0:Ethernet1", "DEL", { {} } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_calls, 2);
+        ASSERT_TRUE(consumer_df->m_toSync.empty());
+        ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+
+        _unhook_sai_vlan_api();
+    }
 }
