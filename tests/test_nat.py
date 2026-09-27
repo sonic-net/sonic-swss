@@ -71,7 +71,7 @@ class TestNat(object):
                 break
         assert zone
 
-    @pytest.mark.parametrize("interface", ["Ethernet999;:", "Ethernet0$(id)"])
+    @pytest.mark.parametrize("interface", ["Ethernet999;:", "Ethernet0$(id)", "Ethernet0123456789"])
     def test_NatRejectsUnsafeInterfaceName(self, dvs, testlog, interface):
         self.setup_db(dvs)
         state_db = dvs.get_state_db()

@@ -7410,13 +7410,7 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t), nat_zone = "1";
         vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
-        if (keys.empty())
-        {
-            SWSS_LOG_ERROR("Invalid NAT interface key");
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-        string op = kfvOp(t), port(keys[0]);
+        string op = kfvOp(t);
         bool skipAddition = false, skipDeletion = false;
         int prefixLen = 0, nat_zone_value = 1;
         vector<string> ipPrefixKeys;
@@ -7441,6 +7435,8 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
         {
             SWSS_LOG_INFO("Key size %zu for %s", keys.size(), key.c_str());
         }
+
+        string port(keys[0]);
 
         /* Ensure the key starts with "Vlan" or "Ethernet" or "PortChannel" or "Loopback", otherwise ignore */
         if ((strncmp(keys[0].c_str(), VLAN_PREFIX, strlen(VLAN_PREFIX))) and
