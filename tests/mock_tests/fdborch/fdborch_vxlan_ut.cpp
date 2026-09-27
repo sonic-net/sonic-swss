@@ -622,6 +622,63 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
     }
 
+    /*
+     * A local MAC that moves behind a bridge port next hop group keeps its neighbor
+     * in the SAI, which resolves it through the group (a MAC moving to a single
+     * remote VTEP still takes it out).
+     */
+    TEST_F(VxlanFdbOrchTest, LocalMacMovedToNhgKeepsNeighbor)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        gL2NhgOrch->m_nhg_nh["536870913"].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh["536870913"].is_active = true;
+
+        const string ip = "100.1.1.47";
+        const string mac = "00:11:01:00:00:2e";
+        NeighborEntry neighbor(ip, string(VLAN40));
+
+        vector<uint8_t> mac_addr = { 0x00, 0x11, 0x01, 0x00, 0x00, 0x2e };
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac_addr, m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                      m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry)
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, ip, mac);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set(VLAN40 + vxlanFdbTable.getTableNameSeparator() + mac, {
+            { string("vni"), string("40") },
+            { string("type"), string("dynamic") },
+            { string("nexthop_group"), string("536870913") }
+        });
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        FdbEntry entry;
+        entry.mac = MacAddress(mac);
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        ASSERT_EQ(gFdbOrch->m_entries[entry].bridge_port_id, m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
     static int nhg_create_calls;
     static sai_next_hop_group_api_t *real_nhg_api;
 
