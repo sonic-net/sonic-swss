@@ -22,6 +22,8 @@ public:
     unsigned long getNumL2NhgNextHops(const std::string &nhg_id);
     unsigned long getL2NhVtepRefCount(const std::string &nhg_id);
     bool hasActiveL2Nhg(const std::string &nhg_id);
+    /* SAI group of an active L2 next hop group, SAI_NULL_OBJECT_ID otherwise. */
+    sai_object_id_t getL2NhgOid(const std::string &nhg_id);
     bool isL2NextHop(const std::string &nhg_id);
 
 private:
