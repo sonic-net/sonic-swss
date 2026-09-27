@@ -1,21 +1,50 @@
 #include "evpnmhorch.h"
 
+#include "fdborch.h"
+#include "l2nhgorch.h"
 #include "portsorch.h"
 
 extern PortsOrch *gPortsOrch;
+extern FdbOrch *gFdbOrch;
+extern L2NhgOrch *gL2NhgOrch;
+extern sai_object_id_t gSwitchId;
 
 extern sai_vlan_api_t *sai_vlan_api;
+extern sai_bridge_api_t *sai_bridge_api;
+
+#define EVPN_ES_BACKUP_NHG_TABLE "EVPN_ES_BACKUP_NHG_TABLE"
+/*
+ * An ES port that comes back up stays switched over this long: its LAG member
+ * starts distributing after the LAG goes oper up, and the host starts collecting
+ * on the link later still (measured on a TH5: ~100 ms of loss switching back at
+ * oper up). Traffic keeps flowing through the peers meanwhile.
+ */
+#define ES_BACKUP_SWITCHBACK_HOLD_SEC 1
 
 #define VLAN_PREFIX "Vlan"
 
 EvpnMhOrch::EvpnMhOrch(vector<TableConnector> &connectors) : Orch(connectors)
 {
     SWSS_LOG_ENTER();
+
+    /* Port oper state and bridge port changes drive the ES backup switchover. */
+    if (gPortsOrch)
+    {
+        gPortsOrch->attach(this);
+    }
+    m_esBackupSwitchbackTimer = new SelectableTimer(timespec { .tv_sec = ES_BACKUP_SWITCHBACK_HOLD_SEC,
+                                                               .tv_nsec = 0 });
+    Orch::addExecutor(new ExecutableTimer(m_esBackupSwitchbackTimer, this, "ES_BACKUP_SWITCHBACK"));
 }
 
 EvpnMhOrch::~EvpnMhOrch()
 {
     SWSS_LOG_ENTER();
+
+    if (gPortsOrch)
+    {
+        gPortsOrch->detach(this);
+    }
 }
 
 EsCacheEntry *EvpnMhOrch::getEsCache(const std::string &key)
@@ -296,12 +325,403 @@ void EvpnMhOrch::doTask(Consumer &consumer)
     {
         doEvpnEsDfTask(consumer);
     }
+    else if (table_name == "EVPN_ETHERNET_SEGMENT")
+    {
+        doEvpnEsIntfTask(consumer);
+    }
+    else if (table_name == EVPN_ES_BACKUP_NHG_TABLE)
+    {
+        doEvpnEsBackupNhgTask(consumer);
+    }
+}
+
+void EvpnMhOrch::doTask()
+{
+    Orch::doTask();
+
+    /* Entries waiting for their backup group (no notification comes when L2NhgOrch
+     * activates it) or for the port's bridge port. */
+    for (auto it = m_esBackupPending.begin(); it != m_esBackupPending.end();)
+    {
+        if (applyEsBackup(*it))
+        {
+            it = m_esBackupPending.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+/*
+ * The protection attributes are set on live bridge ports, so an unsupported one
+ * would be refused by syncd's applyView after a warm restart, where no refusal
+ * reaches orchagent. Use them only when the SAI says it implements them.
+ */
+bool EvpnMhOrch::isEsBackupSupported()
+{
+    if (m_esBackupCapChecked)
+    {
+        return m_esBackupSupported;
+    }
+    m_esBackupCapChecked = true;
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == VS_PLATFORM_SUBSTRING)
+    {
+        m_esBackupSupported = true;
+    }
     else
     {
-        if (table_name == "EVPN_ETHERNET_SEGMENT")
+        sai_attr_capability_t prot = {}, swo = {};
+        sai_status_t s1 = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BRIDGE_PORT,
+            SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID, &prot);
+        sai_status_t s2 = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BRIDGE_PORT,
+            SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER, &swo);
+        m_esBackupSupported = (s1 == SAI_STATUS_SUCCESS) && (s2 == SAI_STATUS_SUCCESS) &&
+                              prot.set_implemented && swo.set_implemented;
+    }
+    SWSS_LOG_NOTICE("ES backup next hop group (bridge port protection) is %s",
+                    m_esBackupSupported ? "supported" :
+                    "not supported: MACs on a down ES port are flushed and flood");
+    return m_esBackupSupported;
+}
+
+void EvpnMhOrch::doEvpnEsBackupNhgTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string port_name = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (!isEsBackupSupported())
         {
-            doEvpnEsIntfTask(consumer);
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
+
+        if (op == SET_COMMAND)
+        {
+            string nhg_id;
+            for (const auto &fv : kfvFieldsValues(t))
+            {
+                if (fvField(fv) == "nexthop_group")
+                {
+                    nhg_id = fvValue(fv);
+                }
+            }
+            auto &entry = m_esBackup[port_name];
+            if (entry.nhg_id != nhg_id)
+            {
+                SWSS_LOG_NOTICE("ES %s backup next hop group %s -> %s", port_name.c_str(),
+                                entry.nhg_id.c_str(), nhg_id.c_str());
+                entry.nhg_id = nhg_id;
+            }
+            if (applyEsBackup(port_name))
+            {
+                m_esBackupPending.erase(port_name);
+            }
+            else
+            {
+                m_esBackupPending.insert(port_name);
+            }
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            auto e = m_esBackup.find(port_name);
+            if (e != m_esBackup.end() && !detachEsBackup(e->second, port_name))
+            {
+                ++it;
+                continue;
+            }
+            SWSS_LOG_NOTICE("ES %s backup next hop group removed", port_name.c_str());
+            m_esBackup.erase(port_name);
+            m_esBackupPending.erase(port_name);
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+bool EvpnMhOrch::setEsBackupAttr(EsBackupEntry &entry, const std::string &port_name,
+                                 sai_attr_id_t id, bool value, sai_object_id_t oid)
+{
+    sai_attribute_t attr;
+    attr.id = id;
+    if (id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+    {
+        attr.value.booldata = value;
+    }
+    else
+    {
+        attr.value.oid = oid;
+    }
+    sai_status_t status = sai_bridge_api->set_bridge_port_attribute(entry.bridge_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("ES %s: failed to set %s on bridge port 0x%" PRIx64 ", rv:%d",
+                       port_name.c_str(),
+                       id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER ?
+                           "switchover" : "protection next hop group",
+                       entry.bridge_port_id, status);
+        return false;
+    }
+    if (id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+    {
+        entry.switchover = value;
+        SWSS_LOG_NOTICE("ES %s: %s backup next hop group %s", port_name.c_str(),
+                        value ? "switched over to" : "switched back from", entry.nhg_id.c_str());
+    }
+    else
+    {
+        entry.nhg_oid = oid;
+        SWSS_LOG_NOTICE("ES %s: protection next hop group 0x%" PRIx64 " (%s)", port_name.c_str(),
+                        oid, entry.nhg_id.c_str());
+    }
+    return true;
+}
+
+/* Returns false while the entry still has to be retried. */
+bool EvpnMhOrch::applyEsBackup(const std::string &port_name)
+{
+    auto e = m_esBackup.find(port_name);
+    if (e == m_esBackup.end())
+    {
+        return true;
+    }
+    auto &entry = e->second;
+
+    Port port;
+    if (!gPortsOrch->getPort(port_name, port) || port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        /* Applied from the bridge port add notification. */
+        entry.bridge_port_id = SAI_NULL_OBJECT_ID;
+        entry.nhg_oid = SAI_NULL_OBJECT_ID;
+        entry.switchover = false;
+        return true;
+    }
+    if (entry.bridge_port_id != port.m_bridge_port_id)
+    {
+        /* A new bridge port starts with the attributes at their defaults. */
+        entry.bridge_port_id = port.m_bridge_port_id;
+        entry.nhg_oid = SAI_NULL_OBJECT_ID;
+        entry.switchover = false;
+    }
+
+    sai_object_id_t want = gL2NhgOrch ? gL2NhgOrch->getL2NhgOid(entry.nhg_id) : SAI_NULL_OBJECT_ID;
+    if (want == SAI_NULL_OBJECT_ID)
+    {
+        if (entry.nhg_oid != SAI_NULL_OBJECT_ID)
+        {
+            detachEsBackup(entry, port_name);
+        }
+        SWSS_LOG_INFO("ES %s: backup next hop group %s not active yet", port_name.c_str(),
+                      entry.nhg_id.c_str());
+        return false;
+    }
+    if (entry.nhg_oid != want)
+    {
+        /* While switched over, the SAI moves the port's entries to the new group. */
+        if (!setEsBackupAttr(entry, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID,
+                             false, want))
+        {
+            return false;
+        }
+    }
+    bool down = port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN;
+    if (!down && m_esBackupSwitchback.count(port_name))
+    {
+        /* Switched back by the hold timer. */
+        return true;
+    }
+    if (entry.switchover != down &&
+        !setEsBackupAttr(entry, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER, down,
+                         SAI_NULL_OBJECT_ID))
+    {
+        return false;
+    }
+    return true;
+}
+
+bool EvpnMhOrch::detachEsBackup(EsBackupEntry &entry, const std::string &port_name)
+{
+    m_esBackupSwitchback.erase(port_name);
+    if (entry.bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+    if (entry.switchover &&
+        !setEsBackupAttr(entry, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER, false,
+                         SAI_NULL_OBJECT_ID))
+    {
+        return false;
+    }
+    if (entry.nhg_oid != SAI_NULL_OBJECT_ID)
+    {
+        if (!setEsBackupAttr(entry, port_name,
+                             SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID, false,
+                             SAI_NULL_OBJECT_ID))
+        {
+            return false;
+        }
+        /* The port's MACs were kept for the group; on a down port they now blackhole. */
+        Port port;
+        if (gFdbOrch && gPortsOrch->getPort(port_name, port) &&
+            port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+        {
+            gFdbOrch->flushFDBEntries(entry.bridge_port_id, SAI_NULL_OBJECT_ID);
+        }
+    }
+    return true;
+}
+
+void EvpnMhOrch::onL2NhgActive(const std::string &nhg_id)
+{
+    for (auto it = m_esBackupPending.begin(); it != m_esBackupPending.end();)
+    {
+        auto e = m_esBackup.find(*it);
+        if (e != m_esBackup.end() && e->second.nhg_id == nhg_id && applyEsBackup(*it))
+        {
+            it = m_esBackupPending.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+bool EvpnMhOrch::isEsBackupAttached(const std::string &port_name) const
+{
+    auto e = m_esBackup.find(port_name);
+    return e != m_esBackup.end() && e->second.nhg_oid != SAI_NULL_OBJECT_ID;
+}
+
+void EvpnMhOrch::onEsBackupPortOperChange(const Port &port)
+{
+    auto e = m_esBackup.find(port.m_alias);
+    if (e == m_esBackup.end() || e->second.nhg_oid == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+    if (port.m_oper_status != SAI_PORT_OPER_STATUS_DOWN)
+    {
+        if (e->second.switchover)
+        {
+            m_esBackupSwitchback.insert(port.m_alias);
+            m_esBackupSwitchbackTimer->stop();
+            m_esBackupSwitchbackTimer->start();
+        }
+        return;
+    }
+    m_esBackupSwitchback.erase(port.m_alias);
+    if (!e->second.switchover &&
+        !setEsBackupAttr(e->second, port.m_alias, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER,
+                         true, SAI_NULL_OBJECT_ID))
+    {
+        m_esBackupPending.insert(port.m_alias);
+    }
+}
+
+void EvpnMhOrch::onEsBackupSwitchbackTimer()
+{
+    m_esBackupSwitchbackTimer->stop();
+    for (const auto &port_name : m_esBackupSwitchback)
+    {
+        auto e = m_esBackup.find(port_name);
+        Port port;
+        if (e == m_esBackup.end() || !e->second.switchover ||
+            !gPortsOrch->getPort(port_name, port) || port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+        {
+            continue;
+        }
+        if (!setEsBackupAttr(e->second, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER,
+                             false, SAI_NULL_OBJECT_ID))
+        {
+            m_esBackupPending.insert(port_name);
+        }
+    }
+    m_esBackupSwitchback.clear();
+}
+
+void EvpnMhOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (&timer == m_esBackupSwitchbackTimer)
+    {
+        onEsBackupSwitchbackTimer();
+    }
+}
+
+void EvpnMhOrch::onEsBackupBridgePortChange(const Port &port, bool add)
+{
+    auto e = m_esBackup.find(port.m_alias);
+    if (e != m_esBackup.end())
+    {
+        if (add)
+        {
+            if (!applyEsBackup(port.m_alias))
+            {
+                m_esBackupPending.insert(port.m_alias);
+            }
+        }
+        else
+        {
+            /* The attributes go with the bridge port. */
+            m_esBackupSwitchback.erase(port.m_alias);
+            e->second.bridge_port_id = SAI_NULL_OBJECT_ID;
+            e->second.nhg_oid = SAI_NULL_OBJECT_ID;
+            e->second.switchover = false;
+        }
+        return;
+    }
+
+    /*
+     * A backup group's own bridge port is removed before the group: take the group
+     * off the ES ports first, which the SAI requires while it is referenced.
+     */
+    if (add || !gL2NhgOrch)
+    {
+        return;
+    }
+    for (auto &kv : m_esBackup)
+    {
+        if (kv.second.nhg_oid != SAI_NULL_OBJECT_ID &&
+            gL2NhgOrch->getNextHopGroupPortName(kv.second.nhg_id) == port.m_alias)
+        {
+            detachEsBackup(kv.second, kv.first);
+            m_esBackupPending.insert(kv.first);
+        }
+    }
+}
+
+void EvpnMhOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_esBackup.empty())
+    {
+        return;
+    }
+    if (type == SUBJECT_TYPE_PORT_OPER_STATE_CHANGE)
+    {
+        auto *update = static_cast<PortOperStateUpdate *>(cntx);
+        Port port = update->port;
+        port.m_oper_status = update->operStatus;
+        onEsBackupPortOperChange(port);
+    }
+    else if (type == SUBJECT_TYPE_BRIDGE_PORT_CHANGE)
+    {
+        auto *update = static_cast<PortUpdate *>(cntx);
+        onEsBackupBridgePortChange(update->port, update->add);
     }
 }
 
