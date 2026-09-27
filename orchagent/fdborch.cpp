@@ -2126,12 +2126,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if ((fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) &&
+        /* A local MAC moved to a remote VTEP takes its neighbors out of the SAI. Behind a bridge
+         * port next hop group they stay: the SAI resolves them through the group's bridge port. */
+        if ((fdbData.dest_type == FdbDest::VTEP) &&
             macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
             (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
-            /* Try to remove the local neighbor entry if a local MAC moved to
-             * the remote VXLAN side now.
-             */
             gNeighOrch->processFDBDelete(entry);
         }
     }
