@@ -18,6 +18,7 @@ class VrfMgr : public Orch
 {
 public:
     VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    ~VrfMgr();
     using Orch::doTask;
     std::string m_evpnVxlanTunnel;
 
