@@ -20,6 +20,8 @@ static std::map<std::string, std::FILE*> pidFiles;
 // Force the teamdctl macsec_gate push to fail, to exercise the retry path in
 // applyMacsecMemberGate.
 static bool failMacsecGatePush = false;
+static bool failPortRemove = false;
+static bool failTeamdSigterm = false;
 // Ports isPortEnslaved() should report as enslaved (see the lstat override).
 static std::set<std::string> mockEnslavedPorts;
 
@@ -152,6 +154,11 @@ int lstat(const char *pathname, struct stat *statbuf)
 static int cb_kill(pid_t pid, int sig)
 {
     mockKillCommands.push_back(std::make_pair(pid, sig));
+    if (failTeamdSigterm && sig == SIGTERM)
+    {
+        errno = EPERM;
+        return -1;
+    }
     if (!sig)
     {
         errno = ESRCH;
@@ -230,6 +237,10 @@ int cb(const std::string &cmd, std::string &stdout)
 {
     mockCallArgs.push_back(cmd);
     if (failMacsecGatePush && cmd.find("runner.macsec_gate") != std::string::npos)
+    {
+        return 1;
+    }
+    if (failPortRemove && cmd.find("port remove") != std::string::npos)
     {
         return 1;
     }
@@ -317,6 +328,8 @@ namespace teammgr_ut
             mock_if_nametoindex_name.clear();
             mock_kernel_mac_updates.clear();
             failMacsecGatePush = false;
+            failPortRemove = false;
+            failTeamdSigterm = false;
             mockEnslavedPorts.clear();
             callback = cb;
             callback_kill = cb_kill;
@@ -1073,5 +1086,98 @@ namespace teammgr_ut
         pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
                 saKey("Ethernet1", 0), SET_COMMAND, { { "state", "ok" } });
         EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_WarmStartEnslavedMemberIsPushedOnce)
+    {
+        /* teamd outlived teammgrd, so there is no pushed entry. The member is
+         * already enslaved and its SA is up: one macsec_gate true, then stop. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel133", "Ethernet1", true, true);
+
+        EXPECT_EQ(countCommandsWith({"PortChannel133", "ports.Ethernet1.runner.macsec_gate", "true"}), 1);
+
+        mockCallArgs.clear();
+        teammgr.doTask();
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_PushBudgetStopsSweep)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel134", "Ethernet1", true, true);
+        mockCallArgs.clear();
+
+        failMacsecGatePush = true;
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        for (int i = 0; i < MACSEC_GATE_MAX_PUSH_ATTEMPTS - 1; ++i)
+        {
+            teammgr.doTask();
+        }
+        EXPECT_EQ(countCommandsWith({"PortChannel134", "ports.Ethernet1.runner.macsec_gate", "false"}),
+                  MACSEC_GATE_MAX_PUSH_ATTEMPTS);
+
+        mockCallArgs.clear();
+        teammgr.doTask();
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+
+        failMacsecGatePush = false;
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 1), SET_COMMAND, { { "state", "ok" } });
+        EXPECT_TRUE(findCommandWith({"PortChannel134", "ports.Ethernet1.runner.macsec_gate", "true"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_SigtermFailureKeepsGate)
+    {
+        /* SIGTERM failed, so teamd is still running. The delete stays, and a
+         * later SA event can still write the gate. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel140", "Ethernet1", true, true);
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        ASSERT_TRUE(findCommandWith({"PortChannel140", "ports.Ethernet1.runner.macsec_gate", "false"}));
+
+        mkdir("/var/run/teamd", 0755);
+        std::FILE *pidFile = std::tmpfile();
+        std::fputs("4321", pidFile);
+        std::rewind(pidFile);
+        pidFiles["/var/run/teamd/PortChannel140.pid"] = pidFile;
+        failTeamdSigterm = true;
+        mockCallArgs.clear();
+
+        pushRow(teammgr, m_config_db.get(), CFG_LAG_TABLE_NAME, "PortChannel140", DEL_COMMAND, {});
+
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 1), SET_COMMAND, { { "state", "ok" } });
+        EXPECT_TRUE(findCommandWith({"PortChannel140", "ports.Ethernet1.runner.macsec_gate", "true"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_PortRemoveFailureIsRetried)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel141", "Ethernet1", true, true);
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+
+        swss::DBConnector *db = m_config_db.get();
+        const std::string table = CFG_LAG_MEMBER_TABLE_NAME;
+        const std::string key = "PortChannel141|Ethernet1";
+        swss::Table t(db, table);
+        t.del(key);
+
+        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            new swss::SubscriberStateTable(db, table, 1, 1), &teammgr, table));
+        consumer->addToSync({ { key, DEL_COMMAND, {} } });
+
+        failPortRemove = true;
+        mockCallArgs.clear();
+        static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+        EXPECT_EQ(countCommandsWith({"PortChannel141", "port remove", "Ethernet1"}), 1);
+
+        failPortRemove = false;
+        mockCallArgs.clear();
+        static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+        EXPECT_TRUE(findCommandWith({"PortChannel141", "port remove", "Ethernet1"}));
     }
 }

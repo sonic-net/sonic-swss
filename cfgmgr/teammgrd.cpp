@@ -57,7 +57,10 @@ int main(int argc, char **argv)
         TableConnector state_port_table(&state_db, STATE_PORT_TABLE_NAME);
         /* MACsec data-plane state written by macsecorch: drives each member's
          * teamd runner.macsec_gate so a member whose MACsec session is down is
-         * pulled out of the LAG distributor by teamd itself. */
+         * pulled out of the LAG distributor by teamd itself.
+         * SubscriberStateTable replays the rows already in STATE_DB as SETs.
+         * doLagTask then re-evaluates each member once that LAG is in
+         * m_lagList, including a member already enslaved across warm start. */
         TableConnector state_macsec_ingress_sa_table(&state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME);
         TableConnector state_macsec_port_table(&state_db, STATE_MACSEC_PORT_TABLE_NAME);
 
