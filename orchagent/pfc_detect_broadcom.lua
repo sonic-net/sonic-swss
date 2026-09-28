@@ -250,18 +250,20 @@ for i = n, 1, -1 do
         if detection_time then
             detection_time = tonumber(detection_time)
             -- A storm has to be visible in at least two samples, so one poll
-            -- must never charge the whole detection time.
-            -- leave at least 1us of budget so a storm needs two samples;
-            -- never charge less than the configured interval
+            -- must never charge the whole detection time.  The port counters
+            -- and the queue pause status are read at different instants, so a
+            -- single sample can show a pause that never happened: a burst that
+            -- starts between the two reads is counted as a pause that spanned
+            -- the whole interval.  Two samples are needed to tell that apart
+            -- from a real one, including when the detection time equals the
+            -- poll interval, which is the default.
             local charge_cap = detection_time - 1
-            if charge_cap < poll_time then
-                charge_cap = poll_time
-            end
             local queue_charge = detect_charge
             if not have_mono then
                 -- no monotonic clock: charge the configured interval, as before
                 queue_charge = poll_time
-            elseif queue_charge > charge_cap then
+            end
+            if queue_charge > charge_cap then
                 queue_charge = charge_cap
             end
 
