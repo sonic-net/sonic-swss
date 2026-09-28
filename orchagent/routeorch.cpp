@@ -14,6 +14,7 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
+#include "vnetorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -2566,6 +2567,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
              * to single next hops and blackholes as well as ECMP routes. */
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
+                auto *vnet_orch = gDirectory.get<VNetOrch*>();
+                if (vnet_orch && vnet_orch->isRouteOwnedByVnet(vrf_id, ipPrefix))
+                {
+                    // Another orchestrator owns this route. Do not remove it
+                    // or record a RouteOrch route that was never created.
+                    if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
+                    {
+                        removeNextHopGroup(nextHops);
+                    }
+                    return false;
+                }
+
                 sai_route_entry_t route_entry{};
                 route_entry.vr_id = vrf_id;
                 route_entry.switch_id = gSwitchId;

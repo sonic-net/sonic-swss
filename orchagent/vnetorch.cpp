@@ -649,6 +649,41 @@ bool VNetOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name
     return false;
 }
 
+bool VNetOrch::isRouteOwnedByVnet(sai_object_id_t vrf_id, const IpPrefix& prefix) const
+{
+    for (const auto& entry : vnet_table_)
+    {
+        auto *vrf_obj = dynamic_cast<VNetVrfObject *>(entry.second.get());
+        if (!vrf_obj || (vrf_obj->getRouteMap().count(prefix) == 0 &&
+                         vrf_obj->getTunnelRoutes().count(prefix) == 0))
+        {
+            continue;
+        }
+
+        if (vrf_obj->getVRids().count(vrf_id))
+        {
+            return true;
+        }
+
+        // VNET routes are also installed in the ingress VR of each peer.
+        for (const auto& peer : vrf_obj->getPeerList())
+        {
+            auto it = vnet_table_.find(peer);
+            if (it == vnet_table_.end())
+            {
+                continue;
+            }
+            auto *peer_obj = dynamic_cast<VNetVrfObject *>(it->second.get());
+            if (peer_obj && peer_obj->getVRidIngress() == vrf_id)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 /*
  * Vnet Route Handling
  */
@@ -3959,4 +3994,3 @@ bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix&
 
     return false;
 }
-

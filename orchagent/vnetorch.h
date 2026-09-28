@@ -293,6 +293,7 @@ public:
 
     bool getVrfIdByVnetName(const std::string& vnet_name, sai_object_id_t &vrf_id);
     bool getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name);
+    bool isRouteOwnedByVnet(sai_object_id_t vrf_id, const IpPrefix& prefix) const;
 
 private:
     virtual bool addOperation(const Request& request);
