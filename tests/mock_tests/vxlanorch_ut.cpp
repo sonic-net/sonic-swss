@@ -395,10 +395,7 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_FAILURE)
                         ));
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0);
 
         EXPECT_NO_THROW({
                 bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
