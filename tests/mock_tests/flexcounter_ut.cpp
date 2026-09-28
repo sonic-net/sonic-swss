@@ -1277,29 +1277,15 @@ namespace flexcounter_test
                                      }));
     }
 
-    // --- COPP policer stats coverage --------------------------------------
-    //
-    // The COPP_STATS flex counter group binds policer OIDs to SAI policer
-    // stats so `show copp stats` can render per-color RED/YELLOW/GREEN
-    // counters. Earlier versions of this code gated binding behind a
-    // $platform=="broadcom" env-string check; reviewer prsunny asked for a
-    // SAI capability probe instead. These three cases exercise the new
-    // capability-driven path with sai_query_stats_capability stubbed via
-    // --wrap (coppstats_sai_wrap.cpp).
+    // COPP policer stats: sai_query_stats_capability is stubbed via --wrap (coppstats_sai_wrap.cpp).
 
     namespace {
-        // Helper: construct a CoppOrch under the current SAI capability hook
-        // (the ctor probes sai_query_stats_capability and caches the answer
-        // on the instance, so the hook must be in place before construction).
+        // The ctor probes and caches the capability, so the hook must be set first.
         std::unique_ptr<CoppOrch> makeCoppOrchUnderHook(swss::DBConnector* db)
         {
             return std::unique_ptr<CoppOrch>(new CoppOrch(db, APP_COPP_TABLE_NAME));
         }
 
-        // Helper: seed CoppOrch's trap-group / trap-group-policer maps without
-        // going through CONFIG_DB. m_trap_group_map and m_trap_group_policer_map
-        // are accessible because portal.h / our top-of-file #define exposes
-        // protected members.
         void seedTrapGroupWithPolicer(CoppOrch& orch,
                                       const std::string& tg_name,
                                       sai_object_id_t tg_oid,
@@ -1311,8 +1297,7 @@ namespace flexcounter_test
             orch.m_trap_group_policer_map[tg_oid] = pol;
         }
 
-        // Helper: registration is deferred until the policer's VID->RID mapping
-        // exists — seed the mapping and fire the pending-registration timer.
+        // Registration waits for the policer's VID->RID mapping; seed it and fire the timer.
         void flushPendingPolicerRegistrations(CoppOrch& orch, sai_object_id_t policer_oid)
         {
             swss::DBConnector asic_db("ASIC_DB", 0);
@@ -1324,7 +1309,6 @@ namespace flexcounter_test
 
     TEST_F(StandaloneFCTest, TestCoppPolicerStatsStatusUpdate)
     {
-        // Hook reports full Broadcom-XGS-style support: all 8 stats.
         copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsAll);
 
         auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -1334,20 +1318,16 @@ namespace flexcounter_test
         sai_object_id_t policer_id = 0x5000000000001;
         seedTrapGroupWithPolicer(*coppOrch, "test_group_full", tg_oid, policer_id);
 
-        // Capability cached at ctor time should report the full wishlist.
         ASSERT_TRUE(coppOrch->isPolicerStatsCapable());
         EXPECT_EQ(coppOrch->getSupportedPolicerStatIds().size(), 8u);
 
-        // User toggles COPP_STATS in CONFIG_DB. bindPolicerCounter gates on
-        // FlexCounterOrch::getCoppPolicerCounterState(), so simulate the
-        // enable by flipping the user-intent flag directly.
+        // bindPolicerCounter gates on the user-intent flag; flip it directly.
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
         flushPendingPolicerRegistrations(*coppOrch, policer_id);
         ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
                                      policer_id, POLICER_COUNTER_ID_LIST));
 
-        // Disable round-trip: clearPolicerCounterIdList tears the binding down.
         coppOrch->clearPolicerCounterIdList();
         ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
                                       policer_id, POLICER_COUNTER_ID_LIST));
@@ -1356,9 +1336,7 @@ namespace flexcounter_test
 
     TEST_F(StandaloneFCTest, TestCoppPolicerStatsUnsupportedPlatform)
     {
-        // Default vslib path returns SAI_STATUS_NOT_SUPPORTED for
-        // queryStatsCapability(POLICER). No hook required — the linker wrap
-        // forwards to __real_sai_query_stats_capability.
+        // vslib returns NOT_SUPPORTED for POLICER, so no hook is needed.
         copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookNone);
 
         auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -1368,12 +1346,10 @@ namespace flexcounter_test
         sai_object_id_t policer_id = 0x5000000000002;
         seedTrapGroupWithPolicer(*coppOrch, "test_group_unsupported", tg_oid, policer_id);
 
-        // Capability should be reported as not supported.
         ASSERT_FALSE(coppOrch->isPolicerStatsCapable());
         EXPECT_TRUE(coppOrch->getSupportedPolicerStatIds().empty());
 
-        // The not-capable path publishes only the boolean; clear any leftover
-        // list from earlier tests sharing this STATE_DB before asserting.
+        // Clear any list left by earlier tests sharing this STATE_DB.
         swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
         capTable.hdel("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED);
         coppOrch->publishPolicerStatsCapability();
@@ -1382,7 +1358,6 @@ namespace flexcounter_test
         EXPECT_EQ(val, "false");
         EXPECT_FALSE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
 
-        // Even with COPP_STATS toggled enable, no binding should occur.
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
         ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
@@ -1392,7 +1367,6 @@ namespace flexcounter_test
 
     TEST_F(StandaloneFCTest, TestCoppPolicerStatsPartialCapability)
     {
-        // Vendor advertises only PACKETS + BYTES (no per-color stats).
         copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsPartial);
 
         auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -1410,8 +1384,6 @@ namespace flexcounter_test
         EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_GREEN_PACKETS"), 0u);
         EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_RED_BYTES"), 0u);
 
-        // CoppOrch's ctor publishes both capability fields to STATE_DB; the
-        // supported list is comma-joined in wishlist order.
         swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
         std::string val;
         EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
@@ -1422,10 +1394,7 @@ namespace flexcounter_test
         m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
         coppOrch->generatePolicerCounterIdList();
         flushPendingPolicerRegistrations(*coppOrch, policer_id);
-        // FLEX_COUNTER_TABLE entry exists; the bound stat set is the
-        // intersection (PACKETS + BYTES only). checkFlexCounter asserts
-        // existence rather than the specific stat list — verifying just the
-        // existence is enough to prove the filtered path works.
+        // checkFlexCounter asserts the entry exists, not the bound stat list.
         ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
                                      policer_id, POLICER_COUNTER_ID_LIST));
 

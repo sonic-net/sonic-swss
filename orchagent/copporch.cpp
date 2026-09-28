@@ -194,9 +194,6 @@ const vector<sai_hostif_trap_type_t> default_trap_ids = {
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 const uint POLICER_COUNTER_POLLING_INTERVAL_MS = 10000;
 
-// Full set of policer stats we would like to bind. The intersection with what
-// the underlying SAI implementation actually reports as supported is computed
-// at runtime by CoppOrch::getSupportedPolicerStatIds().
 static const std::vector<std::pair<sai_policer_stat_t, const char*>> policer_stat_wishlist = {
     {SAI_POLICER_STAT_PACKETS,        "SAI_POLICER_STAT_PACKETS"},
     {SAI_POLICER_STAT_ATTR_BYTES,     "SAI_POLICER_STAT_ATTR_BYTES"},
@@ -230,9 +227,7 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     /* Query SAI for supported trap IDs and publish to STATE_DB */
     publishTrapIdsCapability();
 
-    /* Probe SAI for policer-stats support and publish a STATE_DB capability flag
-     * that sonic-utilities CLI and sonic-mgmt tests read instead of inferring
-     * support from $platform substrings. */
+    /* Query SAI for policer stats support and publish to STATE_DB */
     publishPolicerStatsCapability();
 
     initDefaultHostIntfTable();
@@ -1594,7 +1589,6 @@ void CoppOrch::generatePolicerCounterIdList()
         return;
     }
 
-    // Iterate through all trap groups that have policers
     for (const auto& kv : m_trap_group_policer_map)
     {
         sai_object_id_t trap_group_id = kv.first;
@@ -1605,7 +1599,6 @@ void CoppOrch::generatePolicerCounterIdList()
             continue;
         }
 
-        // Find the trap group name from the trap_group_map
         std::string trap_group_name;
         for (const auto& tg : m_trap_group_map)
         {
@@ -1657,11 +1650,8 @@ bool CoppOrch::bindPolicerCounter(sai_object_id_t policer_id, const std::string 
         return false;
     }
 
-    // SAI capability gate: if the underlying SAI does not advertise any of our
-    // wishlisted policer stats, bind is a no-op and COUNTERS_POLICER_NAME_MAP
-    // stays clean. This handles every call site uniformly — including the
-    // synchronous bindPolicerCounter() invoked from createPolicer() during
-    // trap-group create, which fires before the user toggles COPP_STATS.
+    // No-op when the SAI advertises none of the wishlisted stats; this also
+    // covers the bind from createPolicer(), which runs before COPP_STATS is enabled.
     auto supported_stats = getSupportedPolicerStatIds();
     if (supported_stats.empty())
     {
@@ -1670,14 +1660,13 @@ bool CoppOrch::bindPolicerCounter(sai_object_id_t policer_id, const std::string 
         return false;
     }
 
-    // Check if already bound (avoid duplicate binding)
     if (m_policer_obj_name_map.count(policer_id) > 0)
     {
         SWSS_LOG_DEBUG("Policer counter already bound for trap group %s", trap_group_name.c_str());
         return true;
     }
 
-    // Update COUNTERS_POLICER_NAME_MAP (overwrite any stale OID from warm reboot)
+    // Overwrite any stale OID left by warm reboot
     vector<FieldValueTuple> nameMapFvs;
     nameMapFvs.emplace_back(trap_group_name, sai_serialize_object_id(policer_id));
     m_policerCounterTable->set("", nameMapFvs);
@@ -1726,16 +1715,13 @@ void CoppOrch::unbindPolicerCounter(sai_object_id_t policer_id)
         m_pendingPolicerAddToFlexCntr.erase(pending_iter);
     }
 
-    // Remove from COUNTERS_POLICER_NAME_MAP
     m_policerCounterTable->hdel("", iter->second);
     SWSS_LOG_INFO("Unbound policer counter for trap group %s", iter->second.c_str());
 
     m_policer_obj_name_map.erase(iter);
 }
 
-// SAI policer-stats capability probe. Two-call pattern (sizing + fetch) cached
-// on the CoppOrch instance for orchagent's lifetime. Mirrors portsorch.cpp's
-// isPortStatSupported().
+// Queried once and cached for orchagent's lifetime.
 bool CoppOrch::isPolicerStatSupported(sai_policer_stat_t stat)
 {
     if (!m_policer_stats_caps_queried)
@@ -1774,9 +1760,6 @@ bool CoppOrch::isPolicerStatSupported(sai_policer_stat_t stat)
         });
 }
 
-// Intersection of policer_stat_wishlist and what the vendor SAI advertises.
-// Uses .first/.second instead of C++17 structured bindings — swss builds at
-// -std=c++14 -Werror, see configure.ac.
 std::unordered_set<std::string> CoppOrch::getSupportedPolicerStatIds()
 {
     std::unordered_set<std::string> out;
@@ -1795,16 +1778,12 @@ bool CoppOrch::isPolicerStatsCapable()
     return !getSupportedPolicerStatIds().empty();
 }
 
-// Publish to STATE_DB:SWITCH_CAPABILITY|switch so sonic-utilities CLI and
-// sonic-mgmt tests can gate behavior on the actual SAI capability rather than
-// on a $platform substring.
 void CoppOrch::publishPolicerStatsCapability()
 {
     SWSS_LOG_ENTER();
 
-    // Comma-joined SAI stat names in wishlist order (deterministic; an
-    // unordered_set iteration would produce an unstable string). The names
-    // double as COUNTERS_DB field names, so the CLI needs no mapping table.
+    // Wishlist order keeps the string stable; the names double as COUNTERS_DB
+    // field names, so the CLI needs no mapping table.
     auto supported = getSupportedPolicerStatIds();
     std::string supported_csv;
     for (const auto& entry : policer_stat_wishlist)
@@ -1823,9 +1802,7 @@ void CoppOrch::publishPolicerStatsCapability()
     std::vector<FieldValueTuple> fv;
     fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE,
                     supported.empty() ? "false" : "true");
-    // Published only when non-empty: an empty HSET value trips a
-    // RedisCommand::format bad_alloc via hiredis, and consumers gate on the
-    // boolean before reading the list anyway.
+    // Omitted when empty: an empty HSET value makes hiredis throw bad_alloc.
     if (!supported_csv.empty())
     {
         fv.emplace_back(SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED,

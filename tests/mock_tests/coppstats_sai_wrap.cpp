@@ -26,7 +26,6 @@ namespace
 
     static thread_local Hook g_hook = Hook::None;
 
-    // Full SAI policer-stats set as advertised by a Broadcom XGS-class vendor.
     static const sai_policer_stat_t kAllPolicerStats[] = {
         SAI_POLICER_STAT_PACKETS,
         SAI_POLICER_STAT_ATTR_BYTES,
@@ -38,7 +37,6 @@ namespace
         SAI_POLICER_STAT_RED_BYTES,
     };
 
-    // Partial set: vendor that supports the aggregate but not per-color.
     static const sai_policer_stat_t kPartialPolicerStats[] = {
         SAI_POLICER_STAT_PACKETS,
         SAI_POLICER_STAT_ATTR_BYTES,
@@ -48,9 +46,6 @@ namespace
     sai_status_t fillCapList(sai_stat_capability_list_t *cap_list,
                              const sai_policer_stat_t (&stats)[N])
     {
-        // Two-call protocol: if the caller passed a list with insufficient
-        // room (or list==nullptr), return BUFFER_OVERFLOW with the required
-        // count. Otherwise fill the list and return SUCCESS.
         if (cap_list->list == nullptr || cap_list->count < N)
         {
             cap_list->count = static_cast<uint32_t>(N);

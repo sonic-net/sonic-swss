@@ -329,10 +329,8 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     }
                     if (gCoppOrch && (key == COPP_STATS_KEY))
                     {
-                        // Capability is checked inside CoppOrch via SAI, not by
-                        // string-matching $platform here. generatePolicerCounterIdList
-                        // is a no-op when the underlying SAI doesn't advertise policer
-                        // stats; the user-intent flag still tracks the toggle.
+                        // No-op when the SAI doesn't advertise policer stats;
+                        // the flag still tracks the user toggle.
                         if (value == "enable")
                         {
                             m_copp_stats_counter_enabled = true;
