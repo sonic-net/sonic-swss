@@ -1515,6 +1515,26 @@ bool AclRule::createRule()
     return (status == SAI_STATUS_SUCCESS);
 }
 
+set<NextHopKey> AclRule::getRedirectNextHops() const
+{
+    set<NextHopKey> nextHops;
+    if (!m_redirect_target_next_hop.empty())
+    {
+        nextHops.insert(NextHopKey(m_redirect_target_next_hop));
+    }
+    if (!m_redirect_target_next_hop_group.empty())
+    {
+        auto members = NextHopGroupKey(m_redirect_target_next_hop_group).getNextHops();
+        nextHops.insert(members.begin(), members.end());
+    }
+    return nextHops;
+}
+
+const set<NextHopKey>& AclRule::getPendingRedirectNextHops() const
+{
+    return m_redirect_pending_next_hops;
+}
+
 void AclRule::decreaseNextHopRefCount()
 {
     if (!m_redirect_target_next_hop.empty())
@@ -2257,6 +2277,8 @@ sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
 
     string target = redirect_value;
 
+    m_redirect_pending_next_hops.clear();
+
     // Try to parse physical port and LAG first
     Port port;
     if (gPortsOrch->getPort(target, port))
@@ -2292,9 +2314,22 @@ sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
         // no error, just try next variant
     }
 
-    // Try to parse if this is a tunnel nexthop.
+    // Try to parse if this is a tunnel nexthop: "<endpoint_ip>@<tunnel_name>[,vni][,mac]".
+    // A next hop on a port/VLAN/LAG interface (and hence a next hop group, whose first member
+    // is one) is not a tunnel next hop; skip the probe for those so that VxlanTunnelOrch does
+    // not log a bogus "tunnel does not exist" error for a next hop awaiting its neighbor.
+    auto tunnel_sep = target.find('@');
+    Port nh_intf;
+    bool maybe_tunnel = tunnel_sep != string::npos &&
+                        !gPortsOrch->getPort(target.substr(tunnel_sep + 1,
+                                                           target.find(',') - (tunnel_sep + 1)),
+                                             nh_intf);
     try
     {
+        if (!maybe_tunnel)
+        {
+            throw std::logic_error("Not a tunnel next hop");
+        }
         m_redirect_target_tun_nh.load(target);
         if (SAI_NULL_OBJECT_ID != m_redirect_target_tun_nh.oid)
         {
@@ -2318,6 +2353,24 @@ sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
         NextHopGroupKey nhg(target);
         if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(nhg))
         {
+            // A next hop (or a group member) without a resolved neighbor cannot be programmed yet.
+            // Remember what the rule waits for: AclOrch creates the rule once the neighbor is added.
+            set<NextHopKey> unresolved;
+            for (const auto& member : nhg.getNextHops())
+            {
+                if (!m_pAclOrch->m_neighOrch->hasNextHop(member))
+                {
+                    unresolved.insert(member);
+                }
+            }
+            if (!unresolved.empty())
+            {
+                m_redirect_pending_next_hops = unresolved;
+                SWSS_LOG_NOTICE("ACL rule %s: redirect target '%s' has %zu unresolved next hop(s), waiting for the neighbor",
+                                m_id.c_str(), target.c_str(), unresolved.size());
+                return SAI_NULL_OBJECT_ID;
+            }
+
             SWSS_LOG_INFO("ACL Redirect action target next hop group: '%s' doesn't exist on the switch. Creating it.", nhg.to_string().c_str());
 
             if (!m_pAclOrch->m_routeOrch->addNextHopGroup(nhg))
@@ -3970,6 +4023,10 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // Attach observers
     m_mirrorOrch->attach(this);
     gPortsOrch->attach(this);
+    if (m_neighOrch)
+    {
+        m_neighOrch->attach(this);
+    }
 }
 
 void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_platform)
@@ -4482,6 +4539,10 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 AclOrch::~AclOrch()
 {
     m_mirrorOrch->detach(this);
+    if (m_neighOrch)
+    {
+        m_neighOrch->detach(this);
+    }
 
     if (m_dTelOrch)
     {
@@ -4496,6 +4557,21 @@ AclOrch::~AclOrch()
 void AclOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
+
+    if (type == SUBJECT_TYPE_NEIGH_CHANGE || type == SUBJECT_TYPE_NEIGH_REMOVAL_PENDING)
+    {
+        const NeighborUpdate *update = static_cast<NeighborUpdate *>(cntx);
+        if (type == SUBJECT_TYPE_NEIGH_REMOVAL_PENDING && !update->add)
+        {
+            onNeighborRemovalPending(update->entry);
+        }
+        else if (update->add)
+        {
+            // Neighbor added/updated, or its pending removal was cancelled by a new SET
+            onNeighborAdded(update->entry);
+        }
+        return;
+    }
 
     if (type != SUBJECT_TYPE_MIRROR_SESSION_CHANGE &&
             type != SUBJECT_TYPE_INT_SESSION_CHANGE &&
@@ -4519,6 +4595,117 @@ void AclOrch::update(SubjectType type, void *cntx)
                 rule.second->onUpdate(type, cntx);
             }
         }
+    }
+}
+
+static bool isSameNeighbor(const NextHopKey& nh, const NeighborEntry& neighbor)
+{
+    return nh.ip_address == neighbor.ip_address && nh.alias == neighbor.alias;
+}
+
+bool AclOrch::isAclRuleWaitingForNextHop(const string& table_id, const string& rule_id) const
+{
+    return m_pendingRedirectRules.find({table_id, rule_id}) != m_pendingRedirectRules.end();
+}
+
+void AclOrch::forgetRedirectRule(const string& table_id, const string& rule_id)
+{
+    m_nhRedirectRules.erase({table_id, rule_id});
+    m_pendingRedirectRules.erase({table_id, rule_id});
+}
+
+void AclOrch::requeueRedirectRule(const AclRuleRef& ref, const AclRedirectRuleConfig& config)
+{
+    SWSS_LOG_ENTER();
+
+    Consumer *consumer = dynamic_cast<Consumer *>(getExecutor(config.consumerTable));
+    if (!consumer)
+    {
+        SWSS_LOG_ERROR("No consumer %s to re-apply ACL rule %s in table %s",
+                       config.consumerTable.c_str(), ref.second.c_str(), ref.first.c_str());
+        return;
+    }
+
+    // A newer operation for the same rule is already queued; it wins.
+    if (consumer->m_toSync.find(kfvKey(config.entry)) != consumer->m_toSync.end())
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Re-applying ACL rule %s in table %s: redirect next hop is resolved",
+                    ref.second.c_str(), ref.first.c_str());
+    consumer->addToSync(config.entry);
+}
+
+void AclOrch::onNeighborAdded(const NeighborEntry& neighbor)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& pending : m_pendingRedirectRules)
+    {
+        for (const auto& nh : pending.second.waitFor)
+        {
+            if (isSameNeighbor(nh, neighbor))
+            {
+                // The entry stays parked until doAclRuleTask processes it again, so a second
+                // notification for the same neighbor does not queue it twice.
+                requeueRedirectRule(pending.first, pending.second);
+                break;
+            }
+        }
+    }
+}
+
+void AclOrch::onNeighborRemovalPending(const NeighborEntry& neighbor)
+{
+    SWSS_LOG_ENTER();
+
+    // The neighbor is being removed but the ACL redirect keeps a reference on its next hop.
+    // Take such rules out of the ASIC so that the traffic follows the routing table instead of
+    // a stale MAC, and park them until the neighbor is learned again.
+    for (auto it = m_nhRedirectRules.begin(); it != m_nhRedirectRules.end();)
+    {
+        const auto& table_id = it->first.first;
+        const auto& rule_id = it->first.second;
+
+        AclRule *rule = getAclRule(table_id, rule_id);
+        if (!rule)
+        {
+            it = m_nhRedirectRules.erase(it);
+            continue;
+        }
+
+        bool uses = false;
+        for (const auto& nh : rule->getRedirectNextHops())
+        {
+            if (isSameNeighbor(nh, neighbor))
+            {
+                uses = true;
+                break;
+            }
+        }
+        if (!uses)
+        {
+            ++it;
+            continue;
+        }
+
+        if (!removeAclRule(table_id, rule_id))
+        {
+            SWSS_LOG_ERROR("Failed to deactivate ACL rule %s in table %s on removal of neighbor %s",
+                           rule_id.c_str(), table_id.c_str(), neighbor.to_string().c_str());
+            ++it;
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("ACL rule %s in table %s is inactive: redirect neighbor %s is removed",
+                        rule_id.c_str(), table_id.c_str(), neighbor.to_string().c_str());
+        setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
+
+        AclRedirectRuleConfig parked = it->second;
+        parked.waitFor = { neighbor };
+        m_pendingRedirectRules[it->first] = parked;
+        it = m_nhRedirectRules.erase(it);
     }
 }
 
@@ -5918,6 +6105,10 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             continue;
         }
 
+        // Drop the redirect bookkeeping of the rule: a rule parked for an unresolved
+        // next hop must not be re-created after its DEL
+        forgetRedirectRule(table_id, rule_id);
+
         bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
         if (removeAclRule(table_id, rule_id))
         {
@@ -5961,6 +6152,9 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            // A new operation on the rule supersedes a rule parked for its redirect next hop
+            m_pendingRedirectRules.erase({table_id, rule_id});
+
             bool bAllAttributesOk = true;
             shared_ptr<AclRule> newRule;
 
@@ -6065,7 +6259,10 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
+                    if (newRule->getPendingRedirectNextHops().empty())
+                    {
+                        SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
+                    }
                     bAllAttributesOk = false;
                     break;
                 }
@@ -6110,6 +6307,14 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (addAclRule(newRule, table_id))
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
+                    if (!newRule->getRedirectNextHops().empty())
+                    {
+                        m_nhRedirectRules[{table_id, rule_id}] = { consumer.getTableName(), t, {} };
+                    }
+                    else
+                    {
+                        m_nhRedirectRules.erase({table_id, rule_id});
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else if (isSaiStatusResourceFull(newRule->getLastSaiStatus()))
@@ -6138,6 +6343,24 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
                     it++;
                 }
+            }
+            else if (!newRule->getPendingRedirectNextHops().empty())
+            {
+                // The configuration is valid but the redirect next hop is not resolved yet:
+                // keep the rule out of the ASIC (traffic follows the routing table) and create
+                // it when the neighbor is added.
+                if (getAclRule(table_id, rule_id) && !removeAclRule(table_id, rule_id))
+                {
+                    SWSS_LOG_ERROR("Failed to remove the previous version of ACL rule %s in table %s",
+                                   rule_id.c_str(), table_id.c_str());
+                }
+                forgetRedirectRule(table_id, rule_id);
+                m_pendingRedirectRules[{table_id, rule_id}] =
+                    { consumer.getTableName(), t, newRule->getPendingRedirectNextHops() };
+                it = consumer.m_toSync.erase(it);
+                setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
+                SWSS_LOG_NOTICE("ACL rule %s in table %s is inactive until its redirect next hop is resolved",
+                                rule_id.c_str(), table_id.c_str());
             }
             else
             {
