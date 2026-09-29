@@ -3740,7 +3740,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PRST_PLATFORM_SUBSTRING ||
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
-            platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
             platform == CLX_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING ||
