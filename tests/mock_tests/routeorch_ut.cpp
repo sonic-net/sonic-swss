@@ -1149,6 +1149,28 @@ namespace routeorch_test
         EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(0));
     }
 
+    TEST_F(RouteOrchTest, HandledCreateErrorDoesNotPublishRouteBookkeeping)
+    {
+        const std::string key = "2.2.2.0/24";
+        const IpPrefix prefix(key);
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({key, "SET", {{"ifname", "Ethernet0"},
+                                         {"nexthop", "10.0.0.2"}}});
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> create_status{SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
+                            Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.count(key), static_cast<size_t>(1));
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(prefix), static_cast<size_t>(0));
+    }
+
     /* Tests SAI_STATUS_ITEM_NOT_FOUND error handling for setting route */
     TEST_F(RouteOrchTest, RouteOrchSetItemNotFound)
     {
