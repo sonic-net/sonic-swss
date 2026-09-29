@@ -58,6 +58,9 @@ public:
 
     bool isIntfRestoreDone();
 
+    void dumpBridgeFdb();
+    void dumpBridgeFdb(struct nl_sock *sock);
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
