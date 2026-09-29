@@ -653,8 +653,18 @@ bool VNetOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name
  * Vnet Route Handling
  */
 
-static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
+bool VNetRouteOrch::del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
 {
+    const auto key = std::make_pair(vr_id, getIpPrefixFromSaiPrefix(ip_pfx));
+    auto ownership = route_ownership_.find(key);
+    if (ownership != route_ownership_.end() && !ownership->second)
+    {
+        // RouteOrch (or another orch) created this SAI entry. Its owner must
+        // remove it and account for that removal.
+        route_ownership_.erase(ownership);
+        return true;
+    }
+
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
     route_entry.switch_id = gSwitchId;
@@ -664,7 +674,12 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
     {
         SWSS_LOG_INFO("Unable to remove route since route is already removed");
-        return true;
+        // Another orch may have removed a route that we created. We still need
+        // to balance the CRM increment made by our successful create.
+        if (ownership == route_ownership_.end() || !ownership->second)
+        {
+            return true;
+        }
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
@@ -682,14 +697,19 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     }
 
     gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vr_id, ip_pfx, false);
+    if (ownership != route_ownership_.end())
+    {
+        route_ownership_.erase(ownership);
+    }
 
     return true;
 }
 
 static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
 
-static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
+bool VNetRouteOrch::add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
 {
+    const auto key = std::make_pair(vr_id, getIpPrefixFromSaiPrefix(ip_pfx));
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
     route_entry.switch_id = gSwitchId;
@@ -713,7 +733,12 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
          * accounted for when it was first programmed.
          */
         SWSS_LOG_INFO("Route already programmed, updating next hop instead");
-        return update_route(vr_id, ip_pfx, nh_id);
+        if (!update_route(vr_id, ip_pfx, nh_id))
+        {
+            return false;
+        }
+        route_ownership_.emplace(key, false);
+        return true;
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
@@ -731,6 +756,7 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     }
 
     gFlowCounterRouteOrch->onAddMiscRouteEntry(vr_id, ip_pfx, false);
+    route_ownership_[key] = true;
 
     return true;
 }
@@ -4009,4 +4035,3 @@ bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix&
 
     return false;
 }
-
