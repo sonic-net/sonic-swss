@@ -1,5 +1,8 @@
+#include <arpa/inet.h>
 #include <net/if.h>
 #include <string.h>
+
+#include <algorithm>
 
 #include "logger.h"
 #include "macaddress.h"
@@ -8,6 +11,18 @@
 
 using namespace std;
 using namespace swss;
+
+#ifndef NDA_VNI
+#define NDA_VNI 7
+#endif
+
+#ifndef NDA_SRC_VNI
+#define NDA_SRC_VNI 11
+#endif
+
+#ifndef NDA_NH_ID
+#define NDA_NH_ID 13
+#endif
 
 #define MAC_SYNC_MODE_FIELD "mac_sync_mode"
 #define MAC_SYNC_MODE_FPM   "fpm"
@@ -44,10 +59,37 @@ static bool addAttr(struct nlmsghdr *n, size_t maxLen, int type,
     return true;
 }
 
+static void parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int len)
+{
+    memset(tb, 0, sizeof(struct rtattr *) * (unsigned int)(max + 1));
+    while (RTA_OK(rta, len))
+    {
+        if (rta->rta_type <= max)
+        {
+            tb[rta->rta_type] = rta;
+        }
+        rta = RTA_NEXT(rta, len);
+    }
+}
+
+/* Reads a fixed-size attribute; false when the payload is too short to hold one. */
+template <typename T>
+static bool getAttr(const struct rtattr *rta, T& value)
+{
+    if (RTA_PAYLOAD(rta) < sizeof(T))
+    {
+        return false;
+    }
+    memcpy(&value, RTA_DATA(rta), sizeof(T));
+    return true;
+}
+
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
+    m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
+    m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
     m_ifNameToIndex([](const string& name) { return if_nametoindex(name.c_str()); })
 {
     string subtype;
@@ -63,6 +105,15 @@ void MacSync::readCfgFdbSyncMode()
 
     m_cfgFdbSyncTableRead.hget(FDB_SYNC_GLOBAL_KEY, MAC_SYNC_MODE_FIELD, mode);
     setMacSyncMode(mode);
+}
+
+/* The Ethernet Segment table is keyed by the interface the ESI is bound to, so
+ * an entry is the authority on whether this port carries one. */
+bool MacSync::isEthernetSegmentInterface(const string& ifname)
+{
+    std::vector<FieldValueTuple> values;
+
+    return m_cfgEvpnEsTable.get(ifname, values);
 }
 
 void MacSync::setMacSyncMode(const string& mode)
@@ -295,4 +346,171 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
     SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s%s",
                   add ? "add" : "del", vlanName.c_str(), mac.c_str(), local.port.c_str(),
                   local.isStatic ? " (static, sticky)" : "");
+}
+
+void MacSync::onMacMsg(struct nlmsghdr *h, int len)
+{
+    if (!m_fpmMode)
+    {
+        return;
+    }
+
+    struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(h);
+
+    if (ndm->ndm_family != AF_BRIDGE)
+    {
+        return;
+    }
+
+    struct rtattr *tb[NDA_MAX + 1];
+    parseRtAttrs(tb, NDA_MAX, (struct rtattr *)((char *)ndm + sizeof(struct ndmsg)), len);
+
+    if (!tb[NDA_LLADDR] || RTA_PAYLOAD(tb[NDA_LLADDR]) != ETHER_ADDR_LEN)
+    {
+        SWSS_LOG_ERROR("MacSync: inbound MAC message without a valid NDA_LLADDR");
+        return;
+    }
+
+    uint16_t vid = 0;
+    uint32_t nhid = 0;
+    uint32_t srcVni = 0;
+    uint32_t vxlanVni = 0;
+
+    if ((tb[NDA_VLAN] && !getAttr(tb[NDA_VLAN], vid)) ||
+        (tb[NDA_NH_ID] && !getAttr(tb[NDA_NH_ID], nhid)) ||
+        (tb[NDA_SRC_VNI] && !getAttr(tb[NDA_SRC_VNI], srcVni)) ||
+        (tb[NDA_VNI] && !getAttr(tb[NDA_VNI], vxlanVni)))
+    {
+        SWSS_LOG_ERROR("MacSync: dropping inbound MAC message with a truncated attribute");
+        return;
+    }
+
+    MacAddress mac((uint8_t *)RTA_DATA(tb[NDA_LLADDR]));
+
+    /* zebra emits a remote MAC twice: a bridge-side copy carrying NDA_VLAN but no
+     * VTEP, and a VxLAN-side copy carrying NDA_DST but no VLAN. The netdev name
+     * is the only VLAN source present on both, so derive from it as fdbsyncd does
+     * (SONiC names the device <tunnel>-<vlanid>). */
+    string vlanName;
+    char ifname[IF_NAMESIZE] = {0};
+
+    if (if_indextoname((unsigned int)ndm->ndm_ifindex, ifname))
+    {
+        string intf(ifname);
+        auto dash = intf.rfind('-');
+        if (dash != string::npos)
+        {
+            vlanName = "Vlan" + intf.substr(dash + 1);
+        }
+    }
+
+    if (vlanName.empty() && tb[NDA_VLAN])
+    {
+        vlanName = "Vlan" + to_string(vid);
+    }
+
+    if (vlanName.empty())
+    {
+        SWSS_LOG_ERROR("MacSync: cannot determine VLAN for inbound MAC %s on ifindex %d",
+                       mac.to_string().c_str(), ndm->ndm_ifindex);
+        return;
+    }
+
+    string key = vlanName + ":" + mac.to_string();
+    /* Same withdrawal semantics fdbsyncd applies on the kernel path: an
+     * add carrying NUD_INCOMPLETE or NUD_FAILED is a removal. */
+    bool remove = (h->nlmsg_type == RTM_DELNEIGH) ||
+                  (ndm->ndm_state == NUD_INCOMPLETE) ||
+                  (ndm->ndm_state == NUD_FAILED);
+
+    if (remove)
+    {
+        if (m_remoteMacs.erase(key))
+        {
+            m_vxlanFdbTable.del(key);
+            SWSS_LOG_INFO("MacSync: removed remote MAC %s", key.c_str());
+        }
+        return;
+    }
+
+    /* A MAC behind an Ethernet Segment reaches several VTEPs, so zebra resolves
+     * it to an L2 nexthop group and sends NDA_NH_ID with no NDA_DST. The group
+     * itself is published to L2_NEXTHOP_GROUP_TABLE by fdbsyncd, which keeps
+     * reading it from the kernel in either mac_sync_mode. */
+    string nexthopGroup;
+
+    if (nhid)
+    {
+        nexthopGroup = to_string(nhid);
+    }
+
+    char vtep[INET6_ADDRSTRLEN] = {0};
+    string esInterface;
+
+    if (nexthopGroup.empty())
+    {
+        size_t dstLen = tb[NDA_DST] ? RTA_PAYLOAD(tb[NDA_DST]) : 0;
+        bool haveDst = false;
+
+        /* zebra emits NDA_DST even when there is no VTEP, sized from the address
+         * family it guessed rather than from what it holds, so an unusable or
+         * all-zero destination means "no VTEP" and not 0.0.0.0. */
+        if (dstLen == sizeof(struct in_addr) || dstLen == sizeof(struct in6_addr))
+        {
+            const uint8_t *dst = (const uint8_t *)RTA_DATA(tb[NDA_DST]);
+            haveDst = std::any_of(dst, dst + dstLen, [](uint8_t b) { return b != 0; });
+        }
+
+        if (haveDst)
+        {
+            int family = (dstLen == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
+
+            if (!inet_ntop(family, RTA_DATA(tb[NDA_DST]), vtep, sizeof(vtep)))
+            {
+                SWSS_LOG_ERROR("MacSync: cannot parse remote VTEP for %s", key.c_str());
+                return;
+            }
+        }
+        else if (ifname[0] && isEthernetSegmentInterface(ifname))
+        {
+            /* A MAC on an Ethernet Segment we also hold locally is reachable
+             * through our own access port, so zebra sends it against that port
+             * with neither a VTEP nor a group. FdbOrch programs it against the
+             * port with ageing disabled. */
+            esInterface = ifname;
+        }
+        else
+        {
+            /* The bridge-side copy of a remote MAC; the VxLAN-side copy carries the VTEP. */
+            SWSS_LOG_INFO("MacSync: skipping inbound MAC %s without NDA_DST", key.c_str());
+            return;
+        }
+    }
+
+    /* zebra encodes the VNI as NDA_SRC_VNI; NDA_VNI is accepted as a fallback. */
+    uint32_t vni = tb[NDA_SRC_VNI] ? srcVni : vxlanVni;
+
+    std::vector<FieldValueTuple> fvVector;
+    if (!nexthopGroup.empty())
+    {
+        fvVector.emplace_back("nexthop_group", nexthopGroup);
+    }
+    else if (!esInterface.empty())
+    {
+        fvVector.emplace_back("ifname", esInterface);
+    }
+    else
+    {
+        fvVector.emplace_back("remote_vtep", vtep);
+    }
+    fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
+    fvVector.emplace_back("vni", to_string(vni));
+
+    m_vxlanFdbTable.set(key, fvVector);
+    m_remoteMacs.insert(key);
+
+    string dest = !nexthopGroup.empty() ? ("nexthop_group " + nexthopGroup)
+                : !esInterface.empty()  ? ("ifname " + esInterface)
+                                        : ("vtep " + string(vtep));
+    SWSS_LOG_INFO("MacSync: added remote MAC %s %s vni %u", key.c_str(), dest.c_str(), vni);
 }

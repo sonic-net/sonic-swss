@@ -209,6 +209,8 @@ class Srv6SidListTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase
     string path = string();
 };
 
+class MacSync;
+
 class RouteSync : public NetMsg
 {
 public:
@@ -221,6 +223,11 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     virtual void onMsgRaw(struct nlmsghdr *obj);
+
+    void setMacSync(MacSync *macsync)
+    {
+        m_macsync = macsync;
+    }
 
     void setSuppressionEnabled(bool enabled);
 
@@ -325,6 +332,8 @@ private:
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
+
+    MacSync*            m_macsync {nullptr};
 
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
