@@ -54,6 +54,13 @@ void AppRestartAssist::reconcile()
     m_warmStartInProgress = false;
 }
 
+int fake_keep_stale_entries_calls;
+
+void AppRestartAssist::keepStaleEntries()
+{
+    fake_keep_stale_entries_calls++;
+}
+
 void AppRestartAssist::setReconcileInterval(uint32_t time)
 {
 }
