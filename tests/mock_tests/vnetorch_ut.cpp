@@ -1792,6 +1792,13 @@ namespace vnetorch_test
             return creates > removes ? last : nullptr;
         }
 
+        uint32_t ipv4RouteCrmUsed() const
+        {
+            const auto &resources = Portal::CrmOrchInternal::getResourceMap(gCrmOrch);
+            return resources.at(CrmResourceType::CRM_IPV4_ROUTE)
+                .countersMap.at("STATS").usedCounter;
+        }
+
         // STATE_DB VNET_ROUTE_TUNNEL_TABLE assertions -- the mock equivalent of
         // vnet_lib.check_state_db_routes(). VNetRouteOrch writes this table via a
         // plain swss::Table on STATE_DB, so it is directly readable here (unlike
@@ -4816,11 +4823,13 @@ namespace vnetorch_test
 
         const sai_object_id_t rif = rifOf("Ethernet20");
         ASSERT_NE(rif, SAI_NULL_OBJECT_ID);
+        const uint32_t baseline = ipv4RouteCrmUsed();
 
         // The connected route as fpmsyncd delivers it: IntfsOrch has no
         // addSubnetRoute, so a VNET interface's prefix reaches the ASIC through
         // gRouteOrch like any other route.
         setRoute("10.10.0.0/24", "10.10.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
 
         m_rt.lastCreateStatuses.clear();
         m_rt.setAttrCount = 0;
@@ -4839,6 +4848,18 @@ namespace vnetorch_test
         EXPECT_GE(m_rt.setAttrCount, 1)
             << "replay did not converge onto the already programmed route";
         EXPECT_EQ(m_rt.lastSetNextHop, rif);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1)
+            << "adopting an existing SAI route must not count it twice";
+
+        // VNetRouteOrch adopted RouteOrch's entry. Withdrawing the VNET replay
+        // must leave the physical route and its CRM count to RouteOrch.
+        delVnetLocalRoute("Vnet_replay", "10.10.0.0/24");
+        EXPECT_NE(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delRoute("10.10.0.0/24");
+        EXPECT_EQ(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
     }
 
     // The plain create path still has to work: a subnet route for a prefix no
@@ -4848,6 +4869,7 @@ namespace vnetorch_test
         setVxlanTunnel("tunnel_first", "41.41.41.41");
         setVnet("Vnet_first", "tunnel_first", "6001", "");
         createVnetL3Interface("Ethernet20", "Vnet_first", "10.10.0.8/31");
+        const uint32_t baseline = ipv4RouteCrmUsed();
 
         m_rt.lastCreateStatuses.clear();
         m_rt.setAttrCount = 0;
@@ -4858,6 +4880,40 @@ namespace vnetorch_test
             EXPECT_NE(s, SAI_STATUS_ITEM_ALREADY_EXISTS);
         EXPECT_EQ(m_rt.setAttrCount, 0)
             << "a fresh subnet route should be created, not updated";
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Replaying a route VNetRouteOrch created must not turn it into a
+        // borrowed route merely because the second create finds it in SAI.
+        m_rt.lastCreateStatuses.clear();
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delVnetLocalRoute("Vnet_first", "10.20.0.0/24");
+        EXPECT_EQ(findRoute("10.20.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteOwnerWithdrawsFirst)
+    {
+        setVxlanTunnel("tunnel_owner_first", "43.43.43.43");
+        setVnet("Vnet_owner_first", "tunnel_owner_first", "6003", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_owner_first", "10.11.0.1/24");
+        addNeighbor("Ethernet20", "10.11.0.2", "00:01:02:03:04:06");
+
+        const uint32_t baseline = ipv4RouteCrmUsed();
+        setRoute("10.11.0.0/24", "10.11.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        setVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24", "Ethernet20", "");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Once RouteOrch removes its route, VNetRouteOrch's borrowed-route DEL
+        // must not decrement the same CRM entry a second time.
+        delRoute("10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+        delVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
     }
 
     // VNetRouteOrch::delRoute() walks next_hop_observers_ and advances the
