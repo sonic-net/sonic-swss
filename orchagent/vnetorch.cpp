@@ -2140,6 +2140,7 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
             }
             if (itr->second.empty())
             {
+                next_hop_observer->second.routeTable.erase(itr);
                 ++next_hop_observer;
                 continue;
             }
