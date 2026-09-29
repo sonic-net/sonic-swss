@@ -27,6 +27,19 @@ private:
     std::set<std::string> m_vlans;
     std::set<std::string> m_vlanReplay;
     std::set<std::string> m_vlanMemberReplay;
+    /* Ports PAC has left unauthenticated: kernel bridge port kept locked (ingress guard) and
+     * with flood/mcast_flood/bcast_flood off (egress hygiene) */
+    std::set<std::string> m_pacLockedPorts;
+    /* PAC-authorized clients (OPER_FDB entries with discard=false), keyed by the APP_DB FDB key
+     * "Vlan<vid>:<mac>". While their port is locked they are mirrored into the kernel bridge
+     * FDB as static entries, so that locked admits their CPU-bound frames. */
+    struct PacAuthFdb
+    {
+        std::string port;
+        int vlan_id;
+        std::string mac;
+    };
+    std::map<std::string, PacAuthFdb> m_pacAuthFdb;
     bool replayDone;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_PortVlanMember;
     
@@ -42,6 +55,8 @@ private:
     bool setHostVlanMac(int vlan_id, const std::string &mac);
     bool addHostVlanMember(int vlan_id, const std::string &port_alias, const std::string& tagging_mode);
     bool removeHostVlanMember(int vlan_id, const std::string &port_alias);
+    bool setHostPortBridgeLocked(const std::string &port_alias, bool locked);
+    void setHostPacFdbMirror(const PacAuthFdb &entry, bool add);
     bool isMemberStateOk(const std::string &alias);
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
