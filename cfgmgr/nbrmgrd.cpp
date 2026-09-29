@@ -6,6 +6,8 @@
 #include <chrono>
 
 #include "select.h"
+#include "netdispatcher.h"
+#include "netlink.h"
 #include "exec.h"
 #include "schema.h"
 #include "nbrmgr.h"
@@ -68,6 +70,14 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        /* Kernel neighbour/link events: put back static neighbours the kernel flushed */
+        NetLink netlink;
+        netlink.registerGroup(RTNLGRP_NEIGH);
+        netlink.registerGroup(RTNLGRP_LINK);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &nbrmgr);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &nbrmgr);
+        s.addSelectable(&netlink);
+
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
         {
@@ -83,6 +93,12 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 nbrmgr.doTask();
+                continue;
+            }
+
+            if (sel == &netlink)
+            {
+                /* NetLink dispatched the message to nbrmgr.onMsg() already */
                 continue;
             }
 
