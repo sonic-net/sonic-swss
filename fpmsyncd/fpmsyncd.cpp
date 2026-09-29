@@ -90,6 +90,7 @@ int main(int argc, char **argv)
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     MacSync macsync(&pipeline, &stateDb, &cfgDb);
+    sync.setMacSync(&macsync);
 
     NetLink netlink;
 
