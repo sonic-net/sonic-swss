@@ -667,14 +667,6 @@ bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
         sys_mac = m_mac.to_string();
     }
 
-    uint8_t mac_bin[ETHER_ADDR_LEN];
-    if (!MacAddress::parseMacString(sys_mac, mac_bin))
-    {
-        SWSS_LOG_ERROR("Invalid system_mac '%s' for %s",
-                       sys_mac.c_str(), alias.c_str());
-        return false;
-    }
-
     vector<FieldValueTuple> fvs;
     FieldValueTuple fv("system_mac", sys_mac);
     fvs.push_back(fv);

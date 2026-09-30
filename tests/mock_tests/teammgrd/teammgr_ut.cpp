@@ -1,7 +1,6 @@
 #include "gtest/gtest.h"
 #include "../mock_table.h"
 #include "teammgr.h"
-#include <cerrno>
 #include <dlfcn.h>
 #include <net/if.h>
 #include <netlink/addr.h>
@@ -421,6 +420,7 @@ namespace teammgr_ut
 
         std::string sys_mac = "not-a-mac";
         EXPECT_FALSE(teammgr.setLagSysmac("PortChannel104", sys_mac));
+        EXPECT_TRUE(mock_if_nametoindex_name.empty());
         EXPECT_TRUE(mock_kernel_mac_updates.empty());
 
         swss::Table appLagTable(m_app_db.get(), APP_LAG_TABLE_NAME);
@@ -428,15 +428,6 @@ namespace teammgr_ut
         std::vector<swss::FieldValueTuple> values;
         EXPECT_FALSE(appLagTable.get("PortChannel104", values));
         EXPECT_FALSE(stateLagTable.get("PortChannel104", values));
-    }
-
-    TEST_F(TeamMgrTest, testUpdateKernelRejectsMalformedMacBeforeNetlink)
-    {
-        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
-
-        EXPECT_EQ(teammgr.update_kernel("PortChannel116", "not-a-mac"), -EINVAL);
-        EXPECT_TRUE(mock_if_nametoindex_name.empty());
-        EXPECT_TRUE(mock_kernel_mac_updates.empty());
     }
 
     TEST_F(TeamMgrTest, testSetLagSysmacKernelFailureDoesNotPublish)
