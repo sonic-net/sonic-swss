@@ -1606,7 +1606,7 @@ bool AclRule::remove()
     return res;
 }
 
-void AclRule::updateInPorts()
+bool AclRule::updateInPorts()
 {
     SWSS_LOG_ENTER();
     sai_status_t status;
@@ -1618,7 +1618,10 @@ void AclRule::updateInPorts()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
+        return false;
     }
+
+    return true;
 }
 
 bool AclRule::update(const AclRule& updatedRule)
@@ -1907,6 +1910,29 @@ vector<sai_object_id_t> AclRule::getInPorts() const
     auto objlist = attr.value.aclfield.data.objlist;
     inPorts = vector<sai_object_id_t>(objlist.list, objlist.list + objlist.count);
     return inPorts;
+}
+
+bool AclRule::setInPorts(const vector<sai_object_id_t>& ports)
+{
+    SWSS_LOG_ENTER();
+
+    // An empty IN_PORTS list disables the field, which makes the rule match
+    // every port. Refuse it; the caller must remove the rule instead.
+    if (ports.empty())
+    {
+        SWSS_LOG_ERROR("Refusing to set an empty IN_PORTS list on ACL rule %s", m_id.c_str());
+        return false;
+    }
+
+    sai_acl_field_data_t matchData{};
+    matchData.enable = true;
+
+    // setMatch() deep-copies the object list, so a local vector is safe here.
+    vector<sai_object_id_t> inPorts(ports);
+    matchData.data.objlist.count = static_cast<uint32_t>(inPorts.size());
+    matchData.data.objlist.list = inPorts.data();
+
+    return setMatch(SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS, matchData);
 }
 
 string AclRule::getId() const
@@ -5298,8 +5324,35 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
 {
     SWSS_LOG_ENTER();
 
+    auto match = aclMatchLookup.find(attr_name);
+    if (match == aclMatchLookup.end())
+    {
+        SWSS_LOG_ERROR("Unknown ACL match attribute %s", attr_name.c_str());
+        return false;
+    }
+
+    if (match->second != SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS)
+    {
+        SWSS_LOG_ERROR("Acl rule update not supported for attr name %s", attr_name.c_str());
+        return false;
+    }
+
+    sai_object_id_t port_oid = *(sai_object_id_t *)data;
+    vector<sai_object_id_t> one { port_oid };
+    vector<sai_object_id_t> none;
+
+    return oper == RULE_OPER_ADD
+        ? updateAclRuleInPorts(table_id, rule_id, one, none)
+        : updateAclRuleInPorts(table_id, rule_id, none, one);
+}
+
+bool AclOrch::updateAclRuleInPorts(const string &table_id, const string &rule_id,
+                                   const vector<sai_object_id_t> &portsToAdd,
+                                   const vector<sai_object_id_t> &portsToRemove)
+{
+    SWSS_LOG_ENTER();
+
     sai_object_id_t table_oid = getTableById(table_id);
-    string attr_value;
 
     if (table_oid == SAI_NULL_OBJECT_ID)
     {
@@ -5307,58 +5360,89 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
         return false;
     }
 
-    auto rule_it = m_AclTables[table_oid].rules.find(rule_id);
-    if (rule_it == m_AclTables[table_oid].rules.end())
+    auto tableIt = m_AclTables.find(table_oid);
+    if (tableIt == m_AclTables.end())
     {
-        SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Rule doesn't exist", rule_id.c_str());
+        SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Table is not cached", table_id.c_str());
         return false;
     }
 
-    switch (aclMatchLookup[attr_name])
+    auto rule_it = tableIt->second.rules.find(rule_id);
+    if (rule_it == tableIt->second.rules.end())
     {
-        case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
-        {
-            sai_object_id_t port_oid = *(sai_object_id_t *)data;
-            vector<sai_object_id_t> in_ports = rule_it->second->getInPorts();
-
-            if (oper == RULE_OPER_ADD)
-            {
-                in_ports.push_back(port_oid);
-            }
-            else
-            {
-                for (auto port_iter = in_ports.begin(); port_iter != in_ports.end(); port_iter++)
-                {
-                    if (*port_iter == port_oid)
-                    {
-                        in_ports.erase(port_iter);
-                        break;
-                    }
-                }
-            }
-
-            for (const auto& port_iter: in_ports)
-            {
-                Port p;
-                gPortsOrch->getPort(port_iter, p);
-                attr_value += p.m_alias;
-                attr_value += ',';
-            }
-
-            if (!attr_value.empty())
-            {
-                attr_value.pop_back();
-            }
-
-            rule_it->second->validateAddMatch(MATCH_IN_PORTS, attr_value);
-            rule_it->second->updateInPorts();
-        }
-        break;
-
-        default:
-            SWSS_LOG_ERROR("Acl rule update not supported for attr name %s", attr_name.c_str());
-        break;
+        SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Rule %s doesn't exist",
+                       table_id.c_str(), rule_id.c_str());
+        return false;
     }
+
+    auto current = rule_it->second->getInPorts();
+
+    // Ordered set, so the programmed list is stable across calls.
+    const set<sai_object_id_t> currentPorts(current.begin(), current.end());
+    set<sai_object_id_t> inPorts(currentPorts);
+
+    for (auto port_oid : portsToAdd)
+    {
+        // Validate only the ports being added, not those already in the rule.
+        Port p;
+        if (!gPortsOrch->getPort(port_oid, p))
+        {
+            SWSS_LOG_ERROR("Failed to locate port oid:%" PRIx64 " for ACL rule %s", port_oid, rule_id.c_str());
+            return false;
+        }
+
+        if (p.m_type != Port::PHY)
+        {
+            SWSS_LOG_ERROR("Cannot bind rule %s to %s: IN_PORTS can only match physical interfaces",
+                           rule_id.c_str(), p.m_alias.c_str());
+            return false;
+        }
+
+        inPorts.insert(port_oid);
+    }
+
+    for (auto port_oid : portsToRemove)
+    {
+        inPorts.erase(port_oid);
+    }
+
+    if (inPorts == currentPorts)
+    {
+        // Nothing changed: a duplicate add, or a remove of an absent port.
+        SWSS_LOG_INFO("ACL rule %s IN_PORTS unchanged, skipping update", rule_id.c_str());
+        return true;
+    }
+
+    if (inPorts.empty())
+    {
+        // A port-less drop rule would match every port; remove it instead.
+        SWSS_LOG_ERROR("ACL rule %s would be left with no IN_PORTS; remove the rule instead",
+                       rule_id.c_str());
+        return false;
+    }
+
+    vector<sai_object_id_t> newPorts(inPorts.begin(), inPorts.end());
+    if (!rule_it->second->setInPorts(newPorts))
+    {
+        SWSS_LOG_ERROR("Failed to set IN_PORTS on ACL rule %s", rule_id.c_str());
+        return false;
+    }
+
+    if (!rule_it->second->updateInPorts())
+    {
+        // setInPorts() has already replaced the cached match. Leaving it would
+        // have the cache claim ports the ASIC does not have, and every later
+        // batch is computed from that cache, so put the old list back.
+        if (!current.empty())
+        {
+            rule_it->second->setInPorts(current);
+        }
+        SWSS_LOG_ERROR("Failed to program IN_PORTS on ACL rule %s", rule_id.c_str());
+        return false;
+    }
+
+    SWSS_LOG_INFO("Updated IN_PORTS on ACL rule %s: +%zu -%zu, now %zu ports",
+                  rule_id.c_str(), portsToAdd.size(), portsToRemove.size(), newPorts.size());
 
     return true;
 }

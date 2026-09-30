@@ -332,7 +332,9 @@ public:
     virtual bool update(const AclRule& updatedRule);
     virtual bool remove();
     virtual void onUpdate(SubjectType, void *) = 0;
-    virtual void updateInPorts();
+    // Returns false if the hardware write failed; the caller is expected to
+    // put the cached match back.
+    virtual bool updateInPorts();
 
     virtual bool enableCounter();
     virtual bool disableCounter();
@@ -345,6 +347,9 @@ public:
     sai_object_id_t getCounterOid() const;
     bool hasCounter() const;
     vector<sai_object_id_t> getInPorts() const;
+    // Replace the IN_PORTS match with an explicit OID list, without building
+    // or reparsing an alias string.
+    bool setInPorts(const vector<sai_object_id_t>& ports);
     bool getCreateCounter() const;
     uint32_t getPriority() const;
 
@@ -626,6 +631,11 @@ public:
     bool updateAclRule(shared_ptr<AclRule> updatedAclRule);
     bool updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper);
     bool updateAclRule(string table_id, string rule_id, bool enableCounter);
+    // Apply every add and remove in one pass and push the result with a single
+    // set_acl_entry_attribute.
+    bool updateAclRuleInPorts(const string &table_id, const string &rule_id,
+                              const vector<sai_object_id_t> &portsToAdd,
+                              const vector<sai_object_id_t> &portsToRemove);
     AclRule* getAclRule(string table_id, string rule_id);
 
     bool isCombinedMirrorV6Table();
