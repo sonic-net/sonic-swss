@@ -80,6 +80,8 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookCollectorCreateNotImplemented();
     void setSaiHookSwitchNotifySetNotImplemented();
     void setSaiHookAllSupported();
+    /** Query returns SUCCESS but the attribute reports create_implemented false. */
+    void setSaiHookAttributeCapabilitySuccessUnsupported();
 
     /** RAII: restores the HFTel hook to None on scope exit. */
     struct HFTelSaiHookGuard
