@@ -30,6 +30,8 @@ public:
 
 private:
     ProducerStateTable m_appIntfTableProducer, m_appSagTableProducer;
+    ProducerStateTable m_appIntfGuardProducer;
+    Table m_stateIntfGuardTable;
     Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSagTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable;
 
@@ -44,7 +46,10 @@ private:
     std::string mySwitchType;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
-    void setIntfVrf(const std::string &alias, const std::string &vrfName);
+    bool setIntfVrf(const std::string &alias, const std::string &vrfName);
+    bool isIntfAbsent(const std::string &alias) const;
+    bool prepareBinding(const std::string &alias, const std::string &vrfName);
+    void finishBinding(const std::string &alias, const std::string &action);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
     void setIntfState(const std::string &alias, bool isUp);
@@ -77,6 +82,7 @@ private:
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);
     void delIpv6LinkLocalNeigh(const std::string &alias);
+    bool cleanupLinkLocalNeigh(const std::string &alias);
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
