@@ -129,6 +129,17 @@ OrchDaemon::~OrchDaemon()
     }
 
     /*
+     * Detach observers while all orchs are still alive.
+     * m_orchList reverse deletion can destroy a Subject before its
+     * Observers (e.g. FdbOrch before MuxOrch/NeighOrch). Calling
+     * detachObservers() here avoids the ordering dependency entirely.
+     */
+    for (auto* orch : m_orchList)
+    {
+        orch->detachObservers();
+    }
+
+    /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
      * NOTE: This is still not a robust solution, as order in this list

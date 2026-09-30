@@ -274,4 +274,8 @@ jobs:
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"
-    condition: eq('${{ parameters.archive_pytests }}', true)
+    condition: and(succeeded(), eq('${{ parameters.archive_pytests }}', true))
+  - publish: $(Build.ArtifactStagingDirectory)/
+    artifact: sonic-swss-pytests$(System.JobAttempt)
+    displayName: "Archive failed swss pytests"
+    condition: and(or(failed(), canceled()), eq('${{ parameters.archive_pytests }}', true))

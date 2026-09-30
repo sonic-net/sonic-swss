@@ -228,7 +228,7 @@ public:
     } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
-        swss::Port::Role value;
+        swss::Port::Role value = swss::Port::Role::Ext;
         bool is_set = false;
     } role; // Port role
 

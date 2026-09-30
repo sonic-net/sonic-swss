@@ -32,6 +32,15 @@ using namespace swss;
 
 using ::testing::_;
 
+extern int (*callback)(const std::string &cmd, std::string &stdout);
+extern std::vector<std::string> mockCallArgs;
+
+static int captureCommand(const std::string &cmd, std::string &)
+{
+    mockCallArgs.push_back(cmd);
+    return 0;
+}
+
 class MockFdbSync : public FdbSync
 {
 public:
@@ -690,10 +699,13 @@ public:
     {
         ::testing_db::reset();
         m_mockFdbSync.m_isEvpnNvoExist = true;
+        mockCallArgs.clear();
+        callback = captureCommand;
     }
 
     void TearDown() override
     {
+        callback = nullptr;
     }
 
     std::shared_ptr<swss::DBConnector> m_appDb = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -1234,6 +1246,35 @@ TEST_F(FdbSyncdEvpnMhTest, NhgRefcounting)
     free(nhg_del);
 }
 
+// Regression test for sonic-net/sonic-swss#4842. The fake ProducerStateTable
+// (mock_table.cpp) backs onto a plain std::map, so a DEL of an already-absent
+// key is indistinguishable from never calling DEL at all. To make an
+// unguarded DEL observable, pre-seed a sentinel row at the ignored nhid's
+// key: an unguarded del() would wipe it out, while the fix leaves it intact.
+TEST_F(FdbSyncdEvpnMhTest, IgnoredOifNextHopDelete)
+{
+    uint32_t nhid = 9000;
+
+    std::vector<FieldValueTuple> sentinel = { FieldValueTuple("remote_vtep", "192.0.2.1") };
+    getNhgTable().set(std::to_string(nhid), sentinel);
+
+    struct nlmsghdr *create = create_l2_nhg_member_msg(nhid, "10.0.0.50", 300);
+    m_mockFdbSync.onMsgRaw(create);
+    free(create);
+
+    EXPECT_EQ(m_mockFdbSync.m_l2NhgMap.count(nhid), 0u);
+
+    struct nlmsghdr *del = delete_nhg_msg(nhid);
+    m_mockFdbSync.onMsgRaw(del);
+    free(del);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getNhgTable().get(std::to_string(nhid), values));
+    ASSERT_EQ(values.size(), 1u);
+    EXPECT_EQ(fvField(values[0]), "remote_vtep");
+    EXPECT_EQ(fvValue(values[0]), "192.0.2.1");
+}
+
 TEST_F(FdbSyncdEvpnMhTest, TestMclagRemoteFdb)
 {
     // Test MCLAG remote FDB processing
@@ -1389,6 +1430,98 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlanEmptyKey)
     m_mockFdbSync.macDelVxlanDB(key);
 
     ASSERT_TRUE(true);
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestFdbStateKeyValidation)
+{
+    std::string vlan;
+    std::string mac;
+
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan100:00:AA:BB:CC:DD:EE", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan100");
+    EXPECT_EQ(mac, "00:aa:bb:cc:dd:ee");
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan0001:00:11:22:33:44:55", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan1");
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan4094:00:11:22:33:44:55", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan4094");
+
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("V:00:11:22:33:44:55", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan100", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan100:not-a-mac", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan0:00:11:22:33:44:55", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan4095:00:11:22:33:44:55", vlan, mac));
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestInvalidFdbFieldsAreRejected)
+{
+    struct m_fdb_info info = {};
+    info.vid = "Vlan100";
+    info.mac = "00:11:22:33:44:55";
+    info.port_name = "Ethernet 0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    m_mockFdbSync.updateLocalMac(&info);
+    m_mockFdbSync.updateMclagRemoteMac(&info);
+
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+    EXPECT_TRUE(m_mockFdbSync.m_mclag_remote_fdb_mac.empty());
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestStateFdbEntryCanonicalSetDelete)
+{
+    m_mockFdbSync.m_isEvpnNvoExist = false;
+    KeyOpFieldsValuesTuple addEntry = {
+        "Vlan0100:00:AA:BB:CC:DD:EE",
+        SET_COMMAND,
+        {
+            FieldValueTuple("port", "Ethernet0"),
+            FieldValueTuple("type", "dynamic"),
+        },
+    };
+    m_mockFdbSync.processStateFdbEntry(addEntry, false);
+
+    ASSERT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan100:00:aa:bb:cc:dd:ee"), 1u);
+
+    KeyOpFieldsValuesTuple delEntry = {
+        "Vlan100:00:AA:BB:CC:DD:EE",
+        DEL_COMMAND,
+        {},
+    };
+    m_mockFdbSync.processStateFdbEntry(delEntry, false);
+
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestRemoteFdbEntryUsesRemoteCache)
+{
+    struct m_fdb_info info = {};
+    info.vid = "Vlan100";
+    info.mac = "00:aa:bb:cc:dd:ee";
+    info.port_name = "PortChannel1";
+    info.type = FDB_TYPE_STATIC;
+
+    m_mockFdbSync.macUpdateMclagRemoteCache(&info);
+    ASSERT_FALSE(m_mockFdbSync.macCheckSrcDB(&info));
+
+    KeyOpFieldsValuesTuple delEntry = {
+        "Vlan0100:00:AA:BB:CC:DD:EE",
+        DEL_COMMAND,
+        {},
+    };
+    m_mockFdbSync.processStateFdbEntry(delEntry, true);
+
+    EXPECT_TRUE(m_mockFdbSync.m_mclag_remote_fdb_mac.empty());
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(
+        mockCallArgs[0],
+        " bridge fdb del 00:aa:bb:cc:dd:ee dev PortChannel1 master static vlan 100"
+    );
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestMalformedCachedFdbKeyIsRejected)
+{
+    EXPECT_NO_THROW(m_mockFdbSync.addLocalMac("V:00:11:22:33:44:55", "replace"));
 }
 
 TEST_F(FdbSyncdEvpnMhTest, TestProcessStateFdb)

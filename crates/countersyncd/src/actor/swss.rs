@@ -506,9 +506,10 @@ mod tests {
         let record = batch.iter().next().unwrap();
         assert_eq!(record.observation_time, 7);
         assert_eq!(record.stats.len(), 1);
-        assert_eq!(record.stats[0].object_name.as_ref(), expected_name);
-        assert_eq!(record.stats[0].counter, 42);
-        assert_eq!((record.stats[0].type_id, record.stats[0].stat_id), (1, 1));
+        let stat=record.stats.get(0).unwrap();
+        assert_eq!(stat.object_name.as_ref(), expected_name);
+        assert_eq!(stat.counter, 42);
+        assert_eq!((stat.type_id, stat.stat_id), (1, 1));
     }
 
     async fn forward(events: Vec<SwssEvent>, sender: &Sender<IPFixTemplatesMessage>) {

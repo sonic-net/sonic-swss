@@ -45,6 +45,8 @@ pub struct CounterValue {
     pub counter: u64,
     pub updated: bool,
     pub last_written_value: Option<u64>,
+    /// Pre-resolved template stat name. Owned/manual inputs use the same view API.
+    pub stat_name: Option<&'static str>,
 }
 
 #[allow(dead_code)] // Methods used throughout the code but may not be detected in all configurations
@@ -54,6 +56,7 @@ impl CounterValue {
             counter,
             updated: true,
             last_written_value: None,
+            stat_name: None,
         }
     }
 
@@ -228,8 +231,9 @@ impl CounterDBActor {
                     }
                     None => {
                         // Insert new counter
-                        self.counter_cache
-                            .insert(key, CounterValue::new(stat.counter));
+                        let mut value=CounterValue::new(stat.counter);
+                        value.stat_name=stat.stat_name();
+                        self.counter_cache.insert(key,value);
                     }
                 }
             }
@@ -317,7 +321,10 @@ impl CounterDBActor {
             .await?;
 
         // Get the stat name from stat_id
-        let stat_name = self.get_stat_name(key.stat_id, &object_type)?;
+        let stat_name = match value.stat_name {
+            Some(name)=>std::borrow::Cow::Borrowed(name),
+            None=>std::borrow::Cow::Owned(self.get_stat_name(key.stat_id,&object_type)?),
+        };
 
         // Write to COUNTERS table using hset to update only the specific stat field
         // The correct Redis key format is: COUNTERS:oid (e.g., COUNTERS:oid:0x1000000000013)
@@ -327,7 +334,7 @@ impl CounterDBActor {
 
         // Use hset to set only this specific stat field, preserving other fields
         self.counters_db
-            .hset(&counters_key, &stat_name, &counter_value)
+            .hset(&counters_key, stat_name.as_ref(), &counter_value)
             .map_err(|e| format!("Failed to hset {}:{}: {}", counters_key, stat_name, e))?;
 
         debug!(
@@ -714,6 +721,11 @@ mod tests {
                 let cached_value = actor.counter_cache.get(&key).unwrap();
                 assert!(cached_value.has_changed()); // Value changed
                 assert_eq!(cached_value.counter, 3000);
+                let mut shared=SAIStatsBatch::default();
+                shared.push_shared_record(12348,Arc::from(vec![crate::message::saistats::SAIStatMetadata::new("Ethernet0",1,0)]),[4000]);
+                actor.handle_stats_message(Arc::new(shared)).await;
+                assert_eq!(actor.total_messages_received,6);
+                assert_eq!(actor.counter_cache[&key].counter,4000);
             }
             Err(e) => {
                 // This is acceptable in CI environments where Redis might not be running
