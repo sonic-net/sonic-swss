@@ -60,6 +60,7 @@ public:
 
     /* CBF groups do not have a NextHopGroupkey. */
     inline NextHopGroupKey getNhgKey() const override { return {}; }
+    std::set<std::string> getRifAliases() const override;
 
     /* Update the CBF group, including the SAI programming. */
     bool update(const vector<string> &members, const string &selection_map);

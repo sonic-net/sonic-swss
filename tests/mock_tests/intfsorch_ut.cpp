@@ -659,6 +659,28 @@ namespace intfsorch_test
         }
     };
 
+    TEST_F(BindingGuardTest, NextHopGroupReportsDistinctRouterInterfaceAliases)
+    {
+        defaultRoot();
+        send(gIntfsOrch, APP_INTF_TABLE_NAME,
+             {"Ethernet4", SET_COMMAND, {{"mtu", "9100"}}});
+        ASSERT_NE(gIntfsOrch->getRouterIntfsId("Ethernet4"), SAI_NULL_OBJECT_ID);
+        neighbor("02:00:00:00:00:01");
+        send(gNeighOrch, APP_NEIGH_TABLE_NAME,
+             {"Ethernet0:192.0.2.3", SET_COMMAND, {{"neigh", "02:00:00:00:00:02"}, {"family", "IPv4"}}});
+        send(gNeighOrch, APP_NEIGH_TABLE_NAME,
+             {"Ethernet4:192.0.2.4", SET_COMMAND, {{"neigh", "02:00:00:00:00:03"}, {"family", "IPv4"}}});
+        send(gNhgOrch, APP_NEXTHOP_GROUP_TABLE_NAME,
+             {"alias-test", SET_COMMAND, {{"nexthop", "192.0.2.2,192.0.2.3,192.0.2.4"},
+                                          {"ifname", "Ethernet0,Ethernet0,Ethernet4"}}});
+        ASSERT_TRUE(gNhgOrch->hasNhg("alias-test"));
+        EXPECT_EQ(3u, gNhgOrch->getNhg("alias-test").getNhgKey().getNextHops().size());
+        EXPECT_EQ((std::set<std::string>{"Ethernet0", "Ethernet4"}),
+                  gNhgOrch->getNhg("alias-test").getRifAliases());
+        send(gNhgOrch, APP_NEXTHOP_GROUP_TABLE_NAME, {"alias-test", DEL_COMMAND, {}});
+        EXPECT_FALSE(gNhgOrch->hasNhg("alias-test"));
+    }
+
     TEST_F(BindingGuardTest, PreparationAcknowledgesAdmissionWithoutWaitingForOldReferences)
     {
         defaultRoot();
