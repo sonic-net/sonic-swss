@@ -1513,7 +1513,10 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                  m_neighOrch->hasNextHop(NextHopKey(it.ip_address, it.alias)))
         {
             NeighborContext ctx = NeighborContext(it);
-            m_neighOrch->addNextHop(ctx);
+            if (!m_neighOrch->addNextHop(ctx))
+            {
+                return false;
+            }
             next_hop_id = m_neighOrch->getNextHopId(it);
         }
         else
@@ -2008,9 +2011,44 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     addRoute(ctx, tmp_next_hop);
 }
 
+bool RouteOrch::isNextHopBindingPending(const NextHopGroupKey &nextHops, const string &nhg_index)
+{
+    for (const auto &nh : nextHops.getNextHops())
+    {
+        if (m_intfsOrch->isIntfBindingGuarded(nh.alias))
+        {
+            return true;
+        }
+    }
+    if (!nhg_index.empty())
+    {
+        try
+        {
+            for (const auto &alias : getNhg(nhg_index).getRifAliases())
+            {
+                if (m_intfsOrch->isIntfBindingGuarded(alias))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (const std::out_of_range &)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
+
+    // A cached NH/NHG still acquires the guarded RIF.
+    if (isNextHopBindingPending(nextHops, ctx.nhg_index))
+    {
+        return false;
+    }
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2143,7 +2181,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
                 NeighborContext ctx = NeighborContext(nexthop);
-                m_neighOrch->addNextHop(ctx);
+                if (!m_neighOrch->addNextHop(ctx))
+                {
+                    return false;
+                }
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
             /* IP neighbor is not yet resolved */

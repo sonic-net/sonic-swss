@@ -336,6 +336,7 @@ private:
     void doLabelTask(ConsumerBase& consumer);
 
     const NhgBase &getNhg(const std::string& nhg_index);
+    bool isNextHopBindingPending(const NextHopGroupKey &nextHops, const std::string &nhg_index);
 
     void publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status = ReturnCode(SAI_STATUS_SUCCESS));
 
