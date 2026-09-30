@@ -41,6 +41,9 @@ struct EsBackupEntry
     sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID; /* bridge port the attributes are on */
     sai_object_id_t nhg_oid = SAI_NULL_OBJECT_ID;        /* protection group set on it */
     bool switchover = false;
+    /* The table entry is deleted but the group still carries the port's traffic
+     * (isEsBackupInUse): attached until that ends, a SET, or the group or ES goes. */
+    bool deleted = false;
 };
 
 class EvpnMhOrch : public Orch, public Observer
@@ -92,6 +95,10 @@ private:
     bool setEsBackupAttr(EsBackupEntry &entry, const std::string &port_name,
                          sai_attr_id_t id, bool value, sai_object_id_t oid);
     bool detachEsBackup(EsBackupEntry &entry, const std::string &port_name);
+    bool isEsBackupInUse(const EsBackupEntry &entry, const std::string &port_name,
+                         const Port &port) const;
+    bool holdEsBackupDelete(EsBackupEntry &entry, const std::string &port_name);
+    bool finishEsBackupDelete(const std::string &port_name);
     /* LAG members whose distribution PortsOrch has disabled. */
     std::set<std::string> m_lagMembersNotDistributing;
     bool isEsPortDown(const Port &port, const Port *changed_member = nullptr) const;
