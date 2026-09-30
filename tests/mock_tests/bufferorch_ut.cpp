@@ -57,11 +57,18 @@ namespace bufferorch_test
     }
 
     uint32_t _ut_stub_set_pg_count;
+    std::map<sai_object_id_t, sai_object_id_t> _ut_stub_pg_profile_map;
+    std::map<sai_object_id_t, std::vector<sai_object_id_t>> _ut_stub_pg_profile_history;
     sai_status_t _ut_stub_sai_set_ingress_priority_group_attribute(
         _In_ sai_object_id_t ingress_priority_group_id,
         _In_ const sai_attribute_t *attr)
     {
         _ut_stub_set_pg_count++;
+        if (attr->id == SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE)
+        {
+            _ut_stub_pg_profile_map[ingress_priority_group_id] = attr->value.oid;
+            _ut_stub_pg_profile_history[ingress_priority_group_id].push_back(attr->value.oid);
+        }
         return pold_sai_buffer_api->set_ingress_priority_group_attribute(ingress_priority_group_id, attr);
     }
 
@@ -232,6 +239,11 @@ namespace bufferorch_test
 
         void SetUp() override
         {
+            // these outlive a single test, so a later test would read the
+            // priority groups an earlier one programmed
+            _ut_stub_pg_profile_map.clear();
+            _ut_stub_pg_profile_history.clear();
+
             ASSERT_EQ(sai_route_api, nullptr);
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -537,6 +549,167 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->doTask();
 
         gMockResponsePublisher.reset();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestRemoveOverlappingBufferPgRangeSplitBatch)
+    {
+        _hook_sai_apis();
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+
+        /* buffermgr writes the narrower range before removing the wider one, so the
+         * covering entry is in place even when the two reach orchagent in separate
+         * batches. A lossy entry covers pg 0 as well, and must not win over the
+         * lossless range while pg 0 is PFC enabled.
+         */
+        Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        bufferProfileTable.set("test_headroom_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"size", "0"},
+                                   {"dynamic_th", "0"},
+                                   {"xoff", "51200"}
+                               });
+        gBufferOrch->addExistingData(&bufferProfileTable);
+
+        bufferPgTable.set("Ethernet8:0", {{"profile", "ingress_lossy_profile"}});
+        bufferPgTable.set("Ethernet8:0-5", {{"profile", "test_headroom_profile"}});
+        gBufferOrch->addExistingData(&bufferPgTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", port));
+        ASSERT_GT(port.m_priority_group_ids.size(), 5U);
+
+        const auto lossless_oid = _ut_stub_pg_profile_map[port.m_priority_group_ids[3]];
+        ASSERT_NE(lossless_oid, SAI_NULL_OBJECT_ID);
+
+        auto bufferPgConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
+
+        // batch one: the narrower range only
+        entries.push_back({"Ethernet8:0-3", "SET", {{"profile", "test_headroom_profile"}}});
+        bufferPgConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        _ut_stub_pg_profile_history.clear();
+
+        // batch two: the removal, on its own
+        entries.push_back({"Ethernet8:0-5", "DEL", {}});
+        bufferPgConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        for (size_t ind = 0; ind <= 3; ind++)
+        {
+            const auto pg_id = port.m_priority_group_ids[ind];
+            // covered by the narrower lossless range, so it keeps its headroom
+            ASSERT_EQ(_ut_stub_pg_profile_map[pg_id], lossless_oid);
+            for (const auto &oid: _ut_stub_pg_profile_history[pg_id])
+            {
+                ASSERT_EQ(oid, lossless_oid);
+            }
+        }
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[4]], SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[5]], SAI_NULL_OBJECT_ID);
+
+        // the fixture does not flush APP_DB between tests
+        bufferPgTable.del("Ethernet8:0");
+        bufferPgTable.del("Ethernet8:0-3");
+        bufferPgTable.del("Ethernet8:0-5");
+        bufferProfileTable.del("test_headroom_profile");
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestNarrowOverlappingBufferPgRange)
+    {
+        _hook_sai_apis();
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+
+        /* Narrowing pfc_enable removes the wider range and writes the narrower one
+         * in the same batch. The pgs the narrower range covers must not be released
+         * on the way, whichever order the two keys are processed in.
+         */
+        bufferPgTable.set("Ethernet4:2-5", {{"profile", "ingress_lossless_profile"}});
+        gBufferOrch->addExistingData(&bufferPgTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_GT(port.m_priority_group_ids.size(), 5U);
+
+        const auto profile_oid = _ut_stub_pg_profile_map[port.m_priority_group_ids[3]];
+        ASSERT_NE(profile_oid, SAI_NULL_OBJECT_ID);
+        _ut_stub_pg_profile_history.clear();
+
+        entries.push_back({"Ethernet4:2-5", "DEL", {}});
+        entries.push_back({"Ethernet4:3-4", "SET", {{"profile", "ingress_lossless_profile"}}});
+        auto bufferPgConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
+        bufferPgConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        for (size_t ind = 3; ind <= 4; ind++)
+        {
+            const auto pg_id = port.m_priority_group_ids[ind];
+            ASSERT_EQ(_ut_stub_pg_profile_map[pg_id], profile_oid);
+            // The pg stays covered throughout, so it is never released
+            for (const auto &oid: _ut_stub_pg_profile_history[pg_id])
+            {
+                ASSERT_EQ(oid, profile_oid);
+            }
+        }
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[2]], SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[5]], SAI_NULL_OBJECT_ID);
+
+        // the fixture does not flush APP_DB between tests
+        bufferPgTable.del("Ethernet4:3-4");
+        bufferPgTable.del("Ethernet4:2-5");
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestRemoveOverlappingBufferPgRange)
+    {
+        _hook_sai_apis();
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+
+        /* A port whose pfc_enable has been widened and narrowed again carries the
+         * range matching the current pfc_enable and a wider range left behind by
+         * the previous one. Removing the wider range must not take the pgs that
+         * the remaining range still covers.
+         */
+        bufferPgTable.set("Ethernet12:3-4", {{"profile", "ingress_lossless_profile"}});
+        bufferPgTable.set("Ethernet12:2-5", {{"profile", "ingress_lossless_profile"}});
+        gBufferOrch->addExistingData(&bufferPgTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet12", port));
+        ASSERT_GT(port.m_priority_group_ids.size(), 5U);
+
+        const auto profile_oid = _ut_stub_pg_profile_map[port.m_priority_group_ids[3]];
+        ASSERT_NE(profile_oid, SAI_NULL_OBJECT_ID);
+        for (size_t ind = 2; ind <= 5; ind++)
+        {
+            ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[ind]], profile_oid);
+        }
+
+        entries.push_back({"Ethernet12:2-5", "DEL", {}});
+        auto bufferPgConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
+        bufferPgConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // The pgs covered by the remaining range keep their profile
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[3]], profile_oid);
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[4]], profile_oid);
+        // The pgs no longer covered by any range are released
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[2]], SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(_ut_stub_pg_profile_map[port.m_priority_group_ids[5]], SAI_NULL_OBJECT_ID);
+
+        // the fixture does not flush APP_DB between tests
+        bufferPgTable.del("Ethernet12:3-4");
+        bufferPgTable.del("Ethernet12:2-5");
     }
 
     TEST_F(BufferOrchTest, BufferOrchTestBufferPgReferencingObjRemoveThenAdd)

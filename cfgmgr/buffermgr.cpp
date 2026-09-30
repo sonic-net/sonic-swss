@@ -143,6 +143,57 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
+/*
+ * A lossless PG entry is keyed by the range it covers, so a change to pfc_enable
+ * yields a new key rather than an update, leaving the previous range behind.
+ * Reclaim the ranges this daemon generated that the current pfc_enable no longer
+ * covers. Entries are recognised by the profile they reference, so a profile an
+ * operator configured is left alone, as it is on the administratively down path.
+ */
+void BufferMgr::reclaimStaleLosslessPgs(const string &port, const set<string> &lossless_pg_combinations,
+                                        const string &reason)
+{
+    SWSS_LOG_ENTER();
+
+    const string pg_key_prefix = port + m_cfgBufferPgTable.getTableNameSeparator();
+    vector<string> existing_pg_keys;
+    m_cfgBufferPgTable.getKeys(existing_pg_keys);
+
+    for (const auto &existing_key : existing_pg_keys)
+    {
+        if (existing_key.rfind(pg_key_prefix, 0) != 0)
+        {
+            continue;
+        }
+
+        const string pg_ids = existing_key.substr(pg_key_prefix.length());
+        if (lossless_pg_combinations.count(pg_ids) != 0)
+        {
+            continue;
+        }
+
+        string existing_profile;
+        if (!m_cfgBufferPgTable.hget(existing_key, "profile", existing_profile))
+        {
+            continue;
+        }
+
+        /* The prefix rather than the current profile name, because after a speed or
+         * cable length change the stale entry references the previous profile.
+         */
+        if (existing_profile.rfind(LOSSLESS_PROFILE_PREFIX, 0) != 0)
+        {
+            SWSS_LOG_NOTICE("Not a generated profile %s is configured on PG %s, won't reclaim buffer",
+                            existing_profile.c_str(), existing_key.c_str());
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("Removing lossless PG %s of port %s, %s",
+                        existing_key.c_str(), port.c_str(), reason.c_str());
+        m_cfgBufferPgTable.del(existing_key);
+    }
+}
+
 task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
     string cable;
@@ -158,6 +209,9 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     cable = m_cableLenLookup[port];
     if (cable == "0m")
     {
+        /* A 0m cable means do not regenerate the profile for this port, not that
+         * the port carries no lossless traffic, so what it already has stays.
+         */
         SWSS_LOG_NOTICE("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
         return task_process_status::task_success;
     }
@@ -181,7 +235,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
     speed = m_speedLookup[port];
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
+    string buffer_profile_key = LOSSLESS_PROFILE_PREFIX + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
@@ -239,6 +293,8 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     {
             SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
                         port.c_str(), speed.c_str(), cable.c_str());
+            reclaimStaleLosslessPgs(port, lossless_pg_combinations,
+                                    "no PG profile is configured for its speed and cable length");
             return task_process_status::task_invalid_entry;
     }
 
@@ -304,6 +360,9 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         fvVectorPg.push_back(make_pair("profile", profile_ref));
         m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     }
+
+    reclaimStaleLosslessPgs(port, lossless_pg_combinations, "pfc_enable is " + pfc_enable);
+
     return task_process_status::task_success;
 }
 
@@ -432,10 +491,12 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             bool update_pfc_enable = false;
+            bool has_pfc_enable = false;
             for (auto itp : kfvFieldsValues(tuple))
             {
                 if (fvField(itp) == "pfc_enable")
                 {
+                    has_pfc_enable = true;
                     if (m_portPfcStatus.count(port_name) == 0 || m_portPfcStatus[port_name] != fvValue(itp))
                     {
                         m_portPfcStatus[port_name] = fvValue(itp);
@@ -445,6 +506,18 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                     break;
                 }
             }
+
+            /* A SET carries the whole entry, so the field being gone from one we
+             * have already seen with it means PFC was removed from the port. An
+             * entry that never had it is left alone, as it has covered nothing.
+             */
+            if (!has_pfc_enable && m_portPfcStatus.count(port_name) != 0)
+            {
+                SWSS_LOG_INFO("pfc_enable removed from port %s, clearing PFC status", port_name.c_str());
+                m_portPfcStatus.erase(port_name);
+                reclaimStaleLosslessPgs(port_name, {}, "pfc_enable was removed from PORT_QOS_MAP");
+            }
+
             if (update_pfc_enable)
             {
                 // The return status is ignored
@@ -455,6 +528,7 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         {
             SWSS_LOG_INFO("Port %s removed from PORT_QOS_MAP, clearing PFC status", port_name.c_str());
             m_portPfcStatus.erase(port_name);
+            reclaimStaleLosslessPgs(port_name, {}, "it was removed from PORT_QOS_MAP");
         }
         it = consumer.m_toSync.erase(it);
     }
