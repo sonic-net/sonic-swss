@@ -8,7 +8,7 @@ DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/default.mk
 
 # see FEATURE AREAS in dpkg-buildflags(1)
-#export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 # Upgrade FORTIFY_SOURCE to level 3 (dpkg default is =2).
 # -U clears the existing =2 set by dpkg before setting =3.

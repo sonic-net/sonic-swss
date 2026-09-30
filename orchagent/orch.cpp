@@ -1320,4 +1320,13 @@ void Orch::setOrderedQueueForAllConsumers(bool orderedQueue)
         }
     }
 }
+void Orch::setWarmbootStateOnFailure(const string& app_name, bool set_on_fail)
+{
+    m_publisher.setWarmbootStateOnFailure(app_name, set_on_fail);
+}
+
+void Orch::setEnableNotify(bool enable)
+{
+    m_publisher.setEnableNotify(enable);
+}
 

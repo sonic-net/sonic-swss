@@ -1,0 +1,1167 @@
+//! Privileged local Generic Netlink state-machine stress test using psample.
+//!
+//! Run with:
+//!
+//! `sudo env "HOME=$HOME" "PATH=$PATH:/usr/sbin:/sbin" CARGO_TARGET_DIR=/tmp/countersyncd-psample-target "$(command -v cargo)" run -p countersyncd --example psample_netlink_state_test --release`
+//!
+//! This is intentionally an example instead of a Cargo test: normal CI compiles it via
+//! `cargo check --all-targets`, but does not execute host-wide module unload/reload operations.
+//! It verifies both startup orderings (family already registered and family registered after the
+//! actors start) before running the repeated reload stress phase.
+//! The current-thread virtual-time harness serializes synchronous host operations with actor
+//! execution and therefore does not cover production multi-threaded teardown races.
+
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fs,
+    future::Future,
+    io,
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    process::{Command, Output, Stdio},
+    sync::OnceLock,
+    time::{Duration, Instant as WallInstant},
+};
+
+use countersyncd::{
+    actor::{control_netlink::ControlNetlinkActor, data_netlink::DataNetlinkActor},
+    message::{
+        buffer::SocketBufferMessage,
+        netlink::{NetlinkCommand, NetlinkSubscription},
+    },
+};
+use futures_timer::Delay;
+use log::LevelFilter;
+use netlink_packet_utils::nla::NlasIterator;
+use tokio::{
+    runtime::Builder,
+    sync::mpsc::{
+        channel, error::TryRecvError, unbounded_channel, Receiver, Sender, UnboundedReceiver,
+        UnboundedSender,
+    },
+    task::JoinHandle,
+    time::advance,
+};
+use wait_timeout::ChildExt;
+
+const FAMILY: &str = "psample";
+const GROUP: &str = "packets";
+const SAMPLE_GROUP: u32 = 0x5a17;
+const DEFAULT_RELOADS: usize = 128;
+const MIN_RELOADS: usize = 101;
+const DATA_CHANNEL_CAPACITY: usize = 32;
+// Observed full runs stay below these bounds; modest headroom allows allocator/RSS noise.
+const MAX_RSS_GROWTH_KIB: u64 = 1024;
+const MAX_RSS_TREND_KIB: u64 = 512;
+const MAX_HEAP_GROWTH_BYTES: usize = 512 * 1024;
+const MAX_HEAP_TREND_BYTES: u64 = 128 * 1024;
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+const STARTUP_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const PSAMPLE_ATTR_SAMPLE_GROUP: u16 = 3;
+const PSAMPLE_ATTR_DATA: u16 = 6;
+
+const OUTAGES: &[(&str, Duration)] = &[
+    ("100ms", Duration::from_millis(100)),
+    ("1s", Duration::from_secs(1)),
+    ("10s", Duration::from_secs(10)),
+    ("30s", Duration::from_secs(30)),
+    ("1h", Duration::from_secs(60 * 60)),
+    ("1d", Duration::from_secs(24 * 60 * 60)),
+    ("1w", Duration::from_secs(7 * 24 * 60 * 60)),
+    ("1mo", Duration::from_secs(30 * 24 * 60 * 60)),
+    ("1y", Duration::from_secs(365 * 24 * 60 * 60)),
+];
+
+type DynError = Box<dyn Error + Send + Sync>;
+
+struct Actors {
+    close_sender: Sender<NetlinkCommand>,
+    command_observations: Option<UnboundedReceiver<ObservedCommand>>,
+    data_receiver: Receiver<SocketBufferMessage>,
+    command_relay_task: Option<JoinHandle<()>>,
+    data_task: JoinHandle<()>,
+    control_task: JoinHandle<()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObservedCommand {
+    Connect(NetlinkSubscription),
+    Reconnect(NetlinkSubscription),
+    Disconnect,
+}
+
+struct Cleanup {
+    active: bool,
+    introduced_helpers: Vec<&'static str>,
+}
+
+struct StressStats {
+    reloads: usize,
+    baseline_fds: usize,
+    final_fds: usize,
+    max_fds: usize,
+    baseline_rss: u64,
+    final_rss: u64,
+    max_rss: u64,
+    rss_first_median: u64,
+    rss_last_median: u64,
+    baseline_heap: usize,
+    final_heap: usize,
+    max_heap: usize,
+    heap_first_median: u64,
+    heap_last_median: u64,
+}
+
+struct AutoAdvanceGuard {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl AutoAdvanceGuard {
+    async fn new() -> Self {
+        // This parked blocking task inhibits Tokio paused-time auto-advance and must stay alive.
+        let (release, receiver) = std::sync::mpsc::channel();
+        let task = tokio::task::spawn_blocking(move || {
+            let _ = receiver.recv();
+        });
+        tokio::task::yield_now().await;
+        Self {
+            release: Some(release),
+            task: Some(task),
+        }
+    }
+
+    async fn stop(mut self) -> Result<(), DynError> {
+        drop(self.release.take());
+        self.task.take().expect("auto-advance guard task").await?;
+        Ok(())
+    }
+}
+
+impl Drop for AutoAdvanceGuard {
+    fn drop(&mut self) {
+        drop(self.release.take());
+    }
+}
+
+impl Cleanup {
+    fn new() -> Result<Self, DynError> {
+        if module_loaded("psample")? || module_loaded("act_sample")? {
+            return Err(
+                "psample and act_sample must be initially unloaded; use an exclusive test host"
+                    .into(),
+            );
+        }
+        ensure_test_links_absent()?;
+        let introduced_helpers = ["veth", "sch_ingress", "cls_matchall"]
+            .into_iter()
+            .filter(|module| !module_loaded(module).unwrap_or(false))
+            .collect();
+        Ok(Self {
+            active: true,
+            introduced_helpers,
+        })
+    }
+
+    fn finish(&mut self) -> Result<(), DynError> {
+        delete_links()?;
+        unload_modules()?;
+        unload_helper_modules(&self.introduced_helpers)?;
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = delete_links();
+            let _ = unload_modules();
+            let _ = unload_helper_modules(&self.introduced_helpers);
+        }
+    }
+}
+
+fn main() -> Result<(), DynError> {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("create Tokio runtime: {e}"))?;
+    runtime.block_on(run_test())
+}
+
+async fn run_test() -> Result<(), DynError> {
+    let wall_started = WallInstant::now();
+    let _ = env_logger::builder()
+        .filter_module("countersyncd::actor::control_netlink", LevelFilter::Error)
+        .filter_module("countersyncd::actor::data_netlink", LevelFilter::Error)
+        .try_init();
+    require_root()?;
+    require_command("modprobe")?;
+    require_command("modinfo")?;
+    require_command("rmmod")?;
+    require_command("ip")?;
+    require_command("tc")?;
+    require_module("psample")?;
+    require_module("act_sample")?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    let mut cleanup = Cleanup::new()?;
+    let reloads = reloads()?;
+
+    eprintln!("verifying startup when psample is already registered");
+    load_modules()?;
+    require_removable_modules()?;
+    create_sample_path()?;
+
+    let pre_actor_fds = fd_snapshot()?;
+    let mut actors = start_actors(true);
+    let startup_result = verify_family_present_at_startup(&mut actors).await;
+    let startup_shutdown = stop_actors(actors, false).await;
+    if let Err(error) = startup_result {
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "pre-registered startup failed: {error}; actor shutdown: {startup_shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    startup_shutdown?;
+    let post_startup_fds = fd_snapshot()?;
+    if post_startup_fds != pre_actor_fds {
+        return Err(format!(
+            "pre-registered startup changed fd set after shutdown: before={pre_actor_fds:?}, after={post_startup_fds:?}"
+        )
+        .into());
+    }
+
+    eprintln!("verifying startup before psample is registered");
+    delete_links()?;
+    unload_modules()?;
+    expect_family(false)?;
+    let absent_started = tokio::time::Instant::now();
+    let mut actors = start_actors(true);
+    if let Err(error) = verify_family_absent_at_startup(&mut actors).await {
+        let shutdown = stop_actors(actors, false).await;
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "absent-family startup failed: {error}; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    tokio::time::pause();
+    if absent_started.elapsed() >= Duration::from_secs(1) {
+        let shutdown = stop_actors(actors, true).await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "initial absent-family reconciliation reached the one-second periodic deadline; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    let auto_advance_guard = AutoAdvanceGuard::new().await;
+    if let Err(error) = verify_auto_advance_disabled().await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start virtual-time isolation failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    if let Err(error) = verify_family_registered_after_startup(&mut actors).await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start registration failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
+    let startup_shutdown = stop_actors(actors, true).await;
+    let startup_guard_result = auto_advance_guard.stop().await;
+    tokio::time::resume();
+    if startup_shutdown.is_err() || startup_guard_result.is_err() {
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "post-start actor teardown failed: actor shutdown: {startup_shutdown:?}; virtual-time guard shutdown: {startup_guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
+    let mut actors = start_actors(false);
+    if let Err(error) = verify_sample(&mut actors, "stress-actor-startup").await {
+        let shutdown = stop_actors(actors, false).await;
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "stress actor startup failed: {error}; actor shutdown: {shutdown:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+    tokio::time::pause();
+    let auto_advance_guard = AutoAdvanceGuard::new().await;
+    if let Err(error) = verify_auto_advance_disabled().await {
+        let shutdown = stop_actors(actors, true).await;
+        let guard_result = auto_advance_guard.stop().await;
+        tokio::time::resume();
+        let cleanup_result = cleanup.finish();
+        return Err(format!(
+            "stress virtual-time isolation failed: {error}; actor shutdown: {shutdown:?}; virtual-time guard shutdown: {guard_result:?}; host cleanup: {cleanup_result:?}"
+        )
+        .into());
+    }
+
+    let stress_result = {
+        let stress = run_stress(&mut actors, reloads);
+        tokio::pin!(stress);
+        tokio::select! {
+            result = &mut stress => result,
+            _ = sigint.recv() => Err("interrupted by SIGINT".into()),
+            _ = sigterm.recv() => Err("interrupted by SIGTERM".into()),
+        }
+    };
+
+    let shutdown_result = stop_actors(actors, true).await;
+    let guard_result = auto_advance_guard.stop().await;
+    tokio::time::resume();
+    let post_actor_fds = fd_snapshot();
+    let cleanup_result = cleanup.finish();
+
+    let mut failures = Vec::new();
+    let stats = match stress_result {
+        Ok(stats) => Some(stats),
+        Err(error) => {
+            failures.push(format!("stress test failed: {error}"));
+            None
+        }
+    };
+    if let Err(error) = shutdown_result {
+        failures.push(format!("actor shutdown failed: {error}"));
+    }
+    match post_actor_fds {
+        Ok(post_actor_fds) if post_actor_fds != pre_actor_fds => failures.push(format!(
+            "actor shutdown changed fd set: before={pre_actor_fds:?}, after={post_actor_fds:?}"
+        )),
+        Err(error) => failures.push(format!("post-shutdown fd snapshot failed: {error}")),
+        _ => {}
+    }
+    if let Err(error) = guard_result {
+        failures.push(format!("virtual-time guard shutdown failed: {error}"));
+    }
+    if let Err(error) = cleanup_result {
+        failures.push(format!("host cleanup failed: {error}"));
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("; ").into());
+    }
+    let stats = stats.expect("stress stats are present when no failures were recorded");
+
+    println!(
+        "passed {} reloads; elapsed_wall={:?}; fds(baseline/final/max)={}/{}/{}; rss_kib(baseline/final/max)={}/{}/{}; rss_trend_median_kib(first/last)={}/{}; heap_bytes(baseline/final/max)={}/{}/{}; heap_trend_median_bytes(first/last)={}/{}",
+        stats.reloads,
+        wall_started.elapsed(),
+        stats.baseline_fds,
+        stats.final_fds,
+        stats.max_fds,
+        stats.baseline_rss,
+        stats.final_rss,
+        stats.max_rss,
+        stats.rss_first_median,
+        stats.rss_last_median,
+        stats.baseline_heap,
+        stats.final_heap,
+        stats.max_heap,
+        stats.heap_first_median,
+        stats.heap_last_median
+    );
+    Ok(())
+}
+
+async fn run_stress(actors: &mut Actors, reloads: usize) -> Result<StressStats, DynError> {
+    verify_sample(actors, "initial-psample").await?;
+
+    println!("warming all outage durations before leak baselining");
+    for &(name, outage) in OUTAGES {
+        cycle_family(actors, usize::MAX, name, outage).await?;
+    }
+
+    trim_allocator();
+    let baseline_fds = fd_snapshot()?;
+    let baseline_fd_count: usize = baseline_fds.values().sum();
+    let baseline_rss = rss_kib()?;
+    let baseline_heap = heap_in_use_bytes();
+    let mut max_fds = baseline_fd_count;
+    let mut max_rss = baseline_rss;
+    let mut max_heap = baseline_heap;
+    let mut final_fds = baseline_fd_count;
+    let mut final_rss = baseline_rss;
+    let mut final_heap = baseline_heap;
+    let mut rss_samples = Vec::with_capacity(reloads);
+    let mut heap_samples = Vec::with_capacity(reloads);
+
+    println!(
+        "psample state test: reloads={reloads}, baseline_fds={max_fds}, baseline_rss_kib={baseline_rss}, baseline_heap_bytes={baseline_heap}"
+    );
+
+    for iteration in 0..reloads {
+        let (name, outage) = OUTAGES[iteration % OUTAGES.len()];
+        cycle_family(actors, iteration, name, outage).await?;
+
+        trim_allocator();
+        let current_fds = fd_snapshot()?;
+        let current_fd_count = current_fds.values().sum();
+        let current_rss = rss_kib()?;
+        let current_heap = heap_in_use_bytes();
+        max_fds = max_fds.max(current_fd_count);
+        max_rss = max_rss.max(current_rss);
+        max_heap = max_heap.max(current_heap);
+        final_fds = current_fd_count;
+        final_rss = current_rss;
+        final_heap = current_heap;
+        rss_samples.push(current_rss);
+        heap_samples.push(current_heap as u64);
+
+        if current_fds != baseline_fds {
+            return Err(
+                format!("fd leak: baseline={baseline_fds:?}, current={current_fds:?}").into(),
+            );
+        }
+        if max_rss > baseline_rss + MAX_RSS_GROWTH_KIB {
+            return Err(format!(
+                "memory growth exceeded limit: baseline={baseline_rss} KiB, max={max_rss} KiB"
+            )
+            .into());
+        }
+        if max_heap > baseline_heap + MAX_HEAP_GROWTH_BYTES {
+            return Err(format!(
+                "heap growth exceeded limit: baseline={baseline_heap} bytes, max={max_heap} bytes"
+            )
+            .into());
+        }
+
+        println!(
+            "iteration {}/{} passed; fds={current_fd_count}, rss_kib={current_rss}, heap_bytes={current_heap}",
+            iteration + 1,
+            reloads
+        );
+    }
+
+    let (rss_first_median, rss_last_median) =
+        check_growth_trend("RSS", &rss_samples, MAX_RSS_TREND_KIB)?;
+    let (heap_first_median, heap_last_median) =
+        check_growth_trend("heap", &heap_samples, MAX_HEAP_TREND_BYTES)?;
+    Ok(StressStats {
+        reloads: reloads + OUTAGES.len(),
+        baseline_fds: baseline_fd_count,
+        final_fds,
+        max_fds,
+        baseline_rss,
+        final_rss,
+        max_rss,
+        rss_first_median,
+        rss_last_median,
+        baseline_heap,
+        final_heap,
+        max_heap,
+        heap_first_median,
+        heap_last_median,
+    })
+}
+
+fn check_growth_trend(name: &str, samples: &[u64], limit: u64) -> Result<(u64, u64), DynError> {
+    let window = (samples.len() / 4).max(1);
+    let first = median(&samples[..window]);
+    let last = median(&samples[samples.len() - window..]);
+    if last > first + limit {
+        return Err(format!(
+            "{name} shows sustained growth: first-window median={first}, last-window median={last}, limit={limit}"
+        )
+        .into());
+    }
+    Ok((first, last))
+}
+
+fn median(samples: &[u64]) -> u64 {
+    let mut samples = samples.to_vec();
+    samples.sort_unstable();
+    samples[samples.len() / 2]
+}
+
+async fn cycle_family(
+    actors: &mut Actors,
+    iteration: usize,
+    outage_name: &str,
+    outage: Duration,
+) -> Result<(), DynError> {
+    eprintln!("cycle {iteration}: unloading psample for {outage_name}");
+    let old_ids = resolve_ids()?;
+    delete_links()?;
+    unload_modules()?;
+    expect_family(false)?;
+
+    let notification_time = outage.min(Duration::from_millis(100));
+    advance_in_steps(notification_time).await;
+    advance(outage - notification_time).await;
+    settle().await;
+    if family_exists()? {
+        return Err(format!("psample unexpectedly exists during {outage_name} outage").into());
+    }
+
+    load_modules()?;
+    expect_family(true)?;
+    let new_ids = resolve_ids()?;
+    create_sample_path()?;
+    advance_in_steps(Duration::from_millis(100)).await;
+
+    let marker = format!("psample-{iteration}-{outage_name}");
+    verify_sample(actors, &marker).await?;
+    println!(
+        "  {outage_name}: family/group IDs {:?} -> {:?}",
+        old_ids, new_ids
+    );
+    Ok(())
+}
+
+fn start_actors(observe_commands: bool) -> Actors {
+    let (control_command_sender, control_command_receiver) = channel(32);
+    let (data_sender, data_receiver) = channel(DATA_CHANNEL_CAPACITY);
+
+    let (data_command_receiver, command_observations, command_relay_task) = if observe_commands {
+        let (data_command_sender, data_command_receiver) = channel(32);
+        let (command_observation_sender, command_observations) = unbounded_channel();
+        (
+            data_command_receiver,
+            Some(command_observations),
+            Some(tokio::spawn(relay_commands(
+                control_command_receiver,
+                data_command_sender,
+                command_observation_sender,
+            ))),
+        )
+    } else {
+        (control_command_receiver, None, None)
+    };
+
+    let mut data_actor =
+        DataNetlinkActor::new(FAMILY, GROUP, data_command_receiver, 4 * 1024 * 1024);
+    data_actor.add_recipient(data_sender);
+    let close_sender = control_command_sender.clone();
+    let control_actor = ControlNetlinkActor::new(FAMILY, GROUP, control_command_sender);
+
+    Actors {
+        close_sender,
+        command_observations,
+        data_receiver,
+        command_relay_task,
+        data_task: tokio::spawn(DataNetlinkActor::run(data_actor)),
+        control_task: tokio::spawn(ControlNetlinkActor::run(control_actor)),
+    }
+}
+
+async fn relay_commands(
+    mut commands: Receiver<NetlinkCommand>,
+    data_sender: Sender<NetlinkCommand>,
+    observations: UnboundedSender<ObservedCommand>,
+) {
+    while let Some(command) = commands.recv().await {
+        let observation = match &command {
+            NetlinkCommand::Connect(subscription) => Some(ObservedCommand::Connect(*subscription)),
+            NetlinkCommand::Reconnect(subscription) => {
+                Some(ObservedCommand::Reconnect(*subscription))
+            }
+            NetlinkCommand::Disconnect => Some(ObservedCommand::Disconnect),
+            NetlinkCommand::Close => None,
+        };
+        if let Some(observation) = observation {
+            let _ = observations.send(observation);
+        }
+        let close = matches!(command, NetlinkCommand::Close);
+        if data_sender.send(command).await.is_err() || close {
+            break;
+        }
+    }
+}
+
+async fn stop_actors(actors: Actors, time_paused: bool) -> Result<(), DynError> {
+    let close_result = wall_timeout(
+        Duration::from_secs(5),
+        actors.close_sender.send(NetlinkCommand::Close),
+    )
+    .await;
+    drop(actors.close_sender);
+
+    let data_result = stop_task("data actor", actors.data_task).await;
+    let relay_result = match actors.command_relay_task {
+        Some(task) => stop_task("command relay", task).await,
+        None => Ok(()),
+    };
+    if time_paused {
+        advance_in_steps(Duration::from_millis(20)).await;
+    }
+    let control_result = stop_task("control actor", actors.control_task).await;
+
+    close_result??;
+    data_result?;
+    relay_result?;
+    control_result?;
+    Ok(())
+}
+
+async fn stop_task(name: &str, mut task: JoinHandle<()>) -> Result<(), DynError> {
+    match wall_timeout(Duration::from_secs(5), &mut task).await {
+        Ok(result) => result.map_err(|error| format!("{name} failed: {error}").into()),
+        Err(error) => {
+            task.abort();
+            let _ = task.await;
+            Err(format!("{name} did not stop: {error}").into())
+        }
+    }
+}
+
+async fn verify_family_present_at_startup(actors: &mut Actors) -> Result<(), DynError> {
+    let expected = subscription(resolve_ids()?);
+    expect_command(actors, ObservedCommand::Connect(expected)).await?;
+    verify_sample(actors, "family-present-before-startup").await?;
+    actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations")
+        .close();
+    println!("startup with pre-registered psample passed");
+    Ok(())
+}
+
+async fn verify_family_registered_after_startup(actors: &mut Actors) -> Result<(), DynError> {
+    load_modules()?;
+    expect_family(true)?;
+    let expected = subscription(resolve_ids()?);
+    create_sample_path()?;
+    expect_command(actors, ObservedCommand::Reconnect(expected)).await?;
+    verify_sample(actors, "family-registered-after-startup").await?;
+    actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations")
+        .close();
+    println!("startup before psample registration passed");
+    Ok(())
+}
+
+async fn verify_family_absent_at_startup(actors: &mut Actors) -> Result<(), DynError> {
+    expect_command(actors, ObservedCommand::Disconnect).await?;
+    settle().await;
+    Ok(())
+}
+
+async fn expect_command(actors: &mut Actors, expected: ObservedCommand) -> Result<(), DynError> {
+    let observations = actors
+        .command_observations
+        .as_mut()
+        .expect("startup actor has command observations");
+    let actual = wall_timeout(STARTUP_COMMAND_TIMEOUT, observations.recv())
+        .await
+        .map_err(|error| format!("waiting for control command {expected:?}: {error}"))?
+        .ok_or("control command relay closed during startup verification")?;
+    if actual != expected {
+        return Err(format!("expected control command {expected:?}, received {actual:?}").into());
+    }
+    Ok(())
+}
+
+fn subscription((family_id, group_id): (u16, u32)) -> NetlinkSubscription {
+    NetlinkSubscription {
+        family_id,
+        group_id,
+    }
+}
+
+async fn verify_sample(actors: &mut Actors, marker: &str) -> Result<(), DynError> {
+    let mut delayed_samples = drain_pending_samples(&mut actors.data_receiver, marker)?;
+    if delayed_samples >= DATA_CHANNEL_CAPACITY {
+        return Err(format!(
+            "sample backlog saturated while verifying {marker:?}: drained {delayed_samples} pending samples"
+        )
+        .into());
+    }
+    for attempt in 1..=20 {
+        let attempt_marker = format!("{marker}-attempt-{attempt}");
+        send_marker(attempt_marker.as_bytes())?;
+        let mut skipped = 0usize;
+        let result = wall_timeout(Duration::from_millis(250), async {
+            loop {
+                let message = actors
+                    .data_receiver
+                    .recv()
+                    .await
+                    .ok_or("data actor channel closed while verifying sample")?;
+                if sample_contains(&message, attempt_marker.as_bytes())? {
+                    return Ok::<(), DynError>(());
+                }
+                skipped += 1;
+                if actors.data_receiver.len() >= DATA_CHANNEL_CAPACITY - 1 {
+                    return Err(format!(
+                        "sample backlog saturated while verifying {marker:?}: receiver reached capacity"
+                    )
+                    .into());
+                }
+            }
+        })
+        .await;
+        delayed_samples += skipped;
+        if let Ok(received) = result {
+            received?;
+            if delayed_samples != 0 {
+                eprintln!(
+                    "marker {marker:?}: discarded {delayed_samples} delayed sample(s) before verification"
+                );
+            }
+            return Ok(());
+        }
+        settle().await;
+    }
+
+    Err(format!(
+        "data actor did not receive marker {marker:?} after psample setup; discarded {delayed_samples} delayed sample(s)"
+    )
+    .into())
+}
+
+fn drain_pending_samples(
+    receiver: &mut Receiver<SocketBufferMessage>,
+    context: &str,
+) -> Result<usize, DynError> {
+    let started_len = receiver.len();
+    if started_len >= DATA_CHANNEL_CAPACITY {
+        return Err(format!(
+            "{context}: sample backlog saturated the {DATA_CHANNEL_CAPACITY}-message data channel"
+        )
+        .into());
+    }
+    let mut drained = 0usize;
+    loop {
+        match receiver.try_recv() {
+            Ok(_) => {
+                drained += 1;
+            }
+            Err(TryRecvError::Empty) => return Ok(drained),
+            Err(TryRecvError::Disconnected) => {
+                return Err(format!("{context}: data actor channel closed").into());
+            }
+        }
+    }
+}
+
+fn sample_contains(message: &SocketBufferMessage, marker: &[u8]) -> Result<bool, DynError> {
+    let mut sample_group = None;
+    let mut data_contains_marker = false;
+
+    for attribute in NlasIterator::new(message.as_ref()) {
+        let attribute = attribute.map_err(|error| format!("invalid psample attribute: {error}"))?;
+        match attribute.kind() {
+            PSAMPLE_ATTR_SAMPLE_GROUP if attribute.value().len() >= 4 => {
+                sample_group = Some(u32::from_ne_bytes(attribute.value()[..4].try_into()?));
+            }
+            PSAMPLE_ATTR_DATA => {
+                data_contains_marker = attribute
+                    .value()
+                    .windows(marker.len())
+                    .any(|window| window == marker)
+            }
+            _ => {}
+        }
+    }
+
+    Ok(sample_group == Some(SAMPLE_GROUP) && data_contains_marker)
+}
+
+fn create_sample_path() -> Result<(), DynError> {
+    delete_links()?;
+    let tx = tx_link();
+    let rx = rx_link();
+    let sample_group = SAMPLE_GROUP.to_string();
+    run(
+        "ip",
+        &["link", "add", tx, "type", "veth", "peer", "name", rx],
+    )?;
+    run("ip", &["link", "set", tx, "up"])?;
+    run("ip", &["link", "set", rx, "up"])?;
+    run("tc", &["qdisc", "add", "dev", rx, "clsact"])?;
+    run(
+        "tc",
+        &[
+            "filter",
+            "add",
+            "dev",
+            rx,
+            "ingress",
+            "matchall",
+            "action",
+            "sample",
+            "rate",
+            "1",
+            "group",
+            &sample_group,
+            "trunc",
+            "256",
+        ],
+    )?;
+    Ok(())
+}
+
+fn send_marker(marker: &[u8]) -> Result<(), DynError> {
+    let socket = unsafe {
+        libc::socket(
+            libc::AF_PACKET,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+            (libc::ETH_P_ALL as u16).to_be().into(),
+        )
+    };
+    if socket < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    let socket = unsafe { OwnedFd::from_raw_fd(socket) };
+
+    let result = (|| {
+        let tx = std::ffi::CString::new(tx_link())?;
+        let ifindex = unsafe { libc::if_nametoindex(tx.as_ptr()) };
+        if ifindex == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut frame = vec![0u8; 14 + marker.len()];
+        frame[..6].fill(0xff);
+        frame[6..12].copy_from_slice(&[0x02, 0, 0, 0, 0, 1]);
+        frame[12..14].copy_from_slice(&0x88b5u16.to_be_bytes());
+        frame[14..].copy_from_slice(marker);
+
+        let address = libc::sockaddr_ll {
+            sll_family: libc::AF_PACKET as u16,
+            sll_protocol: 0x88b5u16.to_be(),
+            sll_ifindex: ifindex as i32,
+            sll_hatype: 0,
+            sll_pkttype: 0,
+            sll_halen: 6,
+            sll_addr: [0xff, 0xff, 0xff, 0xff, 0xff, 0, 0, 0],
+        };
+
+        let sent = unsafe {
+            libc::sendto(
+                socket.as_raw_fd(),
+                frame.as_ptr().cast(),
+                frame.len(),
+                0,
+                (&address as *const libc::sockaddr_ll).cast(),
+                std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
+            )
+        };
+        if sent != frame.len() as isize {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+
+    result.map_err(Into::into)
+}
+
+fn load_modules() -> Result<(), DynError> {
+    run("modprobe", &["psample"])?;
+    run("modprobe", &["act_sample"])?;
+    Ok(())
+}
+
+fn unload_modules() -> Result<(), DynError> {
+    let deadline = WallInstant::now() + Duration::from_secs(5);
+    loop {
+        let _ = run("rmmod", &["act_sample"]);
+        let _ = run("rmmod", &["psample"]);
+        if !module_loaded("act_sample")? && !module_loaded("psample")? {
+            return Ok(());
+        }
+        if WallInstant::now() >= deadline {
+            return Err(
+                "could not unload act_sample/psample; another user may hold a reference".into(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn unload_helper_modules(modules: &[&str]) -> Result<(), DynError> {
+    for module in modules.iter().rev() {
+        if module_loaded(module)? {
+            run("rmmod", &[*module])?;
+        }
+    }
+    Ok(())
+}
+
+fn require_removable_modules() -> Result<(), DynError> {
+    let psample = output("modinfo", &["-F", "filename", "psample"])?;
+    let act_sample = output("modinfo", &["-F", "filename", "act_sample"])?;
+    if !psample.status.success() || !act_sample.status.success() {
+        return Err("modinfo could not locate psample/act_sample module files".into());
+    }
+    let psample = String::from_utf8_lossy(&psample.stdout);
+    let act_sample = String::from_utf8_lossy(&act_sample.stdout);
+    if psample.trim() == "(builtin)" || act_sample.trim() == "(builtin)" {
+        return Err("psample and act_sample must be modules, not built into the kernel".into());
+    }
+
+    Ok(())
+}
+
+fn delete_links() -> Result<(), DynError> {
+    for name in [tx_link(), rx_link()] {
+        if link_exists(name)? {
+            let result = output("ip", &["link", "del", name])?;
+            if !result.status.success() && link_exists(name)? {
+                return Err(command_error("ip", &["link", "del", name], &result).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_test_links_absent() -> Result<(), DynError> {
+    for name in [tx_link(), rx_link()] {
+        if link_exists(name)? {
+            return Err(format!("refusing to delete pre-existing interface {name}").into());
+        }
+    }
+    Ok(())
+}
+
+fn tx_link() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| format!("pst{:x}", std::process::id()))
+}
+
+fn rx_link() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| format!("psr{:x}", std::process::id()))
+}
+
+fn expect_family(expected: bool) -> Result<(), DynError> {
+    let actual = family_exists()?;
+    if actual != expected {
+        return Err(format!(
+            "psample family is {}, expected {}",
+            if actual { "available" } else { "absent" },
+            if expected { "available" } else { "absent" }
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn family_exists() -> Result<bool, DynError> {
+    let mut socket = countersyncd::actor::netlink_utils::create_nl_resolver()?;
+    match countersyncd::actor::netlink_utils::resolve_family_group(&mut socket, FAMILY, GROUP) {
+        Ok(_) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => Ok(false),
+        Err(error) => Err(format!("resolve psample family: {error}").into()),
+    }
+}
+
+fn resolve_ids() -> Result<(u16, u32), DynError> {
+    let mut socket = countersyncd::actor::netlink_utils::create_nl_resolver()?;
+    let subscription =
+        countersyncd::actor::netlink_utils::resolve_family_group(&mut socket, FAMILY, GROUP)?;
+    Ok((subscription.family_id, subscription.group_id))
+}
+
+fn module_loaded(module: &str) -> Result<bool, DynError> {
+    Ok(fs::read_to_string("/proc/modules")?
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some(module)))
+}
+
+fn link_exists(name: &str) -> Result<bool, DynError> {
+    Ok(output("ip", &["link", "show", "dev", name])?
+        .status
+        .success())
+}
+
+fn require_root() -> Result<(), DynError> {
+    if unsafe { libc::geteuid() } != 0 {
+        return Err("run this example as root (sudo -E cargo run ...)".into());
+    }
+    Ok(())
+}
+
+fn require_command(command: &str) -> Result<(), DynError> {
+    if command_path(command).is_none() {
+        return Err(format!("required command not found: {command}").into());
+    }
+    Ok(())
+}
+
+fn require_module(module: &str) -> Result<(), DynError> {
+    let result = output("modprobe", &["-n", module])?;
+    if !result.status.success() {
+        return Err(command_error("modprobe", &["-n", module], &result).into());
+    }
+    Ok(())
+}
+
+fn reloads() -> Result<usize, DynError> {
+    let reloads = match std::env::var("PSAMPLE_TEST_RELOADS") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_RELOADS,
+    };
+    if reloads == 0 {
+        return Err("PSAMPLE_TEST_RELOADS must be greater than zero".into());
+    }
+    if reloads < MIN_RELOADS && std::env::var_os("PSAMPLE_TEST_SMOKE").is_none() {
+        return Err(format!("PSAMPLE_TEST_RELOADS must be at least {MIN_RELOADS}").into());
+    }
+    Ok(reloads)
+}
+
+fn fd_snapshot() -> Result<BTreeMap<String, usize>, DynError> {
+    // Equal snapshots prove endpoint cardinality did not grow at checkpoints, not socket identity
+    // stability or absence of churn. Reloaded data sockets and resolver helpers churn by design, so
+    // raw socket inode identities are intentionally normalized away.
+    let mut snapshot = BTreeMap::new();
+    for entry in fs::read_dir("/proc/self/fd")? {
+        let entry = entry?;
+        let target = match fs::read_link(entry.path()) {
+            Ok(target) => normalize_fd_target(&target.display().to_string()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        *snapshot.entry(target).or_default() += 1;
+    }
+    Ok(snapshot)
+}
+
+fn normalize_fd_target(target: &str) -> String {
+    if target.starts_with("socket:[") {
+        "socket".to_string()
+    } else if target.starts_with("anon_inode:[eventpoll]") {
+        "eventpoll".to_string()
+    } else if target.starts_with("anon_inode:[timerfd]") {
+        "timerfd".to_string()
+    } else {
+        target.to_string()
+    }
+}
+
+fn rss_kib() -> Result<u64, DynError> {
+    let status = fs::read_to_string("/proc/self/status")?;
+    let value = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|line| line.split_whitespace().next())
+        .ok_or("VmRSS missing from /proc/self/status")?;
+    Ok(value.parse()?)
+}
+
+async fn settle() {
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn verify_auto_advance_disabled() -> Result<(), DynError> {
+    let before = tokio::time::Instant::now();
+    let virtual_timer = tokio::time::sleep(Duration::from_secs(1));
+    tokio::pin!(virtual_timer);
+    let wall_timer = Delay::new(Duration::from_millis(20));
+    tokio::select! {
+        _ = &mut virtual_timer => {
+            return Err("Tokio time auto-advanced despite the guard".into());
+        }
+        _ = wall_timer => {},
+    }
+    if tokio::time::Instant::now() != before {
+        return Err("Tokio time advanced during a real wall-clock wait".into());
+    }
+    Ok(())
+}
+
+async fn advance_in_steps(duration: Duration) {
+    let mut remaining = duration;
+    while !remaining.is_zero() {
+        let step = remaining.min(Duration::from_millis(10));
+        advance(step).await;
+        settle().await;
+        remaining -= step;
+    }
+}
+
+async fn wall_timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, DynError> {
+    let timer = Delay::new(duration);
+    tokio::pin!(future);
+
+    tokio::select! {
+        result = &mut future => Ok(result),
+        _ = timer => {
+            Err(format!("wall-clock timeout after {duration:?}").into())
+        },
+    }
+}
+
+fn trim_allocator() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+fn heap_in_use_bytes() -> usize {
+    unsafe { libc::mallinfo2().uordblks }
+}
+
+fn run(command: &str, args: &[&str]) -> Result<(), DynError> {
+    let result = output(command, args)?;
+    if result.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(command, args, &result).into())
+    }
+}
+
+fn output(command: &str, args: &[&str]) -> Result<Output, DynError> {
+    let executable =
+        command_path(command).ok_or_else(|| format!("required command not found: {command}"))?;
+    let mut child = Command::new(executable)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("run {command} {}: {e}", args.join(" ")))?;
+    if child.wait_timeout(COMMAND_TIMEOUT)?.is_none() {
+        child.kill()?;
+        let _ = child.wait();
+        return Err(format!(
+            "{} {} timed out after {:?}",
+            command,
+            args.join(" "),
+            COMMAND_TIMEOUT
+        )
+        .into());
+    }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("collect {command} output: {e}").into())
+}
+
+fn command_path(command: &str) -> Option<std::path::PathBuf> {
+    let mut paths = std::env::var_os("PATH").unwrap_or_default();
+    paths.push(":/usr/sbin:/sbin");
+    which::which_in(command, Some(paths), std::env::current_dir().ok()?).ok()
+}
+
+fn command_error(command: &str, args: &[&str], output: &Output) -> String {
+    format!(
+        "{} {} failed with {}: {}",
+        command,
+        args.join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}

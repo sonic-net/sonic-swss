@@ -33,6 +33,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
@@ -3742,7 +3743,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
             platform == CLX_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
@@ -3761,7 +3763,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     if ( platform == MRVL_PRST_PLATFORM_SUBSTRING ||
 	    platform == MRVL_TL_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
 	m_L3V4V6Capability =
         {
@@ -4486,6 +4489,8 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+
+    gAclOrch = nullptr;
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -6284,7 +6289,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {

@@ -120,11 +120,9 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELLINK)
     {
-        if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
-        {
-            /* Remove LAG ports and delete LAG */
-            removeLag(lagName);
-        }
+        /* Always remove APP_LAG (and STATE_LAG if tracked), even when
+         * TeamPortSync was never created because teamdctl failed on add. */
+        removeLag(lagName);
         return;
     }
 
@@ -137,7 +135,6 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
                       bool oper_state, unsigned int mtu)
 {
-    /* Set the LAG */
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
@@ -145,10 +142,6 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     fvVector.push_back(a);
     fvVector.push_back(o);
     fvVector.push_back(m);
-    m_lagTable.set(lagName, fvVector);
-
-    SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
-                   lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down", mtu);
 
     bool lag_update = true;
     /* Return when the team instance has already been tracked */
@@ -165,6 +158,12 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
+
+    /* Publish APP_LAG immediately so orchagent can allocate and free LAG ids on
+     * rapid add/del; RTM_DELLINK always removes APP_LAG even when TeamPortSync
+     * never succeeded.  STATE_LAG is written only after teamd is ready (#3984). */
+    m_lagTable.set(lagName, fvVector);
+
     if (lag_update)
     {
         /* Create the team instance.
@@ -177,16 +176,17 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
          * which would abort the entire netlink processing loop.  When teamd finishes
          * recreating the device the kernel emits a fresh RTM_NEWLINK with the correct
          * new ifindex and addLag() is called again, at which point initialization
-         * succeeds.
-         * STATE_DB is written only after the team instance is successfully created
-         * to prevent dependent services (e.g. intfmgrd) from acting on a LAG that
-         * teamd has not yet finished setting up. */
+         * succeeds. */
         try
         {
             auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
             m_stateLagTable.set(lagName, fvVector);
             m_teamSelectables[lagName] = sync;
             m_selectablesToAdd.insert(lagName);
+
+            SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
+                           lagName.c_str(), admin_state ? "up" : "down",
+                           oper_state ? "up" : "down", mtu);
         }
         catch (const system_error& e)
         {
@@ -203,14 +203,16 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
 void TeamSync::removeLag(const string &lagName)
 {
-    /* Delete all members */
-    auto selectable = m_teamSelectables[lagName];
-    for (auto it : selectable->m_lagMembers)
+    auto it = m_teamSelectables.find(lagName);
+    if (it != m_teamSelectables.end())
     {
-        m_lagMemberTable.del(lagName + ":" + it.first);
+        for (auto member : it->second->m_lagMembers)
+        {
+            m_lagMemberTable.del(lagName + ":" + member.first);
 
-        SWSS_LOG_INFO("Remove member %s before removing LAG %s",
-                it.first.c_str(), lagName.c_str());
+            SWSS_LOG_INFO("Remove member %s before removing LAG %s",
+                    member.first.c_str(), lagName.c_str());
+        }
     }
 
     /* Delete the LAG */
@@ -218,9 +220,10 @@ void TeamSync::removeLag(const string &lagName)
 
     SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
 
-    /* Return when the team instance hasn't been tracked before */
-    if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
+    if (it == m_teamSelectables.end())
+    {
         return;
+    }
 
     m_stateLagTable.del(lagName);
 

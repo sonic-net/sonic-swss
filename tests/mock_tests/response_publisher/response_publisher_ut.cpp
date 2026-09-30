@@ -8,6 +8,7 @@
 #include "recorder.h"
 #include "return_code.h"
 #include "zmqserver.h"
+#include "warm_restart.h"
 
 using namespace swss;
 
@@ -72,14 +73,14 @@ TEST(ResponsePublisher, TestPublishEnableDbWrite)
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(false);
+    publisher.setEnableDbWrite(false);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(true);
+    publisher.setEnableDbWrite(true);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();
@@ -226,7 +227,7 @@ TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setEnableDbWriteAndNotify(false);
+    publisher.setEnableDbWrite(false);
 
     publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "off"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
@@ -235,7 +236,7 @@ TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
     std::string v;
     ASSERT_FALSE(pollHget(stateTable, "10.8.1.0/24", "state", &v, 200));
 
-    publisher.setEnableDbWriteAndNotify(true);
+    publisher.setEnableDbWrite(true);
     publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "on"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
     publisher.flush();
@@ -354,3 +355,42 @@ TEST(ResponsePublisher, PublishAsyncBatchOkDeleteEmptyIntentWritesDel)
     ASSERT_FALSE(stateTable.hget("10.22.0.0/24", "state", v));
 }
 
+TEST(ResponsePublisher, TestWarmbootAndControlFlags)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "TABLE"};
+    std::string value;
+
+    DBConnector stateDbConn{"STATE_DB", 0};
+    Table warmRestartTable{&stateDbConn, "WARM_RESTART_TABLE"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, false};
+
+    // 1. Verify disabling notify does not prevent DB writes
+    publisher.setEnableNotify(false);
+    publisher.publish("TABLE", "KEY_NOTIFY", {{"f", "v"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    ASSERT_TRUE(stateTable.hget("KEY_NOTIFY", "f", value));
+    ASSERT_EQ(value, "v");
+    publisher.setEnableNotify(true);
+
+    // 2. Initialize WarmStart state table and test failure path
+    swss::WarmStart::initialize("orchagent", "orchagent");
+    warmRestartTable.hset("orchagent", "state", "initialized");
+    publisher.setWarmbootStateOnFailure("orchagent", true);
+    publisher.publish("TABLE", "KEY_FAIL", {{"f", "v"}}, ReturnCode(SAI_STATUS_FAILURE));
+    ASSERT_FALSE(stateTable.hget("KEY_FAIL", "f", value));
+
+    std::string warmState;
+    ASSERT_TRUE(warmRestartTable.hget("orchagent", "state", warmState));
+    ASSERT_EQ(warmState, "disabled");
+
+    publisher.setWarmbootStateOnFailure("orchagent", false);
+
+    publisher.setEnableDbWrite(false);
+    publisher.publish("TABLE", "KEY_NO_DB", {{"f", "v"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    ASSERT_FALSE(stateTable.hget("KEY_NO_DB", "f", value));
+
+    publisher.setEnableDbWrite(true);
+    publisher.publish("TABLE", "KEY_WRITE", {{"f", "v"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    ASSERT_TRUE(stateTable.hget("KEY_WRITE", "f", value));
+}

@@ -175,7 +175,20 @@ ReturnCodeOr<P4RouterInterfaceAppDbEntry> RouterInterfaceManager::deserializeRou
       }
       app_db_entry.is_set_vlan_id = true;
         }
-        else if (field != p4orch::kAction && field != p4orch::kControllerMetadata)
+        else if (field == p4orch::kAction) {
+        if (value == p4orch::kUnicastSetPortAndSrcMac ||
+            value == p4orch::kUnicastSetPortAndSrcMacAndVlanId ||
+            value == p4orch::kSetPortAndSrcMacAndVlanId) {
+          app_db_entry.creates_my_mac = false;
+        } else if (value == p4orch::kSetPortAndSrcMac) {
+          app_db_entry.creates_my_mac = true;
+        } else {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Unexpected action " << QuotedVar(value) << " in "
+                 << APP_P4RT_ROUTER_INTERFACE_TABLE_NAME;
+        }
+        app_db_entry.action = value;
+      } else if (field != p4orch::kControllerMetadata)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                    << "Unexpected field " << QuotedVar(field) << " in table entry";
@@ -189,6 +202,24 @@ ReturnCode RouterInterfaceManager::validateRouterInterfaceAppDbEntry(
     const P4RouterInterfaceAppDbEntry& app_db_entry) {
   // Perform generic APP DB entry validations. Operation specific validations
   // will be done by the respective request process methods.
+
+  if (app_db_entry.action == p4orch::kSetPortAndSrcMac ||
+      app_db_entry.action == p4orch::kUnicastSetPortAndSrcMac) {
+    if (!app_db_entry.is_set_port_name || !app_db_entry.is_set_src_mac ||
+        app_db_entry.is_set_vlan_id) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Action " << QuotedVar(app_db_entry.action)
+             << " should set port and source mac, but not vlan id";
+    }
+  } else if (app_db_entry.action == p4orch::kSetPortAndSrcMacAndVlanId ||
+             app_db_entry.action == p4orch::kUnicastSetPortAndSrcMacAndVlanId) {
+    if (!app_db_entry.is_set_port_name || !app_db_entry.is_set_src_mac ||
+        !app_db_entry.is_set_vlan_id) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Action " << QuotedVar(app_db_entry.action)
+             << " should set port, source mac, and vlan id";
+    }
+  }
 
   if (app_db_entry.is_set_port_name) {
     Port port;
@@ -329,7 +360,7 @@ std::vector<ReturnCode> RouterInterfaceManager::createRouterInterfaces(
         router_intf_entries[i].router_interface_id,
         router_intf_entries[i].port_name,
         router_intf_entries[i].src_mac_address, router_intf_entries[i].vlan_id,
-        router_intf_entries[i].is_set_vlan_id);
+        router_intf_entries[i].is_set_vlan_id, router_intf_entries[i].creates_my_mac);
     auto attrs = prepareSaiAttrs(entries[i]);
     if (!attrs.ok()) {
       statuses[i] = ReturnCode(attrs.status());
@@ -732,6 +763,13 @@ std::string RouterInterfaceManager::verifyStateCache(const P4RouterInterfaceAppD
             << " does not match internal cache " << router_intf_entry->vlan_id
             << " in router interface manager.";
         return msg.str();
+    }
+    if (router_intf_entry->creates_my_mac != app_db_entry.creates_my_mac) {
+      std::stringstream msg;
+      msg << "Creating a My MAC entry " << app_db_entry.creates_my_mac
+          << " does not match internal cache "
+          << router_intf_entry->creates_my_mac << " in router interface manager.";
+      return msg.str();
     }
 
     return m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key,

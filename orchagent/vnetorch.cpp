@@ -206,13 +206,13 @@ string VNetVrfObject::getProfile(IpPrefix& ipPrefix)
 void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
 {
     /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
+    if (nh.ips.empty())
     {
         return;
     }
-    else if (nh.ips.getSize() == 1)
+    else if (nh.ips.size() == 1)
     {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        NextHopKey nexthop(nh.ips.front().to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
         {
             gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
@@ -230,13 +230,13 @@ void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
 void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
 {
     /* Return when there is no next hop (dropped) */
-    if (nh.ips.getSize() == 0)
+    if (nh.ips.empty())
     {
         return;
     }
-    else if (nh.ips.getSize() == 1)
+    else if (nh.ips.size() == 1)
     {
-        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        NextHopKey nexthop(nh.ips.front().to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
         {
             gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
@@ -818,6 +818,13 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
             continue;
         }
         sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
+        if (next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("VNET %s: no next hop for endpoint %s, next hop group %s not created",
+                           vnet.c_str(), it.to_string().c_str(), nexthops.to_string().c_str());
+            releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
+            return false;
+        }
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
         nh_seq_id_in_nhgrp[next_hop_id] = nh_seq_id;
@@ -840,6 +847,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                        nexthops.to_string().c_str(), status);
+        releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
         return false;
     }
 
@@ -899,6 +907,22 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
 
     return true;
+}
+
+void VNetRouteOrch::releaseTunnelNextHops(VNetVrfObject *vrf_obj,
+                                          const std::map<sai_object_id_t, NextHopKey>& nexthops,
+                                          const bool isLocalEp)
+{
+    // Local endpoints are owned by NeighOrch; only tunnel next hops were referenced here.
+    if (isLocalEp)
+    {
+        return;
+    }
+
+    for (auto nh : nexthops)
+    {
+        vrf_obj->removeTunnelNextHop(nh.second);
+    }
 }
 
 bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
@@ -1004,6 +1028,12 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
         else
         {
             next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+            if (next_hop_group_entry.next_hop_group_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("VNET %s: no next hop for endpoint %s",
+                               vnet.c_str(), nexthop.to_string().c_str());
+                return false;
+            }
             next_hop_group_entry.ref_count = 0;
         }
 
@@ -1170,14 +1200,29 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
         nexthops_selected = nhg_custom;
         return true;
     }
-    else if (!hasNextHopGroup(vnet, nexthops_primary))
+    else
     {
-        SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
-        setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+        bool next_hop_group_exists = hasNextHopGroup(vnet, nexthops_primary);
+        auto vnet_routes = syncd_tunnel_routes_.find(vnet);
+        bool route_exists = vnet_routes != syncd_tunnel_routes_.end() &&
+                            vnet_routes->second.find(ipPrefix) != vnet_routes->second.end();
+        bool is_custom_monitoring = monitoring == VNET_MONITORING_TYPE_CUSTOM ||
+                                    monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD;
+
+        // Default BFD monitors are owned by the NHG; custom monitors are per route.
+        if (!next_hop_group_exists || (is_custom_monitoring && !route_exists))
         {
-            delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
-            return false;
+            setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+        }
+
+        if (!next_hop_group_exists)
+        {
+            SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
+            if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+            {
+                delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
+                return false;
+            }
         }
     }
     nexthops_selected = nexthops_primary;
@@ -1249,6 +1294,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         NextHopGroupKey active_nhg("", true);
         if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors, monitor_addr_to_pinned_state))
         {
+            SWSS_LOG_WARN("VNET %s route %s: next hop group %s is not available, route not updated",
+                          vnet.c_str(), ipPrefix.to_string().c_str(), nexthops.to_string().c_str());
             return true;
         }
 
@@ -1735,7 +1782,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         return true;
     }
 
-    bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
+    bool is_subnet = (nh.ips.empty() ||
+                      std::any_of(nh.ips.begin(), nh.ips.end(),
+                                  [](const IpAddress& a) { return a.isZero(); }))
+                     ? true : false;
 
     Port port;
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
@@ -1793,17 +1843,20 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     }
     else
     {
-        // Populate next hop group string
         auto ifnames = tokenize(nh.ifname, ',');
-        int idx = 0;
-        for (auto it : nh.ips.getIpAddresses())
+        size_t idx = 0;
+        for (const auto& ip : nh.ips)
         {
+            if (idx >= ifnames.size())
+            {
+                SWSS_LOG_ERROR("Nexthop ip/ifname count mismatch for VNET %s route %s", vnet.c_str(), ipPrefix.to_string().c_str());
+                break;
+            }
             if (!nhg_str.empty())
             {
                 nhg_str += ",";
             }
-
-            nhg_str += it.to_string() + "@" + ifnames[idx];
+            nhg_str += ip.to_string() + "@" + ifnames[idx];
             idx++;
         }
     }
@@ -1854,7 +1907,7 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    IpAddresses ip_addresses;
+    std::vector<IpAddress> ip_addresses;
     string ifname = "";
 
     for (const auto& name: request.getAttrFieldNames())
@@ -1866,7 +1919,18 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
         else if (name == "nexthop")
         {
             auto ipstr = request.getAttrString(name);
-            ip_addresses = IpAddresses(ipstr);
+
+            if (!ipstr.empty())
+            {
+                for (const auto& tok : tokenize(ipstr, ','))
+                {
+                    if (tok.empty())
+                    {
+                        continue;
+                    }
+                    ip_addresses.emplace_back(tok);
+                }
+            }
         }
         else
         {

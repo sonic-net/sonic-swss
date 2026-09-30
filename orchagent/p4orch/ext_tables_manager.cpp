@@ -1,5 +1,7 @@
 #include "p4orch/ext_tables_manager.h"
 
+#include <inttypes.h>
+
 #include <boost/algorithm/string.hpp>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -221,7 +223,7 @@ ReturnCodeOr<P4ExtTableAppDbEntry> ExtTablesManager::deserializeP4ExtTableEntry(
             continue;
         }
 
-        const auto &tokenized_fields = tokenize(field, p4orch::kFieldDelimiter);
+        const auto& tokenized_fields = swss::tokenize(field, p4orch::kFieldDelimiter);
         if (tokenized_fields.size() <= 1)
         {
             SWSS_LOG_ERROR("Unknown extension entry field");

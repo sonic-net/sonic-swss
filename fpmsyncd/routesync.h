@@ -9,6 +9,7 @@
 #include "linkcache.h"
 #include "fpminterface.h"
 #include "warmRestartHelper.h"
+#include "fpmsyncd/routesendcoalescer.h"
 #include <string.h>
 #include <bits/stdc++.h>
 #include <linux/version.h>
@@ -234,6 +235,11 @@ public:
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
 
+    void setTableWithWarmRestart(
+        FieldValueTupleWrapperBase &fvw,
+        ProducerStateTable &table,
+        const std::string &tableName);
+
     void setTable(
         FieldValueTupleWrapperBase & fvw,
         ProducerStateTable & table);
@@ -242,6 +248,11 @@ public:
     void delWithWarmRestart(
         FieldValueTupleWrapperBase && fvw,
         ProducerStateTable & table);
+
+    void delTableWithWarmRestart(
+        FieldValueTupleWrapperBase &&fvw,
+        ProducerStateTable &table,
+        const std::string &tableName);
 
     void onRouteResponse(const std::string& key, const std::vector<FieldValueTuple>& fieldValues);
 
@@ -267,6 +278,13 @@ public:
         return m_warmStartHelper;
     }
 
+    /* Launch the coalescing send thread. Idempotent; no-op without ZMQ. */
+    void startRouteCoalescer();
+
+    /* Drain and retire the coalescing send thread, handing the route tables to
+     * warm-restart reconcile for the rest of the process. */
+    void retireRouteCoalescer();
+
 private:
     /* ApplDB connector */
     shared_ptr<DBConnector> m_appDb;
@@ -276,6 +294,13 @@ private:
     shared_ptr<ProducerStateTable> m_routeTable;
     /* label route table */
     shared_ptr<ProducerStateTable> m_label_routeTable;
+    /* STATE_DB handle for route-send telemetry (owned; only used when ZMQ enabled) */
+    shared_ptr<DBConnector> m_stateDb;
+    /* Coalescing map + dedicated send thread for the ZMQ route path.
+     * Non-null only when ZMQ is enabled. Declared after the tables, the ZMQ
+     * client and the STATE_DB handle it borrows raw pointers to, so it is
+     * destroyed first and its send thread joined while those are still alive. */
+    shared_ptr<RouteSendCoalescer> m_routeCoalescer;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
@@ -418,8 +443,15 @@ private:
         return m_zmqClient != nullptr;
     }
 
-    bool getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists);
+    /* Map a ZMQ route table reference to the coalescer TableId. Returns false if
+     * the table is not one of the two ZMQ-backed route tables. */
+    bool zmqTableId(const ProducerStateTable & table, RouteSendCoalescer::TableId & id) const;
 
+    /* True when the steady-state write should funnel through the coalescing
+     * send thread. */
+    bool coalescerActive() const;
+
+    bool getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists);
 };
 struct NextHopField {
     string nexthops;

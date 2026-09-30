@@ -129,6 +129,17 @@ OrchDaemon::~OrchDaemon()
     }
 
     /*
+     * Detach observers while all orchs are still alive.
+     * m_orchList reverse deletion can destroy a Subject before its
+     * Observers (e.g. FdbOrch before MuxOrch/NeighOrch). Calling
+     * detachObservers() here avoids the ordering dependency entirely.
+     */
+    for (auto* orch : m_orchList)
+    {
+        orch->detachObservers();
+    }
+
+    /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
      * NOTE: This is still not a robust solution, as order in this list
@@ -331,6 +342,7 @@ bool OrchDaemon::init()
 
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
+    gNeighOrch->attach(gBfdOrch);
 
     const int fgnhgorch_pri = 15;
 
@@ -366,7 +378,7 @@ bool OrchDaemon::init()
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
     auto enable_route_zmq = get_route_perf_zmq_enabled();
-    auto route_zmq_server = enable_route_zmq ? m_zmqServer : nullptr;
+    auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
@@ -824,8 +836,17 @@ bool OrchDaemon::init()
             }
         }
 
+        // Complete hardware recovery needs deadlock detection and recovery in
+        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
+        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
+        if (gSwitchOrch->checkPfcDldrEnable())
+        {
+            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
+        }
+
         if(pfcDlrInit)
         {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -836,6 +857,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -889,7 +911,7 @@ bool OrchDaemon::init()
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
     m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
@@ -1268,6 +1290,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
+    // Configure response publisher before warm-boot starts.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/true);
+
     for (Orch *o : m_orchList)
     {
         o->bake();
@@ -1311,6 +1336,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
     gAclOrch->doTask();
+
+    // Configure response publisher after warm-boot completes.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/false);
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and
@@ -1418,6 +1446,25 @@ void OrchDaemon::addOrchList(Orch *o)
 {
     m_orchList.push_back(o);
 }
+
+void OrchDaemon::configureResponsePublisherForWarmBoot(bool warm_boot_start)
+{
+     for (Orch *o : m_orchList)
+     {
+        /* During warmboot, we will enable setWarmbootStateOnFailure, so that
+         * failure during warmboot will update the warmboot state to FAILED
+         * indicating that the reconciliation process failed. */
+        o->setWarmbootStateOnFailure("orchagent", warm_boot_start);
+
+        /* During warmboot, we will disable setEnableNotify, so that no
+         * response notification will be generated when processing warmboot
+         * entries. The response notification is not needed during warmboot as
+         * there is no application client receiving the response during
+         * warmboot. */
+        o->setEnableNotify(!warm_boot_start);
+     }
+}
+
 
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {

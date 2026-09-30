@@ -40,11 +40,11 @@ extern bool gEnableFibSuppress;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        ZmqRouteOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
+        ZmqRouteOrch(db, tableNames, zmqRouteServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -571,6 +571,11 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
+
+        // Mark member as removed from SAI so removeNextHopGroup() skips it.
+        // Preserves seq_id for ordered ECMP re-add via validnexthopinNextHopGroup().
+        nhopgroup->second.nhopgroup_members[nexthop].next_hop_id = SAI_NULL_OBJECT_ID;
+
         // Reduce the member install count when links down
         if (nhopgroup->second.nh_member_install_count)
         {
@@ -1717,6 +1722,14 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
             SWSS_LOG_INFO("Skip NHG member remove for %s in group %" PRIx64 ": nexthop missing",
                           nhop->first.to_string().c_str(),
                           next_hop_group_entry->second.next_hop_group_id);
+            nhop = nhgm.erase(nhop);
+            continue;
+        }
+
+        if (nhop->second.next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Skip NHG member %s already removed from SAI",
+                          nhop->first.to_string().c_str());
             nhop = nhgm.erase(nhop);
             continue;
         }

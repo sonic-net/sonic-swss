@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
+fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp routesendcoalescer.cpp $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                     $(top_srcdir)/lib/orch_zmq_config.cpp
 
 fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
@@ -20,6 +20,6 @@ fpmsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-fpmsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+fpmsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 

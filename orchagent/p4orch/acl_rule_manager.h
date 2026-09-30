@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "dbconnector.h"
-#include "copporch.h"
 #include "orch.h"
 #include "p4orch/acl_util.h"
 #include "p4orch/object_manager_interface.h"
@@ -31,9 +30,9 @@ class AclManagerTest;
 class AclRuleManager : public ObjectManagerInterface
 {
   public:
-    explicit AclRuleManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, CoppOrch *coppOrch,
+    explicit AclRuleManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch,
                             ResponsePublisherInterface *publisher)
-        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE"), m_publisher(publisher), m_coppOrch(coppOrch),
+        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE"), m_publisher(publisher),
           m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0)),
           m_countersTable(std::make_unique<swss::Table>(
               m_countersDb.get(), std::string(COUNTERS_TABLE) + DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME))
@@ -53,6 +52,15 @@ class AclRuleManager : public ObjectManagerInterface
     // Update counters stats for every rule in each ACL table in COUNTERS_DB, if
     // counters are enabled in rules.
     void doAclCounterStatsTask();
+
+    // Create user defined trap for new cpu queue/trap group and program the user
+    // defined trap in hostif table if it is a new trap group.
+    // Save the user defined trap oid in m_p4OidMapper and default ref count is 1.
+    // Remove and create user defined trap if trap group is being updated.
+    // Remove user defined trap and its hostif entry if trap group is going to be
+    // deleted.
+    ReturnCode updateUserDefinedTrap(const std::string& trap_group_name,
+                                     bool is_delete = false);
 
   private:
     // Deserializes an entry in a dynamically created ACL table.
@@ -86,7 +94,7 @@ class AclRuleManager : public ObjectManagerInterface
                                 const P4AclRule &acl_rule, sai_object_id_t *counter_oid);
 
     // Create an ACL meter.
-    ReturnCode createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key, sai_object_id_t *meter_oid);
+    ReturnCode createAclMeter(P4AclMeter& p4_acl_meter, const std::string &meter_key, sai_object_id_t *meter_oid);
 
     // Remove an ACL counter.
     ReturnCode removeAclCounter(const std::string &acl_table_name, const std::string &counter_key);
@@ -147,12 +155,13 @@ class AclRuleManager : public ObjectManagerInterface
     // Create user defined trap for each cpu queue/trap group and program user
     // defined traps in hostif. Save the user defined trap oids in m_p4OidMapper
     // and default ref count is 1.
-    ReturnCode setUpUserDefinedTraps();
+    ReturnCode initializeUserDefinedTraps();
 
-    // Clean up user defined traps created for cpu queues. Callers need to make
-    // sure ref count on user defined traps in m_userDefinedTraps are ones before
-    // clean up.
-    ReturnCode cleanUpUserDefinedTraps();
+    // Create or update(remove then create) user defined traps and its hostif
+    // table entry and update cache.
+    ReturnCode setUserDefinedTrap(const uint32_t queue_num,
+                                  const sai_object_id_t trap_group_oid,
+                                  const sai_object_id_t hostif_oid);
 
     // Verifies internal cache for an entry.
     std::string verifyStateCache(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule *acl_rule);
@@ -166,11 +175,13 @@ class AclRuleManager : public ObjectManagerInterface
     ResponsePublisherInterface *m_publisher;
     P4AclRuleTables m_aclRuleTables;
     VRFOrch *m_vrfOrch;
-    CoppOrch *m_coppOrch;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     std::unique_ptr<swss::DBConnector> m_countersDb;
     std::unique_ptr<swss::Table> m_countersTable;
-    std::map<int, P4UserDefinedTrapHostifTableEntry> m_userDefinedTraps;
+    std::unordered_map<uint32_t, P4UserDefinedTrapHostifTableEntry>
+        m_userDefinedTraps;
+
+    bool m_isAclTableReferencingUserDefinedTrapsAdded = false;
 
     friend class AclTableManager;
     friend class p4orch::test::AclManagerTest;
