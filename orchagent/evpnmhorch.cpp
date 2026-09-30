@@ -269,6 +269,12 @@ void EvpnMhOrch::doEvpnEsIntfTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             m_esIntfMap.erase(key);
+            /* The port is no longer an ES: a held backup group DEL completes. */
+            auto e = m_esBackup.find(key);
+            if (e != m_esBackup.end() && e->second.deleted && !finishEsBackupDelete(key))
+            {
+                m_esBackupPending.insert(key);
+            }
         }
 
         if (!vlanMembersApplyNonDF(key))
@@ -414,6 +420,12 @@ void EvpnMhOrch::doEvpnEsBackupNhgTask(Consumer &consumer)
                 }
             }
             auto &entry = m_esBackup[port_name];
+            if (entry.deleted)
+            {
+                SWSS_LOG_NOTICE("ES %s backup next hop group set again while its removal was held",
+                                port_name.c_str());
+                entry.deleted = false;
+            }
             if (entry.nhg_id != nhg_id)
             {
                 SWSS_LOG_NOTICE("ES %s backup next hop group %s -> %s", port_name.c_str(),
@@ -433,6 +445,11 @@ void EvpnMhOrch::doEvpnEsBackupNhgTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             auto e = m_esBackup.find(port_name);
+            if (e != m_esBackup.end() && holdEsBackupDelete(e->second, port_name))
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             if (e != m_esBackup.end() && !detachEsBackup(e->second, port_name))
             {
                 ++it;
@@ -497,6 +514,10 @@ bool EvpnMhOrch::applyEsBackup(const std::string &port_name)
         return true;
     }
     auto &entry = e->second;
+    if (entry.deleted)
+    {
+        return finishEsBackupDelete(port_name);
+    }
 
     Port port;
     if (!gPortsOrch->getPort(port_name, port) || port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
@@ -518,7 +539,8 @@ bool EvpnMhOrch::applyEsBackup(const std::string &port_name)
     sai_object_id_t want = gL2NhgOrch ? gL2NhgOrch->getL2NhgOid(entry.nhg_id) : SAI_NULL_OBJECT_ID;
     if (want == SAI_NULL_OBJECT_ID)
     {
-        if (entry.nhg_oid != SAI_NULL_OBJECT_ID)
+        /* The attached group keeps carrying a switched over port until the new one is active. */
+        if (entry.nhg_oid != SAI_NULL_OBJECT_ID && !isEsBackupInUse(entry, port_name, port))
         {
             detachEsBackup(entry, port_name);
         }
@@ -571,14 +593,72 @@ bool EvpnMhOrch::detachEsBackup(EsBackupEntry &entry, const std::string &port_na
         {
             return false;
         }
-        /* The port's MACs were kept for the group; on a down port they now blackhole. */
+        /* The port's MACs were kept for the group; on a port that does not forward they
+         * now blackhole. */
         Port port;
-        if (gFdbOrch && gPortsOrch->getPort(port_name, port) &&
-            port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+        if (gFdbOrch && gPortsOrch->getPort(port_name, port) && isEsPortDown(port))
         {
             gFdbOrch->flushFDBEntries(entry.bridge_port_id, SAI_NULL_OBJECT_ID);
         }
     }
+    return true;
+}
+
+/* Switched over, and the port does not forward yet (down, or within the switchback hold). */
+bool EvpnMhOrch::isEsBackupInUse(const EsBackupEntry &entry, const std::string &port_name,
+                                 const Port &port) const
+{
+    return entry.switchover && entry.nhg_oid != SAI_NULL_OBJECT_ID &&
+           (isEsPortDown(port) || m_esBackupSwitchback.count(port_name));
+}
+
+/*
+ * A DEL for an ES port whose traffic the group is carrying is held: switching back sends
+ * that traffic, bridged and routed, to a port that does not forward.
+ */
+bool EvpnMhOrch::holdEsBackupDelete(EsBackupEntry &entry, const std::string &port_name)
+{
+    Port port;
+    if (!isPortInterfaceAssociatedToEs(port_name) || !gPortsOrch->getPort(port_name, port) ||
+        !isEsBackupInUse(entry, port_name, port))
+    {
+        return false;
+    }
+    SWSS_LOG_NOTICE("ES %s backup next hop group %s removed while switched over: kept until "
+                    "the port forwards again or the group goes", port_name.c_str(), entry.nhg_id.c_str());
+    entry.deleted = true;
+    return true;
+}
+
+/*
+ * Completes a held DEL once the group is no longer in use. Erases the entry, so a caller
+ * iterating m_esBackup or m_esBackupSwitchback must not call it. Returns false to retry.
+ */
+bool EvpnMhOrch::finishEsBackupDelete(const std::string &port_name)
+{
+    auto e = m_esBackup.find(port_name);
+    if (e == m_esBackup.end())
+    {
+        return true;
+    }
+    auto &entry = e->second;
+    Port port;
+    if (gPortsOrch->getPort(port_name, port) && port.m_bridge_port_id != SAI_NULL_OBJECT_ID &&
+        port.m_bridge_port_id == entry.bridge_port_id)
+    {
+        if (isPortInterfaceAssociatedToEs(port_name) && isEsBackupInUse(entry, port_name, port))
+        {
+            return true;
+        }
+        if (!detachEsBackup(entry, port_name))
+        {
+            return false;
+        }
+    }
+    /* Otherwise the bridge port is gone or new, and the attributes went with it. */
+    SWSS_LOG_NOTICE("ES %s backup next hop group removed", port_name.c_str());
+    m_esBackupSwitchback.erase(port_name);
+    m_esBackup.erase(e);
     return true;
 }
 
@@ -702,6 +782,7 @@ void EvpnMhOrch::onEsBackupLagMemberChange(const std::string &member_alias, cons
 void EvpnMhOrch::onEsBackupSwitchbackTimer()
 {
     m_esBackupSwitchbackTimer->stop();
+    std::vector<std::string> deleted;
     for (const auto &port_name : m_esBackupSwitchback)
     {
         auto e = m_esBackup.find(port_name);
@@ -716,8 +797,19 @@ void EvpnMhOrch::onEsBackupSwitchbackTimer()
         {
             m_esBackupPending.insert(port_name);
         }
+        else if (e->second.deleted)
+        {
+            deleted.push_back(port_name);
+        }
     }
     m_esBackupSwitchback.clear();
+    for (const auto &port_name : deleted)
+    {
+        if (!finishEsBackupDelete(port_name))
+        {
+            m_esBackupPending.insert(port_name);
+        }
+    }
 }
 
 void EvpnMhOrch::doTask(SelectableTimer &timer)
@@ -742,6 +834,12 @@ void EvpnMhOrch::onEsBackupBridgePortChange(const Port &port, bool add)
                 m_esBackupPending.insert(port.m_alias);
             }
         }
+        else if (e->second.deleted)
+        {
+            m_esBackupSwitchback.erase(port.m_alias);
+            m_esBackupPending.erase(port.m_alias);
+            m_esBackup.erase(e);
+        }
         else
         {
             /* The attributes go with the bridge port. */
@@ -761,14 +859,22 @@ void EvpnMhOrch::onEsBackupBridgePortChange(const Port &port, bool add)
     {
         return;
     }
-    for (auto &kv : m_esBackup)
+    for (auto it = m_esBackup.begin(); it != m_esBackup.end();)
     {
-        if (kv.second.nhg_oid != SAI_NULL_OBJECT_ID &&
-            gL2NhgOrch->getNextHopGroupPortName(kv.second.nhg_id) == port.m_alias)
+        auto &kv = *it;
+        if (kv.second.nhg_oid != SAI_NULL_OBJECT_ID && port.m_type == Port::NEXTHOP_GROUP &&
+            port.m_nexthop_group_id == kv.second.nhg_oid)
         {
-            detachEsBackup(kv.second, kv.first);
+            if (detachEsBackup(kv.second, kv.first) && kv.second.deleted)
+            {
+                SWSS_LOG_NOTICE("ES %s backup next hop group removed", kv.first.c_str());
+                m_esBackupPending.erase(kv.first);
+                it = m_esBackup.erase(it);
+                continue;
+            }
             m_esBackupPending.insert(kv.first);
         }
+        ++it;
     }
 }
 
