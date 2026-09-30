@@ -216,6 +216,36 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
 }
 
 template <typename DropHandler, typename ForwardHandler>
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::clearPluginState(const Port& port, uint8_t tc)
+{
+    SWSS_LOG_ENTER();
+
+    // The detect and restore plugins keep a countdown and the previous poll's
+    // counters per queue in COUNTERS_DB, which outlives a registration.  Left
+    // in place, a new registration resumes a partly spent countdown against
+    // stale counters.  The list must cover every such field the plugins write;
+    // the RX_PAUSE_DURATION names are written by the non-broadcom plugins.
+    string separator = this->getCountersTable()->getTableNameSeparator();
+    string tableName = this->getCountersTable()->getTableName();
+
+    string queueKey = tableName + separator + sai_serialize_object_id(port.m_queue_ids[tc]);
+    this->getCountersDb()->hdel(queueKey, {
+            "PFC_WD_DETECTION_TIME_LEFT",
+            "PFC_WD_RESTORATION_TIME_LEFT",
+            "SAI_QUEUE_STAT_PACKETS_last",
+            "SAI_QUEUE_ATTR_PAUSE_STATUS_last"});
+
+    string portKey = tableName + separator + sai_serialize_object_id(port.m_port_id);
+    string pfcPrefix = "SAI_PORT_STAT_PFC_" + to_string(tc);
+    this->getCountersDb()->hdel(portKey, {
+            pfcPrefix + "_RX_PKTS_last",
+            pfcPrefix + "_ON2OFF_RX_PKTS_last",
+            pfcPrefix + "_RX_PAUSE_DURATION_last",
+            pfcPrefix + "_RX_PAUSE_DURATION_US_last"});
+}
+
+template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
@@ -237,6 +267,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
         string queueIdStr = sai_serialize_object_id(queueId);
+
+        clearPluginState(port, i);
 
         // Store detection and restoration time for plugins
         vector<FieldValueTuple> countersFieldValues;
@@ -328,7 +360,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         this->m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
 
         auto entry = m_entryMap.find(queueId);
-        if (entry != m_entryMap.end() && entry->second.handler != nullptr)
+        // Only the queues registered on this port carry plugin state.  Taken
+        // from m_entryMap rather than the port's current lossless TCs, which
+        // may have changed since the queue was registered.
+        bool registered = entry != m_entryMap.end();
+        if (registered && entry->second.handler != nullptr)
         {
             entry->second.handler->commitCounters();
         }
@@ -338,6 +374,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         // Clean up
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
         this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+
+        if (registered)
+        {
+            clearPluginState(port, i);
+        }
 
         // Drop this queue's PFC_WD_TABLE_INSTORM field so a stale row can't
         // replay a phantom storm on warm restart.

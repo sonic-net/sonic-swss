@@ -59,6 +59,7 @@ private:
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
+    void clearPluginState(const Port& port, uint8_t tc);
     void doTask(swss::NotificationConsumer &wdNotification);
 
     unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc);

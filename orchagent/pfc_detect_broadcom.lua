@@ -117,9 +117,19 @@ if timestamp_last ~= false then
     time_since_last_poll = (timestamp_current - tonumber(timestamp_last))
 end
 
--- ARGV[5]: monotonic start of this poll cycle, us.
--- ARGV[6]: time spent collecting this cycle, us.
--- Both nil on a syncd that does not pass them.
+-- ARGV[5]/ARGV[6] arrive only from a syncd carrying sonic-sairedis#2071; with an
+-- older syncd they are nil, everything below is skipped, and the redis TIME
+-- path above stays in charge.
+--
+-- ARGV[5] is a steady_clock stamp taken BEFORE collectCounters(), so successive
+-- values differ by the true cycle period.  redis TIME can only be read once the
+-- plugin runs -- after collection -- so a TIME delta is (period + change in
+-- collection time); that is why a measured interval can come out SHORTER than
+-- the configured one when collection speeds up.  TIME is also CLOCK_REALTIME,
+-- so an NTP step reads as a stall; steady_clock cannot.
+--
+-- The epoch is arbitrary (boot, typically), NOT unix time.  Only deltas are
+-- meaningful -- never compare it with PFCWD_POLL_TIMESTAMP_last.
 local cycle_start_us = tonumber(ARGV[5])
 local collect_us = tonumber(ARGV[6])
 -- gates the elapsed-time charge below: true once a monotonic gap is available
@@ -127,13 +137,14 @@ local have_mono = false
 
 if cycle_start_us ~= nil then
     local cycle_last = redis.call('HGET', stats_key, 'cycle_start_last')
-    -- %.0f: lua 5.1 renders numbers as %.14g and would drop the low digits
+    -- %.0f, not tostring(): lua 5.1 renders numbers with %.14g and would drop
+    -- the low digits of a large microsecond stamp.
     redis.call('HSET', stats_key, 'cycle_start_last',
                string.format('%.0f', cycle_start_us))
     if cycle_last ~= false then
-        local mono_gap = cycle_start_us - tonumber(cycle_last)
-        if mono_gap > 0 then
-            time_since_last_poll = mono_gap
+        local monotonic_gap = cycle_start_us - tonumber(cycle_last)
+        if monotonic_gap > 0 then
+            time_since_last_poll = monotonic_gap
             have_mono = true
             stats_incr('monotonic_polls', 1)
         end
@@ -141,15 +152,26 @@ if cycle_start_us ~= nil then
 end
 
 if collect_us ~= nil then
-    redis.call('HSET', stats_key, 'collect_us_last', string.format('%.0f', collect_us))
+    -- Collection is the term that scales with the number of polled objects, so
+    -- this is what decides whether an interval is sustainable at a given scale.
+    redis.call('HSET', stats_key, 'collect_us_last',
+               string.format('%.0f', collect_us))
     stats_incr('collect_us_sum', collect_us)
     stats_extreme('collect_us_max', collect_us, true)
     stats_extreme('collect_us_min', collect_us, false)
+    if poll_time > 0 and collect_us > poll_time then
+        -- collection alone already blew the budget: the interval cannot hold
+        stats_incr('collect_over_interval', 1)
+    end
+    -- What is left of the cycle after collection: plugins, the sleep, and
+    -- anything blocking underneath.  A large remainder with a small collect_us
+    -- says the stall is NOT stat collection.
+    if time_since_last_poll > collect_us then
+        local noncollect = time_since_last_poll - collect_us
+        stats_incr('noncollect_us_sum', noncollect)
+        stats_extreme('noncollect_us_max', noncollect, true)
+    end
 end
-
--- How much elapsed time a single poll may charge to the detection timer,
--- as a multiple of the configured interval.
-local MAX_DETECT_CHARGE_POLLS = 2
 
 stats_incr('poll_count', 1)
 redis.call('HSET', stats_key, 'configured_us', string.format('%d', poll_time))
@@ -169,6 +191,24 @@ if timestamp_last ~= false then
         stats_extreme('effective_us_max', time_since_last_poll, true)
         stats_extreme('effective_us_min', time_since_last_poll, false)
 
+        -- DEBUG ONLY: ordered ring of the last 4096 gaps.  Aggregates say how
+        -- bad the worst poll was but not whether the bad polls are isolated or
+        -- periodic, and the flex counter groups that can interfere run on 1s,
+        -- 10s and 60s cycles -- their signature is the SPACING of outliers,
+        -- which only an ordered series shows.
+        --
+        -- Off by default: two extra redis calls on every poll is not something
+        -- to carry in production.  One EXISTS when off, against the ~500 calls
+        -- this script already makes.  Toggle without restarting swss:
+        --     enable:  sonic-db-cli COUNTERS_DB SET PFCWD_POLL_GAPS_DEBUG 1
+        --     disable: sonic-db-cli COUNTERS_DB DEL PFCWD_POLL_GAPS_DEBUG
+        --     read:    sonic-db-cli COUNTERS_DB LRANGE PFCWD_POLL_GAPS 0 -1
+        if redis.call('EXISTS', 'PFCWD_POLL_GAPS_DEBUG') == 1 then
+            redis.call('LPUSH', 'PFCWD_POLL_GAPS',
+                       string.format('%d', time_since_last_poll))
+            redis.call('LTRIM', 'PFCWD_POLL_GAPS', 0, 4095)
+        end
+
         -- Histogram of actual/configured in tenths: ratio_010 is 1.0x,
         -- ratio_020 is 2.0x.  The flex counter loop sleeps
         -- pollInterval - (delay % pollInterval), so a cycle that genuinely
@@ -186,23 +226,27 @@ if timestamp_last ~= false then
     end
 end
 
--- time_since_last_poll is the gap between samples, not how long the queue was
--- actually paused: SAI_QUEUE_ATTR_PAUSE_STATUS is a point-in-time attribute, so
--- "paused for the whole interval" is an inference from two samples that gets
--- weaker as the gap grows.  Charging an unbounded gap to the detection timer
--- lets a single sample satisfy the whole detection time.  That is reachable in
--- practice: PFCWD_POLL_TIMESTAMP_last and the *_last counters all live in
--- COUNTERS_DB and survive pfcwd being disabled and re-enabled, so the first
--- poll after such a gap sees minutes; a long orchagent stall does the same.
--- Bounding it keeps detection at no fewer than
--- ceil(detection_time / (MAX_DETECT_CHARGE_POLLS * poll_time)) samples, and
--- the per-queue cap below raises that to at least two whenever the detection
--- time exceeds one poll interval.
--- The pause-duration estimate below deliberately keeps the true delta.
+-- The detection timer is charged the whole gap since the previous poll, however
+-- long.  Charging less than the time that really passed would bring back the
+-- stretch this timer exists to remove: under an overrun of k intervals,
+-- detection would take k times longer than configured.
+--
+-- "Paused for the whole gap" is inferred from the samples at either end, as it
+-- always was: pause status read true at both, PFC RX advanced and ON2OFF did
+-- not move in between.  Limiting the charge would not make that inference any
+-- stronger, only slower to act on.  What bounds it is the per-queue cap below:
+-- one sample can never finish the countdown, so every storm needs at least two
+-- samples that agree.
+--
+-- A gap is only meaningful against a baseline taken under the current
+-- registration.  orchagent deletes the countdown and the *_last baseline
+-- whenever a queue is registered or unregistered, so the first poll of a new
+-- registration has nothing to compare against and cannot act; a stale gap
+-- (pfcwd re-enabled after minutes, say) is absorbed by that poll.
 local detect_charge = time_since_last_poll
-if poll_time > 0 and detect_charge > MAX_DETECT_CHARGE_POLLS * poll_time then
-    detect_charge = MAX_DETECT_CHARGE_POLLS * poll_time
-    stats_incr('poll_overrun_clamped', 1)
+if poll_time > 0 and time_since_last_poll > 2 * poll_time then
+    -- visibility only: the charge is not reduced
+    stats_incr('poll_overrun_2x', 1)
 end
 
 -- Queue and port hash reads are batched: one HMGET each rather than one HGET
