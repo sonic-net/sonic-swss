@@ -1,6 +1,8 @@
 import pytest
 import time
 
+from dvslib.dvs_common import PollingConfig, wait_for_result
+
 
 class TestBuffer(object):
     from conftest import DockerVirtualSwitch
@@ -82,6 +84,15 @@ class TestBuffer(object):
     def check_syslog(self, dvs, marker, err_log, expected_cnt=1):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
         assert num.strip() >= str(expected_cnt)
+
+    def wait_for_syslog(self, dvs, marker, pattern):
+        def logged():
+            _, num = dvs.runcmd(['sh', '-c', 'awk -v m="$1" \'found; index($0, m) {found=1}\' /var/log/syslog | grep -c -e "$2"',
+                                 'sh', marker, pattern])
+            return (num.strip().isdigit() and int(num.strip()) > 0, num)
+
+        wait_for_result(logged, PollingConfig(polling_interval=0.5, timeout=20, strict=True),
+                        "'{}' was not logged after {}".format(pattern, marker))
 
     @pytest.fixture
     def setup_teardown_test(self, dvs):
@@ -182,6 +193,134 @@ class TestBuffer(object):
 
     # To verify the BUFFER_PG is not hardcoded to 3,4
     # buffermgrd will read 'pfc_enable' entry and apply lossless profile to that queue
+    def test_lossless_pg_survives_buffermgrd_restart(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        A BUFFER_PG entry already in CONFIG_DB when buffermgrd starts is configuration,
+        and a port event rewrites the same keys, so neither may remove it, even when the
+        profile it references carries the generated pg_lossless_ prefix. A pfc_enable
+        change removes only the range the previous value generated, so it stays then too.
+
+        Each check that an entry is still there waits first for buffermgrd to log that
+        it has rendered the port again, so it cannot pass merely because buffermgrd
+        has not got to the port yet.
+        """
+        orig_cable_len = None
+        extra_pg_key = "{}|6".format(self.INTF)
+        rendered = "Mapping {}|3-4 already present".format(self.INTF)
+
+        try:
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+
+            # a 0m cable means no profile is generated at all, so give the port a
+            # real length for the duration of the test
+            orig_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")[self.INTF]
+            cable_len = "300m" if orig_cable_len == "0m" else orig_cable_len
+            if cable_len != orig_cable_len:
+                self.change_cable_len(cable_len)
+
+            dvs.port_admin_set(self.INTF, "up")
+            lossless_profile = "pg_lossless_{}_{}_profile".format(speed, cable_len)
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", lossless_profile)
+
+            # a pg outside the range pfc_enable asks for, on a generated profile
+            self.config_db.update_entry("BUFFER_PG", extra_pg_key, {"profile": lossless_profile})
+            self.app_db.wait_for_entry("BUFFER_PG_TABLE", "{}:6".format(self.INTF))
+
+            marker = dvs.add_log_marker()
+            exitcode, output = dvs.runcmd("supervisorctl restart buffermgrd")
+            assert exitcode == 0, "buffermgrd restart failed: {}".format(output)
+            self.wait_for_syslog(dvs, marker, rendered)
+
+            # start up only renders what is configured, so the entry is still there
+            fvs = self.config_db.get_entry("BUFFER_PG", extra_pg_key)
+            assert fvs.get("profile") == lossless_profile, \
+                "BUFFER_PG {} was reclaimed while buffermgrd was starting up".format(extra_pg_key)
+
+            # nor does a port event, which cannot change the set of ranges
+            marker = dvs.add_log_marker()
+            dvs.port_admin_set(self.INTF, "down")
+            self.wait_for_syslog(dvs, marker, rendered)
+            marker = dvs.add_log_marker()
+            dvs.port_admin_set(self.INTF, "up")
+            self.wait_for_syslog(dvs, marker, rendered)
+            fvs = self.config_db.get_entry("BUFFER_PG", extra_pg_key)
+            assert fvs.get("profile") == lossless_profile, \
+                "BUFFER_PG {} was reclaimed on a port event".format(extra_pg_key)
+
+            # a pfc_enable change removes the range the previous value generated
+            old_pg_key = "{}|3-4".format(self.INTF)
+            marker = dvs.add_log_marker()
+            self.set_port_qos_table(self.INTF, '3,4,5')
+            self.wait_for_syslog(dvs, marker, "Removing lossless PG {} of port".format(old_pg_key))
+            assert not self.config_db.get_entry("BUFFER_PG", old_pg_key), \
+                "BUFFER_PG {} survived a pfc_enable change".format(old_pg_key)
+            fvs = self.config_db.get_entry("BUFFER_PG", "{}|3-5".format(self.INTF))
+            assert fvs.get("profile") == lossless_profile, \
+                "BUFFER_PG for the new pfc_enable was not generated"
+
+            # and nothing it did not generate
+            fvs = self.config_db.get_entry("BUFFER_PG", extra_pg_key)
+            assert fvs.get("profile") == lossless_profile, \
+                "BUFFER_PG {} was removed on a pfc_enable change".format(extra_pg_key)
+
+        finally:
+            self.config_db.delete_entry("BUFFER_PG", extra_pg_key)
+            self.set_port_qos_table(self.INTF, '3,4')
+            if orig_cable_len:
+                self.change_cable_len(orig_cable_len)
+            dvs.port_admin_set(self.INTF, "down")
+
+    def test_superseded_pg_removed_with_pfc_enable(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        A pfc_enable change made while the port is not rendered, here because the cable
+        length is 0m, leaves the previous range in place. Removing pfc_enable afterwards
+        must remove that range too, not only the one for the value never rendered.
+
+        rsyslog holds back a line identical to the one before it, so the change is
+        confirmed by buffermgrd's INFO line for it, which carries the new value.
+        """
+        orig_cable_len = None
+        orig_qos_map = None
+        old_pg_key = "{}|3-4".format(self.INTF)
+        not_rendered = "Not creating/updating PG profile for port {}. Cable length is set to 0m".format(self.INTF)
+
+        try:
+            dvs.runcmd("swssloglevel -l INFO -c buffermgrd")
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+            orig_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")[self.INTF]
+            orig_qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
+
+            self.change_cable_len("300m")
+            dvs.port_admin_set(self.INTF, "up")
+            lossless_profile = "pg_lossless_{}_300m_profile".format(speed)
+            self.config_db.wait_for_field_match("BUFFER_PG", old_pg_key, {"profile": lossless_profile})
+
+            marker = dvs.add_log_marker()
+            self.change_cable_len("0m")
+            self.wait_for_syslog(dvs, marker, not_rendered)
+
+            marker = dvs.add_log_marker()
+            self.set_port_qos_table(self.INTF, '3,4,5')
+            self.wait_for_syslog(dvs, marker, "Got pfc enable status for port {} status 3,4,5".format(self.INTF))
+            fvs = self.config_db.get_entry("BUFFER_PG", old_pg_key)
+            assert fvs.get("profile") == lossless_profile, \
+                "BUFFER_PG {} was removed while the port was not rendered".format(old_pg_key)
+
+            marker = dvs.add_log_marker()
+            self.config_db.delete_field("PORT_QOS_MAP", self.INTF, "pfc_enable")
+            self.wait_for_syslog(dvs, marker, "Removing lossless PG {} of port".format(old_pg_key))
+            assert not self.config_db.get_entry("BUFFER_PG", old_pg_key), \
+                "BUFFER_PG {} survived the removal of pfc_enable".format(old_pg_key)
+
+        finally:
+            if orig_qos_map:
+                self.config_db.update_entry("PORT_QOS_MAP", self.INTF, orig_qos_map)
+                self.lossless_pgs = orig_qos_map["pfc_enable"].split(',')
+            if orig_cable_len:
+                self.change_cable_len(orig_cable_len)
+            dvs.port_admin_set(self.INTF, "down")
+            dvs.runcmd("swssloglevel -l NOTICE -c buffermgrd")
+
     def test_buffer_pg_update(self, dvs, setup_teardown_test):
         orig_cable_len = None
         orig_speed = None
