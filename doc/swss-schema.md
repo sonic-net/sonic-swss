@@ -1139,6 +1139,21 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; LAG entries will be removed, the new LAG entries will be created.
                                             ; Supported range: 1-9999. 0 is invalid
 
+    bgp_eoiu            = "true" / "false"  ; bgp_eoiu enables the BGP End-of-Initial-Update signal. When enabled, the
+                                            ; bgp_eoiu_marker service records an eoiu flag per address family in
+                                            ; STATE_DB BGP_STATE_TABLE once every neighbor of that family has reported
+                                            ; its End-of-RIB, and fpmsyncd starts reconciliation as soon as both
+                                            ; families are flagged rather than waiting out bgp_timer.
+                                            ; The bgp docker must be restarted for a change to take effect.
+
+    eoiu_hold_timer     = 1*4DIGIT          ; eoiu_hold_timer holds the time interval fpmsyncd waits after the eoiu flag
+                                            ; has been reached for both ipv4 and ipv6, before starting reconciliation.
+                                            ; The delay gives the last routes time to reach fpmsyncd from bgp.
+                                            ; Only used when bgp_eoiu is enabled, and should be well below bgp_timer,
+                                            ; otherwise bgp_timer expires first and the eoiu shortcut never applies.
+                                            ; Defaults to 3 seconds when not configured.
+                                            ; Supported range: 1-3600.
+
 
 ### VXLAN\_TUNNEL
 Stores vxlan tunnels configuration

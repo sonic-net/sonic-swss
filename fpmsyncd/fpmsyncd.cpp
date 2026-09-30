@@ -45,8 +45,8 @@ void flushPipeline(RedisPipeline& pipeline);
 const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 
 
-// Wait 3 seconds after detecting EOIU reached state
-// TODO: support eoiu hold interval config
+// Default EOIU hold timer value (3 seconds)
+// Configurable as 'eoiu_hold_timer' field in CONFIG_DB "WARM_RESTART|bgp".
 const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
 
 // Check if eoiu state reached by both ipv4 and ipv6
@@ -70,6 +70,32 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
+/*
+ * Check if the bgp eoiu feature is enabled in CONFIG_DB.
+ * The value is stored as the lowercase string "true"/"false". This comparison must stay
+ * identical to the one gating bgp_eoiu_marker.py in the bgp docker's supervisord template,
+ * so that fpmsyncd and the marker always agree on whether eoiu is active.
+ */
+static bool bgpEoiuEnabled(Table &cfgWarmRestartTable)
+{
+    string value;
+
+    cfgWarmRestartTable.hget("bgp", "bgp_eoiu", value);
+    return value == "true";
+}
+
+/*
+ * Remove any eoiu flags left in stateDB by an earlier warm-restart cycle.
+ * Only done when bgp eoiu is disabled: while it is enabled the flags belong to
+ * bgp_eoiu_marker.py, which cleans them at its own startup.
+ */
+static void clearEoiuFlags(Table &bgpStateTable)
+{
+    bgpStateTable.del("IPv4|eoiu");
+    bgpStateTable.del("IPv6|eoiu");
+    SWSS_LOG_NOTICE("Warm-Restart bgp_eoiu is disabled, cleared ipv4 and ipv6 eoiu flags");
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
@@ -79,6 +105,7 @@ int main(int argc, char **argv)
     DBConnector db("APPL_DB", 0);
     DBConnector cfgDb("CONFIG_DB", 0);
     Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    Table cfgWarmRestartTable(&cfgDb, CFG_WARM_RESTART_TABLE_NAME);
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
@@ -150,6 +177,20 @@ int main(int argc, char **argv)
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
+
+            /*
+             * Stale eoiu flags from a previous cycle would make the eoiu check timer fire
+             * immediately and reconcile too early, so drop them whenever the feature is
+             * disabled. This is done regardless of the warm-restart state to cover the case
+             * where bgp_eoiu was turned off in CONFIG_DB without restarting the bgp docker,
+             * so bgp_eoiu_marker.py never ran to clean them up.
+             */
+            bool bgpEoiu = bgpEoiuEnabled(cfgWarmRestartTable);
+            if (!bgpEoiu)
+            {
+                clearEoiuFlags(bgpStateTable);
+            }
+
             if (warmStartEnabled)
             {
                 // Reconcile writes the route tables directly on this thread.
@@ -174,11 +215,18 @@ int main(int argc, char **argv)
                     SWSS_LOG_NOTICE("Warm-Restart timer started.");
                 }
 
-                // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
-                eoiuCheckTimer.setInterval(timespec{5, 0});
-                eoiuCheckTimer.start();
-                s.addSelectable(&eoiuCheckTimer);
-                SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
+                if (bgpEoiu)
+                {
+                    // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+                    eoiuCheckTimer.setInterval(timespec{5, 0});
+                    eoiuCheckTimer.start();
+                    s.addSelectable(&eoiuCheckTimer);
+                    SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart bgp_eoiu is disabled, eoiuCheckTimer not started.");
+                }
             }
             else
             {
@@ -238,7 +286,7 @@ int main(int argc, char **argv)
                             }
                             eoiuHoldTimer.start();
                             s.addSelectable(&eoiuHoldTimer);
-                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
+                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer (%" PRIuMAX " seconds).", eoiuHoldIval);
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }

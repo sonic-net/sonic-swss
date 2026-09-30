@@ -109,6 +109,9 @@ def swss_app_check_warmstart_state(state_db, name, state):
     keys = warmtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
+    # Track that the app was actually found and carried a state field. Without this
+    # the whole check wrongly passes when the row is missing.
+    checked = False
     for key in keys:
         if key != name:
             continue
@@ -117,6 +120,8 @@ def swss_app_check_warmstart_state(state_db, name, state):
         for fv in fvs:
             if fv[0] == "state":
                 assert fv[1] == state
+                checked = True
+    assert checked, "no 'state' field found for app {} in {}".format(name, keys)
 
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
@@ -215,6 +220,15 @@ def check_syslog_for_neighbor_entry(dvs, marker, new_cnt, delete_cnt, iptype):
         assert num.strip() == str(delete_cnt)
     else:
         assert "iptype is unknown" == ""
+
+# Count fpmsyncd log lines matching 'pattern' written after 'marker'.
+# Modelled on check_syslog_for_neighbor_entry above; 'pattern' is passed to grep -F
+# so it is matched literally.
+def count_fpmsyncd_syslog(dvs, marker, pattern):
+    (exitcode, num) = dvs.runcmd(['sh', '-c',
+        "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep fpmsyncd | grep -F -- \"%s\" | wc -l"
+        % (marker, pattern)])
+    return int(num.strip())
 
 def set_restart_timer(dvs, db, app_name, value):
     create_entry_tbl(
@@ -1776,6 +1790,9 @@ class TestWarmReboot(object):
         del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
 
         warm_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
+        # fpmsyncd only runs the eoiu check timer when bgp_eoiu is enabled in CONFIG_DB,
+        # and clears the eoiu flags when it is not.
+        warm_restart_timer_set(dvs, "bgp", "bgp_eoiu", "true")
         # Restart zebra
         dvs.stop_zebra()
         dvs.start_zebra()
@@ -1871,6 +1888,13 @@ class TestWarmReboot(object):
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
         assert len(addobjs) == 0 and len(delobjs) == 0
+
+        #
+        # Disable bgp eoiu again so it doesn't interfere with later tests. The IPv4|eoiu
+        # flag set above is left behind on purpose: fpmsyncd clears it on the next restart
+        # now that the feature is off.
+        #
+        warm_restart_timer_set(dvs, "bgp", "bgp_eoiu", "false")
 
         #
         # Remove route entries so they don't interfere with later tests
@@ -2715,6 +2739,100 @@ class TestSrv6MySidWarmRestart(object):
         nadd, ndel = dvs.CountSubscribedObjects(pubsub_asic)
         assert nadd == 0
         assert ndel == 0
+
+    def test_FpmsyncdBgpEoiuDisabled(self, dvs):
+        # When bgp_eoiu is disabled fpmsyncd must not arm the eoiu check timer, and must
+        # drop eoiu flags left behind by an earlier cycle. bgp_eoiu_marker.py is the only
+        # thing that writes and cleans those flags, and it does not run while the feature
+        # is off, so a stale "reached" would otherwise be read as a fresh signal and
+        # reconciliation would start before bgp had replayed a single route.
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+
+        warm_restart_set(dvs, "bgp", "true")
+        # checkWarmStart() falls back to cold start when restore_count is absent
+        create_entry_tbl(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME, "bgp",
+                         [("restore_count", "1")])
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", "30")
+        warm_restart_timer_set(dvs, "bgp", "bgp_eoiu", "false")
+
+        # Stale flags, exactly as bgp_eoiu_marker.py would have left them
+        create_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu",
+                         [("state", "reached"), ("timestamp", "2019-04-25 09:39:19")])
+        create_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu",
+                         [("state", "reached"), ("timestamp", "2019-04-25 09:39:22")])
+
+        marker = dvs.add_log_marker()
+        dvs.stop_fpmsyncd()
+        dvs.start_fpmsyncd()
+
+        # The gate is closed. This line only prints when warm restart is actually
+        # enabled, so it doubles as proof that the test really entered warm restart.
+        assert count_fpmsyncd_syslog(
+            dvs, marker, "bgp_eoiu is disabled, eoiuCheckTimer not started.") >= 1
+        assert count_fpmsyncd_syslog(
+            dvs, marker, "Warm-Restart eoiuCheckTimer timer started.") == 0
+
+        # And the stale flags are gone
+        bgptbl = swsscommon.Table(state_db, "BGP_STATE_TABLE")
+        keys = bgptbl.getKeys()
+        assert "IPv4|eoiu" not in keys
+        assert "IPv6|eoiu" not in keys
+
+    def test_FpmsyncdBgpEoiuHoldTimer(self, dvs):
+        # A configured eoiu_hold_timer must be honoured in place of the 3 second default
+        # compiled into fpmsyncd. Asserted on the log line rather than by timing the
+        # reconcile, so the check does not race the scheduler.
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        appl_db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        route = "192.168.250.0/24"
+        hold_timer = 7        # deliberately != DEFAULT_EOIU_HOLD_INTERVAL (3)
+
+        warm_restart_set(dvs, "bgp", "true")
+        create_entry_tbl(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME, "bgp",
+                         [("restore_count", "1")])
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", "60")
+        warm_restart_timer_set(dvs, "bgp", "bgp_eoiu", "true")
+        warm_restart_timer_set(dvs, "bgp", "eoiu_hold_timer", str(hold_timer))
+
+        # fpmsyncd only reaches "restored" -- and so only runs the eoiu check timer --
+        # when there is AppDB route state to restore. Seed one route with Table so the
+        # write stays invisible to orchagent's key-set consumer. Note that this route is
+        # absent from the refresh map, so reconcile() deletes it as stale.
+        create_entry_tbl(appl_db, "ROUTE_TABLE", route,
+                         [("ifname", "Ethernet0"), ("nexthop", "10.0.0.1")])
+
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
+
+        marker = dvs.add_log_marker()
+        dvs.stop_fpmsyncd()
+        dvs.start_fpmsyncd()
+
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        assert count_fpmsyncd_syslog(
+            dvs, marker, "Warm-Restart eoiuCheckTimer timer started.") >= 1
+
+        # Signal eoiu for both families, as bgp_eoiu_marker.py would
+        create_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu",
+                         [("state", "reached"), ("timestamp", "2019-04-25 09:39:19")])
+        create_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu",
+                         [("state", "reached"), ("timestamp", "2019-04-25 09:39:22")])
+
+        # The check timer first fires 5s after start, then every second
+        time.sleep(8)
+        assert count_fpmsyncd_syslog(
+            dvs, marker,
+            "EOIU hold timer (%d seconds)" % hold_timer) >= 1
+
+        # Reconciliation completes on the hold timer, far inside the 60s bgp_timer
+        time.sleep(hold_timer + 2)
+        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+        # Leave the feature off and the tables clean for whatever runs next
+        warm_restart_timer_set(dvs, "bgp", "bgp_eoiu", "false")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
+        del_entry_tbl(appl_db, "ROUTE_TABLE", route)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
