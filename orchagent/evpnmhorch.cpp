@@ -535,7 +535,7 @@ bool EvpnMhOrch::applyEsBackup(const std::string &port_name)
             return false;
         }
     }
-    bool down = port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN;
+    bool down = isEsPortDown(port);
     if (!down && m_esBackupSwitchback.count(port_name))
     {
         /* Switched back by the hold timer. */
@@ -604,29 +604,98 @@ bool EvpnMhOrch::isEsBackupAttached(const std::string &port_name) const
     return e != m_esBackup.end() && e->second.nhg_oid != SAI_NULL_OBJECT_ID;
 }
 
-void EvpnMhOrch::onEsBackupPortOperChange(const Port &port)
+/*
+ * A LAG forwards only through members that are up and distributing. When its last
+ * member stops distributing, the LAG stops forwarding before its oper state follows:
+ * the member's collection disable and the LAG oper down come after it (~15 ms on a
+ * TH5, where the collection disable is slow). A member counts as forwarding unless
+ * it is known to be oper down or not distributing. changed_member, when set, is a
+ * member whose new oper state PortsOrch has not stored yet.
+ */
+bool EvpnMhOrch::isEsPortDown(const Port &port, const Port *changed_member) const
 {
-    auto e = m_esBackup.find(port.m_alias);
+    if (port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+    {
+        return true;
+    }
+    if (port.m_type != Port::LAG || port.m_members.empty())
+    {
+        return false;
+    }
+    for (const auto &alias : port.m_members)
+    {
+        if (m_lagMembersNotDistributing.count(alias))
+        {
+            continue;
+        }
+        Port member;
+        if (changed_member && changed_member->m_alias == alias)
+        {
+            member = *changed_member;
+        }
+        else if (!gPortsOrch->getPort(alias, member))
+        {
+            return false;
+        }
+        if (member.m_oper_status != SAI_PORT_OPER_STATUS_DOWN)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Switch over as soon as the ES port stops forwarding; switch back after the hold. */
+void EvpnMhOrch::updateEsBackupSwitchover(const std::string &port_name, bool down)
+{
+    auto e = m_esBackup.find(port_name);
     if (e == m_esBackup.end() || e->second.nhg_oid == SAI_NULL_OBJECT_ID)
     {
         return;
     }
-    if (port.m_oper_status != SAI_PORT_OPER_STATUS_DOWN)
+    if (!down)
     {
         if (e->second.switchover)
         {
-            m_esBackupSwitchback.insert(port.m_alias);
+            m_esBackupSwitchback.insert(port_name);
             m_esBackupSwitchbackTimer->stop();
             m_esBackupSwitchbackTimer->start();
         }
         return;
     }
-    m_esBackupSwitchback.erase(port.m_alias);
+    m_esBackupSwitchback.erase(port_name);
     if (!e->second.switchover &&
-        !setEsBackupAttr(e->second, port.m_alias, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER,
+        !setEsBackupAttr(e->second, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER,
                          true, SAI_NULL_OBJECT_ID))
     {
-        m_esBackupPending.insert(port.m_alias);
+        m_esBackupPending.insert(port_name);
+    }
+}
+
+void EvpnMhOrch::onEsBackupPortOperChange(const Port &port)
+{
+    if (m_esBackup.count(port.m_alias))
+    {
+        updateEsBackupSwitchover(port.m_alias, isEsPortDown(port));
+    }
+    if (port.m_type == Port::PHY && port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+    {
+        onEsBackupLagMemberChange(port.m_alias, &port);
+    }
+}
+
+/* A LAG member's oper or distribution state changed: re-evaluate the ES LAGs it is in. */
+void EvpnMhOrch::onEsBackupLagMemberChange(const std::string &member_alias, const Port *changed_member)
+{
+    for (const auto &kv : m_esBackup)
+    {
+        Port lag;
+        if (kv.second.nhg_oid == SAI_NULL_OBJECT_ID || !gPortsOrch->getPort(kv.first, lag) ||
+            lag.m_type != Port::LAG || !lag.m_members.count(member_alias))
+        {
+            continue;
+        }
+        updateEsBackupSwitchover(kv.first, isEsPortDown(lag, changed_member));
     }
 }
 
@@ -638,7 +707,7 @@ void EvpnMhOrch::onEsBackupSwitchbackTimer()
         auto e = m_esBackup.find(port_name);
         Port port;
         if (e == m_esBackup.end() || !e->second.switchover ||
-            !gPortsOrch->getPort(port_name, port) || port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+            !gPortsOrch->getPort(port_name, port) || isEsPortDown(port))
         {
             continue;
         }
@@ -706,6 +775,40 @@ void EvpnMhOrch::onEsBackupBridgePortChange(const Port &port, bool add)
 void EvpnMhOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
+
+    /* Tracked with or without ES backup groups, so it is complete when one is attached. */
+    if (type == SUBJECT_TYPE_LAG_MEMBER_DISTRIBUTION_CHANGE)
+    {
+        auto *update = static_cast<LagMemberDistributionUpdate *>(cntx);
+        if (update->distributing)
+        {
+            m_lagMembersNotDistributing.erase(update->member.m_alias);
+        }
+        else
+        {
+            m_lagMembersNotDistributing.insert(update->member.m_alias);
+        }
+        if (!m_esBackup.empty())
+        {
+            onEsBackupLagMemberChange(update->member.m_alias, nullptr);
+        }
+        return;
+    }
+    if (type == SUBJECT_TYPE_LAG_MEMBER_CHANGE)
+    {
+        auto *update = static_cast<LagMemberUpdate *>(cntx);
+        /* A member created not distributing was reported just before its add. */
+        if (!update->add)
+        {
+            m_lagMembersNotDistributing.erase(update->member.m_alias);
+        }
+        /* A member can be created distributing, with no distribution change to report. */
+        if (m_esBackup.count(update->lag.m_alias) && !update->lag.m_members.empty())
+        {
+            updateEsBackupSwitchover(update->lag.m_alias, isEsPortDown(update->lag));
+        }
+        return;
+    }
 
     if (m_esBackup.empty())
     {

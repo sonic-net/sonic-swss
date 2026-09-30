@@ -92,7 +92,12 @@ private:
     bool setEsBackupAttr(EsBackupEntry &entry, const std::string &port_name,
                          sai_attr_id_t id, bool value, sai_object_id_t oid);
     bool detachEsBackup(EsBackupEntry &entry, const std::string &port_name);
+    /* LAG members whose distribution PortsOrch has disabled. */
+    std::set<std::string> m_lagMembersNotDistributing;
+    bool isEsPortDown(const Port &port, const Port *changed_member = nullptr) const;
+    void updateEsBackupSwitchover(const std::string &port_name, bool down);
     void onEsBackupPortOperChange(const Port &port);
+    void onEsBackupLagMemberChange(const std::string &member_alias, const Port *changed_member);
     void onEsBackupSwitchbackTimer();
     void onEsBackupBridgePortChange(const Port &port, bool add);
 };
