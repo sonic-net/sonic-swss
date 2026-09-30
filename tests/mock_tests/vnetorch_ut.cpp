@@ -4649,19 +4649,24 @@ namespace vnetorch_test
         setVnet("Vnet_9", "tunnel_9", "4789", "", false, "", "default");
         setVnetRoute("Vnet_9", prefix, "10.10.10.1,10.10.10.2");
 
-        ASSERT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(ip_prefix), 1U);
         ASSERT_EQ(m_rt.routes.size(), 1U);
 
-        // Simulate a stale RouteOrch cache while SAI still retains the VNET
-        // route. The next regular route SET then receives ITEM_ALREADY_EXISTS.
-        gRouteOrch->m_syncdRoutes[gVirtualRouterId].erase(ip_prefix);
+        // Resolve the regular route next hops so RouteOrch reaches SAI.
+        createL3Interface("Ethernet0", "10.0.0.1/24");
+        setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+        addNeighbor("Ethernet0", "10.0.0.2", "00:00:00:00:00:02");
+        addNeighbor("Ethernet0", "10.0.0.3", "00:00:00:00:00:03");
+
+        // The VNET route exists in SAI but not in RouteOrch's route cache.
+        // The next regular route SET therefore receives ITEM_ALREADY_EXISTS.
         m_rt.lastBulkCreateStatuses.clear();
         setRoute(prefix, "10.0.0.2,10.0.0.3", "Ethernet0,Ethernet0");
 
         ASSERT_EQ(m_rt.lastBulkCreateStatuses.size(), 1U);
         EXPECT_EQ(m_rt.lastBulkCreateStatuses.front(), SAI_STATUS_ITEM_ALREADY_EXISTS);
         EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(ip_prefix), 0U);
-        EXPECT_EQ(m_rt.routes.size(), 1U);
+        EXPECT_EQ(m_rt.routes.size(), 2U); // VNET route plus connected Ethernet0 route.
+        EXPECT_NE(findRoute("100.100.9.0"), nullptr);
         ASSERT_FALSE(m_rt.groups.empty());
         const sai_object_id_t attempted_group = m_rt.groups.back().oid;
         EXPECT_NE(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), attempted_group),
