@@ -7,6 +7,7 @@
 
 #include "sai_serialize.h"
 #include "intfsorch.h"
+#include "notificationproducer.h"
 #include "ipprefix.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -67,6 +68,36 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
     /* Initialize DB connectors */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+    m_guardStateDb = make_shared<DBConnector>("STATE_DB", 0);
+    m_guardStateTable = unique_ptr<Table>(new Table(m_guardStateDb.get(), STATE_INTF_GUARD_TABLE_NAME));
+    auto guardConsumer = new Consumer(new ConsumerStateTable(db, APP_INTF_GUARD_TABLE_NAME,
+        TableConsumable::DEFAULT_POP_BATCH_SIZE, intfsorch_pri), this, APP_INTF_GUARD_TABLE_NAME);
+    Orch::addExecutor(guardConsumer);
+    // Recover retained guards before admitting RIF acquisitions.
+    vector<string> guardedAliases;
+    m_guardStateTable->getKeys(guardedAliases);
+    for (const auto &alias : guardedAliases)
+    {
+        string id, action, ackId, state;
+        m_guardStateTable->hget(alias, "request_id", id);
+        m_guardStateTable->hget(alias, "action", action);
+        m_guardStateTable->hget(alias, "id", ackId);
+        m_guardStateTable->hget(alias, "state", state);
+        if (!id.empty() && id == ackId && state == "released")
+        {
+            // Retain completed generations so APP replay cannot retire the new RIF.
+            m_intfGuard.prepareCurrent(alias, id);
+            m_intfGuard.cancel(alias, id);
+            // Check the replayed root once against the completed request.
+            m_retainedRoots.insert(alias);
+        }
+        else if (!id.empty() && (action == "prepare" || action == "applied" || action == "cancel"))
+        {
+            m_intfGuard.prepareCurrent(alias, id);
+            const KeyOpFieldsValuesTuple request{alias, SET_COMMAND, {{"id", id}, {"action", action}}};
+            guardConsumer->addToSync(request);
+        }
+    }
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
@@ -198,7 +229,145 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
 
 bool IntfsOrch::isIntfChangeInProgress(const string &alias)
 {
-    return m_removingIntfses.find(alias) != m_removingIntfses.end();
+    return m_removingIntfses.count(alias) || m_intfGuard.isHeld(alias);
+}
+
+void IntfsOrch::reportGuard(const string &alias)
+{
+    const auto *entry = m_intfGuard.get(alias);
+    if (!entry)
+    {
+        return;
+    }
+    const char *state = entry->state == IntfGuard::State::Held ? "guarded" :
+        entry->state == IntfGuard::State::Retired ? "retired" : "released";
+    m_guardStateTable->set(alias, {{"id", entry->id}, {"state", state}});
+    NotificationProducer wake(m_guardStateDb.get(), "INTF_GUARD_ACK");
+    vector<FieldValueTuple> values;
+    wake.send("ack", alias, values);
+}
+
+void IntfsOrch::retireGuard(const string &alias)
+{
+    // Missing ports or a zero reference count alone are not retirement.
+    if (!m_syncdIntfses.count(alias) && m_intfGuard.retire(alias))
+    {
+        reportGuard(alias);
+    }
+}
+
+bool IntfsOrch::retireBinding(const string &alias)
+{
+    // Retire the old binding even when its INTF_TABLE DEL was coalesced.
+    if (!gPortsOrch->allPortsReady())
+    {
+        return false;
+    }
+    auto intf = m_syncdIntfses.find(alias);
+    if (intf == m_syncdIntfses.end())
+    {
+        Port port;
+        return !gPortsOrch->getPort(alias, port) || port.m_rif_id == SAI_NULL_OBJECT_ID;
+    }
+    if (gNeighOrch && !gNeighOrch->retireInterfaceNeighbors(alias))
+    {
+        return false;
+    }
+    const auto vrf = intf->second.vrf_id;
+    const auto prefixes = intf->second.ip_addresses;
+    auto vnet = m_vnetInfses.find(alias);
+    auto vnetOrch = gDirectory.get<VNetOrch*>();
+    for (const auto &prefix : prefixes)
+    {
+        bool removed = vnet == m_vnetInfses.end() ? removeIntf(alias, vrf, &prefix) :
+            vnetOrch && vnetOrch->delIntf(alias, vnet->second, &prefix);
+        if (!removed)
+        {
+            return false;
+        }
+    }
+    if (intf->second.proxy_arp && !setIntfProxyArp(alias, "disabled"))
+    {
+        return false;
+    }
+    bool removed = vnet == m_vnetInfses.end() ? removeIntf(alias, vrf, nullptr) :
+        vnetOrch && vnetOrch->delIntf(alias, vnet->second, nullptr);
+    if (removed && vnet != m_vnetInfses.end())
+    {
+        m_vnetInfses.erase(vnet);
+    }
+    return removed;
+}
+
+void IntfsOrch::doGuardTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        const auto &t = it->second;
+        const auto alias = kfvKey(t);
+        string id, action;
+        for (const auto &fv : kfvFieldsValues(t))
+        {
+            if (fvField(fv) == "id") id = fvValue(fv);
+            if (fvField(fv) == "action") action = fvValue(fv);
+        }
+        string currentId, currentAction;
+        m_guardStateTable->hget(alias, "request_id", currentId);
+        m_guardStateTable->hget(alias, "action", currentAction);
+        if (kfvOp(t) != SET_COMMAND || id.empty() || id != currentId || action != currentAction ||
+            (action != "prepare" && action != "applied" && action != "cancel"))
+        {
+            // Discard notifications that do not match the current request.
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        if (!m_intfGuard.prepareCurrent(alias, id))
+        {
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        if (action == "prepare")
+        {
+            reportGuard(alias);
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        string applied, retired;
+        m_guardStateTable->hget(alias, "applied_id", applied);
+        m_guardStateTable->hget(alias, "retired_id", retired);
+        const bool retirementPending = action == "applied" || (!applied.empty() && applied != retired);
+        const auto *guard = m_intfGuard.get(alias);
+        if (retirementPending && guard->state == IntfGuard::State::Held && !retireBinding(alias))
+        {
+            ++it;
+            continue;
+        }
+        // Release applied requests only after old-owner retirement.
+        if (action == "cancel")
+        {
+            m_intfGuard.cancel(alias, id);
+        }
+        else
+        {
+            m_intfGuard.retire(alias);
+            m_intfGuard.release(alias, id);
+            m_removingIntfses.erase(alias);
+        }
+        if (retirementPending)
+        {
+            // Superseding a prepare cannot discard an earlier applied move.
+            m_guardStateTable->set(alias, {{"retired_id", applied}});
+        }
+        auto roots = dynamic_cast<Consumer *>(getExecutor(APP_INTF_TABLE_NAME));
+        if (roots && roots->m_toSync.count(alias))
+        {
+            // Only a root queued before completion can be a retained one.
+            m_retainedRoots.insert(alias);
+        }
+        reportGuard(alias);
+        it = consumer.m_toSync.erase(it);
+    }
 }
 
 bool IntfsOrch::setRouterIntfsMpls(const Port &port)
@@ -490,7 +659,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 {
     SWSS_LOG_ENTER();
 
-    if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    if (isIntfChangeInProgress(alias))
     {
         return false;
     }
@@ -689,6 +858,12 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    if (consumer.getTableName() == APP_INTF_GUARD_TABLE_NAME)
+    {
+        doGuardTask(consumer);
+        return;
+    }
+
     if (!gPortsOrch->allPortsReady())
     {
         return;
@@ -702,6 +877,13 @@ void IntfsOrch::doTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
+
+        // Preserve root and prefix SETs while their old owner is retiring.
+        if (kfvOp(t) == SET_COMMAND && m_intfGuard.isHeld(alias))
+        {
+            ++it;
+            continue;
+        }
 
         bool isSubIntf = false;
         size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
@@ -887,6 +1069,22 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
+            if (!ip_prefix_in_key && m_retainedRoots.erase(alias) && !m_syncdIntfses.count(alias))
+            {
+                string action, target;
+                m_guardStateTable->hget(alias, "action", action);
+                m_guardStateTable->hget(alias, "target_vrf", target);
+                if (action == "applied" ||
+                    (action == "cancel" && m_guardStateTable->hget(alias, "applied_vrf", target)))
+                {
+                    // An older retained root must not resurrect the old binding.
+                    if ((vnet_name.empty() ? vrf_name : vnet_name) != target)
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                }
+            }
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1138,6 +1336,11 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (!ip_prefix_in_key && consumer.m_toSync.count(alias) == 1)
+            {
+                // A producer DEL with no SET behind it supersedes a retained root.
+                m_retainedRoots.erase(alias);
+            }
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1155,6 +1358,8 @@ void IntfsOrch::doTask(Consumer &consumer)
                             continue;
                         }
                     }
+                    m_removingIntfses.erase(alias);
+                    retireGuard(alias);
                 }
                 else
                 {
@@ -1176,6 +1381,16 @@ void IntfsOrch::doTask(Consumer &consumer)
             /* Cannot locate interface */
             if (!gPortsOrch->getPort(alias, port))
             {
+                if (!ip_prefix_in_key && m_intfGuard.isHeld(alias) && m_syncdIntfses.count(alias))
+                {
+                    ++it;
+                    continue;
+                }
+                if (!ip_prefix_in_key)
+                {
+                    m_removingIntfses.erase(alias);
+                    retireGuard(alias);
+                }
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -1183,6 +1398,16 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
             {
                 /* Cannot locate the interface */
+                if (!ip_prefix_in_key)
+                {
+                    if (m_intfGuard.isHeld(alias) && port.m_rif_id != SAI_NULL_OBJECT_ID)
+                    {
+                        ++it;
+                        continue;
+                    }
+                    m_removingIntfses.erase(alias);
+                    retireGuard(alias);
+                }
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -1209,6 +1434,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 if (vnet_orch->delIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
                     m_vnetInfses.erase(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.erase(alias);
+                        retireGuard(alias);
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -1221,12 +1451,19 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    m_removingIntfses.erase(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.erase(alias);
+                        retireGuard(alias);
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    m_removingIntfses.insert(alias);
+                    if (!ip_prefix_in_key)
+                    {
+                        m_removingIntfses.insert(alias);
+                    }
                     it++;
                     continue;
                 }
