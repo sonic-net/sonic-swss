@@ -385,7 +385,7 @@ namespace vxlanorch_test
     TEST_F(VxlanOrchTest, TunnelCleanupExceptionsDoNotSkipRemainingCleanup)
     {
         initSwitchOrch();
-        auto* vxlan_orch = new ThrowingFlexCounterVxlanTunnelOrch(
+        VxlanTunnelOrch* vxlan_orch = new ThrowingFlexCounterVxlanTunnelOrch(
             m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
         m_vxlan_tunnel_orch = vxlan_orch;
         gDirectory.set(vxlan_orch);
@@ -395,7 +395,7 @@ namespace vxlanorch_test
         vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
 
         EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
-            .Times(8)
+            .Times(4)
             .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
             .WillOnce(DoAll(SetArgPointee<0>(vxlan_tunnel_oid), Return(SAI_STATUS_SUCCESS)))
@@ -408,7 +408,7 @@ namespace vxlanorch_test
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(vxlan_tunnel_oid))
             .WillOnce(Throw(std::runtime_error("tunnel cleanup failed")));
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
+            .Times(2)
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
         ASSERT_TRUE(tunnel->createTunnelHw(TUNNEL_MAP_T_VIRTUAL_ROUTER,
