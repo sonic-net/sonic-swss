@@ -104,6 +104,12 @@ struct LagMemberUpdate
     bool add;
 };
 
+struct LagMemberDistributionUpdate
+{
+    Port member;
+    bool distributing;
+};
+
 struct VlanMemberUpdate
 {
     Port vlan;
