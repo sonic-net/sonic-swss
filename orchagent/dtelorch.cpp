@@ -1468,7 +1468,17 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
         string port = key.substr(0, found);
         string queue_id = key.substr(found + 1);
         Port port_obj;
-        uint32_t q_ind = stoi(queue_id);
+        uint32_t q_ind;
+        try
+        {
+            q_ind = to_uint<uint32_t>(queue_id);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("DTEL ERROR: Invalid queue id in key %s: %s", key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
@@ -1498,32 +1508,41 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 
             qreport->q_ind = q_ind;
 
-            for (auto i : kfvFieldsValues(t))
+            try
             {
-                if (fvField(i) == REPORT_TAIL_DROP)
+                for (auto i : kfvFieldsValues(t))
                 {
-                    qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP;
-                    qr_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
-                    qreport->queue_report_attr.push_back(qr_attr);
+                    if (fvField(i) == REPORT_TAIL_DROP)
+                    {
+                        qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP;
+                        qr_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
+                        qreport->queue_report_attr.push_back(qr_attr);
+                    }
+                    else if (fvField(i) == QUEUE_DEPTH_THRESHOLD)
+                    {
+                        qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD;
+                        qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
+                        qreport->queue_report_attr.push_back(qr_attr);
+                    }
+                    else if (fvField(i) == QUEUE_LATENCY_THRESHOLD)
+                    {
+                        qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD;
+                        qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
+                        qreport->queue_report_attr.push_back(qr_attr);
+                    }
+                    else if (fvField(i) == THRESHOLD_BREACH_QUOTA)
+                    {
+                        qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA;
+                        qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
+                        qreport->queue_report_attr.push_back(qr_attr);
+                    }
                 }
-                else if (fvField(i) == QUEUE_DEPTH_THRESHOLD)
-                {
-                    qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD;
-                    qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport->queue_report_attr.push_back(qr_attr);
-                }
-                else if (fvField(i) == QUEUE_LATENCY_THRESHOLD)
-                {
-                    qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD;
-                    qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport->queue_report_attr.push_back(qr_attr);
-                }
-                else if (fvField(i) == THRESHOLD_BREACH_QUOTA)
-                {
-                    qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA;
-                    qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport->queue_report_attr.push_back(qr_attr);
-                }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Invalid queue report field for %s: %s", key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (m_portOrch->getPort(port, port_obj))
