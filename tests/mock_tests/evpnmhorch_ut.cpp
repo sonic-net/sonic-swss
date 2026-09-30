@@ -799,18 +799,18 @@ namespace evpnmhorch_test
             gL2NhgOrch->m_nhg_nh[ES_BACKUP_NHG].is_active = true;
         }
 
-        void pushBackup(const string &op)
+        void pushBackup(const string &op, const string &port = TEST_INTERFACE_1)
         {
             auto consumer = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ES_BACKUP_NHG_TABLE"));
             ASSERT_NE(consumer, nullptr);
             std::deque<KeyOpFieldsValuesTuple> entries;
             if (op == "SET")
             {
-                entries.push_back({ TEST_INTERFACE_1, "SET", { { "nexthop_group", ES_BACKUP_NHG } } });
+                entries.push_back({ port, "SET", { { "nexthop_group", ES_BACKUP_NHG } } });
             }
             else
             {
-                entries.push_back({ TEST_INTERFACE_1, "DEL", { {} } });
+                entries.push_back({ port, "DEL", { {} } });
             }
             consumer->addToSync(entries);
             static_cast<Orch *>(gEvpnMhOrch)->doTask();
@@ -1019,5 +1019,231 @@ namespace evpnmhorch_test
         ASSERT_TRUE(set_calls.empty());
         ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
         ASSERT_EQ(es_flush_calls, 1);
+    }
+
+    /*
+     * An ES LAG (PortChannel1 = TEST_INTERFACE_1 + TEST_INTERFACE_2, both up) switches
+     * over when its last member stops forwarding, before the LAG goes oper down.
+     */
+    static const string ES_LAG = "PortChannel1";
+    static const sai_object_id_t ES_LAG_OID = 0x2000000000001ULL;
+    static const sai_object_id_t ES_LAG_BRIDGE_PORT_OID = 0x3a000000000fffULL;
+
+    struct EvpnMhEsBackupLagTest : public EvpnMhEsBackupTest
+    {
+        std::shared_ptr<SaiSpyFunctor<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER, sai_status_t,
+                                      sai_object_id_t, const sai_attribute_t *>> lagMemberSpy;
+
+        void SetUp() override
+        {
+            EvpnMhEsBackupTest::SetUp();
+
+            Port lag(ES_LAG, Port::LAG);
+            lag.m_lag_id = ES_LAG_OID;
+            lag.m_bridge_port_id = ES_LAG_BRIDGE_PORT_OID;
+            lag.m_members = { TEST_INTERFACE_1, TEST_INTERFACE_2 };
+            lag.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            gPortsOrch->m_portList[ES_LAG] = lag;
+            sai_object_id_t member_oid = 0x1b000000000001ULL;
+            for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
+            {
+                auto &member = gPortsOrch->m_portList[alias];
+                member.m_lag_id = ES_LAG_OID;
+                member.m_lag_member_id = member_oid++;
+                member.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            }
+
+            lagMemberSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+            lagMemberSpy->callFake([](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_SUCCESS;
+            });
+        }
+
+        void TearDown() override
+        {
+            lagMemberSpy.reset();
+            gPortsOrch->m_portList.erase(ES_LAG);
+            for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
+            {
+                gPortsOrch->m_portList[alias].m_lag_id = SAI_NULL_OBJECT_ID;
+                gPortsOrch->m_portList[alias].m_lag_member_id = SAI_NULL_OBJECT_ID;
+            }
+            EvpnMhEsBackupTest::TearDown();
+        }
+
+        /* PortsOrch programming a member's distribution (egress enable). */
+        void setDistribution(const string &alias, bool enable)
+        {
+            Port member = gPortsOrch->m_portList[alias];
+            ASSERT_TRUE(gPortsOrch->setDistributionOnLagMember(member, enable));
+        }
+
+        /* PortsOrch::updatePortOperStatus(): observers run before m_portList is updated. */
+        void setPortOper(const string &alias, sai_port_oper_status_t status)
+        {
+            Port port = gPortsOrch->m_portList[alias];
+            port.m_oper_status = status;
+            PortOperStateUpdate update = { port, status };
+            gEvpnMhOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+            gPortsOrch->m_portList[alias] = port;
+        }
+
+        size_t switchoverCalls(bool value)
+        {
+            size_t n = 0;
+            for (const auto &c : set_calls)
+            {
+                n += c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER && c.value == value;
+            }
+            return n;
+        }
+    };
+
+    TEST_F(EvpnMhEsBackupLagTest, SwitchesOverWhenTheLastMemberStopsDistributing)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 1u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+
+        /* The other member still forwards. */
+        setDistribution(TEST_INTERFACE_1, false);
+        ASSERT_EQ(set_calls.size(), 1u);
+
+        /* The last one stops: switched over while the LAG is still oper up. */
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_DOWN);
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_DOWN);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        /* Up again, but no member distributes yet: the hold does not start. */
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_UP);
+        setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_UP);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        setDistribution(TEST_INTERFACE_1, true);
+        ASSERT_EQ(set_calls.size(), 2u);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, SwitchesOverWhenTheLastMemberGoesDown)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 1u);
+
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 1u);
+        /* Link down, before teamd disables the member or the LAG goes down. */
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* A flap that teamd never saw: back up, switched back after the hold. */
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 2u);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MembersDisabledBeforeTheGroupIsAttached)
+    {
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_TRUE(set_calls.empty());
+
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, RemovedMemberIsNoLongerTrackedAsDisabled)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+
+        /* Removed and re-added: PortsOrch programs its distribution again from scratch. */
+        LagMemberUpdate removed = { gPortsOrch->m_portList[ES_LAG], gPortsOrch->m_portList[TEST_INTERFACE_1], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &removed);
+        ASSERT_FALSE(gEvpnMhOrch->m_lagMembersNotDistributing.count(TEST_INTERFACE_1));
+
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(set_calls.size(), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MemberAddedDistributingSwitchesBack)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* TEST_INTERFACE_1 leaves the LAG: still nothing forwards. */
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        lag.m_members = { TEST_INTERFACE_2 };
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        LagMemberUpdate removed = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &removed);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(switchoverCalls(false), 0u);
+
+        /* Re-added already distributing (created with distribution on): the LAG forwards again. */
+        lag.m_members = { TEST_INTERFACE_1, TEST_INTERFACE_2 };
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        LagMemberUpdate added = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], true };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &added);
+        ASSERT_EQ(switchoverCalls(false), 0u);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MemberCreatedNotDistributingDoesNotForward)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+
+        /* TEST_INTERFACE_2 is re-created not distributing: PortsOrch reports that just
+         * before the member add. */
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        LagMemberDistributionUpdate distribution = { gPortsOrch->m_portList[TEST_INTERFACE_2], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_DISTRIBUTION_CHANGE, &distribution);
+        LagMemberUpdate added = { lag, gPortsOrch->m_portList[TEST_INTERFACE_2], true };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &added);
+
+        ASSERT_TRUE(gEvpnMhOrch->m_lagMembersNotDistributing.count(TEST_INTERFACE_2));
+        ASSERT_EQ(switchoverCalls(true), 1u);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(switchoverCalls(false), 0u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, HoldDoesNotSwitchBackOntoALagThatDoesNotForward)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* The hold expires while the LAG is oper up but no member distributes. */
+        gEvpnMhOrch->m_esBackupSwitchback.insert(ES_LAG);
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(switchoverCalls(false), 0u);
     }
 }
