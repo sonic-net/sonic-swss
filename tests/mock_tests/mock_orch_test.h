@@ -6,6 +6,7 @@
 #undef protected
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <string>
 
