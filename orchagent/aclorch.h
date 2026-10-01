@@ -13,6 +13,7 @@
 #include "switchorch.h"
 #include "portsorch.h"
 #include "mirrororch.h"
+#include "neighorch.h"
 #include "dtelorch.h"
 #include "observer.h"
 #include "vxlanorch.h"
@@ -350,6 +351,13 @@ public:
 
     const vector<AclRangeConfig>& getRangeConfig() const;
 
+    // Next hops the installed redirect action points to (the next hop, or the members of the
+    // next hop group); empty when the rule does not redirect to a next hop.
+    set<NextHopKey> getRedirectNextHops() const;
+    // Next hops a redirect target is waiting for: filled when the redirect action could not be
+    // resolved only because these next hops have no resolved neighbor yet.
+    const set<NextHopKey>& getPendingRedirectNextHops() const;
+
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
                                         MirrorOrch *mirror,
                                         DTelOrch *dtel,
@@ -394,6 +402,7 @@ protected:
     string m_redirect_target_next_hop;
     string m_redirect_target_next_hop_group;
     AclRule::TunnelNH m_redirect_target_tun_nh;
+    set<NextHopKey> m_redirect_pending_next_hops;
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
@@ -628,6 +637,9 @@ public:
     bool updateAclRule(string table_id, string rule_id, bool enableCounter);
     AclRule* getAclRule(string table_id, string rule_id);
 
+    // True when the rule is kept out of the ASIC until its redirect next hop is resolved
+    bool isAclRuleWaitingForNextHop(const string& table_id, const string& rule_id) const;
+
     bool isCombinedMirrorV6Table();
     bool isAclMirrorV6Supported() const;
     bool isAclMirrorV4Supported() const;
@@ -713,6 +725,29 @@ private:
 
     void removeAllAclTableStatus();
     void removeAllAclRuleStatus();
+
+    /*
+     * ACL rules that redirect to a next hop (REDIRECT_ACTION "<ip>@<intf>" or a next hop group)
+     * follow the neighbor: a rule whose next hop is not resolved yet is parked and created as soon
+     * as the neighbor is added; a rule whose neighbor is being removed is taken out of the ASIC
+     * (traffic falls back to the routing table) and parked until the neighbor is learned again.
+     * The rule configuration is never touched.
+     */
+    struct AclRedirectRuleConfig
+    {
+        string consumerTable;               // table the rule came from (CONFIG_DB or APPL_DB)
+        KeyOpFieldsValuesTuple entry;       // the SET operation that configured the rule
+        set<NextHopKey> waitFor;            // parked rules only: next hops to wait for
+    };
+    typedef pair<string, string> AclRuleRef;   // (table_id, rule_id)
+
+    void onNeighborAdded(const NeighborEntry& neighbor);
+    void onNeighborRemovalPending(const NeighborEntry& neighbor);
+    void requeueRedirectRule(const AclRuleRef& ref, const AclRedirectRuleConfig& config);
+    void forgetRedirectRule(const string& table_id, const string& rule_id);
+
+    map<AclRuleRef, AclRedirectRuleConfig> m_nhRedirectRules;      // installed rules redirecting to a next hop
+    map<AclRuleRef, AclRedirectRuleConfig> m_pendingRedirectRules; // rules waiting for a next hop
 
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
