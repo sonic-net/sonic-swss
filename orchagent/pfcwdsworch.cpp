@@ -721,20 +721,17 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::flushPendingActions(void)
     {
         for (auto queueId : failedQueues)
         {
-            // BIG_RED_SWITCH keeps its handlers in a separate map.
+            // BIG_RED_SWITCH keeps its handlers in a separate map and nulls the
+            // regular entries' handlers while it is on, so a null handler here
+            // may still have a live BRS counterpart.
             auto entry = m_entryMap.find(queueId);
-            if (entry == m_entryMap.end())
+            if (entry == m_entryMap.end() || entry->second.handler == nullptr)
             {
                 entry = m_brsEntryMap.find(queueId);
-                if (entry == m_brsEntryMap.end())
+                if (entry == m_brsEntryMap.end() || entry->second.handler == nullptr)
                 {
                     continue;
                 }
-            }
-
-            if (entry->second.handler == nullptr)
-            {
-                continue;
             }
 
             SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be "
