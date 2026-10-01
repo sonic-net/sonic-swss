@@ -5,6 +5,8 @@
 #include "converter.h"
 #include "bufferorch.h"
 #include <inttypes.h>
+#include <limits>
+#include <stdexcept>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
 
@@ -69,13 +71,20 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (consumer.getTableName() == CFG_WATERMARK_TABLE_NAME)
+            try
             {
-                handleWmConfigUpdate(key, fvt);
+                if (consumer.getTableName() == CFG_WATERMARK_TABLE_NAME)
+                {
+                    handleWmConfigUpdate(key, fvt);
+                }
+                else if (consumer.getTableName() == CFG_FLEX_COUNTER_TABLE_NAME)
+                {
+                    handleFcConfigUpdate(key, fvt);
+                }
             }
-            else if (consumer.getTableName() == CFG_FLEX_COUNTER_TABLE_NAME)
+            catch (const std::logic_error &)
             {
-                handleFcConfigUpdate(key, fvt);
+                SWSS_LOG_ERROR("Invalid watermark configuration value");
             }
         }
         else if (op == DEL_COMMAND)
@@ -100,7 +109,8 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
         {
             if (i.first == "interval")
             {
-                auto intervT = timespec { .tv_sec = static_cast<time_t>(to_uint<uint32_t>(i.second.c_str())), .tv_nsec = 0 };
+                auto interval = to_uint<uint32_t>(i.second, 1, std::numeric_limits<uint32_t>::max());
+                auto intervT = timespec { .tv_sec = static_cast<time_t>(interval), .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
                 // reset the timer interval when current timer expires
                 m_timerChanged = true;

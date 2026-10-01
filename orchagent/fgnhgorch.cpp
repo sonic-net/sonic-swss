@@ -8,6 +8,36 @@
 #include "crmorch.h"
 #include <array>
 #include <algorithm>
+#include <cctype>
+#include <limits>
+#include <stdexcept>
+
+namespace
+{
+bool parseUnsignedField(const std::string &value, uint32_t &result)
+{
+    if (value.empty() || !std::all_of(value.begin(), value.end(),
+        [](unsigned char c) { return std::isdigit(c) != 0; }))
+    {
+        return false;
+    }
+
+    try
+    {
+        auto parsed = std::stoul(value);
+        if (parsed > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        result = static_cast<uint32_t>(parsed);
+        return true;
+    }
+    catch (const std::logic_error &)
+    {
+        return false;
+    }
+}
+}
 
 #define LINK_DOWN    0
 #define LINK_UP      1
@@ -1688,7 +1718,11 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         {
             if (fvField(i) == "bucket_size")
             {
-                bucket_size = stoi(fvValue(i));
+                if (!parseUnsignedField(fvValue(i), bucket_size))
+                {
+                    SWSS_LOG_ERROR("Invalid FG_NHG bucket_size");
+                    return true;
+                }
             }
             else if (fvField(i) == "match_mode")
             {
@@ -1709,7 +1743,11 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             else if (fvField(i) == "max_next_hops")
             {
 
-                max_next_hops = stoi(fvValue(i));
+                if (!parseUnsignedField(fvValue(i), max_next_hops))
+                {
+                    SWSS_LOG_ERROR("Invalid FG_NHG max_next_hops");
+                    return true;
+                }
             }
         }
 
@@ -1988,7 +2026,11 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
             }
             else if (fvField(i) == "bank")
             {
-                bank = stoi(fvValue(i));
+                if (!parseUnsignedField(fvValue(i), bank))
+                {
+                    SWSS_LOG_ERROR("Invalid FG_NHG member bank");
+                    return true;
+                }
             }
             else if (fvField(i) == "link")
             {
@@ -2133,22 +2175,30 @@ void FgNhgOrch::doTask(Consumer& consumer)
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
-        if (table_name == CFG_FG_NHG)
+        try
         {
-            entry_handled = doTaskFgNhg(t);
+            if (table_name == CFG_FG_NHG)
+            {
+                entry_handled = doTaskFgNhg(t);
+            }
+            else if (table_name == CFG_FG_NHG_PREFIX)
+            {
+                entry_handled = doTaskFgNhgPrefix(t);
+            }
+            else if (table_name == CFG_FG_NHG_MEMBER)
+            {
+                entry_handled = doTaskFgNhgMember(t);
+            }
+            else
+            {
+                entry_handled = true;
+                SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+            }
         }
-        else if (table_name == CFG_FG_NHG_PREFIX)
+        catch (const std::logic_error &)
         {
-            entry_handled = doTaskFgNhgPrefix(t);
-        }
-        else if (table_name == CFG_FG_NHG_MEMBER)
-        {
-            entry_handled = doTaskFgNhgMember(t);
-        }
-        else
-        {
+            SWSS_LOG_ERROR("Invalid FG_NHG task value");
             entry_handled = true;
-            SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
         }
 
         if (entry_handled)
