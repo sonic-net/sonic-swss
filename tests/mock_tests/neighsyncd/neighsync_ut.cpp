@@ -12,10 +12,23 @@
 #include <vector>
 
 #include "../mock_table.h"
+#include "linkcache.h"
 #include "neighsyncd/neighsync.h"
 #include "redisutility.h"
 
 using namespace swss;
+
+static std::string mockInterfaceName = "Vlan1000";
+
+namespace swss
+{
+
+std::string LinkCache::ifindexToName(int)
+{
+    return mockInterfaceName;
+}
+
+}
 
 namespace
 {
@@ -104,6 +117,7 @@ class NeighSyncTest : public ::testing::Test
     void SetUp() override
     {
         testing_db::reset();
+        mockInterfaceName = "Vlan1000";
         m_appDb = std::make_shared<DBConnector>("APPL_DB", 0);
         m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
         m_configDb = std::make_shared<DBConnector>("CONFIG_DB", 0);
@@ -241,6 +255,33 @@ TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8::6"));
+}
+
+TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborOnNonVlanInterface)
+{
+    enableDualTor();
+    mockInterfaceName = "PortChannel101";
+    auto neigh = createNeighbor(AF_INET6, "2001:db8::7", NUD_FAILED);
+    ASSERT_TRUE(neigh.get() != nullptr);
+
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
+
+    EXPECT_FALSE(failedNeighborExists("2001:db8::7"));
+}
+
+TEST_F(NeighSyncTest, RemovesStaleFailedNeighborOnNonVlanInterface)
+{
+    enableDualTor();
+    mockInterfaceName = "PortChannel101";
+    Table failedNeighborTable(m_appDb.get(), APP_NEIGH_FAILED_TABLE_NAME);
+    failedNeighborTable.set("PortChannel101:2001:db8:3::1", {{"NULL", "NULL"}});
+    ASSERT_TRUE(failedNeighborExists("2001:db8:3::1"));
+
+    auto neigh = createNeighbor(AF_INET6, "2001:db8:3::1", NUD_FAILED);
+    ASSERT_TRUE(neigh.get() != nullptr);
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
+
+    EXPECT_FALSE(failedNeighborExists("2001:db8:3::1"));
 }
 
 } // namespace
