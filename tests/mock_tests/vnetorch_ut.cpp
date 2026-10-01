@@ -4904,6 +4904,44 @@ namespace vnetorch_test
         EXPECT_EQ(m_tun.removedTerms.size(), 1U);
     }
 
+    // A regular RouteOrch ECMP route can race with a route already programmed
+    // by a default-scope VNET. If SAI reports ITEM_ALREADY_EXISTS while
+    // RouteOrch's cache has lost that entry, the VNET still owns the SAI route;
+    // RouteOrch must leave it in place and clean up the ECMP group it just made.
+    TEST_F(VNetOrchTest, ExistingVnetRouteCleansUpUnownedEcmpGroup)
+    {
+        const string prefix = "100.100.9.0/24";
+        const IpPrefix ip_prefix(prefix);
+
+        setVxlanTunnel("tunnel_9", "8.8.8.9");
+        setVnet("Vnet_9", "tunnel_9", "4789", "", false, "", "default");
+        setVnetRoute("Vnet_9", prefix, "10.10.10.1,10.10.10.2");
+
+        ASSERT_EQ(m_rt.routes.size(), 1U);
+
+        // Resolve the regular route next hops so RouteOrch reaches SAI.
+        createL3Interface("Ethernet0", "10.0.0.1/24");
+        setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+        addNeighbor("Ethernet0", "10.0.0.2", "00:00:00:00:00:02");
+        addNeighbor("Ethernet0", "10.0.0.3", "00:00:00:00:00:03");
+
+        // The VNET route exists in SAI but not in RouteOrch's route cache.
+        // The next regular route SET therefore receives ITEM_ALREADY_EXISTS.
+        m_rt.lastBulkCreateStatuses.clear();
+        setRoute(prefix, "10.0.0.2,10.0.0.3", "Ethernet0,Ethernet0");
+
+        ASSERT_EQ(m_rt.lastBulkCreateStatuses.size(), 1U);
+        EXPECT_EQ(m_rt.lastBulkCreateStatuses.front(), SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(ip_prefix), 0U);
+        EXPECT_EQ(m_rt.routes.size(), 2U); // VNET route plus connected Ethernet0 route.
+        EXPECT_NE(findRoute("100.100.9.0"), nullptr);
+        ASSERT_FALSE(m_rt.groups.empty());
+        const sai_object_id_t attempted_group = m_rt.groups.back().oid;
+        EXPECT_NE(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), attempted_group),
+                  m_rt.removedGroups.end());
+        EXPECT_TRUE(m_rt.removedRoutes.empty());
+    }
+
     // Migration of test_vnet_orch_4's peering scenario. In the VS suite that test
     // is @pytest.mark.skip ("Failing. Under investigation"), so this restores real
     // coverage of the VNET peering path rather than duplicating a live test. Two
@@ -4937,6 +4975,20 @@ namespace vnetorch_test
         EXPECT_EQ(vrs.size(), 2U);
         // Both VRs point the prefix at the same remote tunnel-encap next hop.
         checkEndpointType("fd:2::35", SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP);
+
+        const IpPrefix route_prefix("5.5.5.10/32");
+        EXPECT_TRUE(m_vnetOrch->isRouteOwnedByVnet(vrA, route_prefix));
+        EXPECT_TRUE(m_vnetOrch->isRouteOwnedByVnet(vrB, route_prefix));
+        EXPECT_FALSE(m_vnetOrch->isRouteOwnedByVnet(gVirtualRouterId, route_prefix));
+        EXPECT_FALSE(m_vnetOrch->isRouteOwnedByVnet(vrB, IpPrefix("5.5.5.11/32")));
+
+        auto* peer_a = m_vnetOrch->getTypePtr<VNetVrfObject>("Vnet_peerA");
+        ASSERT_NE(peer_a, nullptr);
+        set<string> saved_peers = peer_a->getPeerList();
+        set<string> missing_peer = {"Vnet_missing"};
+        peer_a->setPeerList(missing_peer);
+        EXPECT_FALSE(m_vnetOrch->isRouteOwnedByVnet(gVirtualRouterId, route_prefix));
+        peer_a->setPeerList(saved_peers);
 
         // Deleting the route withdraws it from both VRs (doRouteTask DEL iterates
         // the same vr_set); tearing down mirrors the VS order.
