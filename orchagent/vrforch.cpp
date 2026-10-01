@@ -30,10 +30,16 @@ extern RouteOrch*            gRouteOrch;
 extern FlowCounterRouteOrch* gFlowCounterRouteOrch;
 extern Srv6Orch*             gSrv6Orch;
 
+namespace
+{
+constexpr char DEFAULT_VRF_NAME[] = "default";
+}
+
 bool VRFOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
     uint32_t vni = 0;
+    bool vni_present = false;
     bool error = true;
 
     sai_attribute_t attr;
@@ -75,6 +81,7 @@ bool VRFOrch::addOperation(const Request& request)
         else if (name == "vni")
         {
             vni = static_cast<uint32_t>(request.getAttrUint(name));
+            vni_present = true;
             continue;
         }
         else if ((name == "mgmtVrfEnabled") || (name == "in_band_mgmt_enabled"))
@@ -92,8 +99,54 @@ bool VRFOrch::addOperation(const Request& request)
 
     const std::string& vrf_name = request.getKeyString(0);
     auto it = vrf_table_.find(vrf_name);
+    const uint32_t old_vni = getVRFmappedVNI(vrf_name);
+
+    if (vni_present && (old_vni != 0) && (vni != 0) && (vni != old_vni))
+    {
+        SWSS_LOG_ERROR("Rejecting live VNI reconfiguration for VRF '%s': old %u, requested %u",
+                       vrf_name.c_str(), old_vni, vni);
+        return true;
+    }
+
+    if (vni_present && (vni != 0))
+    {
+        for (const auto& mapping : vrf_vni_map_table_)
+        {
+            if ((mapping.first != vrf_name) && (mapping.second == vni))
+            {
+                SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; it is already owned by VRF '%s'",
+                               vni, vrf_name.c_str(), mapping.first.c_str());
+                return true;
+            }
+        }
+    }
+
     if (it == std::end(vrf_table_))
     {
+        if (vrf_name == DEFAULT_VRF_NAME)
+        {
+            /*
+             * The switch owns the default virtual router.  Represent it in the
+             * VRF tables so that dependent orchagents can resolve/refcount it,
+             * but never create a second SAI virtual router or duplicate the
+             * default VR's link-local and flow-counter lifecycle.
+             */
+            if (!attrs.empty())
+            {
+                SWSS_LOG_NOTICE("Ignoring non-VNI attributes on logical default VRF entry");
+            }
+
+            vrf_table_[vrf_name] = {gVirtualRouterId, 0};
+            m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
+            if (vni_present && (vni != 0) && !updateVrfVNIMap(vrf_name, vni))
+            {
+                return false;
+            }
+
+            SWSS_LOG_NOTICE("Default VRF was added as a logical VRF");
+            return true;
+        }
+
         // Create a new vrf
         sai_object_id_t router_id;
         sai_status_t status = sai_virtual_router_api->create_virtual_router(&router_id,
@@ -122,7 +175,7 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_id_table_[router_id] = vrf_name;
         gFlowCounterRouteOrch->onAddVR(router_id);
 
-        if (vni != 0)
+        if (vni_present && (vni != 0))
         {
             SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
             error = updateVrfVNIMap(vrf_name, vni);
@@ -144,25 +197,36 @@ bool VRFOrch::addOperation(const Request& request)
 
         sai_object_id_t router_id = it->second.vrf_id;
 
-        for (const auto& attr: attrs)
+        if (vrf_name == DEFAULT_VRF_NAME && !attrs.empty())
         {
-            sai_status_t status = sai_virtual_router_api->set_virtual_router_attribute(router_id, &attr);
-            if (status != SAI_STATUS_SUCCESS)
+            SWSS_LOG_NOTICE("Ignoring non-VNI attributes on logical default VRF entry");
+        }
+
+        if (vrf_name != DEFAULT_VRF_NAME)
+        {
+            for (const auto& attr: attrs)
             {
-                SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
-                task_process_status handle_status = handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
-                if (handle_status != task_success)
+                sai_status_t status = sai_virtual_router_api->set_virtual_router_attribute(router_id, &attr);
+                if (status != SAI_STATUS_SUCCESS)
                 {
-                    return parseHandleSaiStatusFailure(handle_status);
+                    SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
                 }
             }
         }
 
-        SWSS_LOG_INFO("VRF '%s' vni %d modify", vrf_name.c_str(), vni);
-        error = updateVrfVNIMap(vrf_name, vni);
-        if (error == false)
+        if (vni_present)
         {
-            return false;
+            SWSS_LOG_INFO("VRF '%s' vni %d modify", vrf_name.c_str(), vni);
+            error = updateVrfVNIMap(vrf_name, vni);
+            if (error == false)
+            {
+                return false;
+            }
         }
 
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
@@ -188,6 +252,20 @@ bool VRFOrch::delOperation(const Request& request)
         return false;
 
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
+
+    if (vrf_name == DEFAULT_VRF_NAME)
+    {
+        /* The SAI default virtual router and its base routes are switch-owned. */
+        error = delVrfVNIMap(vrf_name, 0);
+        if (!error)
+        {
+            return false;
+        }
+        vrf_table_.erase(vrf_name);
+        m_stateVrfObjectTable.del(vrf_name);
+        SWSS_LOG_NOTICE("Default VRF logical entry was removed");
+        return true;
+    }
 
     RouteOrch* routeOrch = gDirectory.get<RouteOrch*>();
 
@@ -246,6 +324,26 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     old_vni = getVRFmappedVNI(vrf_name);
     SWSS_LOG_INFO("VRF '%s' vni %d old_vni %d", vrf_name.c_str(), vni, old_vni);
 
+    if ((old_vni != 0) && (vni != 0) && (vni != old_vni))
+    {
+        SWSS_LOG_ERROR("Rejecting live VNI reconfiguration for VRF '%s': old %u, requested %u",
+                       vrf_name.c_str(), old_vni, vni);
+        return true;
+    }
+
+    if (vni != 0)
+    {
+        for (const auto& mapping : vrf_vni_map_table_)
+        {
+            if ((mapping.first != vrf_name) && (mapping.second == vni))
+            {
+                SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; it is already owned by VRF '%s'",
+                               vni, vrf_name.c_str(), mapping.first.c_str());
+                return true;
+            }
+        }
+    }
+
     if (old_vni != vni)
     {
         if (vni == 0)
@@ -256,16 +354,16 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
                 return false;
             }
         } else {
-            //update l3vni table, if vlan/vni is received later will be able to update L3VniStatus.
-            l3vni_table_[vni].vlan_id = 0;
-            l3vni_table_[vni].l3_vni = true;
             auto evpn_vtep_ptr = evpn_orch->getEVPNVtep();
-            if(!evpn_vtep_ptr)
+            if (!evpn_vtep_ptr)
             {
                 SWSS_LOG_NOTICE("updateVrfVNIMap unable to find EVPN VTEP");
                 return false;
             }
 
+            //update l3vni table, if vlan/vni is received later will be able to update L3VniStatus.
+            l3vni_table_[vni].vlan_id = 0;
+            l3vni_table_[vni].l3_vni = true;
             vrf_vni_map_table_[vrf_name] = vni;
 
             /* This VRF is now an EVPN L3-VNI VRF. All the interfaces share the

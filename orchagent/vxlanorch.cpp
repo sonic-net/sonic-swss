@@ -2343,6 +2343,24 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     string vrf_name = request.getAttrString("vrf");
     VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
 
+    for (const auto& mapping : vxlan_vrf_table_)
+    {
+        const auto& existing = mapping.second;
+        if ((existing.vni_id == vni_id) && (existing.vrf_name != vrf_name))
+        {
+            SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; VXLAN map '%s' already assigns it to VRF '%s'",
+                           vni_id, vrf_name.c_str(), mapping.first.c_str(), existing.vrf_name.c_str());
+            return true;
+        }
+
+        if ((vrf_name == "default") && (existing.vrf_name == vrf_name))
+        {
+            SWSS_LOG_ERROR("Rejecting duplicate default-VRF VXLAN mapping '%s'; existing map is '%s'",
+                           full_map_entry_name.c_str(), mapping.first.c_str());
+            return true;
+        }
+    }
+
     SWSS_LOG_NOTICE("VRF VNI mapping '%s' update vrf %s, vni %d",
             full_map_entry_name.c_str(), vrf_name.c_str(), vni_id);
     if (vrf_orch->isVRFexists(vrf_name))
@@ -2376,6 +2394,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
 
     const auto tunnel_map_entry_name = request.getKeyString(1);
     vrf_map_entry_t entry;
+    entry.vrf_name = vrf_name;
     try
     {
         entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
@@ -2439,13 +2458,8 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         return false;
     }
 
-    size_t pos = full_map_entry_name.find("Vrf");
-    if (pos == string::npos) 
-    {
-        SWSS_LOG_ERROR("VxlanVrfMapOrch no VRF in Vxlan map '%s'", full_map_entry_name.c_str());
-        return false;
-    }
-    string vrf_name = full_map_entry_name.substr(pos);
+    vrf_map_entry_t entry = vxlan_vrf_table_.at(full_map_entry_name);
+    const string& vrf_name = entry.vrf_name;
 
     if (!vrf_orch->isVRFexists(vrf_name))
     {
@@ -2456,14 +2470,11 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
     auto tunnel_name = request.getKeyString(0);
     auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
 
-    vrf_map_entry_t entry;
     try
     {
         /*
          * Remove encap and decap mapper
          */
-        entry = vxlan_vrf_table_[full_map_entry_name];
-
         SWSS_LOG_NOTICE("VxlanVrfMapOrch Vxlan tunnel VRF encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
 
@@ -2980,4 +2991,3 @@ void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_i
     SWSS_LOG_NOTICE("name %s\n", vniVlanMapName.c_str());
     vxlan_tunnel_map_table_[vniVlanMapName].map_entry_id = tunnel_map_id;
 }
-
