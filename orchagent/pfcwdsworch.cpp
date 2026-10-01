@@ -281,10 +281,10 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     }
 
     // Pre-create the switch state the storm path would otherwise have to
-    // build inline, while we are far away from any storm. Handlers with
-    // nothing to pre-create inherit a no-op. A failure here is not fatal:
-    // the storm path still creates whatever is missing, just more slowly.
-    if (!DropHandler::prepare(port.m_port_id, losslessTc))
+    // build inline, while we are far away from any storm. Only the drop
+    // action uses it. A failure here is not fatal: the storm path still
+    // creates whatever is missing, just more slowly.
+    if (action == PfcWdAction::PFC_WD_ACTION_DROP && !DropHandler::prepare(port.m_port_id, losslessTc))
     {
         SWSS_LOG_WARN("Failed to pre-provision PFC watchdog ACL state on port %s; "
                       "storm mitigation will fall back to creating it on demand",
