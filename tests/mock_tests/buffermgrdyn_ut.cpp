@@ -51,6 +51,18 @@ namespace buffermgrdyn_test
     map<string, vector<FieldValueTuple>> zeroProfileMap;
     vector<KeyOpFieldsValuesTuple> zeroProfile;
 
+    string getField(const vector<FieldValueTuple> &fieldValues, const string &field)
+    {
+        for (const auto &fv : fieldValues)
+        {
+            if (fvField(fv) == field)
+            {
+                return fvValue(fv);
+            }
+        }
+        return "";
+    }
+
     void FreeRedisReply(redisReply *reply)
     {
         if (reply == nullptr)
@@ -2660,18 +2672,6 @@ namespace buffermgrdyn_test
         vector<FieldValueTuple> profileFvVector;
         ASSERT_TRUE(appBufferProfileTable.get(testProfile.name, profileFvVector));
 
-        auto getField = [](const vector<FieldValueTuple> &fieldValues, const string &field) -> string
-        {
-            for (const auto &fv : fieldValues)
-            {
-                if (fvField(fv) == field)
-                {
-                    return fvValue(fv);
-                }
-            }
-            return "";
-        };
-
         const string applDbProfileSize = getField(profileFvVector, buffer_size_field_name);
         ASSERT_FALSE(applDbProfileSize.empty());
         EXPECT_EQ(applDbProfileSize, disabledProfileSize)
@@ -2723,6 +2723,186 @@ namespace buffermgrdyn_test
         ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, applPoolFvVector));
         EXPECT_NE(getField(applPoolFvVector, buffer_pool_xoff_field_name), "655360")
             << "The bad dump's pool xoff=655360 is produced only when the profile has already fallen back to size=xon";
+    }
+
+    /*
+     * Verify that ratio-driven SHP disable waits for all lossless profiles to
+     * reach non-SHP form in SAI before publishing pool xoff=0.
+     *
+     * Without the barrier, pool xoff=0 races the profile expansions: if any
+     * profile still has xoff_th > reserved_size when the pool becomes non-shared,
+     * SAI rejects the pool SET (xoff_th > reserved_size in a non-shared pool).
+     *
+     * Test sequence:
+     *  1. Enable SHP (over_subscribe_ratio=2); profiles in SHP-form (xoff > size).
+     *  2. Withhold APPL_STATE_DB ack for both profiles (port-init delay).
+     *  3. Delete over_subscribe_ratio → barrier fires, pool xoff=0 NOT published,
+     *     task_need_retry returned, and the disabled ratio remains in effect.
+     *  4. Ack one profile and retry → barrier remains held.
+     *  5. Ack the second profile and retry → barrier passes, pool xoff=0 published.
+     */
+    TEST_F(BufferMgrDynTest, TestSHPDisableByRatioWaitsForProfileSyncBeforePoolPublish)
+    {
+        // --- setup ---
+        InitDefaultLosslessParameter("2");   // step 1: SHP enabled by ratio=2
+        InitMmuSize();
+        StartBufferManager();
+        m_dynamicBuffer->m_bufferpoolSha = "mock_buffer_pool";
+        m_dynamicBuffer->m_headroomSha   = "mock_headroom";
+        // Keep unrelated waitWithRetry() calls from sleeping in the mock.
+        m_dynamicBuffer->m_saiSyncPollIntervalSec = 0;
+
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+        InitBufferPool();
+
+        // step 2: install MULTIPLE lossless profiles in SHP-form (xoff > size).
+        // Both profiles intentionally use the same mocked vendor result because
+        // SetRedisScriptReply supplies one stable response to every script call.
+        // The barrier behavior under test depends on tracking multiple profile
+        // names, not on the profiles having different calculated sizes.
+        const string expandedSize = "93184";   // xon(43008) + xoff(50176)
+
+        buffer_profile_t profile100;
+        profile100.name           = "pg_lossless_100000_5m_profile";
+        profile100.size           = "43008";   // SHP-form: size == xon
+        profile100.xon            = "43008";
+        profile100.xoff           = "50176";   // xoff > size
+        profile100.static_configured = false;
+        profile100.lossless       = true;
+        profile100.pool_name      = INGRESS_LOSSLESS_PG_POOL_NAME;
+        profile100.speed          = "100000";
+        profile100.cable_length   = "5m";
+        profile100.port_mtu       = "9100";
+        profile100.gearbox_model  = "";
+        profile100.threshold_mode = buffer_dynamic_th_field_name;
+        profile100.threshold      = "0";
+        m_dynamicBuffer->m_bufferProfileLookup[profile100.name] = profile100;
+
+        buffer_profile_t profile200;
+        profile200.name           = "pg_lossless_200000_5m_profile";
+        profile200.size           = "43008";   // SHP-form: size == xon
+        profile200.xon            = "43008";
+        profile200.xoff           = "50176";   // xoff > size  →  invalid in non-shared pool
+        profile200.static_configured = false;
+        profile200.lossless       = true;
+        profile200.pool_name      = INGRESS_LOSSLESS_PG_POOL_NAME;
+        profile200.speed          = "200000";
+        profile200.cable_length   = "5m";
+        profile200.port_mtu       = "9100";
+        profile200.gearbox_model  = "";
+        profile200.threshold_mode = buffer_dynamic_th_field_name;
+        profile200.threshold      = "0";
+        m_dynamicBuffer->m_bufferProfileLookup[profile200.name] = profile200;
+
+        // signal that profiles were written to APPL_DB so they qualify for sync tracking
+        m_dynamicBuffer->m_bufferProfileApplDbWritten = true;
+
+        // SHP is active; pool has non-zero xoff
+        m_dynamicBuffer->m_overSubscribeRatio = "2";
+        m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
+        m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].total_size = "1024000";
+        m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff = "655360";
+        appBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
+                               {{buffer_pool_xoff_field_name, "655360"}});
+
+        // step 3: withhold APPL_STATE_DB acknowledgement for both profiles,
+        // simulating a port-init delay observed in production.
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(profile100.name);
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(profile200.name);
+        m_dynamicBuffer->m_shpProfilesToCheck.clear();
+
+        // step 4: trigger ratio-driven SHP disable (delete over_subscribe_ratio)
+        // Production flow: "config buffer shared-headroom-pool over-subscribe-ratio 0"
+        // triggers handleDefaultLossLessBufferParam with newRatio="" (no key present).
+        vector<FieldValueTuple> fvDisable = {{"default_dynamic_th", "0"}};
+        KeyOpFieldsValuesTuple tupleDisable = {"AZURE", "SET", fvDisable};
+
+        // refreshSharedHeadroomPool() recalculates profiles (both written to APPL_DB),
+        // adds them to m_shpProfilesToCheck, flushes the producer, then calls
+        // checkPendingProfilesSyncStatus(). Since neither profile is in
+        // APPL_STATE_DB, the call returns task_need_retry immediately WITHOUT
+        // publishing pool xoff=0.
+        SetRedisScriptReply({"xon:43008", "xoff:50176", "size:" + expandedSize});
+        auto status = m_dynamicBuffer->handleDefaultLossLessBufferParam(tupleDisable);
+        ClearMockRedisReply();
+
+        // step 4: verify the existing non-zero pool xoff was preserved while profiles are pending
+        vector<FieldValueTuple> poolFvBefore;
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, poolFvBefore));
+        const string poolXoffBefore = getField(poolFvBefore, buffer_pool_xoff_field_name);
+        EXPECT_EQ(poolXoffBefore, "655360")
+            << "pool xoff=0 must NOT be published while any lossless profile is still "
+               "pending in APPL_STATE_DB: publishing it with an SHP-form profile "
+               "(xoff_th > reserved_size) would cause SAI to reject the pool SET";
+
+        EXPECT_EQ(status, task_process_status::task_need_retry)
+            << "must return task_need_retry so the doTask loop retries the disable "
+               "after the delayed profiles finish expanding in SAI";
+
+        EXPECT_EQ(m_dynamicBuffer->m_overSubscribeRatio, "")
+            << "the disabled ratio must remain the calculation basis while publication is deferred";
+        EXPECT_TRUE(m_dynamicBuffer->m_shpDisablePendingByRatio)
+            << "the retry state must persist after the config value has already been consumed";
+        EXPECT_EQ(m_dynamicBuffer->m_shpProfilesToCheck.size(), 2u)
+            << "the barrier must track every profile written by this refresh";
+
+        // step 5: acknowledge only the first profile and retry. The second profile
+        // remains pending, so the barrier must still prevent pool publication.
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile100.name, {
+            {"xon",  profile100.xon},
+            {"xoff", profile100.xoff},
+            {"size", expandedSize}   // 43008+50176=93184: xoff_th(50176) <= size(93184) ✓
+        });
+
+        SetRedisScriptReply({"xon:43008", "xoff:50176", "size:" + expandedSize});
+        status = m_dynamicBuffer->handleDefaultLossLessBufferParam(tupleDisable);
+        ClearMockRedisReply();
+
+        vector<FieldValueTuple> poolFvPartial;
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, poolFvPartial));
+        EXPECT_EQ(getField(poolFvPartial, buffer_pool_xoff_field_name), "655360")
+            << "pool xoff must remain unchanged until every expanded profile is synced";
+        EXPECT_EQ(status, task_process_status::task_need_retry);
+        EXPECT_TRUE(m_dynamicBuffer->m_shpDisablePendingByRatio);
+
+        // step 6: acknowledge the second profile, completing the profile expansion.
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile200.name, {
+            {"xon",  profile200.xon},
+            {"xoff", profile200.xoff},
+            {"size", expandedSize}   // 43008+50176=93184: xoff_th(50176) <= size(93184) ✓
+        });
+
+        // step 7: re-deliver the same tuple as doTask would on retry. The explicit
+        // pending state replays the barrier even though m_overSubscribeRatio already
+        // contains the desired disabled value.
+        SetRedisScriptReply({"xon:43008", "xoff:50176", "size:" + expandedSize});
+        status = m_dynamicBuffer->handleDefaultLossLessBufferParam(tupleDisable);
+        ClearMockRedisReply();
+
+        // step 8: verify pool xoff=0 IS now published
+        vector<FieldValueTuple> poolFvAfter;
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, poolFvAfter));
+        const string poolXoffAfter = getField(poolFvAfter, buffer_pool_xoff_field_name);
+        EXPECT_EQ(poolXoffAfter, "0")
+            << "pool xoff=0 must be published once all profiles are confirmed in "
+               "APPL_STATE_DB (every profile now satisfies xoff_th <= reserved_size "
+               "so SAI will accept the pool SET without SAI_STATUS_FAILURE)";
+
+        EXPECT_EQ(status, task_process_status::task_success)
+            << "handleDefaultLossLessBufferParam must succeed when all profiles are synced";
+        EXPECT_FALSE(m_dynamicBuffer->m_shpDisablePendingByRatio)
+            << "the deferred-disable state must clear after successful pool publication";
+
+        // step 9: verify no SAI buffer failure
+        // task_success confirms the pool was published after the barrier was satisfied;
+        // pending profile state must remain retryable rather than becoming task_failed.
+        // In production, SAI_STATUS_FAILURE / gOrchUnhealthy is set only when pool
+        // xoff=0 is published before profiles are ready — which the barrier prevents.
+        EXPECT_NE(status, task_process_status::task_failed)
+            << "no SAI buffer failure: barrier ensures pool xoff=0 reaches SAI only "
+               "after all profiles satisfy xoff_th <= reserved_size";
     }
 
 }
