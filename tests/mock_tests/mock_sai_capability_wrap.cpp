@@ -63,6 +63,19 @@ namespace
 
         thread_local Hook g_hook = Hook::None;
     }
+
+    // Optional VxLAN switch attributes (SwitchOrch).
+    namespace switchorch
+    {
+        enum class Hook
+        {
+            None = 0,
+            VxlanSportModeNotImplemented,
+            VxlanDefaultPortNotImplemented,
+        };
+
+        thread_local Hook g_hook = Hook::None;
+    }
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -187,6 +200,42 @@ extern "C"
                 && object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
         {
             return SAI_STATUS_NOT_SUPPORTED;
+        }
+
+        if (switchorch::g_hook == switchorch::Hook::VxlanSportModeNotImplemented)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            if (object_type == SAI_OBJECT_TYPE_SWITCH_TUNNEL &&
+                attr_id == SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->create_implemented = false;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
+        }
+
+        if (switchorch::g_hook == switchorch::Hook::VxlanDefaultPortNotImplemented)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            if (object_type == SAI_OBJECT_TYPE_SWITCH &&
+                attr_id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->set_implemented = false;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
         }
 
         if (hftel::g_hook == hftel::Hook::None)
@@ -349,6 +398,34 @@ namespace hftelorch_sai_wrap_ut
     }
 
     HFTelSaiHookGuard::~HFTelSaiHookGuard()
+    {
+        setSaiHookNone();
+    }
+}
+
+namespace switchorch_sai_wrap_ut
+{
+    void setSaiHookNone()
+    {
+        switchorch::g_hook = switchorch::Hook::None;
+    }
+
+    void setSaiHookVxlanSportModeNotImplemented()
+    {
+        switchorch::g_hook = switchorch::Hook::VxlanSportModeNotImplemented;
+    }
+
+    void setSaiHookVxlanDefaultPortNotImplemented()
+    {
+        switchorch::g_hook = switchorch::Hook::VxlanDefaultPortNotImplemented;
+    }
+
+    SwitchSaiHookGuard::SwitchSaiHookGuard(void (*apply)())
+    {
+        apply();
+    }
+
+    SwitchSaiHookGuard::~SwitchSaiHookGuard()
     {
         setSaiHookNone();
     }

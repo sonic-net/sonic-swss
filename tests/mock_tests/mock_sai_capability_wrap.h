@@ -27,9 +27,8 @@ extern "C"
  *                                                via the shared SaiOffloadSession
  *                                                selective-counter capability check)
  *
- * sai_query_attribute_capability is a single wrapped symbol shared by both
- * orchs, so its __wrap_ dispatches by object_type: ICMP echo session queries are
- * driven by the ICMP hook state, all other object types by the HFTel hook state.
+ * sai_query_attribute_capability is a single wrapped symbol shared by ICMP,
+ * HFTel, and SwitchOrch, so its __wrap_ dispatches by object_type / attr_id.
  * Each orch therefore drives only its own namespace below.
  */
 
@@ -89,6 +88,27 @@ namespace hftelorch_sai_wrap_ut
 
         HFTelSaiHookGuard(const HFTelSaiHookGuard&) = delete;
         HFTelSaiHookGuard& operator=(const HFTelSaiHookGuard&) = delete;
+    };
+}
+
+/**
+ * Test hooks for optional VxLAN switch-attribute capability queries in
+ * SwitchOrch (orchagent/switchorch.cpp).
+ */
+namespace switchorch_sai_wrap_ut
+{
+    void setSaiHookNone();
+    void setSaiHookVxlanSportModeNotImplemented();
+    void setSaiHookVxlanDefaultPortNotImplemented();
+
+    /** RAII: restores the SwitchOrch hook to None on scope exit. */
+    struct SwitchSaiHookGuard
+    {
+        explicit SwitchSaiHookGuard(void (*apply)());
+        ~SwitchSaiHookGuard();
+
+        SwitchSaiHookGuard(const SwitchSaiHookGuard&) = delete;
+        SwitchSaiHookGuard& operator=(const SwitchSaiHookGuard&) = delete;
     };
 }
 
