@@ -307,6 +307,7 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
+    std::set<NextHopKey> m_bulkMplsNhReducedRefCnt;
 
     std::set<IpPrefix> m_SubnetDecapTermsCreated;
     ProducerStateTable m_appTunnelDecapTermProducer;
