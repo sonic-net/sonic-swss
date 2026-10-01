@@ -453,6 +453,7 @@ public:
 struct vrf_map_entry_t {
     sai_object_id_t encap_id = SAI_NULL_OBJECT_ID;
     sai_object_id_t decap_id = SAI_NULL_OBJECT_ID;
+    std::string vrf_name;
     bool isL2Vni = false;
     std::string vniVlanMapName;
     uint32_t vlan_id = 0;
