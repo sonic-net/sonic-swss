@@ -160,6 +160,11 @@ create_tunnel_map(MAP_T map_t)
 void
 remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -886,14 +891,17 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
                                                                   bool with_term, sai_uint8_t encap_ttl)
 {
     bool p2p = false;
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     try
     {
-        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
         sai_ip_address_t ips, ipd, *ip=nullptr;
         swss::copy(ips, src_ip_);
 
-        createMapperHw(mapper_list, map_src);
+        if (!createMapperHw(mapper_list, map_src))
+        {
+            throw std::runtime_error("Could not create tunnel maps");
+        }
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -942,6 +950,38 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
     catch (const std::runtime_error& error)
     {
         SWSS_LOG_ERROR("Error creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
+        // Release objects in reverse order before removing their maps.
+        try
+        {
+            remove_tunnel_termination(ids_.tunnel_term_id);
+        }
+        catch (const std::runtime_error& cleanup_error)
+        {
+            SWSS_LOG_ERROR("Error removing tunnel termination %s: %s", tunnel_name_.c_str(), cleanup_error.what());
+        }
+        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
+        {
+            try
+            {
+                tunnel_orch->removeTunnelFromFlexCounter(ids_.tunnel_id, tunnel_name_);
+            }
+            catch (const std::runtime_error& cleanup_error)
+            {
+                SWSS_LOG_ERROR("Error removing tunnel counter %s: %s", tunnel_name_.c_str(), cleanup_error.what());
+            }
+            try
+            {
+                remove_tunnel(ids_.tunnel_id);
+            }
+            catch (const std::runtime_error& cleanup_error)
+            {
+                SWSS_LOG_ERROR("Error removing tunnel %s: %s", tunnel_name_.c_str(), cleanup_error.what());
+            }
+        }
+        deleteMapperHw(mapper_list, map_src);
+        ids_.tunnel_id = SAI_NULL_OBJECT_ID;
+        ids_.tunnel_term_id = SAI_NULL_OBJECT_ID;
+        active_ = false;
         return false;
     }
 
@@ -2896,4 +2936,3 @@ void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_i
     SWSS_LOG_NOTICE("name %s\n", vniVlanMapName.c_str());
     vxlan_tunnel_map_table_[vniVlanMapName].map_entry_id = tunnel_map_id;
 }
-
