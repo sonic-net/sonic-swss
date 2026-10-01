@@ -5,6 +5,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from evpn_tunnel import VxlanTunnel
 
 
 class TestVrf(object):
@@ -12,6 +13,7 @@ class TestVrf(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
     def create_entry(self, tbl, key, pairs):
         fvs = swsscommon.FieldValuePairs(pairs)
@@ -35,6 +37,20 @@ class TestVrf(object):
         tbl =  swsscommon.Table(db, table)
         return set(tbl.getKeys())
 
+    def vrf_tunnel_map_types(self, vni):
+        """Return the programmed VRF tunnel-map directions for one VNI."""
+        tbl = swsscommon.Table(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        map_types = []
+        for key in tbl.getKeys():
+            status, fvs = tbl.get(key)
+            assert status
+            attrs = dict(fvs)
+            if (attrs.get("SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY") == vni or
+                    attrs.get("SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE") == vni):
+                map_types.append(attrs["SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE"])
+        return sorted(map_types)
+
     def is_vrf_attributes_correct(self, db, table, key, expected_attributes):
         tbl =  swsscommon.Table(db, table)
         keys = set(tbl.getKeys())
@@ -55,11 +71,11 @@ class TestVrf(object):
 
 
     def vrf_create(self, dvs, vrf_name, attributes, expected_attributes):
-        # check that the vrf wasn't exist before
-        assert self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The initial state is incorrect"
-
-        # read existing entries in the DB
+        # Read the baseline state. A logical VRF_TABLE|default entry may be
+        # present without creating another ASIC virtual-router object.
         initial_entries = self.entries(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        initial_app_entries = self.entries(self.pdb, "VRF_TABLE")
+        assert vrf_name not in initial_app_entries
 
         # create a fake attribute if we don't have attributes in the request
         if len(attributes) == 0:
@@ -74,16 +90,17 @@ class TestVrf(object):
 
         # check application database
         tbl = swsscommon.Table(self.pdb, "VRF_TABLE")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == vrf_name
+        intf_entries = set(tbl.getKeys())
+        assert intf_entries == initial_app_entries | {vrf_name}
         exp_attr = {}
         for an in range(len(attributes)):
             exp_attr[attributes[an][0]] = attributes[an][1]
         self.is_vrf_attributes_correct(self.pdb, "VRF_TABLE", vrf_name, exp_attr)
 
         # check that the vrf entry was created
-        assert self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 2, "The vrf wasn't created"
+        assert self.how_many_entries_exist(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == \
+            len(initial_entries) + 1, "The vrf wasn't created"
 
         # find the id of the entry which was added
         added_entry_id = list(self.entries(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") - initial_entries)[0]
@@ -98,6 +115,7 @@ class TestVrf(object):
 
         state = {
             'initial_entries': initial_entries,
+            'initial_app_entries': initial_app_entries,
             'entry_id': added_entry_id,
         }
 
@@ -110,11 +128,13 @@ class TestVrf(object):
 
         # check application database
         tbl = swsscommon.Table(self.pdb, "VRF_TABLE")
-        intf_entries = tbl.getKeys()
-        assert vrf_name not in intf_entries
+        intf_entries = set(tbl.getKeys())
+        assert intf_entries == state['initial_app_entries']
 
         # check that the vrf entry was removed
-        assert self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The vrf wasn't removed"
+        assert self.how_many_entries_exist(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == \
+            len(state['initial_entries']), "The vrf wasn't removed"
 
         # check that the correct vrf entry was removed
         assert state['initial_entries'] == self.entries(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
@@ -215,6 +235,375 @@ class TestVrf(object):
             }
         )
         self.vrf_remove(dvs, "Vrf1", state)
+
+    def test_VRFMgr_DefaultVrfL3Vni(self, dvs, testlog):
+        """The default VRF is logical state and must reuse the switch VR."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-vrf"
+        inactive_tunnel_name = "tunnel-without-nvo"
+        vxlan.create_vlan1(dvs, "Vlan100")
+        vxlan.create_vlan1(dvs, "Vlan101")
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "6.6.6.6")
+        vxlan.create_vxlan_tunnel(dvs, inactive_tunnel_name, "7.7.7.7")
+        vxlan.create_evpn_nvo(dvs, "nvo-default-vrf", tunnel_name)
+
+        initial_vrs = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        assert len(initial_vrs) == 1
+        app_db = dvs.get_app_db()
+        state_db = dvs.get_state_db()
+
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5000")])
+
+        # vrfmgrd must publish the L3VNI without creating a Linux VRF device.
+        (status, _) = dvs.runcmd("ip link show dev default")
+        assert status != 0
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "5000"})
+        state_db.wait_for_field_match(
+            "VRF_TABLE", "default", {"state": "ok"})
+        state_db.wait_for_field_match(
+            "VRF_OBJECT_TABLE", "default", {"state": "ok"})
+        vxlan_vrf_table = swsscommon.Table(self.pdb, "VXLAN_VRF_TABLE")
+        old_map_key = "%s:evpn_map_5000_default" % tunnel_name
+        new_map_key = "%s:evpn_map_5001_default" % tunnel_name
+
+        # The VRF and NVO may arrive before the tunnel map. The later map event
+        # must reconcile the missing APP_DB entry without replaying the VRF.
+        assert old_map_key not in vxlan_vrf_table.getKeys()
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-5000", "5000", "Vlan100")
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", old_map_key)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, inactive_tunnel_name, "map-5000", "5000", "Vlan100")
+        inactive_map_key = "%s:evpn_map_5000_default" % inactive_tunnel_name
+        assert inactive_map_key not in vxlan_vrf_table.getKeys()
+
+        # VRFOrch must associate the name with the pre-existing switch default
+        # virtual router rather than asking SAI to allocate another one.
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+
+        # Replaying the same value is idempotent. A live replacement is
+        # rejected and leaves the old mapping undisturbed.
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5000")])
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", old_map_key)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-5001", "5001", "Vlan101")
+
+        # A direct second APP_DB mapping for the default VRF is rejected by
+        # VxlanVrfMapOrch before it can create another SAI encap/decap pair.
+        tunnel_map_entries = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY")
+        duplicate_map_key = "%s:duplicate-default-map" % tunnel_name
+        self.create_entry_tbl(
+            self.pdb, "VXLAN_VRF_TABLE", duplicate_map_key,
+            [("vni", "5001"), ("vrf", "default")])
+        assert self.entries(
+            self.adb,
+            "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY") == tunnel_map_entries
+        self.delete_entry_tbl(
+            self.pdb, "VXLAN_VRF_TABLE", duplicate_map_key)
+
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5001")])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "5000"})
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", old_map_key)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", new_map_key)
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+
+        # The CLI removes only the VNI association by writing vni=0. The
+        # logical default VRF remains live while its VXLAN mapping is removed.
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "0")])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "0"})
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", old_map_key)
+        state_db.wait_for_field_match(
+            "VRF_TABLE", "default", {"state": "ok"})
+        state_db.wait_for_field_match(
+            "VRF_OBJECT_TABLE", "default", {"state": "ok"})
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+        (status, _) = dvs.runcmd("ip link show dev default")
+        assert status != 0
+
+        # A different VNI is valid only after the old association and its
+        # dependent mapping have completed deletion.
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5001")])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "5001"})
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", new_map_key)
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", new_map_key)
+
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-5000", "5000", "Vlan100")
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-5001", "5001", "Vlan101")
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, inactive_tunnel_name, "map-5000", "5000", "Vlan100")
+        vxlan.remove_evpn_nvo(dvs, "nvo-default-vrf")
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan.remove_vxlan_tunnel(dvs, inactive_tunnel_name)
+        vxlan.remove_vlan(dvs, "100")
+        vxlan.remove_vlan(dvs, "101")
+
+    def test_VRFMgr_DefaultVrfL3VniOwnershipConflicts(self, dvs, testlog):
+        """Reject one L3VNI being owned by both default and tenant VRFs."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-vrf-owner"
+        nvo_name = "nvo-vrf-owner"
+        tenant_first = "VrfTenantFirst"
+        tenant_second = "VrfTenantSecond"
+        app_db = dvs.get_app_db()
+
+        vxlan.create_vlan1(dvs, "Vlan130")
+        vxlan.create_vlan1(dvs, "Vlan131")
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "11.11.11.11")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-owner-5300", "5300", "Vlan130")
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-owner-5400", "5400", "Vlan131")
+
+        tenant_map_key = "%s:evpn_map_5300_%s" % (tunnel_name, tenant_first)
+        default_5300_key = "%s:evpn_map_5300_default" % tunnel_name
+        default_5400_key = "%s:evpn_map_5400_default" % tunnel_name
+        tenant_5400_key = "%s:evpn_map_5400_%s" % (tunnel_name, tenant_second)
+
+        # Tenant first: CONFIG_DB accepts the row, but vrfmgrd rejects the
+        # conflicting default mapping before publishing any APP_DB state.
+        self.create_entry_tbl(
+            self.cdb, "VRF", tenant_first, [("vni", "5300")])
+        app_db.wait_for_field_match(
+            "VRF_TABLE", tenant_first, {"vni": "5300"})
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", tenant_map_key)
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5300")])
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_5300_key)
+        (status, _) = dvs.runcmd("ip link show dev default")
+        assert status != 0
+
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        self.delete_entry_tbl(self.cdb, "VRF", tenant_first)
+        app_db.wait_for_deleted_entry("VRF_TABLE", tenant_first)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", tenant_map_key)
+
+        # Default first: reject the tenant before creating its Linux VRF,
+        # APP_DB entry, SAI VR, or tunnel-map entries.
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", "5400")])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "5400"})
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", default_5400_key)
+        initial_vrs = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        self.create_entry_tbl(
+            self.cdb, "VRF", tenant_second, [("vni", "5400")])
+        app_db.wait_for_deleted_entry("VRF_TABLE", tenant_second)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", tenant_5400_key)
+        (status, _) = dvs.runcmd("ip link show dev " + tenant_second)
+        assert status != 0
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+
+        self.delete_entry_tbl(self.cdb, "VRF", tenant_second)
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_5400_key)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-owner-5300", "5300", "Vlan130")
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, "map-owner-5400", "5400", "Vlan131")
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan.remove_vlan(dvs, "130")
+        vxlan.remove_vlan(dvs, "131")
+
+    def test_VRFMgr_DefaultVrfL3VniDependencyLifecycle(self, dvs, testlog):
+        """Reconcile default-VRF state as NVO and tunnel-map inputs change."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-order"
+        nvo_name = "nvo-default-order"
+        map_name = "map-default-order"
+        vni = "5100"
+        vlan = "Vlan110"
+        map_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+
+        initial_vrs = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+
+        # Configure the logical VRF before any VXLAN dependency exists.
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", vni)])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": vni})
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+
+        # NVO alone is insufficient; the VNI-to-VLAN map completes the mapping.
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "8.8.8.8")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", map_key, {"vni": vni, "vrf": "default"})
+
+        # Removing and restoring the tunnel map must withdraw and recreate the
+        # APP_DB mapping without replaying VRF configuration.
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", map_key)
+
+        # The same reconciliation is required when the active NVO disappears
+        # and later returns.
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", map_key)
+
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan.remove_vlan(dvs, "110")
+
+    def test_VRFMgr_DefaultVrfL3VniWarmRestart(self, dvs, testlog):
+        """Warm-restart SWSS without duplicating or losing the default mapping."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-warm"
+        nvo_name = "nvo-default-warm"
+        map_name = "map-default-warm"
+        vni = "5500"
+        vlan = "Vlan150"
+        map_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "12.12.12.12")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", vni)])
+        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": vni})
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", map_key, {"vni": vni, "vrf": "default"})
+
+        initial_vrs = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        expected_map_types = sorted([
+            "SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI",
+            "SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID",
+        ])
+        assert self.vrf_tunnel_map_types(vni) == expected_map_types
+
+        (exitcode, _) = dvs.runcmd("config warm_restart enable swss")
+        assert exitcode == 0
+        try:
+            # The shared DVS can retain unrelated pending work from earlier
+            # modules. The mapping itself is already converged above, so wait
+            # for the restart handshake while ignoring unrelated queues.
+            (exitcode, result) = dvs.runcmd(
+                "/usr/bin/orchagent_restart_check -s -r 20 -w 1000",
+                include_stderr=False)
+            assert exitcode == 0
+            assert result == "RESTARTCHECK succeeded\n"
+            dvs.stop_swss()
+            dvs.start_swss()
+
+            app_db.wait_for_field_match(
+                "VRF_TABLE", "default", {"vni": vni})
+            app_db.wait_for_field_match(
+                "VXLAN_VRF_TABLE", map_key,
+                {"vni": vni, "vrf": "default"})
+            assert self.entries(
+                self.adb,
+                "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+            # VS may allocate new OIDs while reconciling a warm restart. The
+            # invariant is exactly one encap and one decap direction, not OID
+            # identity across the restart.
+            assert self.vrf_tunnel_map_types(vni) == expected_map_types
+        finally:
+            dvs.runcmd("config warm_restart disable swss")
+
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan.remove_vlan(dvs, "150")
+
+    def test_VRFMgr_DefaultVrfL3VniNvoRetarget(self, dvs, testlog):
+        """Move an NVO between tunnels without leaving a stale VRF map."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        old_tunnel = "tunnel-default-old"
+        new_tunnel = "tunnel-default-new"
+        nvo_name = "nvo-default-retarget"
+        vni = "5200"
+        vlan = "Vlan120"
+        old_key = "%s:evpn_map_%s_default" % (old_tunnel, vni)
+        new_key = "%s:evpn_map_%s_default" % (new_tunnel, vni)
+        app_db = dvs.get_app_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, old_tunnel, "9.9.9.9")
+        vxlan.create_vxlan_tunnel(dvs, new_tunnel, "10.10.10.10")
+        vxlan.create_vxlan_tunnel_map(
+            dvs, old_tunnel, "map-default-old", vni, vlan)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, new_tunnel, "map-default-new", vni, vlan)
+        vxlan.create_evpn_nvo(dvs, nvo_name, old_tunnel)
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", vni)])
+
+        app_db.wait_for_entry("VXLAN_VRF_TABLE", old_key)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", new_key)
+
+        # Updating the same NVO key changes the active source tunnel.
+        vxlan.create_evpn_nvo(dvs, nvo_name, new_tunnel)
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", old_key)
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", new_key, {"vni": vni, "vrf": "default"})
+
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", new_key)
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, old_tunnel, "map-default-old", vni, vlan)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, new_tunnel, "map-default-new", vni, vlan)
+        vxlan.remove_vxlan_tunnel(dvs, old_tunnel)
+        vxlan.remove_vxlan_tunnel(dvs, new_tunnel)
+        vxlan.remove_vlan(dvs, "120")
 
     def test_VRFMgr_Update(self, dvs, testlog):
         self.setup_db(dvs)
