@@ -3681,14 +3681,18 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
     for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
     {
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
-        /* Get the weight of next hop */
+        /* Get the weight of next hop. rtnl_route_nh_get_weight() returns the
+         * raw netlink rtnh_hops byte, which encodes (true_weight - 1) per
+         * netlink convention (see zebra/rt_netlink.c's use of rtnh_hops+1/-1
+         * on the FRR side); it must be converted back with +1 before use. A
+         * raw value of 0 also covers the "no weight attribute set" case,
+         * which correctly maps to the default weight of 1. */
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
         if (weight == 0)
         {
             SWSS_LOG_INFO("Using default weight of 1 for nexthop");
-            weight = 1; // default weight is 1
         }
-        result += to_string(weight);
+        result += to_string(weight + 1);
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
