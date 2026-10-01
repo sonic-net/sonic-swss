@@ -6,6 +6,7 @@
 #include "warm_restart.h"
 
 #include <inttypes.h>
+#include <algorithm>
 #include <sstream>
 #include <iostream>
 #include <boost/algorithm/string.hpp>
@@ -1305,6 +1306,98 @@ void BufferOrch::processQueueBulk(Consumer& consumer)
 }
 
 /*
+ * Return the profile of another entry that still covers this pg, or
+ * SAI_NULL_OBJECT_ID when nothing does. A lossy entry can cover the same pg as a
+ * lossless range, so an entry that reserves headroom wins: handing a pg that is
+ * still PFC enabled a profile with no headroom would silently make it lossy.
+ */
+sai_object_id_t BufferOrch::getCoveringPgBufferProfile(const string &port_name, size_t pg_index,
+                                                       const string &excluded_key, string &profile_name)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t fallback_profile = SAI_NULL_OBJECT_ID;
+    string fallback_name;
+
+    for (const auto &entry : *m_buffer_type_maps[APP_BUFFER_PG_TABLE_NAME])
+    {
+        if (entry.first == excluded_key)
+        {
+            continue;
+        }
+
+        const auto separator_pos = entry.first.find_last_of(delimiter);
+        if (separator_pos == string::npos)
+        {
+            continue;
+        }
+
+        const auto ports = tokenize(entry.first.substr(0, separator_pos), list_item_delimiter);
+        if (find(ports.begin(), ports.end(), port_name) == ports.end())
+        {
+            continue;
+        }
+
+        sai_uint32_t range_low, range_high;
+        if (!parseIndexRange(entry.first.substr(separator_pos + 1), range_low, range_high))
+        {
+            continue;
+        }
+        if (pg_index < range_low || pg_index > range_high)
+        {
+            continue;
+        }
+
+        const auto profile_ref = entry.second.m_objsReferencingByMe.find(buffer_profile_field_name);
+        if (profile_ref == entry.second.m_objsReferencingByMe.end())
+        {
+            continue;
+        }
+
+        const auto profile_tokens = tokenize(profile_ref->second, delimiter);
+        if (profile_tokens.size() != 2)
+        {
+            continue;
+        }
+
+        const auto &profiles = *m_buffer_type_maps[profile_tokens[0]];
+        const auto profile = profiles.find(profile_tokens[1]);
+        if (profile == profiles.end())
+        {
+            continue;
+        }
+
+        BufferProfileConfig profileCfg;
+        if (m_bufHlpr.getBufferConfig(profileCfg, profile_tokens[1]))
+        {
+            const auto xoff = profileCfg.fieldValueMap.find("xoff");
+            if (xoff != profileCfg.fieldValueMap.end() && !xoff->second.empty() && xoff->second != "0")
+            {
+                SWSS_LOG_INFO("Priority group %s:%zd is still covered by %s, keeping its buffer profile %s",
+                              port_name.c_str(), pg_index, entry.first.c_str(), profile_tokens[1].c_str());
+                profile_name = profile_tokens[1];
+                return profile->second.m_saiObjectId;
+            }
+        }
+
+        if (fallback_profile == SAI_NULL_OBJECT_ID)
+        {
+            fallback_profile = profile->second.m_saiObjectId;
+            fallback_name = profile_tokens[1];
+        }
+    }
+
+    if (fallback_profile != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Priority group %s:%zd is still covered by a profile reserving no headroom, %s",
+                      port_name.c_str(), pg_index, fallback_name.c_str());
+    }
+
+    profile_name = fallback_name;
+    return fallback_profile;
+}
+
+/*
 Input sample "BUFFER_PG|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tuple)
@@ -1518,18 +1611,18 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     if (flexCounterOrch->isCreateOnlyConfigDbBuffers())
                     {
-                        auto pgs = tokens[1];
+                        const auto pgIndex = static_cast<uint32_t>(ind);
                         if (!pg.counter_was_added && pg.counter_needs_to_add &&
                             (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
                             SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
-                            gPortsOrch->createPortBufferPgCounters(port, pgs);
+                            gPortsOrch->addPortBufferPgCounters(port, pgIndex, pgIndex);
                         }
                         else if (pg.counter_was_added && !pg.counter_needs_to_add &&
                                     (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
                             SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
-                            gPortsOrch->removePortBufferPgCounters(port, pgs);
+                            gPortsOrch->deletePortBufferPgCounters(port, pgIndex, pgIndex);
                         }
                     }
                 }
@@ -1553,7 +1646,7 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
             }
             else if (op == DEL_COMMAND)
             {
-                if (pg_port_flags[port_name][ind] == SET_COMMAND)
+                if (pg_port_flags[port_name][ind] == SET_COMMAND && !pg.rebound)
                 {
                     /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
                     gPortsOrch->decreasePortRefCount(port_name);
@@ -1564,8 +1657,8 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
                 SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
                 return task_process_status::task_invalid_entry;
             }
-            /* save the last command (set or delete) */
-            pg_port_flags[port_name][ind] = op;
+            /* save the last command (set or delete), a rebound pg stays configured */
+            pg_port_flags[port_name][ind] = pg.rebound ? SET_COMMAND : op;
         }
     }
 
@@ -1598,6 +1691,32 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
 void BufferOrch::processPriorityGroupBulk(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    /* Every task of this batch has been recorded by now, so a range written in the
+     * same batch as the removal of an overlapping one is visible here. Resolving
+     * the fallback profile any earlier would release a pg that the batch goes on
+     * to cover, which a narrowing pfc_enable does: it removes the wider range and
+     * writes the narrower one at the same time.
+     */
+    for (auto& task: m_priorityGroupBulk[DEL_COMMAND])
+    {
+        const auto& key = kfvKey(task.kofvs);
+        for (auto& portContext: task.ports)
+        {
+            for (auto& pg: portContext.pgs)
+            {
+                string covering_profile;
+                sai_attribute_t attr;
+                attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
+                attr.value.oid = getCoveringPgBufferProfile(portContext.port_name, pg.index, key, covering_profile);
+
+                pg.attr = SaiAttrWrapper(SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP, attr);
+                pg.rebound = attr.value.oid != SAI_NULL_OBJECT_ID;
+                // A rebound pg keeps the counters its new profile calls for
+                pg.counter_needs_to_add = pg.rebound && covering_profile.find("_zero_") == string::npos;
+            }
+        }
+    }
 
     for (const auto op: {DEL_COMMAND, SET_COMMAND})
     {
