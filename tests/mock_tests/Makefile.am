@@ -38,6 +38,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 fdborch/flush_syncd_notif_ut.cpp \
                 macmoveguard/macmoveguard_ut.cpp \
                 fdborch/fdborch_vxlan_ut.cpp \
+                vrforch_ut.cpp \
                 copp_ut.cpp \
                 copporch_ut.cpp \
                 saispy_ut.cpp \
