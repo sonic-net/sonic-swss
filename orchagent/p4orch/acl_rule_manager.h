@@ -163,6 +163,12 @@ class AclRuleManager : public ObjectManagerInterface
                                   const sai_object_id_t trap_group_oid,
                                   const sai_object_id_t hostif_oid);
 
+    // Create a user-defined trap without an explicit hostif table entry.
+    // Packets will use the default wildcard NETDEV hostif path.
+    ReturnCode setUserDefinedTrapWithoutHostIfTableEntry(
+        uint32_t queue_num,
+        sai_object_id_t trap_group_oid);
+
     // Verifies internal cache for an entry.
     std::string verifyStateCache(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule *acl_rule);
 
