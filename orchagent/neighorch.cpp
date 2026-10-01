@@ -40,7 +40,8 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
         m_portsOrch(portsOrch),
-        m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME)
+        m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME),
+        m_appNeighTable(appDb, APP_NEIGH_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -382,6 +383,11 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
     const NextHopKey nh = ctx.neighborEntry;
+
+    if (m_intfsOrch->isIntfBindingGuarded(nh.alias))
+    {
+        return false;
+    }
 
     Port p;
     if (!gPortsOrch->getPort(nh.alias, p))
@@ -1030,6 +1036,62 @@ bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, string vrf_name, Ne
     return getNeighborEntry(nexthop, neighborEntry, macAddress);
 }
 
+bool NeighOrch::retireInterfaceNeighbors(const string &alias)
+{
+    // Remove old neighbors through their owner while admission is held.
+    vector<NeighborEntry> oldNeighbors;
+    for (const auto &neighbor : m_syncdNeighbors)
+    {
+        if (neighbor.first.alias == alias)
+        {
+            oldNeighbors.push_back(neighbor.first);
+        }
+    }
+    bool complete = true;
+    auto consumer = dynamic_cast<Consumer *>(getExecutor(APP_NEIGH_TABLE_NAME));
+    for (const auto &neighbor : oldNeighbors)
+    {
+        const auto key = alias + ":" + neighbor.ip_address.to_string();
+        vector<FieldValueTuple> desired;
+        const bool replay = consumer && !consumer->m_toSync.count(key) &&
+                            m_appNeighTable.get(key, desired);
+
+        NeighborContext ctx(neighbor);
+        if (!removeNeighbor(ctx))
+        {
+            complete = false;
+        }
+        else if (replay)
+        {
+            // Replay consumed desired SETs without replacing newer queued work.
+            const KeyOpFieldsValuesTuple entry{key, SET_COMMAND, desired};
+            consumer->addToSync(entry);
+        }
+    }
+    return complete;
+}
+
+void NeighOrch::doTask()
+{
+    Orch::doTask();
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+    // Retry guard-refused callbacks after newer neighbor SET/DEL work.
+    auto pending = std::move(m_pendingEnables);
+    m_pendingEnables.clear();
+    for (const auto &entry : pending)
+    {
+        auto neighbor = m_syncdNeighbors.find(entry.first);
+        if (neighbor != m_syncdNeighbors.end() && neighbor->second.mac == entry.second &&
+            !enableNeighbor(entry.first))
+        {
+            m_pendingEnables.insert(entry);
+        }
+    }
+}
+
 void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1063,6 +1125,12 @@ void NeighOrch::doTask(Consumer &consumer)
         }
 
         string alias = key.substr(0, found);
+
+        if (op == SET_COMMAND && m_intfsOrch->isIntfBindingGuarded(alias))
+        {
+            ++it;
+            continue;
+        }
 
         if (alias == "eth0" || alias == "lo" || alias == "docker0" || alias == "usb0"
             || ((op == SET_COMMAND) && m_intfsOrch->isInbandIntfInMgmtVrf(alias)))
@@ -1359,6 +1427,11 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     string alias = neighborEntry.alias;
     bool bulk_op = ctx.bulk_op;
 
+    if (m_intfsOrch->isIntfBindingGuarded(alias))
+    {
+        return false;
+    }
+
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
     if (rif_id == SAI_NULL_OBJECT_ID)
     {
@@ -1636,6 +1709,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
 bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 {
     SWSS_LOG_ENTER();
+    m_pendingEnables.erase(ctx.neighborEntry);
 
     sai_status_t status;
     auto& object_statuses = ctx.object_statuses;
@@ -2056,12 +2130,19 @@ bool NeighOrch::enableNeighbor(const NeighborEntry& neighborEntry)
     NeighborContext ctx = NeighborContext(neigh);
     ctx.mac = m_syncdNeighbors[neighborEntry].mac;
 
+    if (m_intfsOrch->isIntfBindingGuarded(neighborEntry.alias))
+    {
+        m_pendingEnables[neighborEntry] = ctx.mac;
+        return false;
+    }
+
     return addNeighbor(ctx);
 }
 
 bool NeighOrch::disableNeighbor(const NeighborEntry& neighborEntry)
 {
     SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
+    m_pendingEnables.erase(neighborEntry);
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {

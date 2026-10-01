@@ -898,3 +898,49 @@ namespace neighorch_test
         EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN2000_NEIGH));
     }
 }
+
+namespace neighorch_test
+{
+    TEST_F(NeighOrchTest, FdbAddSurvivesCanceledGuard)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+        ASSERT_TRUE(gNeighOrch->disableNeighbor(VLAN1000_NEIGH));
+        ASSERT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+        std::string requestId = "1";
+        auto guard = [&](const std::string &action) {
+            auto consumer = gIntfsOrch->getConsumerBase("INTF_GUARD_TABLE");
+            ASSERT_NE(consumer, nullptr);
+            Table state(m_state_db.get(), "INTERFACE_GUARD_TABLE");
+            state.set(VLAN_1000, {{"request_id", requestId}, {"action", action}, {"target_vrf", ""}});
+            consumer->addToSync({VLAN_1000, SET_COMMAND, {{"id", requestId}, {"action", action}}});
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+        };
+        guard("prepare");
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan));
+        FdbEntry entry;
+        entry.mac = MacAddress(MAC1);
+        entry.bv_id = vlan.m_vlan_info.vlan_oid;
+        entry.port_name = ETHERNET0;
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        gNeighOrch->processFDBAdd(entry);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+        guard("cancel");
+        for (int pass = 0; pass < 3; ++pass)
+            static_cast<Orch *>(gNeighOrch)->doTask();
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+
+        // A newer FDB deletion cancels the refused restoration.
+        ASSERT_TRUE(gNeighOrch->disableNeighbor(VLAN1000_NEIGH));
+        requestId = "2";
+        guard("prepare");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        gNeighOrch->processFDBAdd(entry);
+        gNeighOrch->processFDBDelete(entry);
+        guard("cancel");
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+    }
+}
