@@ -61,4 +61,35 @@ namespace warmrestartassist_test
         ASSERT_EQ(fvField(fvVector[0]), "field");
         ASSERT_EQ(fvValue(fvVector[0]), "value1");
     }
+
+    /*
+     * keepStaleEntries() keeps the entries nothing refreshed and leaves updates and deletes
+     * alone, whether they come before or after it.
+     */
+    TEST_F(WarmrestartassistTest, keepStaleEntriesTest)
+    {
+        Table testTable = Table(m_app_db.get(), APP_WRA_TEST_TABLE_NAME);
+        testTable.set("key2", { {"field", "value2"} });
+        testTable.set("key3", { {"field", "value3"} });
+        testTable.set("key4", { {"field", "value4"} });
+        testTable.set("key5", { {"field", "value5"} });
+
+        appRestartAssist->readTablesToMap();
+        appRestartAssist->insertToMap(APP_WRA_TEST_TABLE_NAME, "key", { {"field", "value1"} }, false);
+        appRestartAssist->insertToMap(APP_WRA_TEST_TABLE_NAME, "key4", {}, true);
+        appRestartAssist->keepStaleEntries();
+        appRestartAssist->insertToMap(APP_WRA_TEST_TABLE_NAME, "key3", {}, true);
+        appRestartAssist->insertToMap(APP_WRA_TEST_TABLE_NAME, "key5", { {"field", "value5b"} }, false);
+        appRestartAssist->reconcile();
+
+        vector<FieldValueTuple> fvVector;
+        ASSERT_TRUE(testTable.get("key", fvVector));
+        ASSERT_EQ(fvValue(fvVector[0]), "value1");
+        ASSERT_TRUE(testTable.get("key2", fvVector));
+        ASSERT_EQ(fvValue(fvVector[0]), "value2");
+        ASSERT_FALSE(testTable.get("key3", fvVector));
+        ASSERT_FALSE(testTable.get("key4", fvVector));
+        ASSERT_TRUE(testTable.get("key5", fvVector));
+        ASSERT_EQ(fvValue(fvVector[0]), "value5b");
+    }
 }
