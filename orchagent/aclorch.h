@@ -332,9 +332,8 @@ public:
     virtual bool update(const AclRule& updatedRule);
     virtual bool remove();
     virtual void onUpdate(SubjectType, void *) = 0;
-    // Returns false if the hardware write failed; the caller is expected to
-    // put the cached match back.
-    virtual bool updateInPorts();
+    // Program IN_PORTS in hardware first and cache the list only on success.
+    virtual bool updateInPorts(const vector<sai_object_id_t>& ports);
 
     virtual bool enableCounter();
     virtual bool disableCounter();

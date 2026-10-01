@@ -1647,18 +1647,35 @@ bool AclRule::remove()
     return res;
 }
 
-bool AclRule::updateInPorts()
+bool AclRule::updateInPorts(const vector<sai_object_id_t>& ports)
 {
     SWSS_LOG_ENTER();
-    sai_status_t status;
 
-    auto attr = m_matches[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS].getSaiAttr();
+    if (ports.empty())
+    {
+        SWSS_LOG_ERROR("Refusing to program an empty IN_PORTS list on ACL rule %s", m_id.c_str());
+        return false;
+    }
+
+    // Write the hardware first and cache only what it accepted, so a failed
+    // write can never leave the cache claiming ports the ASIC does not have.
+    vector<sai_object_id_t> inPorts(ports);
+    sai_attribute_t attr;
+    attr.id = SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS;
     attr.value.aclfield.enable = true;
+    attr.value.aclfield.data.objlist.count = static_cast<uint32_t>(inPorts.size());
+    attr.value.aclfield.data.objlist.list = inPorts.data();
 
-    status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+    sai_status_t status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
+        return false;
+    }
+
+    if (!setInPorts(ports))
+    {
+        SWSS_LOG_ERROR("ACL rule %s IN_PORTS programmed but could not be cached", m_id.c_str());
         return false;
     }
 
@@ -5463,21 +5480,8 @@ bool AclOrch::updateAclRuleInPorts(const string &table_id, const string &rule_id
     }
 
     vector<sai_object_id_t> newPorts(inPorts.begin(), inPorts.end());
-    if (!rule_it->second->setInPorts(newPorts))
+    if (!rule_it->second->updateInPorts(newPorts))
     {
-        SWSS_LOG_ERROR("Failed to set IN_PORTS on ACL rule %s", rule_id.c_str());
-        return false;
-    }
-
-    if (!rule_it->second->updateInPorts())
-    {
-        // setInPorts() has already replaced the cached match. Leaving it would
-        // have the cache claim ports the ASIC does not have, and every later
-        // batch is computed from that cache, so put the old list back.
-        if (!current.empty())
-        {
-            rule_it->second->setInPorts(current);
-        }
         SWSS_LOG_ERROR("Failed to program IN_PORTS on ACL rule %s", rule_id.c_str());
         return false;
     }
