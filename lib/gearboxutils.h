@@ -54,6 +54,7 @@ typedef struct
     std::string phy_oid;
     std::string name;
     std::string lib_name;
+    std::string phy_access_lib_name;
     std::string firmware;
     std::string firmware_major_version;
     std::string sai_init_config_file;
