@@ -136,6 +136,14 @@ private:
         const std::string &port_name,
         MKASession &session,
         const MACsecProfile &desired);
+    bool validateRolloverStatus(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired,
+        const MKASessionStatus &status,
+        bool primaryChanged,
+        bool fallbackChanged,
+        bool primary);
     bool reconcilePort(
         const std::string &port_name,
         MKASession &session,
