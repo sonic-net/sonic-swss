@@ -13,13 +13,14 @@ using namespace std;
 namespace swss {
 
 typedef std::unordered_map<std::string, uint32_t> VRFNameVNIMapTable;
+typedef std::unordered_map<std::string, std::string> VtepNVOMapTable;
 
 class VrfMgr : public Orch
 {
 public:
     VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
-    std::string m_evpnVxlanTunnel;
+    VtepNVOMapTable m_evpnVxlanTunnel;
 
     uint32_t getVRFmappedVNI(const std::string& vrf_name);
 
@@ -32,17 +33,19 @@ private:
     void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);
     bool doVrfEvpnNvoAddTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t);
+    bool validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vni, std::string& s_vni);
     bool doVrfVxlanTableCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfVxlanTableRemoveTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bool add);
-    void VrfVxlanTableSync(bool add);
+    void syncVrfVxlanTableForTunnel(const std::string& tunnel_name);
+    std::vector<std::string> getVxlanTunnelsForVni(const std::string& vni);
     void doTask(Consumer &consumer);
 
     std::map<std::string, uint32_t> m_vrfTableMap;
     std::set<uint32_t> m_freeTables;
     VRFNameVNIMapTable m_vrfVniMapTable;
 
-    Table m_stateVrfTable, m_stateVrfObjectTable;
+    Table m_stateVrfTable, m_stateVrfObjectTable, m_cfgVxlanTunnelMapTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appVxlanVrfTableProducer;
 };
 
