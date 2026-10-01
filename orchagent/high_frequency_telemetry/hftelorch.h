@@ -49,7 +49,9 @@ private:
     bool isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) const;
 
     void doTask(swss::NotificationConsumer &consumer);
+    void handleNotification(swss::KeyOpFieldsValuesTuple &entry);
     void doTask(Consumer &consumer);
+    void handleTamTelTypeConfigChangeNotification(const std::string &data);
 
     // SAI objects
     sai_object_id_t m_sai_hostif_obj;
