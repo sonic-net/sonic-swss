@@ -1,5 +1,7 @@
 #include <limits.h>
 #include <inttypes.h>
+#include <algorithm>
+#include <deque>
 #include <unordered_map>
 #include "pfcwdsworch.h"
 #include "pfcwdorch.h"
@@ -112,6 +114,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
     }
 
     m_brsEntryMap.clear();
+
+    // Tearing down every handler queued one ACL change per (port, queue);
+    // push them all with one call per queue index.
+    flushPendingActions();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -214,6 +220,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             }
         }
     }
+
+    // BIG_RED_SWITCH installs a handler on every lossless queue of every port
+    // at once - exactly the case batching exists for.
+    flushPendingActions();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -239,6 +249,17 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     {
         auto portStatIdSet = filterPfcCounters(PfcWdBaseOrch::counterIdsToStr(c_portStatIds, &sai_serialize_port_stat), losslessTc);
         this->m_pfcwdFlexCounterManager->setCounterIdList(port.m_port_id, CounterType::PORT, portStatIdSet, SAI_OBJECT_TYPE_PORT);
+    }
+
+    // Pre-create the switch state the storm path would otherwise have to
+    // build inline, while we are far away from any storm. Handlers with
+    // nothing to pre-create inherit a no-op. A failure here is not fatal:
+    // the storm path still creates whatever is missing, just more slowly.
+    if (!DropHandler::prepare(port.m_port_id, losslessTc))
+    {
+        SWSS_LOG_WARN("Failed to pre-provision PFC watchdog ACL state on port %s; "
+                      "storm mitigation will fall back to creating it on demand",
+                      port.m_alias.c_str());
     }
 
     for (auto i : losslessTc)
@@ -363,6 +384,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         m_pfcWdSwStateTable->del(port.m_alias + ":" + to_string(i));
     }
 
+    // Destroying the handlers above queued their ACL removals.
+    flushPendingActions();
+
+    DropHandler::unprepare(port.m_port_id);
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -545,6 +570,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 
             it = consumer.m_toSync.erase(it);
         }
+
+        // Warm reboot can replay a storm on every port at once; apply the
+        // whole replay with one ACL update per queue index.
+        flushPendingActions();
     }
 }
 
@@ -586,29 +615,128 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
 {
     SWSS_LOG_ENTER();
 
-    string queueIdStr;
-    string event;
-    vector<swss::FieldValueTuple> values;
+    // Drain every event the detection plugin published, not one per select()
+    // wake-up. At scale a single 100ms poll can report a storm on hundreds of
+    // (port, queue) pairs; walking back out to the orchagent select loop
+    // between each one - and programming ACLs synchronously each time - is
+    // what delays the next detection cycle.
+    std::deque<KeyOpFieldsValuesTuple> events;
+    wdNotification.pops(events);
 
-    wdNotification.pop(queueIdStr, event, values);
-
-    string info;
-    for (auto &fv : values)
+    for (auto &notification : events)
     {
-        info += fvField(fv) + ":" + fvValue(fv) + "|";
-    }
-    if (!info.empty())
-    {
-        info.pop_back();
+        // The plugin publishes ["<queue oid>", "<event>"]; pops() puts the
+        // first element in the op field and the second in the key field.
+        const string &queueIdStr = kfvOp(notification);
+        const string &event = kfvKey(notification);
+
+        string info;
+        for (auto &fv : kfvFieldsValues(notification))
+        {
+            info += fvField(fv) + ":" + fvValue(fv) + "|";
+        }
+        if (!info.empty())
+        {
+            info.pop_back();
+        }
+
+        sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
+        try
+        {
+            sai_deserialize_object_id(queueIdStr, queueId);
+        }
+        catch (const std::exception &e)
+        {
+            // One malformed event must not drop the rest of the batch.
+            SWSS_LOG_ERROR("Failed to parse PFC watchdog event queue id %s: %s",
+                           queueIdStr.c_str(), e.what());
+            continue;
+        }
+
+        if (!startWdActionOnQueue(event, queueId, info))
+        {
+            SWSS_LOG_ERROR("Failed to start PFC watchdog %s event action on queue %s",
+                           event.c_str(), queueIdStr.c_str());
+        }
     }
 
-    sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
-    sai_deserialize_object_id(queueIdStr, queueId);
-
-    if (!startWdActionOnQueue(event, queueId, info))
+    if (events.size() > 1)
     {
-        SWSS_LOG_ERROR("Failed to start PFC watchdog %s event action on queue %s", event.c_str(), queueIdStr.c_str());
+        SWSS_LOG_NOTICE("Handled %zu PFC watchdog events in one batch", events.size());
     }
+
+    flushPendingActions();
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::flushPendingActions(void)
+{
+    SWSS_LOG_ENTER();
+
+    // Push everything the handlers deferred: one SAI call per queue index
+    // instead of one per (port, queue).
+    auto failedQueues = DropHandler::flush();
+
+    if (!failedQueues.empty())
+    {
+        for (auto queueId : failedQueues)
+        {
+            // BIG_RED_SWITCH keeps its handlers in a separate map.
+            auto entry = m_entryMap.find(queueId);
+            if (entry == m_entryMap.end())
+            {
+                entry = m_brsEntryMap.find(queueId);
+                if (entry == m_brsEntryMap.end())
+                {
+                    continue;
+                }
+            }
+
+            if (entry->second.handler == nullptr)
+            {
+                continue;
+            }
+
+            SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be "
+                          "installed (ACL programming failed); queue is NOT being mitigated",
+                          entry->second.portAlias.c_str(), entry->second.index);
+
+            // Invalidate first so the destructor queues no removal for an add
+            // that never landed; commit the counters so the queue returns to
+            // "operational", or the detection script never evaluates it again.
+            entry->second.handler->markInvalid();
+            entry->second.handler->commitCounters();
+            entry->second.handler = nullptr;
+        }
+
+        // Tearing those handlers down may have queued more work.
+        DropHandler::flush();
+    }
+
+    // The outcome is known now, so write the warm-reboot record and state.
+    for (auto queueId : m_pendingStormCommit)
+    {
+        auto entry = m_entryMap.find(queueId);
+        if (entry == m_entryMap.end())
+        {
+            continue;
+        }
+
+        if (entry->second.handler != nullptr && entry->second.handler->isValid())
+        {
+            // Log storm event to APPL_DB for warm-reboot purpose
+            string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
+            m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+            setSwWdState(entry->second.portAlias, entry->second.index, "configured");
+        }
+        else
+        {
+            // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
+            setSwWdState(entry->second.portAlias, entry->second.index, "failed");
+        }
+    }
+
+    m_pendingStormCommit.clear();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -624,6 +752,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
         }
     }
 
+    // Backstop: bounds how long a queued change can sit unapplied if some
+    // path fails to flush explicitly.
+    flushPendingActions();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -673,20 +804,11 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                if (entry->second.handler->isValid())
-                {
-                    // Log storm event to APPL_DB for warm-reboot purpose
-                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
-                }
-                else
-                {
-                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
-                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
-                                  entry->second.portAlias.c_str(), entry->second.index);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
-                }
+
+                // Programming may be deferred to the next
+                // flushPendingActions(), which writes APPL_DB and STATE_DB
+                // once the outcome is known.
+                m_pendingStormCommit.push_back(entry->first);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
@@ -701,20 +823,11 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                if (entry->second.handler->isValid())
-                {
-                    // Log storm event to APPL_DB for warm-reboot purpose
-                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
-                }
-                else
-                {
-                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
-                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
-                                  entry->second.portAlias.c_str(), entry->second.index);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
-                }
+
+                // Programming may be deferred to the next
+                // flushPendingActions(), which writes APPL_DB and STATE_DB
+                // once the outcome is known.
+                m_pendingStormCommit.push_back(entry->first);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
@@ -729,20 +842,11 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
                         entry->second.index,
                         this->getCountersTable());
                 entry->second.handler->initCounters();
-                if (entry->second.handler->isValid())
-                {
-                    // Log storm event to APPL_DB for warm-reboot purpose
-                    string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                    m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "configured");
-                }
-                else
-                {
-                    // No INSTORM: a storm we can't mitigate must not replay on warm reboot.
-                    SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be installed (ACL create failed); queue is NOT being mitigated",
-                                  entry->second.portAlias.c_str(), entry->second.index);
-                    setSwWdState(entry->second.portAlias, entry->second.index, "failed");
-                }
+
+                // Programming may be deferred to the next
+                // flushPendingActions(), which writes APPL_DB and STATE_DB
+                // once the outcome is known.
+                m_pendingStormCommit.push_back(entry->first);
             }
         }
         else
@@ -759,6 +863,13 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
 
             entry->second.handler->commitCounters();
             entry->second.handler = nullptr;
+
+            // A storm that starts and clears inside one batch must not be
+            // committed as a storm afterwards.
+            m_pendingStormCommit.erase(
+                    std::remove(m_pendingStormCommit.begin(), m_pendingStormCommit.end(), entry->first),
+                    m_pendingStormCommit.end());
+
             // Remove storm status in APPL_DB for warm-reboot purpose
             string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
             m_applDb->hdel(key, to_string(entry->second.index));

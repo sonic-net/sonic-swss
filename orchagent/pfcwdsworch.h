@@ -56,6 +56,12 @@ private:
         shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
+    // Apply the programming the action handlers deferred during this batch of
+    // storm/restore events, then write the APPL_DB and STATE_DB records for the
+    // storms that were mitigated. Every path that creates or destroys a handler
+    // must call this before returning.
+    void flushPendingActions(void);
+
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
@@ -73,6 +79,9 @@ private:
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
+
+    // Queues whose storm record is still waiting on flushPendingActions().
+    vector<sai_object_id_t> m_pendingStormCommit;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;

@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <memory>
+#include <set>
+#include <map>
 #include "aclorch.h"
 #include "table.h"
 
@@ -47,6 +49,25 @@ class PfcWdActionHandler
         }
 
         virtual bool isValid(void) const { return true; }
+
+        // Called by PfcWdSwOrch when a handler that deferred its programming
+        // turns out to have failed once the batch was flushed. Only handlers
+        // that defer work override this.
+        virtual void markInvalid(void) { }
+
+        // Hooks that let PfcWdSwOrch keep switch programming off the storm
+        // detection path. The defaults are no-ops, so handlers that touch
+        // nothing shared (DLR, zero-buffer, lossy) are unaffected.
+        //
+        //   prepare()   - called when the watchdog is configured on a port,
+        //                 long before any storm, to pre-create shared state.
+        //   unprepare() - called when the watchdog is removed from a port.
+        //   flush()     - called once after a whole batch of storm/restore
+        //                 events has been handled. Returns the OIDs of the
+        //                 queues whose deferred programming failed.
+        static bool prepare(sai_object_id_t, const std::set<uint8_t> &) { return true; }
+        static void unprepare(sai_object_id_t) { }
+        static std::set<sai_object_id_t> flush(void) { return std::set<sai_object_id_t>(); }
 
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
         void initCounters(void);
@@ -107,9 +128,35 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         static void clear();
 
         bool isValid(void) const override { return !m_rolledBack; }
+        void markInvalid(void) override { m_rolledBack = true; }
+
+        // Pre-create the ACL tables the storm path would otherwise build
+        // inline. Binds no ports.
+        static bool prepare(sai_object_id_t port, const std::set<uint8_t> &queueIds);
+
+        // Apply every ingress IN_PORTS change accumulated since the last
+        // flush: one set_acl_entry_attribute per queue index, instead of one
+        // per (port, queue). Returns the OIDs of the queues whose programming
+        // failed, so the caller can mark those handlers invalid.
+        static std::set<sai_object_id_t> flush(void);
+
+        // A deferred ingress change, recorded by the constructor (add) or the
+        // destructor (remove) and applied by flush().
+        struct PendingPortOp
+        {
+            bool add = true;
+            sai_object_id_t queueOid = SAI_NULL_OBJECT_ID;
+        };
+
     private:
         // class shared dict: ACL table name -> ACL table
         static std::map<std::string, AclTable> m_aclTables;
+
+        // Ingress IN_PORTS changes waiting for the next flush(), indexed by
+        // queue index and then by port. Indexing by port means a storm and a
+        // restore on the same (port, TC) inside one batch collapse to a single
+        // net change, so the ASIC never sees the intermediate state.
+        static std::map<uint8_t, std::map<sai_object_id_t, PendingPortOp>> m_pendingInPorts;
 
         bool shared_egress_acl_table = false;
 
@@ -119,10 +166,17 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         string m_strEgressRule;
-        bool createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        bool createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t port);
-        void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
-        void removeIngressBinding(sai_object_id_t port);
+
+        // Put a queue's unapplied in-ports changes back for the next flush.
+        static void requeue(uint8_t queueId,
+                            const std::map<sai_object_id_t, PendingPortOp> &ops);
+        static bool useSharedEgressAclTable(void);
+        static string ingressRuleName(uint8_t queueId);
+        static string egressTableName(uint8_t queueId);
+        static bool ensureAclTable(sai_object_id_t port, const string &strTable, bool ingress);
+        static bool createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
+        static bool createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId,
+                const string &strTable, const vector<sai_object_id_t> &ports);
 };
 
 class PfcWdDlrHandler: public PfcWdLossyHandler
