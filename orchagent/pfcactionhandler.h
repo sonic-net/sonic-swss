@@ -123,7 +123,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         bool isValid(void) const override { return !m_rolledBack; }
         void markInvalid(void) override { m_rolledBack = true; }
 
-        // Pre-create the ACL tables the storm path would otherwise build
+        // Pre-create the egress ACL tables the storm path would otherwise build
         // inline. Binds no ports.
         static bool prepare(sai_object_id_t port, const std::set<uint8_t> &queueIds);
 

@@ -310,16 +310,10 @@ bool PfcWdAclHandler::prepare(sai_object_id_t port, const std::set<uint8_t> &que
 {
     SWSS_LOG_ENTER();
 
-    // Create the ingress table once, off the storm path. No port is bound: the
-    // rule selects its ports through IN_PORTS.
-    if (!ensureAclTable(SAI_NULL_OBJECT_ID, INGRESS_TABLE_DROP, true))
-    {
-        SWSS_LOG_ERROR("Failed to pre-create PFCWD ingress ACL table %s", INGRESS_TABLE_DROP);
-        return false;
-    }
-
-    // Egress tables: pre-create only. Binding stays on the storm path because
-    // the egress rule has no port match - see the comment at the top.
+    // Egress tables only. The ingress table is shared with MuxOrch, which binds
+    // its ports only when it creates the table itself, so it is left to the
+    // first storm. Binding stays on the storm path because the egress rule has
+    // no port match - see the comment at the top.
     if (useSharedEgressAclTable())
     {
         return ensureAclTable(SAI_NULL_OBJECT_ID, egressTableName(0), false);
