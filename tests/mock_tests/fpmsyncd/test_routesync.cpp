@@ -4655,8 +4655,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     vector<FieldValueTuple> fvs;
     EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
 
-    // With ZMQ enabled, all 11 fields should be present (including empty ones)
-    EXPECT_EQ(fvs.size(), 11);
+    // With ZMQ enabled, all 12 fields should be present (including empty ones)
+    EXPECT_EQ(fvs.size(), 12);
 
     // Build a map for easier verification
     std::map<std::string, std::string> fieldMap;
@@ -4685,6 +4685,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     EXPECT_EQ(fieldMap["segment"], "");
     EXPECT_TRUE(fieldMap.count("seg_src") > 0);
     EXPECT_EQ(fieldMap["seg_src"], "");
+    EXPECT_TRUE(fieldMap.count("vpn_sid") > 0);
+    EXPECT_EQ(fieldMap["vpn_sid"], "");
 
     rtnl_route_put(test_route);
 
@@ -4760,6 +4762,7 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
     EXPECT_EQ(fieldMap.count("router_mac"), 0);
     EXPECT_EQ(fieldMap.count("segment"), 0);
     EXPECT_EQ(fieldMap.count("seg_src"), 0);
+    EXPECT_EQ(fieldMap.count("vpn_sid"), 0);
 
     rtnl_route_put(test_route);
 }
