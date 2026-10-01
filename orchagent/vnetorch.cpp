@@ -653,8 +653,18 @@ bool VNetOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name
  * Vnet Route Handling
  */
 
-static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
+bool VNetRouteOrch::del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
 {
+    const auto key = std::make_pair(vr_id, getIpPrefixFromSaiPrefix(ip_pfx));
+    auto ownership = route_ownership_.find(key);
+    if (ownership != route_ownership_.end() && !ownership->second)
+    {
+        // RouteOrch (or another orch) created this SAI entry. Its owner must
+        // remove it and account for that removal.
+        route_ownership_.erase(ownership);
+        return true;
+    }
+
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
     route_entry.switch_id = gSwitchId;
@@ -664,7 +674,12 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
     {
         SWSS_LOG_INFO("Unable to remove route since route is already removed");
-        return true;
+        // Another orch may have removed a route that we created. We still need
+        // to balance the CRM increment made by our successful create.
+        if (ownership == route_ownership_.end() || !ownership->second)
+        {
+            return true;
+        }
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
@@ -682,12 +697,19 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     }
 
     gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vr_id, ip_pfx, false);
+    if (ownership != route_ownership_.end())
+    {
+        route_ownership_.erase(ownership);
+    }
 
     return true;
 }
 
-static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
+static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
+
+bool VNetRouteOrch::add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
 {
+    const auto key = std::make_pair(vr_id, getIpPrefixFromSaiPrefix(ip_pfx));
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
     route_entry.switch_id = gSwitchId;
@@ -699,7 +721,26 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     route_attr.value.oid = nh_id;
 
     sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+    {
+        /*
+         * The prefix can already be programmed: the connected route for an
+         * interface assigned to a VNET arrives through RouteOrch, and a config
+         * reload or an fpmsyncd replay re-delivers it here as a subnet route.
+         * Converge onto the existing entry instead of failing the task, the way
+         * del_route() already tolerates SAI_STATUS_ITEM_NOT_FOUND.
+         * The CRM counter is deliberately not incremented: the entry was
+         * accounted for when it was first programmed.
+         */
+        SWSS_LOG_INFO("Route already programmed, updating next hop instead");
+        if (!update_route(vr_id, ip_pfx, nh_id))
+        {
+            return false;
+        }
+        route_ownership_.emplace(key, false);
+        return true;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("SAI failed to create route");
         return false;
@@ -715,6 +756,7 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     }
 
     gFlowCounterRouteOrch->onAddMiscRouteEntry(vr_id, ip_pfx, false);
+    route_ownership_[key] = true;
 
     return true;
 }
@@ -2103,8 +2145,8 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
     auto route_itr = syncd_routes_.find(ipPrefix);
     if (route_itr == syncd_routes_.end())
     {
-        SWSS_LOG_ERROR("Failed to find route %s.", ipPrefix.to_string().c_str());
-        assert(false);
+        SWSS_LOG_INFO("Route %s already absent from the VNET route table",
+                      ipPrefix.to_string().c_str());
         return;
     }
     auto next_hop_observer = next_hop_observers_.begin();
@@ -2115,15 +2157,17 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
             auto itr = next_hop_observer->second.routeTable.find(ipPrefix);
             if ( itr == next_hop_observer->second.routeTable.end())
             {
-                SWSS_LOG_ERROR(
-                    "Failed to find any ip(%s) belong to this route(%s).",
+                SWSS_LOG_INFO(
+                    "Observer ip(%s) holds no state for replayed route(%s)",
                     next_hop_observer->first.to_string().c_str(),
                     ipPrefix.to_string().c_str());
-                assert(false);
+                ++next_hop_observer;
                 continue;
             }
             if (itr->second.empty())
             {
+                next_hop_observer->second.routeTable.erase(itr);
+                ++next_hop_observer;
                 continue;
             }
             for (auto& observer : next_hop_observer->second.observers)
@@ -3991,4 +4035,3 @@ bool VNetTunnelTermAcl::getAclRule(const string vnet_name, const swss::IpPrefix&
 
     return false;
 }
-
