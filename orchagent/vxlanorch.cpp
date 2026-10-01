@@ -2649,16 +2649,10 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     // Extract DIP and tunnel
     auto remote_vtep = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
@@ -2671,7 +2665,8 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     {
         SWSS_LOG_NOTICE("Remote VNI del: remote VTEP %s was never added to vid %d, releasing its tunnel",
                         remote_vtep.c_str(), vlan_id);
-        return tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+        // delTunnelUser() does not use the VNI.
+        return tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
     }
 
     Port vlanPort, tunnelPort;
@@ -2718,10 +2713,10 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
                    vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
                    tunnelPort.m_fdb_count );
 
-    ret = tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    ret = tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
 
-    SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
-                   remote_vtep.c_str(), vni_id, vlan_id);
+    SWSS_LOG_INFO("remote_vtep=%s vlanid=%d ",
+                   remote_vtep.c_str(), vlan_id);
 
 
     return ret;
@@ -2834,16 +2829,10 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     // Extract end point ip
     auto end_point_ip = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
