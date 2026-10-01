@@ -378,6 +378,16 @@ std::set<sai_object_id_t> PfcWdAclHandler::flush(void)
         {
             if (portPair.second.add)
             {
+                // A port that is gone or not physical fails only its own
+                // queue, not every port storming on this TC.
+                Port p;
+                if (!gPortsOrch->getPort(portPair.first, p) || p.m_type != Port::PHY)
+                {
+                    SWSS_LOG_ERROR("Skipping port oid:0x%" PRIx64 " for ingress PFCWD drop rule %s: "
+                                   "not a known physical port", portPair.first, strRule.c_str());
+                    failedQueues.insert(portPair.second.queueOid);
+                    continue;
+                }
                 toAdd.push_back(portPair.first);
                 addedBy[portPair.first] = portPair.second.queueOid;
             }
