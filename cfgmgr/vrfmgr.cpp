@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <string.h>
 #include "logger.h"
 #include "dbconnector.h"
@@ -14,6 +15,7 @@
 #define TABLE_LOCAL_PREF 1001 // after l3mdev-table
 #define MGMT_VRF_TABLE_ID 6000
 #define MGMT_VRF          "mgmt"
+#define DEFAULT_VRF       "default"
 
 using namespace swss;
 
@@ -23,7 +25,8 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_appVnetTableProducer(appDb, APP_VNET_TABLE_NAME),
         m_appVxlanVrfTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
-        m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME)
+        m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME),
+        m_cfgVxlanTunnelMapTable(cfgDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME)
 {
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
     {
@@ -225,6 +228,21 @@ void VrfMgr::doTask(Consumer &consumer)
         auto vrfName = kfvKey(t);
 
         string op = kfvOp(t);
+        if (consumer.getTableName() == CFG_VXLAN_TUNNEL_MAP_TABLE_NAME)
+        {
+            const size_t delimiter_pos = vrfName.find(config_db_key_delimiter);
+            if (delimiter_pos == string::npos)
+            {
+                SWSS_LOG_ERROR("Invalid VXLAN tunnel map key %s", vrfName.c_str());
+            }
+            else
+            {
+                syncVrfVxlanTableForTunnel(vrfName.substr(0, delimiter_pos));
+            }
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         // Mgmt VRF table event handling for in-band management
         if (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME)
         {
@@ -278,9 +296,30 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
-                if (!setLink(vrfName))
+                if ((consumer.getTableName() == CFG_VRF_TABLE_NAME) ||
+                    (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME))
                 {
-                    SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
+                    uint32_t validated_vni = 0;
+                    string validated_s_vni;
+                    if (!validateVrfVniConfig(t, validated_vni, validated_s_vni))
+                    {
+                        SWSS_LOG_ERROR("Rejected VRF VNI configuration for %s", vrfName.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                }
+
+                if (vrfName != DEFAULT_VRF)
+                {
+                    if (!setLink(vrfName))
+                    {
+                        SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
+                    }
+                    SWSS_LOG_NOTICE("Created vrf netdev %s", vrfName.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Skipping VRF netdev creation for default VRF");
                 }
 
                 bool status = true;
@@ -288,7 +327,6 @@ void VrfMgr::doTask(Consumer &consumer)
                 fvVector.emplace_back("state", "ok");
                 m_stateVrfTable.set(vrfName, fvVector);
 
-                SWSS_LOG_NOTICE("Created vrf netdev %s", vrfName.c_str());
                 if ((consumer.getTableName() == CFG_VRF_TABLE_NAME) ||
                     (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME))
                 {
@@ -299,9 +337,7 @@ void VrfMgr::doTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-
                     m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
-
                 }
                 else
                 {
@@ -353,9 +389,16 @@ void VrfMgr::doTask(Consumer &consumer)
 
             if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
             {
-                if (!delLink(vrfName))
+                if (vrfName != DEFAULT_VRF)
                 {
-                    SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());
+                    if (!delLink(vrfName))
+                    {
+                        SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Skipping VRF netdev deletion for default VRF");
                 }
             }
 
@@ -373,6 +416,7 @@ void VrfMgr::doTask(Consumer &consumer)
 bool VrfMgr::doVrfEvpnNvoAddTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
+    auto nvo_name = kfvKey(t);
     string tunnel_name = "";
     const vector<FieldValueTuple>& data = kfvFieldsValues(t);
     for (auto idx : data)
@@ -386,27 +430,95 @@ bool VrfMgr::doVrfEvpnNvoAddTask(const KeyOpFieldsValuesTuple & t)
         }
     }
 
-    if (m_evpnVxlanTunnel.empty())
+    string old_tunnel_name;
+    const auto old_nvo = m_evpnVxlanTunnel.find(nvo_name);
+    if (old_nvo != m_evpnVxlanTunnel.end())
     {
-        m_evpnVxlanTunnel = tunnel_name;
-        VrfVxlanTableSync(true);
+        old_tunnel_name = old_nvo->second;
     }
 
-    SWSS_LOG_INFO("Added evpn nvo tunnel %s", m_evpnVxlanTunnel.c_str());
+    m_evpnVxlanTunnel[nvo_name] = tunnel_name;
+    if (!old_tunnel_name.empty() && old_tunnel_name != tunnel_name)
+    {
+        syncVrfVxlanTableForTunnel(old_tunnel_name);
+    }
+    syncVrfVxlanTableForTunnel(tunnel_name);
+
+    SWSS_LOG_INFO("Added evpn nvo %s with tunnel %s", nvo_name.c_str(), tunnel_name.c_str());
     return true;
 }
 
 bool VrfMgr::doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
+    auto nvo_name = kfvKey(t);
 
-    if (!m_evpnVxlanTunnel.empty())
+    auto it = m_evpnVxlanTunnel.find(nvo_name);
+    if (it != m_evpnVxlanTunnel.end())
     {
-        VrfVxlanTableSync(false);
-        m_evpnVxlanTunnel = "";
+        string tunnel_name = it->second;
+        m_evpnVxlanTunnel.erase(it);
+        syncVrfVxlanTableForTunnel(tunnel_name);
+
+        SWSS_LOG_INFO("Removed evpn nvo %s with tunnel %s", nvo_name.c_str(), tunnel_name.c_str());
+    }
+    return true;
+}
+
+bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vni, string& s_vni)
+{
+    constexpr uint32_t MAX_VNI = (1U << 24) - 1;
+    const string& vrf_name = kfvKey(t);
+    vni = 0;
+    s_vni.clear();
+
+    for (const auto& field_value : kfvFieldsValues(t))
+    {
+        if (fvField(field_value) != "vni")
+        {
+            continue;
+        }
+
+        s_vni = fvValue(field_value);
+        try
+        {
+            size_t parsed = 0;
+            const auto value = stoul(s_vni, &parsed);
+            if ((parsed != s_vni.size()) || (value > MAX_VNI))
+            {
+                SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s", s_vni.c_str(), vrf_name.c_str());
+                return false;
+            }
+            vni = static_cast<uint32_t>(value);
+        }
+        catch (const exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s: %s", s_vni.c_str(), vrf_name.c_str(), e.what());
+            return false;
+        }
+        break;
     }
 
-    SWSS_LOG_INFO("Removed evpn nvo tunnel %s", m_evpnVxlanTunnel.c_str());
+    const uint32_t old_vni = getVRFmappedVNI(vrf_name);
+    if ((old_vni != 0) && (vni != 0) && (vni != old_vni))
+    {
+        SWSS_LOG_ERROR("Live VNI reconfiguration for VRF %s is not supported: old %u, requested %u",
+                       vrf_name.c_str(), old_vni, vni);
+        return false;
+    }
+
+    if (vni != 0)
+    {
+        for (const auto& mapping : m_vrfVniMapTable)
+        {
+            if ((mapping.first != vrf_name) && (mapping.second == vni))
+            {
+                SWSS_LOG_ERROR("VNI %u is already mapped to VRF %s", vni, mapping.first.c_str());
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -419,58 +531,25 @@ bool VrfMgr::doVrfVxlanTableCreateTask(const KeyOpFieldsValuesTuple & t)
     string s_vni = "";
     bool add = true;
 
-    const vector<FieldValueTuple>& data = kfvFieldsValues(t);
-    for (auto idx : data)
+    if (!validateVrfVniConfig(t, vni, s_vni))
     {
-        const auto &field = fvField(idx);
-        const auto &value = fvValue(idx);
-
-        if (field == "vni")
-        {
-            s_vni = value;
-            vni = static_cast<uint32_t>(stoul(value));
-        }
-    }
-
-    if (vni != 0)
-    {
-        for (auto itr : m_vrfVniMapTable)
-        {
-            if (vni == itr.second)
-            {
-                SWSS_LOG_ERROR(" vni %d is already mapped to vrf %s", vni, itr.first.c_str());
-                return false;
-            }
-        }
+        return false;
     }
 
     old_vni = getVRFmappedVNI(vrf_name);
     SWSS_LOG_INFO("VRF VNI map update vrf %s, vni %d, old_vni %d", vrf_name.c_str(), vni, old_vni);
-    if (vni != old_vni)
-    {
-        if (vni == 0)
-        {
-            m_vrfVniMapTable.erase(vrf_name);
-            s_vni = to_string(old_vni);
-            add = false;
-        }
-        else
-        {
-            if (old_vni != 0)
-            {
-                SWSS_LOG_ERROR(" vrf %s is already mapped to vni %d", vrf_name.c_str(), old_vni);
-                return false;
-            }
-            m_vrfVniMapTable[vrf_name] = vni;
-        }
 
-    }
-
-    if ((vni == 0) && add)
+    if (vni == old_vni)
     {
         return true;
     }
 
+    if (vni == 0)
+    {
+        return doVrfVxlanTableRemoveTask(t);
+    }
+
+    m_vrfVniMapTable[vrf_name] = vni;
     SWSS_LOG_INFO("VRF VNI map update vrf %s, s_vni %s, add %d", vrf_name.c_str(), s_vni.c_str(), add);
     doVrfVxlanTableUpdate(vrf_name, s_vni, add);
     return true;
@@ -499,15 +578,19 @@ bool VrfMgr::doVrfVxlanTableRemoveTask(const KeyOpFieldsValuesTuple & t)
 bool VrfMgr::doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bool add)
 {
     SWSS_LOG_ENTER();
-    string key;
 
-    if (m_evpnVxlanTunnel.empty())
+    if (add && m_evpnVxlanTunnel.empty())
     {
         SWSS_LOG_INFO("NVO Tunnel not present. vrf %s, vni %s, add %d", vrf_name.c_str(), vni.c_str(), add);
         return false;
     }
 
-    key = m_evpnVxlanTunnel + ":" + "evpn_map_" + vni + "_" + vrf_name;
+    std::vector<std::string> tunnels = getVxlanTunnelsForVni(vni);
+    if (tunnels.empty())
+    {
+        SWSS_LOG_INFO("No VXLAN tunnels found with VNI %s for VRF %s", vni.c_str(), vrf_name.c_str());
+        return false;
+    }
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple v1("vni", vni);
@@ -515,29 +598,64 @@ bool VrfMgr::doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bo
     fvVector.push_back(v1);
     fvVector.push_back(v2);
 
-    SWSS_LOG_INFO("VRF VNI map table update vrf %s, vni %s, add %d", vrf_name.c_str(), vni.c_str(), add);
-    if (add)
+    for (const auto& tunnel_name : tunnels)
     {
-        m_appVxlanVrfTableProducer.set(key, fvVector);
-    }
-    else
-    {
-        m_appVxlanVrfTableProducer.del(key);
+        const bool active_nvo_tunnel = std::any_of(
+            m_evpnVxlanTunnel.begin(), m_evpnVxlanTunnel.end(),
+            [&tunnel_name](const auto& nvo) { return nvo.second == tunnel_name; });
+        if (add && !active_nvo_tunnel)
+        {
+            continue;
+        }
+
+        string key = tunnel_name + ":" + "evpn_map_" + vni + "_" + vrf_name;
+
+        SWSS_LOG_INFO("VRF VNI map table update for tunnel %s, vrf %s, vni %s, add %d", 
+                      tunnel_name.c_str(), vrf_name.c_str(), vni.c_str(), add);
+
+        if (add)
+        {
+            m_appVxlanVrfTableProducer.set(key, fvVector);
+        }
+        else
+        {
+            m_appVxlanVrfTableProducer.del(key);
+        }
     }
 
     return true;
 }
 
-void VrfMgr::VrfVxlanTableSync(bool add)
+void VrfMgr::syncVrfVxlanTableForTunnel(const string& tunnel_name)
 {
     SWSS_LOG_ENTER();
-    string s_vni = "";
 
-    for (auto itr : m_vrfVniMapTable)
+    const bool active_nvo_tunnel = std::any_of(
+        m_evpnVxlanTunnel.begin(), m_evpnVxlanTunnel.end(),
+        [&tunnel_name](const auto& nvo) { return nvo.second == tunnel_name; });
+
+    for (const auto& itr : m_vrfVniMapTable)
     {
-        s_vni = to_string(itr.second);
-        SWSS_LOG_INFO("vrf %s, vni %s, add %d", (itr.first).c_str(), s_vni.c_str(), add);
-        doVrfVxlanTableUpdate(itr.first, s_vni, add);
+        const string s_vni = to_string(itr.second);
+        const auto matching_tunnels = getVxlanTunnelsForVni(s_vni);
+        const bool vni_mapped_to_tunnel = std::find(
+            matching_tunnels.begin(), matching_tunnels.end(), tunnel_name) != matching_tunnels.end();
+        const bool should_exist = active_nvo_tunnel && vni_mapped_to_tunnel;
+        const string key = tunnel_name + ":" + "evpn_map_" + s_vni + "_" + itr.first;
+
+        SWSS_LOG_INFO("Reconcile VRF VNI map vrf %s, vni %s, tunnel %s, present %d",
+                      itr.first.c_str(), s_vni.c_str(), tunnel_name.c_str(), should_exist);
+        if (should_exist)
+        {
+            std::vector<FieldValueTuple> fvVector;
+            fvVector.emplace_back("vni", s_vni);
+            fvVector.emplace_back("vrf", itr.first);
+            m_appVxlanVrfTableProducer.set(key, fvVector);
+        }
+        else
+        {
+            m_appVxlanVrfTableProducer.del(key);
+        }
     }
 }
 
@@ -553,3 +671,37 @@ uint32_t VrfMgr::getVRFmappedVNI(const std::string& vrf_name)
     }
 }
 
+std::vector<std::string> VrfMgr::getVxlanTunnelsForVni(const std::string& vni)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<std::string> tunnels;
+    std::vector<std::string> keys;
+    m_cfgVxlanTunnelMapTable.getKeys(keys);
+
+    for (const auto& key : keys)
+    {
+        std::vector<FieldValueTuple> values;
+        m_cfgVxlanTunnelMapTable.get(key, values);
+
+        for (const auto& fv : values)
+        {
+            if (fvField(fv) == "vni" && fvValue(fv) == vni)
+            {
+                const size_t delimiter_pos = key.find(config_db_key_delimiter);
+                if (delimiter_pos != std::string::npos)
+                {
+                    const std::string tunnel_name = key.substr(0, delimiter_pos);
+                    if (std::find(tunnels.begin(), tunnels.end(), tunnel_name) == tunnels.end())
+                    {
+                        tunnels.push_back(tunnel_name);
+                        SWSS_LOG_INFO("Found tunnel %s with VNI %s", tunnel_name.c_str(), vni.c_str());
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    return tunnels;
+}
