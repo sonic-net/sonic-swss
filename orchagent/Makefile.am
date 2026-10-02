@@ -37,7 +37,8 @@ dist_swss_DATA = \
 		 watermark_bufferpool.lua \
 		 lagids.lua \
 		 tunnel_rates.lua \
-		 trap_rates.lua
+		 trap_rates.lua \
+		 queue_ctr_rates.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
