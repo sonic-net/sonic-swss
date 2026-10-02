@@ -727,6 +727,61 @@ namespace shlorch_test
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
     }
 
+    /*
+     * Split horizon is requested per vlan and port while the isolation group is per
+     * bridge port, so one vlan releasing a port must not drop the isolation another
+     * vlan still needs.
+     */
+    TEST_F(ShlOrchTest, ShlSharedPortAcrossVlansTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", VTEP_REMOTE_IP_2}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Second vlan asks for the same port and vtep
+        entries.push_back({"Vlan20:Ethernet4", "SET", {
+            {"vteps", VTEP_REMOTE_IP_2}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 2);
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Vlan10 goes away, Vlan20 still needs Ethernet4 isolated
+        entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 1);
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Last vlan releases the port
+        entries.push_back({"Vlan20:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 0);
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+    }
+
     TEST_F(ShlOrchTest, ShlUnknownAttributeTest)
     {
         Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
