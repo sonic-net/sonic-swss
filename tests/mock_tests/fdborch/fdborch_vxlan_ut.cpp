@@ -1,4 +1,7 @@
 #include "ut_helper.h"
+#define private public
+#include "l2nhgorch.h"
+#undef private
 #include "mock_orchagent_main.h"
 
 #define SAI_MOCK_FILENAME fdborch_vxlan_ut
@@ -889,6 +892,144 @@ namespace fdborch_vxlan_ut
         // nexthop-group/VTEP dependencies. Do not use GTEST_SKIP here:
         // the automake/gtest harness treats runtime skipped tests as
         // non-passing in Azure.
+    }
+
+    static int bridge_port_set_calls;
+
+    static sai_status_t _ut_count_bridge_port_set(
+        _In_ sai_object_id_t bridge_port_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        bridge_port_set_calls++;
+        /* Stops removeBridgePort at its first SAI call: the test only checks it is reached. */
+        return SAI_STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    TEST_F(VxlanFdbOrchTest, L2NhgDeleteWaitsForItsRemoteMacs)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        const string nhg = "536870913";
+        gL2NhgOrch->m_nhg_nh[nhg].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh[nhg].is_active = true;
+        const sai_object_id_t nhg_bridge_port = m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id;
+
+        const string mac_key = string(VLAN40) + ":00:11:01:00:00:2e";
+        const vector<FieldValueTuple> mac_fvs = {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", nhg }
+        };
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set(mac_key, mac_fvs);
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        sai_bridge_api_t ut_bridge_api = *sai_bridge_api;
+        struct BridgeApiRestore
+        {
+            sai_bridge_api_t *saved;
+            ~BridgeApiRestore() { sai_bridge_api = saved; }
+        } restore_bridge_api{ sai_bridge_api };
+        ut_bridge_api.set_bridge_port_attribute = _ut_count_bridge_port_set;
+        sai_bridge_api = &ut_bridge_api;
+        bridge_port_set_calls = 0;
+
+        /* The group's delete is consumed before its remote MAC's: it waits, bridge port untouched. */
+        auto nhgConsumer = dynamic_cast<Consumer *>(gL2NhgOrch->getExecutor(APP_L2_NEXTHOP_GROUP_TABLE_NAME));
+        nhgConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ { nhg, DEL_COMMAND, {} } });
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        EXPECT_EQ(bridge_port_set_calls, 0);
+        EXPECT_EQ(nhgConsumer->m_toSync.size(), 1);
+        EXPECT_EQ(gL2NhgOrch->m_nhg_nh.count(nhg), 1);
+        EXPECT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id, nhg_bridge_port);
+
+        auto fdbConsumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        fdbConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ { mac_key, DEL_COMMAND, mac_fvs } });
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 0);
+
+        /* With the MAC gone the retried delete goes on to remove the bridge port. */
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        EXPECT_EQ(bridge_port_set_calls, 1);
+
+        nhgConsumer->m_toSync.clear();
+    }
+
+    TEST_F(VxlanFdbOrchTest, L2NhgSetAfterADeferredDeleteKeepsTheGroup)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        const string nhg = "536870913";
+        gL2NhgOrch->m_nhg_nh[nhg].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh[nhg].is_active = true;
+        const sai_object_id_t nhg_bridge_port = m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id;
+
+        const string mac_key = string(VLAN40) + ":00:11:01:00:00:2e";
+        const vector<FieldValueTuple> mac_fvs = {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", nhg }
+        };
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set(mac_key, mac_fvs);
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        sai_bridge_api_t ut_bridge_api = *sai_bridge_api;
+        struct BridgeApiRestore
+        {
+            sai_bridge_api_t *saved;
+            ~BridgeApiRestore() { sai_bridge_api = saved; }
+        } restore_bridge_api{ sai_bridge_api };
+        ut_bridge_api.set_bridge_port_attribute = _ut_count_bridge_port_set;
+        sai_bridge_api = &ut_bridge_api;
+        bridge_port_set_calls = 0;
+
+        /* The group is set again while its delete waits for the MAC: the delete is dropped. */
+        auto nhgConsumer = dynamic_cast<Consumer *>(gL2NhgOrch->getExecutor(APP_L2_NEXTHOP_GROUP_TABLE_NAME));
+        nhgConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ { nhg, DEL_COMMAND, {} } });
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        ASSERT_EQ(nhgConsumer->m_toSync.size(), 1);
+        nhgConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ { nhg, SET_COMMAND, { { "nexthop_group", "" } } } });
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        EXPECT_TRUE(nhgConsumer->m_toSync.empty());
+        EXPECT_EQ(gL2NhgOrch->m_nhg_nh.count(nhg), 1);
+
+        /* The MAC going no longer takes the group with it. */
+        auto fdbConsumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        fdbConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ { mac_key, DEL_COMMAND, mac_fvs } });
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        static_cast<Orch *>(gL2NhgOrch)->doTask();
+        EXPECT_EQ(bridge_port_set_calls, 0);
+        EXPECT_EQ(gL2NhgOrch->m_nhg_nh.count(nhg), 1);
+        EXPECT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id, nhg_bridge_port);
     }
 
     /* Test Consolidated Flush Per Vlan and Per Port */
