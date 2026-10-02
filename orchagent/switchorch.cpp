@@ -214,8 +214,6 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
         m_stateDb(new DBConnector("STATE_DB", 0)),
-        m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
-        m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
         m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
         m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME)),
         m_counterManager(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, SWITCH_STAT_COUNTER_POLLING_INTERVAL_MS, false)
@@ -228,7 +226,8 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     set_switch_pfc_dlr_init_capability();
     set_switch_pfc_dldr_capability();
     set_switch_bfd_next_hop_capability();
-    initSensorsTable();
+    initAsicSensorsPoller();
+    initGearboxSensorsPoller();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchMirrorOnDropCapability();
@@ -238,8 +237,11 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
 
-    auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
+    auto executorT = new ExecutableTimer(m_asicSensorsPoller.timer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+
+    auto executorGbT = new ExecutableTimer(m_gearboxSensorsPoller.timer, this, "GEARBOX_SENSORS_POLL_TIMER");
+    Orch::addExecutor(executorGbT);
 }
 
 void SwitchOrch::generateSwitchCounterNameMap() const
@@ -451,7 +453,7 @@ ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, 
     return ReturnCode();
 }
 
-void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
+void SwitchOrch::doCfgSensorsPollerTableTask(Consumer &consumer, SensorsPollerContext &ctx)
 {
     SWSS_LOG_ENTER();
 
@@ -465,62 +467,62 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             FieldValueTuple fvt = kfvFieldsValues(t)[0];
-            SWSS_LOG_NOTICE("ASIC sensors : set %s(%s) to %s", table_attr.c_str(), fvField(fvt).c_str(), fvValue(fvt).c_str());
+            SWSS_LOG_NOTICE("%s sensors : set %s(%s) to %s", ctx.name.c_str(), table_attr.c_str(), fvField(fvt).c_str(), fvValue(fvt).c_str());
 
-            if (table_attr == ASIC_SENSORS_POLLER_STATUS)
+            if (table_attr == ctx.pollerStatusKey)
             {
                 if (fvField(fvt) == "admin_status")
                 {
-                    if (fvValue(fvt) == "enable" && !m_sensorsPollerEnabled)
+                    if (fvValue(fvt) == "enable" && !ctx.enabled)
                     {
-                        m_sensorsPollerTimer->start();
-                        m_sensorsPollerEnabled = true;
+                        ctx.timer->start();
+                        ctx.enabled = true;
                     }
                     else if (fvValue(fvt) == "disable")
                     {
-                        m_sensorsPollerEnabled = false;
+                        ctx.enabled = false;
                     }
                     else
                     {
-                        SWSS_LOG_ERROR("ASIC sensors : unsupported operation for poller state %d",m_sensorsPollerEnabled);
+                        SWSS_LOG_ERROR("%s sensors : unsupported operation for poller state %d", ctx.name.c_str(), ctx.enabled);
                     }
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("ASIC sensors : unsupported field in attribute %s", ASIC_SENSORS_POLLER_STATUS);
+                    SWSS_LOG_ERROR("%s sensors : unsupported field in attribute %s", ctx.name.c_str(), ctx.pollerStatusKey.c_str());
                 }
             }
-            else if (table_attr == ASIC_SENSORS_POLLER_INTERVAL)
+            else if (table_attr == ctx.pollerIntervalKey)
             {
-                auto interval=to_int<time_t>(fvValue(fvt));
+                auto interval = to_int<time_t>(fvValue(fvt));
 
                 if (fvField(fvt) == "interval")
                 {
-                    if (interval != m_sensorsPollerInterval)
+                    if (interval != ctx.interval)
                     {
-                        auto intervT = timespec { .tv_sec = interval , .tv_nsec = 0 };
-                        m_sensorsPollerTimer->setInterval(intervT);
-                        m_sensorsPollerInterval = interval;
-                        m_sensorsPollerIntervalChanged = true;
+                        auto intervT = timespec { .tv_sec = interval, .tv_nsec = 0 };
+                        ctx.timer->setInterval(intervT);
+                        ctx.interval = interval;
+                        ctx.intervalChanged = true;
                     }
                     else
                     {
-                        SWSS_LOG_INFO("ASIC sensors : poller interval unchanged : %s seconds", to_string(m_sensorsPollerInterval).c_str());
+                        SWSS_LOG_INFO("%s sensors : poller interval unchanged : %s seconds", ctx.name.c_str(), to_string(ctx.interval).c_str());
                     }
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("ASIC sensors : unsupported field in attribute %s", ASIC_SENSORS_POLLER_INTERVAL);
+                    SWSS_LOG_ERROR("%s sensors : unsupported field in attribute %s", ctx.name.c_str(), ctx.pollerIntervalKey.c_str());
                 }
             }
             else
             {
-                SWSS_LOG_ERROR("ASIC sensors : unsupported attribute %s", table_attr.c_str());
+                SWSS_LOG_ERROR("%s sensors : unsupported attribute %s", ctx.name.c_str(), table_attr.c_str());
             }
         }
         else
         {
-            SWSS_LOG_ERROR("ASIC sensors : unsupported operation %s",op.c_str());
+            SWSS_LOG_ERROR("%s sensors : unsupported operation %s", ctx.name.c_str(), op.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -1599,7 +1601,11 @@ void SwitchOrch::doTask(Consumer &consumer)
     }
     else if (tableName == CFG_ASIC_SENSORS_TABLE_NAME)
     {
-        doCfgSensorsTableTask(consumer);
+        doCfgSensorsPollerTableTask(consumer, m_asicSensorsPoller);
+    }
+    else if (tableName == CFG_GEARBOX_SENSORS_TABLE_NAME)
+    {
+        doCfgSensorsPollerTableTask(consumer, m_gearboxSensorsPoller);
     }
     else if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
     {
@@ -1788,95 +1794,37 @@ void SwitchOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    if (&timer == m_sensorsPollerTimer)
+    if (&timer == m_asicSensorsPoller.timer)
     {
-        if (m_sensorsPollerIntervalChanged)
+        if (m_asicSensorsPoller.intervalChanged)
         {
-            m_sensorsPollerTimer->reset();
-            m_sensorsPollerIntervalChanged = false;
+            m_asicSensorsPoller.timer->reset();
+            m_asicSensorsPoller.intervalChanged = false;
         }
 
-        if (!m_sensorsPollerEnabled)
+        if (!m_asicSensorsPoller.enabled)
         {
-            m_sensorsPollerTimer->stop();
+            m_asicSensorsPoller.timer->stop();
             return;
         }
 
-        sai_attribute_t attr;
-        sai_status_t status;
-        std::vector<FieldValueTuple> values;
-
-        if (m_numTempSensors)
+        pollSensors(m_asicSensorsPoller);
+    }
+    else if (&timer == m_gearboxSensorsPoller.timer)
+    {
+        if (m_gearboxSensorsPoller.intervalChanged)
         {
-            std::vector<int32_t> temp_list(m_numTempSensors);
-
-            memset(&attr, 0, sizeof(attr));
-            attr.id = SAI_SWITCH_ATTR_TEMP_LIST;
-            attr.value.s32list.count = m_numTempSensors;
-            attr.value.s32list.list = temp_list.data();
-
-            status = sai_switch_api->get_switch_attribute(gSwitchId , 1, &attr);
-            if (status == SAI_STATUS_SUCCESS)
-            {
-                for (size_t i = 0; i < attr.value.s32list.count ; i++) {
-                    const std::string &fieldName = "temperature_" + std::to_string(i);
-                    values.emplace_back(fieldName, std::to_string(temp_list[i]));
-                }
-                m_asicSensorsTable->set("",values);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST: %d", status);
-            }
+            m_gearboxSensorsPoller.timer->reset();
+            m_gearboxSensorsPoller.intervalChanged = false;
         }
 
-        if (m_sensorsMaxTempSupported)
+        if (!m_gearboxSensorsPoller.enabled)
         {
-            memset(&attr, 0, sizeof(attr));
-            attr.id = SAI_SWITCH_ATTR_MAX_TEMP;
-
-            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-            if (status == SAI_STATUS_SUCCESS)
-            {
-                const std::string &fieldName = "maximum_temperature";
-                values.emplace_back(fieldName, std::to_string(attr.value.s32));
-                m_asicSensorsTable->set("",values);
-            }
-            else if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
-            {
-                m_sensorsMaxTempSupported = false;
-                SWSS_LOG_INFO("ASIC sensors : SAI_SWITCH_ATTR_MAX_TEMP is not supported");
-            }
-            else
-            {
-                m_sensorsMaxTempSupported = false;
-                SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_TEMP: %d", status);
-            }
+            m_gearboxSensorsPoller.timer->stop();
+            return;
         }
 
-        if (m_sensorsAvgTempSupported)
-        {
-            memset(&attr, 0, sizeof(attr));
-            attr.id = SAI_SWITCH_ATTR_AVERAGE_TEMP;
-
-            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-            if (status == SAI_STATUS_SUCCESS)
-            {
-                const std::string &fieldName = "average_temperature";
-                values.emplace_back(fieldName, std::to_string(attr.value.s32));
-                m_asicSensorsTable->set("",values);
-            }
-            else if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
-            {
-                m_sensorsAvgTempSupported = false;
-                SWSS_LOG_INFO("ASIC sensors : SAI_SWITCH_ATTR_AVERAGE_TEMP is not supported");
-            }
-            else
-            {
-                m_sensorsAvgTempSupported = false;
-                SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_AVERAGE_TEMP: %d", status);
-            }
-        }
+        pollSensors(m_gearboxSensorsPoller);
     }
     else if (&timer == m_eliminateEventsTimer)
     {
@@ -1888,73 +1836,223 @@ void SwitchOrch::doTask(SelectableTimer &timer)
     }
 }
 
-void SwitchOrch::initSensorsTable()
+void SwitchOrch::initAsicSensorsPoller()
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    sai_status_t status;
-    std::vector<FieldValueTuple> values;
+    m_asicSensorsPoller.name = "ASIC";
+    m_asicSensorsPoller.pollerStatusKey = ASIC_SENSORS_POLLER_STATUS;
+    m_asicSensorsPoller.pollerIntervalKey = ASIC_SENSORS_POLLER_INTERVAL;
+    m_asicSensorsPoller.table = std::make_shared<Table>(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME);
+    m_asicSensorsPoller.timer = new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }));
+    m_asicSensorsPoller.interval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
 
-    if (!m_numTempSensorsInitialized)
+    SensorsPollerContext::SwitchSensorsInfo asicInfo;
+    asicInfo.oid = gSwitchId;
+    m_asicSensorsPoller.switches.push_back(asicInfo);
+
+    initSensorsPoller(m_asicSensorsPoller);
+}
+
+void SwitchOrch::initSensorsPoller(SensorsPollerContext &ctx)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &sw : ctx.switches)
     {
-        memset(&attr, 0, sizeof(attr));
-        attr.id = SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS;
+        sai_attribute_t attr;
+        sai_status_t status;
+        std::vector<FieldValueTuple> values;
 
-        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-        if (status == SAI_STATUS_SUCCESS)
+        if (!sw.numTempSensorsInitialized)
         {
-            m_numTempSensors = attr.value.u8;
-            m_numTempSensorsInitialized = true;
-        }
-        else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
-                 || status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
-        {
-            m_numTempSensorsInitialized = true;
-            SWSS_LOG_INFO("ASIC sensors : SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS is not supported");
-        }
-        else
-        {
-            SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS: 0x%x", status);
-        }
-    }
+            memset(&attr, 0, sizeof(attr));
+            attr.id = SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS;
 
-    if (m_numTempSensors)
-    {
-        std::vector<int32_t> temp_list(m_numTempSensors);
-
-        memset(&attr, 0, sizeof(attr));
-        attr.id = SAI_SWITCH_ATTR_TEMP_LIST;
-        attr.value.s32list.count = m_numTempSensors;
-        attr.value.s32list.list = temp_list.data();
-
-        status = sai_switch_api->get_switch_attribute(gSwitchId , 1, &attr);
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            for (size_t i = 0; i < attr.value.s32list.count ; i++) {
-                const std::string &fieldName = "temperature_" + std::to_string(i);
-                values.emplace_back(fieldName, std::to_string(0));
+            status = sai_switch_api->get_switch_attribute(sw.oid, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                sw.numTempSensors = attr.value.u8;
+                sw.numTempSensorsInitialized = true;
             }
-            m_asicSensorsTable->set("",values);
+            else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+                     || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                sw.numTempSensorsInitialized = true;
+                SWSS_LOG_INFO("%s sensors : SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS not supported on %s",
+                              ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("%s sensors : failed to get SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS on %s: 0x%x",
+                               ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), status);
+            }
         }
-        else
+
+        if (sw.numTempSensors)
         {
-            SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST: %d", status);
+            std::vector<int32_t> temp_list(sw.numTempSensors);
+
+            memset(&attr, 0, sizeof(attr));
+            attr.id = SAI_SWITCH_ATTR_TEMP_LIST;
+            attr.value.s32list.count = sw.numTempSensors;
+            attr.value.s32list.list = temp_list.data();
+
+            status = sai_switch_api->get_switch_attribute(sw.oid, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                for (size_t i = 0; i < attr.value.s32list.count; i++)
+                {
+                    values.emplace_back("temperature_" + std::to_string(i), std::to_string(0));
+                }
+                ctx.table->set(sw.tableKey, values);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("%s sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST on %s: %d",
+                               ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), status);
+            }
         }
+
+        if (sw.maxTempSupported)
+        {
+            values.emplace_back("maximum_temperature", std::to_string(0));
+            ctx.table->set(sw.tableKey, values);
+        }
+
+        if (sw.avgTempSupported)
+        {
+            values.emplace_back("average_temperature", std::to_string(0));
+            ctx.table->set(sw.tableKey, values);
+        }
+
+        SWSS_LOG_NOTICE("%s sensors : initialized %s with %u temp sensors",
+                        ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), sw.numTempSensors);
+    }
+}
+
+void SwitchOrch::initGearboxSensorsPoller()
+{
+    SWSS_LOG_ENTER();
+
+    m_gearboxSensorsPoller.name = "Gearbox";
+    m_gearboxSensorsPoller.pollerStatusKey = GEARBOX_SENSORS_POLLER_STATUS;
+    m_gearboxSensorsPoller.pollerIntervalKey = GEARBOX_SENSORS_POLLER_INTERVAL;
+    m_gearboxSensorsPoller.table = std::make_shared<Table>(m_stateDb.get(), GEARBOX_TEMPERATURE_INFO_TABLE_NAME);
+    m_gearboxSensorsPoller.timer = new SelectableTimer((timespec { .tv_sec = DEFAULT_GEARBOX_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }));
+    m_gearboxSensorsPoller.interval = DEFAULT_GEARBOX_SENSORS_POLLER_INTERVAL;
+
+    Table gearboxTable(m_db, "_GEARBOX_TABLE");
+
+    std::vector<std::string> keys;
+    gearboxTable.getKeys(keys);
+    for (const auto &k : keys)
+    {
+        if (k.substr(0, 4) != "phy:" || k.find(':', 4) != std::string::npos)
+        {
+            continue;
+        }
+        std::string oidStr;
+        gearboxTable.hget(k, "phy_oid", oidStr);
+        if (oidStr.empty())
+        {
+            continue;
+        }
+
+        SensorsPollerContext::SwitchSensorsInfo info;
+        sai_deserialize_object_id(oidStr, info.oid);
+        info.tableKey = k;
+
+        m_gearboxSensorsPoller.switches.push_back(info);
     }
 
-    if (m_sensorsMaxTempSupported)
-    {
-        const std::string &fieldName = "maximum_temperature";
-        values.emplace_back(fieldName, std::to_string(0));
-        m_asicSensorsTable->set("",values);
-    }
+    initSensorsPoller(m_gearboxSensorsPoller);
+}
 
-    if (m_sensorsAvgTempSupported)
+void SwitchOrch::pollSensors(SensorsPollerContext &ctx)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &sw : ctx.switches)
     {
-        const std::string &fieldName = "average_temperature";
-        values.emplace_back(fieldName, std::to_string(0));
-        m_asicSensorsTable->set("",values);
+        sai_attribute_t attr;
+        sai_status_t status;
+        std::vector<FieldValueTuple> values;
+
+        if (sw.numTempSensors)
+        {
+            std::vector<int32_t> temp_list(sw.numTempSensors);
+
+            memset(&attr, 0, sizeof(attr));
+            attr.id = SAI_SWITCH_ATTR_TEMP_LIST;
+            attr.value.s32list.count = sw.numTempSensors;
+            attr.value.s32list.list = temp_list.data();
+
+            status = sai_switch_api->get_switch_attribute(sw.oid, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                for (size_t i = 0; i < attr.value.s32list.count; i++)
+                {
+                    values.emplace_back("temperature_" + std::to_string(i), std::to_string(temp_list[i]));
+                }
+                ctx.table->set(sw.tableKey, values);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("%s sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST on %s: %d",
+                               ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), status);
+            }
+        }
+
+        if (sw.maxTempSupported)
+        {
+            memset(&attr, 0, sizeof(attr));
+            attr.id = SAI_SWITCH_ATTR_MAX_TEMP;
+
+            status = sai_switch_api->get_switch_attribute(sw.oid, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                values.emplace_back("maximum_temperature", std::to_string(attr.value.s32));
+                ctx.table->set(sw.tableKey, values);
+            }
+            else if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                sw.maxTempSupported = false;
+                SWSS_LOG_INFO("%s sensors : SAI_SWITCH_ATTR_MAX_TEMP not supported on %s",
+                              ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str());
+            }
+            else
+            {
+                sw.maxTempSupported = false;
+                SWSS_LOG_ERROR("%s sensors : failed to get SAI_SWITCH_ATTR_MAX_TEMP on %s: %d",
+                               ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), status);
+            }
+        }
+
+        if (sw.avgTempSupported)
+        {
+            memset(&attr, 0, sizeof(attr));
+            attr.id = SAI_SWITCH_ATTR_AVERAGE_TEMP;
+
+            status = sai_switch_api->get_switch_attribute(sw.oid, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                values.emplace_back("average_temperature", std::to_string(attr.value.s32));
+                ctx.table->set(sw.tableKey, values);
+            }
+            else if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                sw.avgTempSupported = false;
+                SWSS_LOG_INFO("%s sensors : SAI_SWITCH_ATTR_AVERAGE_TEMP not supported on %s",
+                              ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str());
+            }
+            else
+            {
+                sw.avgTempSupported = false;
+                SWSS_LOG_ERROR("%s sensors : failed to get SAI_SWITCH_ATTR_AVERAGE_TEMP on %s: %d",
+                               ctx.name.c_str(), sw.tableKey.empty() ? "ASIC" : sw.tableKey.c_str(), status);
+            }
+        }
     }
 }
 
