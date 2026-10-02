@@ -635,6 +635,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 >,
                 RouteBulkContext
         >                                       toBulk;
+        auto bulkerGuard = guardRouteBulker();
 
         // Add or remove routes with a route bulker
         while (it != consumer.m_toSync.end())
@@ -3069,6 +3070,7 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
 
     string key = prefix.to_string();
     RouteBulkContext context(key, false);
+    auto bulkerGuard = guardRouteBulker();
     context.ip_prefix = prefix;
     context.vrf_id = gVirtualRouterId;
     if (removeRoute(context))
