@@ -280,6 +280,8 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    /* Point every route and label route using NhgOrch group nhg_index at nhg_id. */
+    bool moveNhgIndexRoutes(const std::string& nhg_index, sai_object_id_t nhg_id);
 
     void flushResponses() override;
 

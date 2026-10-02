@@ -6,6 +6,7 @@
 #undef protected
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "swssnet.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
 #include "mock_sai_api.h"
@@ -1800,5 +1801,61 @@ namespace routeorch_test
         // After NHG destruction, refcounts must be decremented
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
+    }
+
+    /*
+     * A NEXTHOP_GROUP_TABLE SET that takes a group to or from a single next
+     * hop changes its SAI ID, and the route on its index follows each time.
+     */
+    TEST_F(RouteOrchTest, NhgSetBetweenOneAndSeveralNextHopsMovesItsRoute)
+    {
+        const string index = "nhg_replace";
+        const IpPrefix prefix("2.2.3.0/24");
+
+        auto nhg_consumer = dynamic_cast<Consumer *>(gNhgOrch->getExecutor(APP_NEXTHOP_GROUP_TABLE_NAME));
+        auto route_consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(nhg_consumer, nullptr);
+        ASSERT_NE(route_consumer, nullptr);
+
+        auto feed = [](Consumer *consumer, Orch *orch, const KeyOpFieldsValuesTuple &entry) {
+            deque<KeyOpFieldsValuesTuple> entries{entry};
+            consumer->addToSync(entries);
+            orch->doTask();
+        };
+        auto routeNextHopId = [&prefix]() {
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = gVirtualRouterId;
+            route_entry.switch_id = gSwitchId;
+            swss::copy(route_entry.destination, prefix);
+            sai_attribute_t attr;
+            attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            attr.value.oid = SAI_NULL_OBJECT_ID;
+            EXPECT_EQ(sai_route_api->get_route_entry_attribute(&route_entry, 1, &attr), SAI_STATUS_SUCCESS);
+            return attr.value.oid;
+        };
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2"}, {"ifname", "Ethernet0"}}});
+        ASSERT_TRUE(gNhgOrch->hasNhg(index));
+        const sai_object_id_t nh2_id = gNeighOrch->getNextHopId(NextHopKey("10.0.0.2@Ethernet0"));
+        ASSERT_EQ(gNhgOrch->getNhg(index).getId(), nh2_id);
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "SET", {{"nexthop_group", index}}});
+        ASSERT_EQ(routeNextHopId(), nh2_id);
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        const sai_object_id_t group_id = gNhgOrch->getNhg(index).getId();
+        EXPECT_NE(group_id, nh2_id);
+        EXPECT_EQ(routeNextHopId(), group_id);
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.3"}, {"ifname", "Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        const sai_object_id_t nh3_id = gNeighOrch->getNextHopId(NextHopKey("10.0.0.3@Ethernet0"));
+        EXPECT_EQ(gNhgOrch->getNhg(index).getId(), nh3_id);
+        EXPECT_EQ(routeNextHopId(), nh3_id);
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "DEL", {}});
+        feed(nhg_consumer, gNhgOrch, {index, "DEL", {}});
+        ASSERT_FALSE(gNhgOrch->hasNhg(index));
     }
 }
