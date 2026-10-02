@@ -2017,9 +2017,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     Port oldVlan;
     string oldType;
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
+    FdbDest oldDestType = FdbDest::UNKNOWN;
     bool macUpdate = false;
     bool macMoveLocalToRemote = false;
     bool macFlushPending = false;
+    bool recreatePortNhgTransition = false;
+    /* Prior state used to reconcile PORT<->NHG recreate failures. */
+    FdbData oldFdbData;
 
     auto it = m_entries.find(entry);
     if (it != m_entries.end())
@@ -2027,6 +2031,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         /* get existing port and type */
         oldType = it->second.type;
         oldOrigin = it->second.origin;
+        oldDestType = it->second.dest_type;
+        oldFdbData = it->second;
 
         if (it->second.is_flush_pending)
         {
@@ -2162,6 +2168,21 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         }
 
         macUpdate = true;
+
+        /* Recreate unsupported PORT<->NHG bridge-port updates. */
+        auto isPortBacked = [](FdbDest destType)
+        {
+            return destType == FdbDest::IFNAME || destType == FdbDest::UNKNOWN;
+        };
+        recreatePortNhgTransition =
+            ((isPortBacked(oldDestType) && fdbData.dest_type == FdbDest::NEXTHOPGROUP) ||
+             (oldDestType == FdbDest::NEXTHOPGROUP && isPortBacked(fdbData.dest_type)));
+
+        if (recreatePortNhgTransition)
+        {
+            SWSS_LOG_NOTICE("FDB %s in %s moving between PORT and NHG; using remove+create",
+                            entry.mac.to_string().c_str(), vlan.m_alias.c_str());
+        }
     }
 
     sai_attribute_t attr;
@@ -2233,30 +2254,36 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             && (fdbData.origin != oldOrigin))
     {
-        /* origin is changed from Remote-advertized to Local-provisioned
-         * Remove the end-point ip attribute from fdb entry
-         */
-        sai_ip_address_t ipaddr;
-        ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-        ipaddr.addr.ip4 = 0;
-        attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
-        attr.value.ipaddr = ipaddr;
-        attrs.push_back(attr);
+        /* Clear stale endpoint IP only for in-place remote-to-local moves;
+         * a recreated port-backed entry must omit ENDPOINT_IP. */
+        if (!recreatePortNhgTransition)
+        {
+            sai_ip_address_t ipaddr;
+            ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+            ipaddr.addr.ip4 = 0;
+            attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+            attr.value.ipaddr = ipaddr;
+            attrs.push_back(attr);
+        }
     }
 
     if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED))
     {
-        if ((fdbData.origin != oldOrigin)
-           || ((oldType == "dynamic") && (oldType != fdbData.type)))
+        if (((fdbData.origin != oldOrigin)
+             || ((oldType == "dynamic") && (oldType != fdbData.type)))
+            && (fdbData.sai_fdb_type == SAI_FDB_ENTRY_TYPE_STATIC ||
+                (!macMoveLocalToRemote && !recreatePortNhgTransition)))
         {
             attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
             attr.value.booldata = false;
-            /* Valid only on a static entry: on a set, it goes before the type turns dynamic */
+            /* This attribute is valid only on static entries. For an in-place
+             * update, clear it before changing TYPE to dynamic; a dynamic
+             * recreate must omit it and use the default false value. */
             attrs.insert((fdbData.sai_fdb_type == SAI_FDB_ENTRY_TYPE_DYNAMIC) ? attrs.begin() : attrs.end(), attr);
         }
     }
     addPacketActionAttr(fdbData, attrs);
-    if (macUpdate && !macMoveLocalToRemote)
+    if (macUpdate && !macMoveLocalToRemote && !recreatePortNhgTransition)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
@@ -2286,7 +2313,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
     else
     {
-        if (macMoveLocalToRemote)
+        if (macMoveLocalToRemote || recreatePortNhgTransition)
         {
             status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
 
@@ -2304,6 +2331,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 if (handle_status != task_success)
                 {
                     return parseHandleSaiStatusFailure(handle_status);
+                }
+                /* Invalidate state and recreate only after removal is proven;
+                 * generic remove-status handling is intentionally coarser. */
+                if (recreatePortNhgTransition &&
+                    status != SAI_STATUS_ITEM_NOT_FOUND && status != SAI_STATUS_ADDR_NOT_FOUND)
+                {
+                    return false;
                 }
             }
 
@@ -2334,6 +2368,43 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            if (recreatePortNhgTransition &&
+                status != SAI_STATUS_ITEM_ALREADY_EXISTS)
+            {
+                /* The old entry is gone from ASIC and cache; retire its
+                 * STATE_DB row, CRM count and observers so a replay of
+                 * this SET is handled as a fresh add. */
+                string oldKey = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" +
+                                entry.mac.to_string();
+                if (oldOrigin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+                {
+                    m_mclagFdbStateTable.del(oldKey);
+                }
+                else if (oldOrigin == FDB_ORIGIN_LEARN ||
+                         oldOrigin == FDB_ORIGIN_PROVISIONED)
+                {
+                    m_fdbStateTable.del(oldKey);
+                }
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+
+                FdbUpdate fdbDeleteUpdate;
+                fdbDeleteUpdate.entry = entry;
+                fdbDeleteUpdate.add = false;
+                fdbDeleteUpdate.type = oldType;
+                fdbDeleteUpdate.sai_fdb_type = oldFdbData.sai_fdb_type;
+                if (!oldPort.m_alias.empty())
+                {
+                    fdbDeleteUpdate.port = oldPort;
+                }
+                else
+                {
+                    (void)m_portsOrch->getPortByBridgePortId(oldFdbData.bridge_port_id,
+                                                             fdbDeleteUpdate.port);
+                }
+                notify(SUBJECT_TYPE_FDB_CHANGE, &fdbDeleteUpdate);
+
+                return parseHandleSaiStatusFailure(handle_status);
+            }
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
