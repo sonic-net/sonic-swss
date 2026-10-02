@@ -478,11 +478,19 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         if (nlmsg_type == RTM_NEWNEIGH && state == NUD_FAILED)
         {
-            std::vector<FieldValueTuple> failedNeighFields = {
-                FieldValueTuple("NULL", "NULL"),
-            };
-            m_kernelFailedNeighTable.set(key, failedNeighFields);
-            SWSS_LOG_INFO("Published failed kernel neighbor '%s' for nbrmgrd processing", key.c_str());
+            if (!intfName.compare(0, strlen("Vlan"), "Vlan"))
+            {
+                std::vector<FieldValueTuple> failedNeighFields = {
+                    FieldValueTuple("NULL", "NULL"),
+                };
+                m_kernelFailedNeighTable.set(key, failedNeighFields);
+                SWSS_LOG_INFO("Published failed kernel neighbor '%s' for nbrmgrd processing", key.c_str());
+            }
+            else
+            {
+                m_kernelFailedNeighTable.del(key);
+                SWSS_LOG_INFO("Ignoring failed kernel neighbor '%s' on non-VLAN interface", key.c_str());
+            }
         }
         else if (nlmsg_type == RTM_DELNEIGH ||
                  ((nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_GETNEIGH) &&
