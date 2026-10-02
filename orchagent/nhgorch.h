@@ -74,6 +74,18 @@ public:
      */
     bool update(const NextHopGroupKey& nhg_key);
 
+    /*
+     * True when update(nhg_key) would give the synced group a new SAI ID: a
+     * non-recursive group of one next hop uses that next hop's own ID.
+     */
+    bool replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const;
+
+    /* True if sync() can add at least one member: a next hop ID, interface up. */
+    bool hasInstallableMember() const;
+
+    /* True if at least one member has a SAI group member object. */
+    bool hasSyncedMember() const;
+
     /* Validate a next hop in the group, syncing it. */
     bool validateNextHop(const NextHopKey& nh_key);
 
@@ -131,4 +143,7 @@ public:
 
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Replace a group whose update changes its SAI ID. */
+    bool replaceNhg(const string &index, const NextHopGroupKey &nhg_key);
 };
