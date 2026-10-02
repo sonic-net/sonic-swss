@@ -1049,6 +1049,57 @@ namespace flexcounter_test
         ASSERT_TRUE(ts.empty());
     }
 
+    // When a port is not ready, port flex counters are deferred; verify the
+    // deferral is observable and that it recovers once the port is ready.
+    // See sonic-net/sonic-swss#4694.
+    TEST_P(FlexCounterTest, PortNotReadyDeferralIsObservable)
+    {
+        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+
+        // Delay timer expired, so doTask() reaches the allPortsReady() gate.
+        flexCounterOrch->m_delayTimerExpired = true;
+        flexCounterOrch->m_portsNotReadyWarned = false;
+
+        // A port stuck in init keeps allPortsReady() false.
+        const std::string stuckPort = "Ethernet0";
+        gPortsOrch->m_pendingPortSet.insert(stuckPort);
+
+        ASSERT_FALSE(gPortsOrch->allPortsReady());
+        auto pending = gPortsOrch->getPendingInitPorts();
+        ASSERT_NE(pending.find(stuckPort), pending.end());
+
+        // PORT enable while not ready: counters deferred, warning fired once.
+        Table flexCounterCfg(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("PORT", values);
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        ASSERT_TRUE(flexCounterOrch->m_portsNotReadyWarned);
+        ASSERT_FALSE(flexCounterOrch->getPortCountersState());
+
+        // Port becomes ready: diagnostic re-arms and counters are enabled.
+        gPortsOrch->m_pendingPortSet.erase(stuckPort);
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+        ASSERT_TRUE(gPortsOrch->getPendingInitPorts().empty());
+
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+        ASSERT_FALSE(flexCounterOrch->m_portsNotReadyWarned);
+        ASSERT_TRUE(flexCounterOrch->getPortCountersState());
+
+        // Also cover the "PortInitDone not received" path: when port init is
+        // not done, allPortsReady() is false and the diagnostic reports it.
+        bool savedInitDone = gPortsOrch->m_initDone;
+        flexCounterOrch->m_portsNotReadyWarned = false;
+        gPortsOrch->m_initDone = false;
+        flexCounterCfg.set("PORT", values);
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        ASSERT_FALSE(gPortsOrch->allPortsReady());
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+        ASSERT_TRUE(flexCounterOrch->m_portsNotReadyWarned);
+        gPortsOrch->m_initDone = savedInitDone;
+    }
+
     INSTANTIATE_TEST_CASE_P(
         FlexCounterTests,
         FlexCounterTest,
