@@ -737,6 +737,129 @@ class TestRouterInterface(object):
             if route["dest"] == "10.0.0.4/32":
                 assert False
 
+    def set_intf_appl_db(self, interface, vrf_name, proxy_arp=None):
+        # IntfMgr emits vrf_name and mac_addr together on a full interface SET
+        pairs = [("vrf_name", vrf_name), ("mac_addr", "00:00:00:00:00:00")]
+        if proxy_arp:
+            pairs.append(("proxy_arp", proxy_arp))
+        fvs = swsscommon.FieldValuePairs(pairs)
+        tbl = swsscommon.ProducerStateTable(self.pdb, "INTF_TABLE")
+        tbl.set(interface, fvs)
+        time.sleep(2)
+
+    def remove_intf_appl_db(self, interface):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "INTF_TABLE")
+        tbl._del(interface)
+        time.sleep(2)
+
+    def add_ip_address_appl_db(self, interface, ip):
+        pairs = [("scope", "global"), ("family", "IPv4" if "." in ip else "IPv6")]
+        fvs = swsscommon.FieldValuePairs(pairs)
+        tbl = swsscommon.ProducerStateTable(self.pdb, "INTF_TABLE")
+        tbl.set(interface + ":" + ip, fvs)
+        time.sleep(2)
+
+    def remove_ip_address_appl_db(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "INTF_TABLE")
+        tbl._del(interface + ":" + ip)
+        time.sleep(2)
+
+    def get_rif_vrf_oid(self, rif_oid):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        (status, fvs) = tbl.get(rif_oid)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                return fv[1]
+        return None
+
+    def get_added_rif_oid(self, old_intf_entries):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = list(set(tbl.getKeys()) - old_intf_entries)
+        assert len(intf_entries) == 1
+        return intf_entries[0]
+
+    def test_PortInterfaceVrfChangeOnCoalescedSet(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        intf_name = "Ethernet12"
+
+        # bring up interface
+        self.set_admin_status(dvs, intf_name, "up")
+
+        # create both vrfs
+        old_vrf_oid = self.create_vrf("Vrf_old")
+        new_vrf_oid = self.create_vrf("Vrf_new")
+
+        # record ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        old_intf_entries = set(tbl.getKeys())
+
+        # create the router interface in the old vrf, with proxy arp enabled so
+        # that the vrf change has to tear it down too
+        self.set_intf_appl_db(intf_name, "Vrf_old", proxy_arp="enabled")
+
+        old_rif_oid = self.get_added_rif_oid(old_intf_entries)
+        assert self.get_rif_vrf_oid(old_rif_oid) == old_vrf_oid
+
+        # a SET carrying the new vrf with no preceding DEL is what orchagent sees
+        # once the ProducerStateTable coalesces the DEL+SET pair
+        self.set_intf_appl_db(intf_name, "Vrf_new")
+
+        # the old router interface is torn down and recreated in the new vrf
+        new_rif_oid = self.get_added_rif_oid(old_intf_entries)
+        assert new_rif_oid != old_rif_oid
+        assert self.get_rif_vrf_oid(new_rif_oid) == new_vrf_oid
+
+        # remove interface and vrfs
+        self.remove_intf_appl_db(intf_name)
+        self.remove_vrf("Vrf_old")
+        self.remove_vrf("Vrf_new")
+
+        # bring down interface
+        self.set_admin_status(dvs, intf_name, "down")
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        assert len(set(tbl.getKeys()) - old_intf_entries) == 0
+
+    def test_PortInterfaceVrfChangeOnCoalescedSetWithIpAddress(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        intf_name = "Ethernet12"
+        ip_addr = "10.0.0.12/31"
+
+        # bring up interface
+        self.set_admin_status(dvs, intf_name, "up")
+
+        # create both vrfs
+        old_vrf_oid = self.create_vrf("Vrf_old")
+        self.create_vrf("Vrf_new")
+
+        # record ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        old_intf_entries = set(tbl.getKeys())
+
+        # create the router interface in the old vrf and assign an IP to it
+        self.set_intf_appl_db(intf_name, "Vrf_old")
+        old_rif_oid = self.get_added_rif_oid(old_intf_entries)
+        self.add_ip_address_appl_db(intf_name, ip_addr)
+
+        # the router interface still owns an IP address, so it cannot be torn
+        # down and the vrf change is rejected
+        self.set_intf_appl_db(intf_name, "Vrf_new")
+
+        assert self.get_rif_vrf_oid(old_rif_oid) == old_vrf_oid
+
+        # remove IP, interface and vrfs
+        self.remove_ip_address_appl_db(intf_name, ip_addr)
+        self.remove_intf_appl_db(intf_name)
+        self.remove_vrf("Vrf_old")
+        self.remove_vrf("Vrf_new")
+
+        # bring down interface
+        self.set_admin_status(dvs, intf_name, "down")
+
     def create_port_channel(self, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
