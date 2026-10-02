@@ -13,6 +13,10 @@
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
 #define ASIC_SENSORS_POLLER_INTERVAL "ASIC_SENSORS_POLLER_INTERVAL"
 
+#define DEFAULT_GEARBOX_SENSORS_POLLER_INTERVAL 60
+#define GEARBOX_SENSORS_POLLER_STATUS "GEARBOX_SENSORS_POLLER_STATUS"
+#define GEARBOX_SENSORS_POLLER_INTERVAL "GEARBOX_SENSORS_POLLER_INTERVAL"
+
 #define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
@@ -107,10 +111,8 @@ private:
     void doCfgSwitchHashTableTask(Consumer &consumer);
     void doCfgSwitchTrimmingTableTask(Consumer &consumer);
     void doCfgSwitchFastLinkupTableTask(Consumer &consumer);
-    void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
-    void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
     void querySwitchMirrorOnDropCapability();
@@ -180,17 +182,39 @@ private:
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
 
-    // ASIC temperature sensors
+    // Temperature sensor polling (shared by ASIC and gearbox)
+    struct SensorsPollerContext
+    {
+        std::string name;
+        std::string pollerStatusKey;
+        std::string pollerIntervalKey;
+        std::shared_ptr<swss::Table> table;
+        swss::SelectableTimer *timer = nullptr;
+        bool enabled = false;
+        time_t interval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
+        bool intervalChanged = false;
+
+        struct SwitchSensorsInfo
+        {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            std::string tableKey;
+            uint8_t numTempSensors = 0;
+            bool numTempSensorsInitialized = false;
+            bool maxTempSupported = true;
+            bool avgTempSupported = true;
+        };
+        std::vector<SwitchSensorsInfo> switches;
+    };
+
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
-    std::shared_ptr<swss::Table> m_asicSensorsTable= nullptr;
-    swss::SelectableTimer* m_sensorsPollerTimer = nullptr;
-    bool m_sensorsPollerEnabled = false;
-    time_t m_sensorsPollerInterval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
-    bool m_sensorsPollerIntervalChanged = false;
-    uint8_t m_numTempSensors = 0;
-    bool m_numTempSensorsInitialized = false;
-    bool m_sensorsMaxTempSupported = true;
-    bool m_sensorsAvgTempSupported = true;
+    SensorsPollerContext m_asicSensorsPoller;
+    SensorsPollerContext m_gearboxSensorsPoller;
+
+    void initAsicSensorsPoller();
+    void initGearboxSensorsPoller();
+    void initSensorsPoller(SensorsPollerContext &ctx);
+    void pollSensors(SensorsPollerContext &ctx);
+    void doCfgSensorsPollerTableTask(Consumer &consumer, SensorsPollerContext &ctx);
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
