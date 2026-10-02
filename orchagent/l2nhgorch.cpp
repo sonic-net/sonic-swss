@@ -183,6 +183,17 @@ bool L2NhgOrch::deleteL2NextHopGroup(string nhg_id)
         auto nhg_port_name = getNextHopGroupPortName(nhg_id);
         if (gPortsOrch->getPort(nhg_port_name, nhgPort))
         {
+            /*
+             * Remote MACs whose VXLAN_FDB_TABLE delete is consumed after this one still
+             * reference the bridge port: retry once FdbOrch has removed them.
+             */
+            if (nhgPort.m_fdb_count != 0)
+            {
+                SWSS_LOG_INFO("L2 next hop group %s still has %u FDB entries, deferring its removal",
+                              nhg_id.c_str(), nhgPort.m_fdb_count);
+                return false;
+            }
+
             status = gPortsOrch->removeBridgePort(nhgPort);
             if (!status)
             {
@@ -892,6 +903,15 @@ void L2NhgOrch::doL2NhgTask(Consumer &consumer)
 
         if (!status)
         {
+            /* A SET queued behind a DEL that has to wait replaces it: the group stays and is updated. */
+            auto next = std::next(it);
+            if (op == DEL_COMMAND && next != consumer.m_toSync.end() && next->first == it->first &&
+                kfvOp(next->second) == SET_COMMAND)
+            {
+                SWSS_LOG_INFO("L2 next hop group %s set again before its delete completed, keeping it", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             it++;
             continue;
         }
