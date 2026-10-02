@@ -19,6 +19,7 @@ namespace
     enum class BulkResult
     {
         Success,
+        SuccessWithoutStatuses,
         FailureWithoutStatuses,
         Exception
     };
@@ -42,11 +43,11 @@ namespace
         }
         if (results[index(op)] == BulkResult::FailureWithoutStatuses)
         {
-            for (uint32_t i = 0; i < count; ++i)
-            {
-                EXPECT_EQ(SAI_STATUS_FAILURE, statuses[i]);
-            }
             return SAI_STATUS_FAILURE;
+        }
+        if (results[index(op)] == BulkResult::SuccessWithoutStatuses)
+        {
+            return SAI_STATUS_SUCCESS;
         }
         std::fill_n(statuses, count, SAI_STATUS_SUCCESS);
         return SAI_STATUS_SUCCESS;
@@ -203,6 +204,18 @@ namespace
         expectEmpty(bulker);
     }
 
+    TEST_P(BulkerFailureTest, EntitySuccessWithoutStatusesPreservesCompatibility)
+    {
+        auto op = std::get<0>(GetParam());
+        results[index(op)] = BulkResult::SuccessWithoutStatuses;
+        EntityBulker<sai_route_api_t> bulker(&routeApi, 1000);
+        std::deque<sai_status_t> statuses;
+        queueRoutes(bulker, op, std::get<1>(GetParam()), statuses);
+        EXPECT_NO_THROW(bulker.flush());
+        EXPECT_EQ(std::deque<sai_status_t>(statuses.size(), SAI_STATUS_SUCCESS), statuses);
+        expectEmpty(bulker);
+    }
+
     TEST_P(BulkerFailureTest, EntityExceptionClearsAllPendingStateBeforeStorageDies)
     {
         auto op = std::get<0>(GetParam());
@@ -264,6 +277,25 @@ namespace
         if (op == BulkOperation::Remove)
         {
             EXPECT_EQ(SAI_STATUS_SUCCESS, statuses.front());
+        }
+        expectEmpty(bulker);
+    }
+
+    TEST_P(BulkerFailureTest, ObjectSuccessWithoutStatusesPreservesCompatibility)
+    {
+        auto op = std::get<0>(GetParam());
+        results[index(op)] = BulkResult::SuccessWithoutStatuses;
+        ObjectBulker<sai_next_hop_api_t> bulker(&objectApi, 0, 1000);
+        std::deque<sai_object_id_t> oids;
+        std::deque<sai_status_t> statuses;
+        queueObjects(bulker, op, std::get<1>(GetParam()), oids, statuses);
+        EXPECT_NO_THROW(bulker.flush());
+        EXPECT_EQ(std::deque<sai_status_t>(statuses.size(), SAI_STATUS_SUCCESS), statuses);
+        if (op == BulkOperation::Create)
+        {
+            EXPECT_EQ(std::get<1>(GetParam()), oids.size());
+            EXPECT_TRUE(std::all_of(oids.begin(), oids.end(),
+                    [](sai_object_id_t oid) { return oid != SAI_NULL_OBJECT_ID; }));
         }
         expectEmpty(bulker);
     }
