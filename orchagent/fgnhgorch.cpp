@@ -6,6 +6,7 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
+#include "converter.h"
 #include <array>
 #include <algorithm>
 
@@ -1688,7 +1689,15 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         {
             if (fvField(i) == "bucket_size")
             {
-                bucket_size = stoi(fvValue(i));
+                try
+                {
+                    bucket_size = swss::to_uint<uint32_t>(fvValue(i));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid bucket_size for FG_NHG %s: %s", key.c_str(), e.what());
+                    return true;
+                }
             }
             else if (fvField(i) == "match_mode")
             {
@@ -1708,8 +1717,15 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             }
             else if (fvField(i) == "max_next_hops")
             {
-
-                max_next_hops = stoi(fvValue(i));
+                try
+                {
+                    max_next_hops = swss::to_uint<uint32_t>(fvValue(i));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid max_next_hops for FG_NHG %s: %s", key.c_str(), e.what());
+                    return true;
+                }
             }
         }
 
@@ -1988,7 +2004,15 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
             }
             else if (fvField(i) == "bank")
             {
-                bank = stoi(fvValue(i));
+                try
+                {
+                    bank = swss::to_uint<uint32_t>(fvValue(i));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid bank for FG_NHG_MEMBER %s: %s", key.c_str(), e.what());
+                    return true;
+                }
             }
             else if (fvField(i) == "link")
             {
