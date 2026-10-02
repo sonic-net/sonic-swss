@@ -594,16 +594,90 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 sai_attribute_t attr;
                 sai_ip_address_t ipaddr;
 
-                /* Since sai doesn't support remove one fdb attr, just set the ENDPOINT IP to 0 after move local */
-                attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
-                ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-                memcpy(ipaddr.addr.ip6, swss::IpAddress("0:0:0::0").getV6Addr(), sizeof(ipaddr.addr.ip6));
-                attr.value.ipaddr = ipaddr;
-                status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &attr);
-                if (status != SAI_STATUS_SUCCESS)
+                vector<sai_attribute_t> attrs;
+
+                /* Recreate unsupported PORT<->NHG moves. */
+                if (existing_entry->second.dest_type == FdbDest::NEXTHOPGROUP)
                 {
-                    SWSS_LOG_INFO("set fdb attr failed, mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
-                                   attr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
+                    status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to remove FDB %s in 0x%" PRIx64 " for NHG->local move, rv:%d",
+                                    update.entry.mac.to_string().c_str(), entry->bv_id, status);
+                        /* Continue only when removal is proven. */
+                        handleSaiRemoveStatus(SAI_API_FDB, status);
+                        if (status != SAI_STATUS_ITEM_NOT_FOUND && status != SAI_STATUS_ADDR_NOT_FOUND)
+                        {
+                            return;
+                        }
+                    }
+
+                    attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+                    attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+                    attrs.push_back(attr);
+
+                    attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                    attr.value.oid = bridge_port_id;
+                    attrs.push_back(attr);
+
+                    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to create FDB %s in 0x%" PRIx64 " on %s for NHG->local move, rv:%d",
+                                    update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
+                        /* Reconcile a proven concurrent row; otherwise retry. */
+                        handleSaiCreateStatus(SAI_API_FDB, status);
+                        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+                        {
+                            sai_attribute_t get_attr;
+                            get_attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                            sai_status_t get_status =
+                                sai_fdb_api->get_fdb_entry_attribute(&fdb_entry, 1, &get_attr);
+                            if (get_status == SAI_STATUS_SUCCESS &&
+                                get_attr.value.oid == bridge_port_id)
+                            {
+                                SWSS_LOG_NOTICE("FdbOrch: NHG->local create reported "
+                                                "ITEM_ALREADY_EXISTS for mac=%s bv_id=0x%"
+                                                PRIx64 " but ASIC entry is on learn port %s; "
+                                                "reconciling software state",
+                                                update.entry.mac.to_string().c_str(),
+                                                entry->bv_id, update.port.m_alias.c_str());
+                            }
+                            else
+                            {
+                                SWSS_LOG_WARN("FdbOrch: NHG->local create reported "
+                                              "ITEM_ALREADY_EXISTS for mac=%s bv_id=0x%"
+                                              PRIx64 " but ASIC bridge_port (0x%" PRIx64
+                                              ", get rv:%d) does not match learn port 0x%"
+                                              PRIx64 "; leaving cached state unchanged",
+                                              update.entry.mac.to_string().c_str(),
+                                              entry->bv_id,
+                                              get_status == SAI_STATUS_SUCCESS ?
+                                                  get_attr.value.oid : 0,
+                                              get_status, bridge_port_id);
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            clearFdbEntry(existing_entry->first, existing_entry->second);
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    /* Since sai doesn't support remove one fdb attr, just set the ENDPOINT IP to 0 after move local */
+                    attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+                    ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+                    memcpy(ipaddr.addr.ip6, swss::IpAddress("0:0:0::0").getV6Addr(), sizeof(ipaddr.addr.ip6));
+                    attr.value.ipaddr = ipaddr;
+                    status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_INFO("set fdb attr failed, mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
+                                       attr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
+                    }
                 }
 
                 /* mac move from remote vxlan to local */
