@@ -81,7 +81,8 @@ class DVSAcl:
             table_name: str,
             table_type: str,
             ports: List[str],
-            stage: str = None
+            stage: str = None,
+            priority: str = None
     ) -> None:
         """Create a new ACL table in Config DB.
 
@@ -90,6 +91,7 @@ class DVSAcl:
             table_type: The type of table to create.
             ports: A list of ports to bind to the ACL table.
             stage: The stage for the ACL table. {ingress, egress}
+            priority: The ACL table group member priority for the table.
         """
         table_attrs = {
             "policy_desc": table_name,
@@ -99,6 +101,9 @@ class DVSAcl:
 
         if stage:
             table_attrs["stage"] = stage
+
+        if priority:
+            table_attrs["priority"] = priority
 
         self.config_db.create_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
@@ -249,6 +254,31 @@ class DVSAcl:
                 member_groups.append(group_id)
 
         assert set(member_groups) == set(acl_table_group_ids)
+
+    def verify_acl_table_group_member_priority(
+            self,
+            acl_table_id: str,
+            priority: str,
+            num_members: int
+    ) -> None:
+        """Verify that the ACL table group members for the given table carry the
+        expected SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY value.
+
+        Args:
+            acl_table_id: The ACL table whose group members to check.
+            priority: The expected group member priority value.
+            num_members: The number of ACL table group members in ASIC DB.
+        """
+        members = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_MEMBER_TABLE_NAME, num_members)
+
+        checked = 0
+        for member in members:
+            fvs = self.asic_db.wait_for_entry(self.ADB_ACL_GROUP_MEMBER_TABLE_NAME, member)
+            if fvs.get("SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID") == acl_table_id:
+                assert fvs.get("SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY") == str(priority)
+                checked += 1
+
+        assert checked > 0
 
     def verify_acl_table_portchannel_binding(
             self,
