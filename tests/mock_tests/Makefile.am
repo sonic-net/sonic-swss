@@ -86,6 +86,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashmeterorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
+                dtelorch_ut.cpp \
                 srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
