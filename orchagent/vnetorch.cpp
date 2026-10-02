@@ -1860,6 +1860,16 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
+    if (request.getOperation() == SET_COMMAND)
+    {
+        const std::string& vnet = request.getKeyString(0);
+        const swss::IpPrefix prefix = request.getKeyIpPrefix(1);
+        if (deferIfTunnelRouteExists(vnet, prefix))
+        {
+            return false;
+        }
+    }
+
     std::vector<IpAddress> ip_addresses;
     string ifname = "";
 
@@ -3486,6 +3496,28 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, monitors, monitor_addr_to_pinned_state);
     }
 
+    return true;
+}
+
+bool VNetRouteOrch::deferIfTunnelRouteExists(const std::string& vnet,
+                                             const swss::IpPrefix& prefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (!vnet_orch_->isVnetExecVrf() || !vnet_orch_->isVnetExists(vnet))
+    {
+        return false;
+    }
+
+    auto it = syncd_tunnel_routes_.find(vnet);
+    if (it == syncd_tunnel_routes_.end() || it->second.find(prefix) == it->second.end())
+    {
+        return false;
+    }
+
+    SWSS_LOG_INFO("VNET_ROUTE SET deferred: vnet=%s prefix=%s "
+                  "waiting for VNET_ROUTE_TUNNEL DEL for same prefix)",
+                  vnet.c_str(), prefix.to_string().c_str());
     return true;
 }
 

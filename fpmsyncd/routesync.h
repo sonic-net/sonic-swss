@@ -166,6 +166,8 @@ class VnetTunnelTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
     string endpoint = string();
+    string vni = string();
+    string mac_address = string();
 };
 
 class NextHopGroupTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {

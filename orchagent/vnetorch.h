@@ -526,6 +526,7 @@ private:
 
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
+    bool deferIfTunnelRouteExists(const std::string& vnet, const swss::IpPrefix& prefix);
 
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
