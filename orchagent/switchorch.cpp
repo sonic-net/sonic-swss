@@ -1938,7 +1938,7 @@ void SwitchOrch::initGearboxSensorsPoller()
     m_gearboxSensorsPoller.name = "Gearbox";
     m_gearboxSensorsPoller.pollerStatusKey = GEARBOX_SENSORS_POLLER_STATUS;
     m_gearboxSensorsPoller.pollerIntervalKey = GEARBOX_SENSORS_POLLER_INTERVAL;
-    m_gearboxSensorsPoller.table = std::make_shared<Table>(m_stateDb.get(), GEARBOX_TEMPERATURE_INFO_TABLE_NAME);
+    m_gearboxSensorsPoller.table = std::make_shared<Table>(m_stateDb.get(), STATE_GEARBOX_TEMPERATURE_INFO_TABLE_NAME);
     m_gearboxSensorsPoller.timer = new SelectableTimer((timespec { .tv_sec = DEFAULT_GEARBOX_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }));
     m_gearboxSensorsPoller.interval = DEFAULT_GEARBOX_SENSORS_POLLER_INTERVAL;
 
