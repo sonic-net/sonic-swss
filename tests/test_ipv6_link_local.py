@@ -105,8 +105,53 @@ class TestIPv6LinkLocal(object):
         neigh_entries = self.pdb.get_keys("NEIGH_TABLE")
         assert (len(neigh_entries) == 0)
 
+    def test_NeighborReplayIpv6LinkLocalOnEnable(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        interface = "Ethernet0"
+        neighbor = "fe80::2"
+        mac = "02:00:00:00:00:02"
+        key = interface + ":" + neighbor
+
+        self.set_admin_status(interface, "up")
+        time.sleep(2)
+
+        try:
+            rc, output = dvs.runcmd(
+                "ip -6 neigh replace {} lladdr {} nud reachable dev {}".format(
+                    neighbor, mac, interface
+                )
+            )
+            assert rc == 0, output
+
+            rc, output = dvs.runcmd(
+                "ip -6 neigh show to {} dev {}".format(neighbor, interface)
+            )
+            assert rc == 0
+            assert neighbor in output
+            assert mac in output
+
+            # Allow neighsyncd to consume and ignore the original netlink event.
+            time.sleep(2)
+            assert self.pdb.get_entry("NEIGH_TABLE", key) == {}
+
+            # Enabling link-local mode must replay the existing kernel neighbor;
+            # no additional neighbor update is generated after this point.
+            self.create_ipv6_link_local_intf(interface)
+            self.pdb.wait_for_field_match(
+                "NEIGH_TABLE", key, {"family": "IPv6", "neigh": mac}
+            )
+        finally:
+            dvs.runcmd(
+                "ip -6 neigh del {} lladdr {} dev {}".format(
+                    neighbor, mac, interface
+                )
+            )
+            self.pdb.wait_for_deleted_entry("NEIGH_TABLE", key)
+            self.remove_ipv6_link_local_intf(interface)
+            self.set_admin_status(interface, "down")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
     pass
-
