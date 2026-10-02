@@ -67,6 +67,7 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
     std::map<std::pair<std::string, std::string>,
              DashPortMapBulkContext>
         toBulk;
+    BulkerClearGuard<ObjectBulker<sai_dash_outbound_port_map_api_t>> bulkerGuard(port_map_bulker_);
     while (it != consumer.m_toSync.end())
     {
         swss::KeyOpFieldsValuesTuple tuple = it->second;
@@ -322,6 +323,7 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
     std::map<std::pair<std::string, std::string>,
              DashPortMapRangeBulkContext>
         toBulk;
+    BulkerClearGuard<EntityBulker<sai_dash_outbound_port_map_api_t>> bulkerGuard(port_map_range_bulker_);
     while (it != consumer.m_toSync.end())
     {
         swss::KeyOpFieldsValuesTuple tuple = it->second;
