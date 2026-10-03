@@ -818,6 +818,13 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
             continue;
         }
         sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
+        if (next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("VNET %s: no next hop for endpoint %s, next hop group %s not created",
+                           vnet.c_str(), it.to_string().c_str(), nexthops.to_string().c_str());
+            releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
+            return false;
+        }
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
         nh_seq_id_in_nhgrp[next_hop_id] = nh_seq_id;
@@ -840,6 +847,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                        nexthops.to_string().c_str(), status);
+        releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
         return false;
     }
 
@@ -899,6 +907,22 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
 
     return true;
+}
+
+void VNetRouteOrch::releaseTunnelNextHops(VNetVrfObject *vrf_obj,
+                                          const std::map<sai_object_id_t, NextHopKey>& nexthops,
+                                          const bool isLocalEp)
+{
+    // Local endpoints are owned by NeighOrch; only tunnel next hops were referenced here.
+    if (isLocalEp)
+    {
+        return;
+    }
+
+    for (auto nh : nexthops)
+    {
+        vrf_obj->removeTunnelNextHop(nh.second);
+    }
 }
 
 bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
@@ -1004,6 +1028,12 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
         else
         {
             next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+            if (next_hop_group_entry.next_hop_group_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("VNET %s: no next hop for endpoint %s",
+                               vnet.c_str(), nexthop.to_string().c_str());
+                return false;
+            }
             next_hop_group_entry.ref_count = 0;
         }
 
@@ -1264,6 +1294,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         NextHopGroupKey active_nhg("", true);
         if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors, monitor_addr_to_pinned_state))
         {
+            SWSS_LOG_WARN("VNET %s route %s: next hop group %s is not available, route not updated",
+                          vnet.c_str(), ipPrefix.to_string().c_str(), nexthops.to_string().c_str());
             return true;
         }
 
