@@ -934,11 +934,16 @@ bool NhgOrch::replaceNhg(const string &index, const NextHopGroupKey &nhg_key)
                       std::chrono::steady_clock::now() - move_start).count();
     }
 
-    if (new_id != old_id)
+    if (new_id != old_id && entry.ref_count > 0)
     {
         SWSS_LOG_NOTICE("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s, "
                         "routes moved in %lld ms",
                         index.c_str(), old_id, new_id, nhg_key.to_string().c_str(), move_ms);
+    }
+    else if (new_id != old_id)
+    {
+        SWSS_LOG_INFO("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s",
+                      index.c_str(), old_id, new_id, nhg_key.to_string().c_str());
     }
 
     /* The old group is released when nhg goes out of scope. */
@@ -1148,8 +1153,7 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    if (!isSynced() ||
-        (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1)))
+    if (!isSynced() || replacesIdOnUpdate(nhg_key))
     {
         bool was_synced = isSynced();
         bool was_temp = isTemp();

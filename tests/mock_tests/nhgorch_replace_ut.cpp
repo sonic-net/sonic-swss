@@ -242,6 +242,36 @@ TEST_F(NhgOrchReplaceTest, OnlySingleNextHopTransitionsReplaceTheId)
     EXPECT_FALSE(multi.replacesIdOnUpdate(NextHopGroupKey("10.0.0.1@Ethernet0", string(""))));
 }
 
+/* update() rebuilds a synced group, and so changes its ID, exactly when
+ * replacesIdOnUpdate() says so; doTask() relies on that to send every ID
+ * change through replaceNhg(). */
+TEST_F(NhgOrchReplaceTest, UpdateChangesTheIdOnlyWhenThePredicateSaysSo)
+{
+    const NextHopKey nh3{"10.0.0.3@Ethernet8"};
+    ASSERT_NO_FATAL_FAILURE(seed("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4"));
+    gNeighOrch->m_syncdNextHops[nh3] = { 0x4403, 0, 0 };
+
+    {
+        NextHopGroup single(NextHopGroupKey("10.0.0.1@Ethernet0", string("")), false);
+        ASSERT_TRUE(single.sync());
+        ASSERT_EQ(single.getId(), nh1_oid);
+        const NextHopGroupKey to_nh2("10.0.0.2@Ethernet4", string(""));
+        ASSERT_TRUE(single.replacesIdOnUpdate(to_nh2));
+        EXPECT_TRUE(single.update(to_nh2));
+        EXPECT_EQ(single.getId(), nh2_oid);
+    }
+
+    auto &multi = *gNhgOrch->m_syncdNextHopGroups.at(index).nhg;
+    ASSERT_EQ(multi.getId(), group_oid);
+    const NextHopGroupKey to_nh1_nh3("10.0.0.1@Ethernet0,10.0.0.3@Ethernet8", string(""));
+    ASSERT_FALSE(multi.replacesIdOnUpdate(to_nh1_nh3));
+    EXPECT_TRUE(multi.update(to_nh1_nh3));
+    EXPECT_EQ(multi.getId(), group_oid);
+
+    gNhgOrch->m_syncdNextHopGroups.erase(index);
+    gNeighOrch->m_syncdNextHops.erase(nh3);
+}
+
 /* Several next hops shrink to one: the routes move to the next hop first, and
  * only then is the old SAI group removed, so its removal cannot fail on them. */
 TEST_F(NhgOrchReplaceTest, ShrinkingToOneNextHopMovesRoutesBeforeRemovingTheGroup)
