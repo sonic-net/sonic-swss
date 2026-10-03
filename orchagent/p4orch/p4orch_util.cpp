@@ -358,3 +358,11 @@ std::string trim(const std::string &s)
     size_t start = s.find_first_not_of(" ");
     return (end == std::string::npos) ? "" : s.substr(start, end - start + 1);
 }
+
+bool isPlatformAlpinevs()
+{
+    const char *env_platform = getenv("platform");
+    std::string platform = env_platform ? env_platform : "";
+
+    return !platform.empty() && (platform.find(ALPINEVS_PLATFORM_SUBSTRING) != std::string::npos);
+}

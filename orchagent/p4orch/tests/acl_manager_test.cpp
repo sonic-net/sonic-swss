@@ -1313,6 +1313,32 @@ class AclManagerTest : public ::testing::Test
         return acl_rule_manager_->updateUserDefinedTrap(trap_group_name, is_delete);
     }
 
+    ReturnCode SetUserDefinedTrapWithoutHostIfTableEntry(
+        uint32_t queue_num, sai_object_id_t trap_group_oid)
+    {
+        return acl_rule_manager_->setUserDefinedTrapWithoutHostIfTableEntry(
+            queue_num, trap_group_oid);
+    }
+
+    void VerifyUserDefinedTrapWithoutHostIfTableEntry(
+        uint32_t queue_num, sai_object_id_t expected_udt_oid)
+    {
+        const auto udt_it =
+            acl_rule_manager_->m_userDefinedTraps.find(queue_num);
+
+        ASSERT_NE(
+            udt_it,
+            acl_rule_manager_->m_userDefinedTraps.end());
+
+        EXPECT_EQ(
+            expected_udt_oid,
+            udt_it->second.user_defined_trap);
+
+        EXPECT_EQ(
+            SAI_NULL_OBJECT_ID,
+            udt_it->second.hostif_table_entry);
+    }
+
     StrictMock<MockSaiAcl> mock_sai_acl_;
     StrictMock<MockSaiSerialize> mock_sai_serialize_;
     StrictMock<MockSaiPolicer> mock_sai_policer_;
@@ -1653,6 +1679,226 @@ TEST_F(AclManagerTest, UpdateUserDefinedTrapSucceeds) {
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   EXPECT_TRUE(UpdateUserDefinedTrap(trap_group, /*is_delete=*/false).ok());
+}
+
+TEST_F(
+    AclManagerTest,
+    CreateUserDefinedTrapWithoutHostIfTableEntrySucceeds)
+{
+    const uint32_t queue_num = 2;
+    const sai_object_id_t trap_group_oid =
+        gTrapGroupStartOid + queue_num;
+    const sai_object_id_t user_defined_trap_oid =
+        gUserDefinedTrapStartOid + queue_num;
+
+    EXPECT_CALL(
+        mock_sai_hostif_,
+        create_hostif_user_defined_trap(
+            _, Eq(gSwitchId), _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(user_defined_trap_oid),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(
+        mock_sai_hostif_,
+        create_hostif_table_entry(_, _, _, _))
+        .Times(0);
+
+    EXPECT_TRUE(
+        SetUserDefinedTrapWithoutHostIfTableEntry(
+            queue_num, trap_group_oid)
+            .ok());
+
+    sai_object_id_t mapper_oid = SAI_NULL_OBJECT_ID;
+
+    EXPECT_TRUE(
+        p4_oid_mapper_->getOID(
+            SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+            std::to_string(queue_num),
+            &mapper_oid));
+
+    EXPECT_EQ(user_defined_trap_oid, mapper_oid);
+
+    VerifyUserDefinedTrapWithoutHostIfTableEntry(
+        queue_num, user_defined_trap_oid);
+}
+
+TEST_F(
+    AclManagerTest,
+    CreateUserDefinedTrapWithoutHostIfTableEntryFails)
+{
+    const uint32_t queue_num = 2;
+    const sai_object_id_t trap_group_oid =
+        gTrapGroupStartOid + queue_num;
+
+    EXPECT_CALL(
+        mock_sai_hostif_,
+        create_hostif_user_defined_trap(
+            _, Eq(gSwitchId), _, _))
+        .WillOnce(
+            Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+
+    EXPECT_EQ(
+        StatusCode::SWSS_RC_FULL,
+        SetUserDefinedTrapWithoutHostIfTableEntry(
+            queue_num, trap_group_oid));
+}
+
+TEST_F(AclManagerTest, CreatePuntTableWithoutHostifSucceedsOnAlpinevs)
+{
+    setenv("platform", "x86_64-alpinevs-r0", 1);
+
+    auto app_db_entry = getDefaultAclTableDefAppDbEntry();
+    const uint32_t queue_num = kP4CpuQueueMinNum;
+
+    /*
+     * Recreate CoppOrch with one user-defined trap group that has a queue
+     * but no genetlink attributes.
+     */
+    swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
+
+    for (uint32_t queue = kP4CpuQueueMinNum;
+         queue <= kP4CpuQueueMaxNum;
+         ++queue)
+    {
+        app_copp_table.del(
+            GENL_PACKET_TRAP_GROUP_NAME_PREFIX +
+            std::to_string(queue));
+    }
+
+    cleanupAclManagerTest();
+
+    EXPECT_CALL(mock_sai_hostif_,
+                create_hostif_table_entry(_, _, _, _))
+        .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+    EXPECT_CALL(mock_sai_hostif_,
+                create_hostif_trap(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    EXPECT_CALL(mock_sai_switch_,
+                get_switch_attribute(_, _, _))
+        .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+    gCoppOrch = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+
+    setUpSwitchOrch();
+    setUpP4Orch();
+
+    const std::string trap_group_name =
+        GENL_PACKET_TRAP_GROUP_NAME_PREFIX +
+        std::to_string(queue_num);
+
+    std::vector<swss::FieldValueTuple> attrs = {
+        {"queue", std::to_string(queue_num)},
+    };
+
+    app_copp_table.set(trap_group_name, attrs);
+
+    const sai_object_id_t trap_group_oid =
+        gTrapGroupStartOid +
+        queue_num -
+        kP4CpuQueueMinNum;
+
+    EXPECT_CALL(mock_sai_hostif_,
+                create_hostif_trap_group(_, _, _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(trap_group_oid),
+                Return(SAI_STATUS_SUCCESS)));
+
+    gCoppOrch->addExistingData(&app_copp_table);
+    static_cast<Orch *>(gCoppOrch)->doTask();
+
+    /*
+     * Remove expectations used for CoppOrch initialization. This allows the
+     * following Times(0) expectation to specifically validate P4Orch.
+     */
+    EXPECT_TRUE(
+        ::testing::Mock::VerifyAndClearExpectations(
+            &mock_sai_hostif_));
+
+    /*
+     * P4Orch must create the user-defined trap.
+     */
+    const sai_object_id_t user_defined_trap_oid =
+        gUserDefinedTrapStartOid + queue_num;
+
+    EXPECT_CALL(mock_sai_hostif_,
+                create_hostif_user_defined_trap(_, _, _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(user_defined_trap_oid),
+                Return(SAI_STATUS_SUCCESS)));
+
+    /*
+     * The essential Alpine/no-genl behavior: no explicit hostif table
+     * entry should be created.
+     */
+    EXPECT_CALL(mock_sai_hostif_,
+                create_hostif_table_entry(_, _, _, _))
+        .Times(0);
+
+    /*
+     * Normal ACL-table creation should still succeed.
+     */
+    EXPECT_CALL(mock_sai_acl_,
+                create_acl_table(_, _, _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(kAclTableIngressOid),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(mock_sai_acl_,
+                create_acl_table_group_member(_, _, _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(kAclGroupMemberIngressOid),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(mock_sai_udf_,
+                create_udf_match(_, _, _, _))
+        .WillOnce(
+            DoAll(
+                SetArgPointee<0>(kUdfMatchOid1),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(mock_sai_udf_,
+                create_udf_group(_, _, _, _))
+        .Times(3)
+        .WillRepeatedly(
+            DoAll(
+                SetArgPointee<0>(kUdfGroupOid1),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(mock_sai_udf_,
+                create_udf(_, _, _, _))
+        .Times(3)
+        .WillRepeatedly(
+            DoAll(
+                SetArgPointee<0>(kUdfOid1),
+                Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_EQ(
+        StatusCode::SWSS_RC_SUCCESS,
+        ProcessAddTableRequest(app_db_entry));
+
+    EXPECT_NE(
+        nullptr,
+        GetAclTable(app_db_entry.acl_table_name));
+
+    sai_object_id_t mapper_oid = SAI_NULL_OBJECT_ID;
+
+    EXPECT_TRUE(
+        p4_oid_mapper_->getOID(
+            SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+            std::to_string(queue_num),
+            &mapper_oid));
+
+    EXPECT_EQ(user_defined_trap_oid, mapper_oid);
+
+    unsetenv("platform");
 }
 
 TEST_F(

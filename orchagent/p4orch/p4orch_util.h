@@ -481,3 +481,5 @@ template <typename T> std::string QuotedVar(T name)
 
 // Trim tailing and leading whitespace
 std::string trim(const std::string &s);
+// Check if the platform is alpinevs
+bool isPlatformAlpinevs();
