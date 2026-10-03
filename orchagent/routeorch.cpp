@@ -3171,6 +3171,103 @@ bool RouteOrch::checkNextHopGroupCount()
     return m_nextHopGroupCount < m_maxNextHopGroupCount;
 }
 
+/* Every route is tried even after a failure, so a caller that rolls back with
+ * the old ID gets all of them back. One index can carry most of the table, so
+ * the sets go out in bulk rather than one SAI round trip per route. */
+bool RouteOrch::moveNhgIndexRoutes(const std::string& nhg_index, sai_object_id_t nhg_id)
+{
+    SWSS_LOG_ENTER();
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+
+    /* Private bulkers: nothing staged in the shared ones goes out with these. */
+    EntityBulker<sai_route_api_t> route_bulker(sai_route_api, gMaxBulkSize);
+    EntityBulker<sai_mpls_api_t> label_bulker(sai_mpls_api, gMaxBulkSize);
+    std::deque<sai_status_t> route_statuses;
+    std::deque<sai_status_t> label_statuses;
+    std::vector<IpPrefix> prefixes;
+    std::vector<Label> labels;
+
+    sai_attribute_t route_attr;
+    route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    route_attr.value.oid = nhg_id;
+
+    for (const auto &table : m_syncdRoutes)
+    {
+        for (const auto &rt : table.second)
+        {
+            /* Fine grained and mux routes keep nhg_index but are programmed
+             * by their own owner, not with the group's ID. An SRv6 route with
+             * a context_index programs the group's ID too, so it moves. */
+            if (rt.second.nhg_index != nhg_index ||
+                m_fgNhgOrch->syncdContainsFgNhg(table.first, rt.first) ||
+                (mux_orch && mux_orch->isMuxNexthops(rt.second.nhg_key)))
+            {
+                continue;
+            }
+
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = table.first;
+            route_entry.switch_id = gSwitchId;
+            copy(route_entry.destination, rt.first);
+
+            route_statuses.emplace_back();
+            prefixes.push_back(rt.first);
+            route_bulker.set_entry_attribute(&route_statuses.back(), &route_entry, &route_attr);
+        }
+    }
+
+    sai_attribute_t inseg_attr;
+    inseg_attr.id = SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID;
+    inseg_attr.value.oid = nhg_id;
+
+    for (const auto &table : m_syncdLabelRoutes)
+    {
+        for (const auto &rt : table.second)
+        {
+            if (rt.second.nhg_index != nhg_index)
+            {
+                continue;
+            }
+
+            sai_inseg_entry_t inseg_entry = {};
+            inseg_entry.switch_id = gSwitchId;
+            inseg_entry.label = rt.first;
+
+            label_statuses.emplace_back();
+            labels.push_back(rt.first);
+            label_bulker.set_entry_attribute(&label_statuses.back(), &inseg_entry, &inseg_attr);
+        }
+    }
+
+    route_bulker.flush();
+    label_bulker.flush();
+
+    bool success = true;
+
+    for (size_t i = 0; i < route_statuses.size(); i++)
+    {
+        if (route_statuses[i] != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to point route %s at next hop group %s (0x%" PRIx64 "), rv:%d",
+                           prefixes[i].to_string().c_str(), nhg_index.c_str(), nhg_id, route_statuses[i]);
+            success = false;
+        }
+    }
+
+    for (size_t i = 0; i < label_statuses.size(); i++)
+    {
+        if (label_statuses[i] != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to point label route %u at next hop group %s (0x%" PRIx64 "), rv:%d",
+                           labels[i], nhg_index.c_str(), nhg_id, label_statuses[i]);
+            success = false;
+        }
+    }
+
+    return success;
+}
+
 const NhgBase &RouteOrch::getNhg(const std::string &nhg_index)
 {
     SWSS_LOG_ENTER();

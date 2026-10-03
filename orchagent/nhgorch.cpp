@@ -1,3 +1,4 @@
+#include <chrono>
 #include <random>
 #include "nhgorch.h"
 #include "neighorch.h"
@@ -380,7 +381,14 @@ void NhgOrch::doTask(Consumer& consumer)
                 /* Common update, when all the requirements are met. */
                 else
                 {
-                    success = nhg_ptr->update(nhg_key);
+                    if (nhg_ptr->replacesIdOnUpdate(nhg_key))
+                    {
+                        success = replaceNhg(index, nhg_key);
+                    }
+                    else
+                    {
+                        success = nhg_ptr->update(nhg_key);
+                    }
 
                     /* Keep the msg in loop if any member path is not available yet */
                     if (is_recursive && non_existent_member)
@@ -863,6 +871,88 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
 }
 
 /*
+ * Purpose:     Update a group whose SAI ID changes with the update.
+ * Description: Routes and label routes point at the group's SAI ID directly,
+ *              and a group of one next hop shares its next hop's ID, holding a
+ *              next hop reference in NeighOrch in its place. The new group is
+ *              created and the routes moved to it before the old one is
+ *              released, so no route is left on an object that orchagent no
+ *              longer counts.
+ * Params:      IN  index   - The CP index of the next hop group.
+ *              IN  nhg_key - The new next hop group key.
+ * Returns:     true, if the group was replaced;
+ *              false, otherwise (the old group stays in place).
+ */
+bool NhgOrch::replaceNhg(const string &index, const NextHopGroupKey &nhg_key)
+{
+    SWSS_LOG_ENTER();
+
+    auto &entry = m_syncdNextHopGroups.at(index);
+    sai_object_id_t old_id = entry.nhg->getId();
+
+    /*
+     * sync() creates the SAI group of several next hops even when none of its
+     * members can be added, and an empty group would blackhole the routes. The
+     * old group stays until a retry finds a member to add. A group whose SAI
+     * object and some members exist still replaces the old one; the retried
+     * SET adds the missing members through update().
+     */
+    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
+    bool multi = nhg_key.getSize() > 1;
+    if (multi && !nhg->hasInstallableMember())
+    {
+        SWSS_LOG_INFO("Next hop group %s: no member of %s can be added yet, replacement deferred",
+                      index.c_str(), nhg_key.to_string().c_str());
+        return false;
+    }
+
+    bool complete = nhg->sync();
+    if (!nhg->isSynced() || (multi && !nhg->hasSyncedMember()))
+    {
+        SWSS_LOG_INFO("Failed to sync the replacement of next hop group %s with %s",
+                      index.c_str(), nhg_key.to_string().c_str());
+        return false;
+    }
+
+    sai_object_id_t new_id = nhg->getId();
+    long long move_ms = 0;
+    if (new_id != old_id && entry.ref_count > 0)
+    {
+        auto move_start = std::chrono::steady_clock::now();
+        if (!gRouteOrch->moveNhgIndexRoutes(index, new_id))
+        {
+            /* Put the routes that did move back; the new group goes on return. */
+            if (!gRouteOrch->moveNhgIndexRoutes(index, old_id))
+            {
+                SWSS_LOG_ERROR("Next hop group %s: rollback to 0x%" PRIx64 " incomplete, routes stay on "
+                               "0x%" PRIx64 " until the retried update moves them",
+                               index.c_str(), old_id, new_id);
+            }
+            return false;
+        }
+        move_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - move_start).count();
+    }
+
+    if (new_id != old_id && entry.ref_count > 0)
+    {
+        SWSS_LOG_NOTICE("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s, "
+                        "routes moved in %lld ms",
+                        index.c_str(), old_id, new_id, nhg_key.to_string().c_str(), move_ms);
+    }
+    else if (new_id != old_id)
+    {
+        SWSS_LOG_INFO("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s",
+                      index.c_str(), old_id, new_id, nhg_key.to_string().c_str());
+    }
+
+    /* The old group is released when nhg goes out of scope. */
+    entry.nhg.swap(nhg);
+
+    return complete;
+}
+
+/*
  * Purpose:     Remove the next hop group.
  * Description: Reset the group's SAI ID.  If the group has more than one
  *              members, remove the members and the group.
@@ -989,6 +1079,66 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 }
 
 /*
+ * Purpose:     Tell whether an update gives the group a new SAI ID.
+ * Description: A synced non-recursive group of one next hop uses that next
+ *              hop's own ID, so going to or from a single next hop changes it.
+ * Params:      IN  nhg_key - The new next hop group key.
+ * Returns:     true, if update(nhg_key) would replace the group's SAI ID;
+ *              false, otherwise.
+ */
+bool NextHopGroup::replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const
+{
+    SWSS_LOG_ENTER();
+
+    return isSynced() && !isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1);
+}
+
+/*
+ * Purpose:     Tell whether sync() can add at least one member to the group.
+ * Description: syncMembers() skips a member without a next hop ID and one
+ *              whose interface is down.
+ * Returns:     true, if some member has a next hop ID and its interface up;
+ *              false, otherwise.
+ */
+bool NextHopGroup::hasInstallableMember() const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &mbr : m_members)
+    {
+        /* Check the IP next hop first: getNhId() creates a labeled next hop
+         * over it, which a rejected group would then remove again. */
+        if (gNeighOrch->isNextHopFlagSet(NextHopKey(mbr.first.ip_address, mbr.first.alias), NHFLAGS_IFDOWN))
+        {
+            continue;
+        }
+
+        if (mbr.second.getNhId() != SAI_NULL_OBJECT_ID &&
+            !gNeighOrch->isNextHopFlagSet(mbr.first, NHFLAGS_IFDOWN))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool NextHopGroup::hasSyncedMember() const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &mbr : m_members)
+    {
+        if (mbr.second.isSynced())
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
  * Purpose:     Update the next hop group based on a new next hop group key.
  * Description: Update the group's members by removing the members that aren't
  *              in the new next hop group and adding the new members.  We first
@@ -1003,8 +1153,7 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    if (!isSynced() ||
-        (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1)))
+    if (!isSynced() || replacesIdOnUpdate(nhg_key))
     {
         bool was_synced = isSynced();
         bool was_temp = isTemp();
