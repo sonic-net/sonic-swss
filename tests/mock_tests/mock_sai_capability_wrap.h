@@ -1,5 +1,12 @@
 #pragma once
 
+#include <functional>
+
+extern "C"
+{
+#include "saitypes.h"
+}
+
 /*
  * GNU ld --wrap hooks for free-standing SAI capability/metadata functions
  * exercised by the orchagent unit tests.
@@ -25,6 +32,46 @@
  * driven by the ICMP hook state, all other object types by the HFTel hook state.
  * Each orch therefore drives only its own namespace below.
  */
+
+#include <functional>
+#include <utility>
+
+#include <saitypes.h>
+#include <saiobject.h>
+
+/**
+ * Generic per-attribute capability override for the single shared
+ * sai_query_attribute_capability() --wrap. Return true to handle the query
+ * (filling *cap and *status); return false to fall through to the default
+ * per-orch behaviour. Usable by any mock test (e.g. the ACL match-field gate).
+ */
+namespace sai_cap_ut
+{
+    using AttrCapabilityOverride = std::function<bool(
+        sai_object_type_t object_type,
+        sai_attr_id_t attr_id,
+        sai_attr_capability_t *cap,
+        sai_status_t *status)>;
+
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn);
+    void clearAttrCapabilityOverride();
+
+    /** RAII: clears the override on scope exit. */
+    struct AttrCapabilityOverrideGuard
+    {
+        explicit AttrCapabilityOverrideGuard(AttrCapabilityOverride fn)
+        {
+            setAttrCapabilityOverride(std::move(fn));
+        }
+        ~AttrCapabilityOverrideGuard()
+        {
+            clearAttrCapabilityOverride();
+        }
+
+        AttrCapabilityOverrideGuard(const AttrCapabilityOverrideGuard &) = delete;
+        AttrCapabilityOverrideGuard &operator=(const AttrCapabilityOverrideGuard &) = delete;
+    };
+}
 
 /**
  * Test hooks for the SAI calls on the ICMP echo session stats count mode path
@@ -82,5 +129,34 @@ namespace hftelorch_sai_wrap_ut
 
         HFTelSaiHookGuard(const HFTelSaiHookGuard&) = delete;
         HFTelSaiHookGuard& operator=(const HFTelSaiHookGuard&) = delete;
+    };
+}
+
+/*
+ * Generic, test-settable override for the shared --wrap of
+ * sai_query_attribute_enum_values_capability. Any mock test can program a
+ * per-attribute enum-values result (status + value list) without disturbing the
+ * icmp-specific hooks above. The override is consulted first; if unset, the wrap
+ * falls back to the icmp hooks / __real_*.
+ */
+namespace sai_enum_cap_ut
+{
+    using EnumValuesCapabilityOverride = std::function<sai_status_t(
+        sai_object_id_t switch_id,
+        sai_object_type_t object_type,
+        sai_attr_id_t attr_id,
+        sai_s32_list_t *enum_values_capability)>;
+
+    void setEnumValuesCapabilityOverride(EnumValuesCapabilityOverride fn);
+    void clearEnumValuesCapabilityOverride();
+
+    /** RAII: clears the override on scope exit. */
+    struct EnumValuesCapabilityOverrideGuard
+    {
+        explicit EnumValuesCapabilityOverrideGuard(EnumValuesCapabilityOverride fn);
+        ~EnumValuesCapabilityOverrideGuard();
+
+        EnumValuesCapabilityOverrideGuard(const EnumValuesCapabilityOverrideGuard&) = delete;
+        EnumValuesCapabilityOverrideGuard& operator=(const EnumValuesCapabilityOverrideGuard&) = delete;
     };
 }

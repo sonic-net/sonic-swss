@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -42,6 +43,11 @@ namespace
         thread_local bool g_fail_session_capability = false;
     }
 
+    // Generic per-attribute enum-values-capability override (sai_enum_cap_ut),
+    // consulted first in __wrap_sai_query_attribute_enum_values_capability so any
+    // orch UT (e.g. the ACL table group type query) can inject a result.
+    thread_local sai_enum_cap_ut::EnumValuesCapabilityOverride g_enumValuesOverride;
+
     // HFTel capability discovery path (HFTelOrch::isSupportedHFTel).
     namespace hftel
     {
@@ -57,6 +63,11 @@ namespace
 
         thread_local Hook g_hook = Hook::None;
     }
+
+    // Generic per-attribute capability override (sai_cap_ut), checked first in
+    // __wrap_sai_query_attribute_capability so any orch UT (e.g. the ACL
+    // match-field gate) can inject a result regardless of object type.
+    thread_local sai_cap_ut::AttrCapabilityOverride g_attr_cap_override;
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -109,6 +120,14 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Inout_ sai_s32_list_t* enum_values_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when set,
+        // its result is used verbatim; otherwise fall through to the icmp hooks.
+        if (g_enumValuesOverride)
+        {
+            return g_enumValuesOverride(switch_id, object_type, attr_id,
+                                        enum_values_capability);
+        }
+
         const bool is_icmp_stats_mode = (object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
                 && (attr_id == SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
 
@@ -165,6 +184,24 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Out_ sai_attr_capability_t *attr_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when it
+        // handles the query, its status and capability are used verbatim;
+        // otherwise fall through to the per-orch handling below.
+        if (g_attr_cap_override)
+        {
+            sai_attr_capability_t cap;
+            std::memset(&cap, 0, sizeof(cap));
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_attr_cap_override(object_type, attr_id, &cap, &st))
+            {
+                if (attr_capability)
+                {
+                    *attr_capability = cap;
+                }
+                return st;
+            }
+        }
+
         // ICMP echo session selective-counter capability (IcmpOrch via the shared
         // SaiOffloadSession base). Fail only the ICMP echo session object; any
         // other object type falls through to the HFTel handling / real impl so
@@ -337,5 +374,42 @@ namespace hftelorch_sai_wrap_ut
     HFTelSaiHookGuard::~HFTelSaiHookGuard()
     {
         setSaiHookNone();
+    }
+}
+
+namespace sai_cap_ut
+{
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn)
+    {
+        g_attr_cap_override = std::move(fn);
+    }
+
+    void clearAttrCapabilityOverride()
+    {
+        g_attr_cap_override = nullptr;
+    }
+}
+
+namespace sai_enum_cap_ut
+{
+    void setEnumValuesCapabilityOverride(EnumValuesCapabilityOverride fn)
+    {
+        g_enumValuesOverride = std::move(fn);
+    }
+
+    void clearEnumValuesCapabilityOverride()
+    {
+        g_enumValuesOverride = nullptr;
+    }
+
+    EnumValuesCapabilityOverrideGuard::EnumValuesCapabilityOverrideGuard(
+            EnumValuesCapabilityOverride fn)
+    {
+        setEnumValuesCapabilityOverride(std::move(fn));
+    }
+
+    EnumValuesCapabilityOverrideGuard::~EnumValuesCapabilityOverrideGuard()
+    {
+        clearEnumValuesCapabilityOverride();
     }
 }
