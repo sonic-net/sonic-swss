@@ -52,6 +52,16 @@ private:
     std::unordered_map<sai_object_type_t, std::unordered_set<std::shared_ptr<HFTelProfile>>> m_type_profile_mapping;
     CounterNameCache m_counter_name_cache;
 
+    // Tracks "profile|group" keys currently rejected by groupTableSet()
+    // with task_need_retry because MIXED mode doesn't support live
+    // reconfiguration (the profile isn't SAI_TAM_TEL_TYPE_STATE_STOP_STREAM
+    // yet). task_need_retry items are re-attempted on every doTask pass, so
+    // logging unconditionally here would spam the log for as long as the
+    // profile stays enabled; this set lets groupTableSet log exactly once
+    // per block instead of on every retry.
+    std::unordered_set<std::string> m_mixed_live_reconfig_blocked;
+
+
     task_process_status profileTableSet(const std::string &profile_name, const std::vector<swss::FieldValueTuple> &values);
     task_process_status profileTableDel(const std::string &profile_name);
     task_process_status groupTableSet(const std::string &profile_name, const std::string &group_name, const std::vector<swss::FieldValueTuple> &values);

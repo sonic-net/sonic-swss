@@ -52,7 +52,13 @@ public:
     sai_object_type_t getObjectType(sai_object_id_t tam_tel_type_obj) const;
     void setPollInterval(std::uint32_t poll_interval);
     void setBulkSize(std::uint32_t bulk_size);
-    void setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
+    // Returns false (without applying anything) if the label allocator
+    // would exceed the 15-bit IPFIX IE range. The caller is expected to
+    // have already rejected the update with task_need_retry if the shared
+    // tel_type isn't SAI_TAM_TEL_TYPE_STATE_STOP_STREAM (MIXED mode doesn't
+    // support live reconfiguration), since that's a transient condition and
+    // belongs at the task-status level - see HFTelOrch::groupTableSet.
+    bool setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
     void setStatsIDs(const std::string &group_name, const std::set<std::string> &object_counters);
     bool setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id);
     bool delObjectSAIID(sai_object_type_t object_type, const char *object_name);

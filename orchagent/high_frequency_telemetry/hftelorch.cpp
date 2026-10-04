@@ -539,10 +539,44 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     auto arg_object_names = fvsGetValue(values, "object_names", true);
     if (arg_object_names && !arg_object_names->empty())
     {
+        // Live reconfiguration isn't supported in MIXED mode: every group
+        // shares one stream and template set, so an object-list change -
+        // and the label allocation it may need - is only accepted while
+        // the whole profile is stopped. task_need_retry (not task_failed)
+        // because this is transient: the GCU-based apply path only writes
+        // CONFIG_DB deltas, so there's no way for an operator to "retry" by
+        // resubmitting the identical config once they disable the profile -
+        // nothing would change, so no new write, so no new notification.
+        // Leaving this item in orchagent's own retry queue is what lets it
+        // get applied automatically once the profile is disabled.
+        const string blocked_key = profile_name + "|" + group_name;
+        if (profile->isMixedTypeMode() &&
+            profile->getStreamState(type) != SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+        {
+            if (m_mixed_live_reconfig_blocked.insert(blocked_key).second)
+            {
+                // .second is true only on first insertion, so this fires
+                // once per block, not on every retry.
+                SWSS_LOG_WARN(
+                    "HFTel: group %s:%s object_names update is pending - MIXED mode doesn't "
+                    "support live reconfiguration; disable the profile to apply it",
+                    profile_name.c_str(), group_name.c_str());
+            }
+            return task_process_status::task_need_retry;
+        }
+        m_mixed_live_reconfig_blocked.erase(blocked_key);
+
         vector<string> buffer;
         boost::split(buffer, *arg_object_names, boost::is_any_of(","));
         set<string> object_names(buffer.begin(), buffer.end());
-        profile->setObjectNames(group_name, move(object_names));
+        if (!profile->setObjectNames(group_name, move(object_names)))
+        {
+            // Rejected (logged by setObjectNames itself): the label
+            // allocator would exceed the 15-bit IPFIX IE range. This is a
+            // permanent condition for this exact request, not a transient
+            // one, so fail the task instead of retrying it forever.
+            return task_process_status::task_failed;
+        }
     }
 
     auto arg_object_counters = fvsGetValue(values, "object_counters", true);
@@ -597,6 +631,7 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
     profile->clearGroup(group_name);
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + HFTelUtils::sai_type_to_group_name(type));
+    m_mixed_live_reconfig_blocked.erase(profile_name + "|" + group_name);
 
     SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
 

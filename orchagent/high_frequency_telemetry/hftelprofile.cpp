@@ -281,7 +281,7 @@ void HFTelProfile::setPollInterval(uint32_t poll_interval)
     }
 }
 
-void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object_names)
+bool HFTelProfile::setObjectNames(const string &group_name, set<string> &&object_names)
 {
     SWSS_LOG_ENTER();
 
@@ -292,6 +292,15 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     if (isMixedTypeMode())
     {
+        // The caller (HFTelOrch::groupTableSet) is expected to have already
+        // rejected this update with task_need_retry if the shared tel_type
+        // isn't SAI_TAM_TEL_TYPE_STATE_STOP_STREAM - live reconfiguration
+        // isn't supported in MIXED mode, and that check belongs at the
+        // task-status level so an operator's retry is driven by orchagent's
+        // own retry queue rather than requiring a new CONFIG_DB write (the
+        // GCU-based apply path only writes deltas, so resubmitting the same
+        // desired config produces no write, and so no new notification, if
+        // nothing actually changed).
         size_t new_label_count = object_names.size();
         if (group_exists)
         {
@@ -314,7 +323,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
                 "the 15-bit IPFIX IE range (%u). Delete and recreate the profile to reset.",
                 group_name.c_str(), new_label_count,
                 MAX_LABEL);
-            return;
+            return false;
         }
     }
 
@@ -342,7 +351,7 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     {
         if (itr->second.isSameObjects(object_names))
         {
-            return;
+            return true;
         }
         for (const auto &obj : itr->second.getObjects())
         {
@@ -362,6 +371,8 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     // TODO: In the phase 2, we don't need to stop the stream before update the object names
     setStreamState(sai_object_type, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+
+    return true;
 }
 
 void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &object_counters)
