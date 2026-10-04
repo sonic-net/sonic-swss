@@ -246,14 +246,13 @@ void TeamMgr::doLagTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             int min_links = 0;
-            bool fallback = false;
             bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
             string sys_mac;
-            string fallback_method;
+            string fallback;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -266,15 +265,15 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "fallback")
                 {
-                    fallback = fvValue(i) == "true";
-                    SWSS_LOG_INFO("Get fallback option %s",
-                            fallback ? "true" : "false");
-                }
-                else if (fvField(i) == "fallback_method")
-                {
-                    fallback_method = fvValue(i);
-                    SWSS_LOG_INFO("Get fallback method %s",
-                            fallback_method.c_str());
+                    fallback = fvValue(i);
+                    // Transition mechanism for the fallback field, going from a boolean to a string
+                    if (fallback == "true") {
+                        fallback = "single";
+                    } else if (fallback != "single" && fallback != "static") {
+                        fallback = "none";
+                    }
+                    SWSS_LOG_INFO("Get fallback %s",
+                            fallback.c_str());
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -313,7 +312,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback, fallback_method, fast_rate) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
                     // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
                     removeLag(alias);
@@ -687,7 +686,7 @@ bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, const string &fallback_method, bool fast_rate)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, const string &fallback, bool fast_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -739,14 +738,9 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         conf << ",\"min_ports\":" << min_links;
     }
 
-    if (fallback)
+    if (!fallback.empty())
     {
-        conf << ",\"fallback\":true";
-
-        if (!fallback_method.empty())
-        {
-            conf << ",\"fallback_method\":\"" << fallback_method << "\"";
-        }
+        conf << ",\"fallback\":\"" << fallback << "\"";
     }
 
     if (fast_rate)
