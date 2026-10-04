@@ -109,9 +109,12 @@ public:
     bool enableNeighbors(std::list<NeighborContext>&);
     bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
-    void processFDBDelete(const FdbEntry &entry);
+    void processFDBDelete(const FdbEntry &entry, bool behind_nhg = false);
     void processFDBAdd(const FdbEntry &entry);
     void processFDBResolve(const FdbEntry &entry);
+    void processFDBRemoteUpdate(const FdbEntry &entry);
+    void processFDBRemoteDelete(const FdbEntry &entry);
+    void updateTunnelHostRoute(sai_object_id_t vrf_id, const IpAddress &ip, bool present);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
@@ -157,6 +160,13 @@ private:
     std::set<NextHopKey> m_neighborToResolve;
     /* Existing neighbors re-resolved by processFDBResolve(), awaiting a kernel update */
     std::set<NeighborEntry> m_neighborToRefresh;
+    /* VLAN neighbors kept out of the SAI while their MAC is behind a VxLAN tunnel */
+    std::set<NeighborEntry> m_tunnelMacNeighbors;
+    /* Host routes (VRF, address) whose next hops are VxLAN tunnel next hops */
+    std::set<std::pair<sai_object_id_t, IpAddress>> m_tunnelHostRoutes;
+
+    bool hasTunnelHostRoute(const Port &vlan, const IpAddress &ip) const;
+    bool isMacBehindTunnel(const string &alias, const MacAddress &mac);
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
     ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
