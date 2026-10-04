@@ -219,8 +219,9 @@ void NeighOrch::processFDBAdd(const FdbEntry &entry)
  * prevent traffic from being forwarded to an invalid or unreachable destination.
  *
  * @param entry The FDB entry containing MAC address, VLAN ID, and port information
+ * @param behind_nhg The MAC moved behind a bridge port next hop group, not a single VTEP
  */
-void NeighOrch::processFDBDelete(const FdbEntry &entry)
+void NeighOrch::processFDBDelete(const FdbEntry &entry, bool behind_nhg)
 {
     // Get Vlan object
     Port vlan;
@@ -234,6 +235,15 @@ void NeighOrch::processFDBDelete(const FdbEntry &entry)
     SWSS_LOG_INFO("Delete FDB for mac :%s , VLAN: %s",
                    entry.mac.to_string().c_str(), vlan.m_alias.c_str());
 
+    if (!behind_nhg)
+    {
+        /*
+         * The neighbors stay programmed and the SAI follows the MAC onto the
+         * tunnel; those of hosts with a host route over a tunnel are already out.
+         */
+        return;
+    }
+
     // If the FDB entry MAC matches with neighbor/ARP entry MAC,
     // and ARP entry incoming interface matches with VLAN name,
     // del neighbor/arp entry.
@@ -243,6 +253,165 @@ void NeighOrch::processFDBDelete(const FdbEntry &entry)
             neighborEntry.second.mac == entry.mac)
         {
             disableNeighbor(neighborEntry.first);
+        }
+    }
+}
+
+/*
+ * A host with a host route over a VxLAN tunnel in the VLAN's VRF (symmetric
+ * IRB) is reached by that route, so its neighbor stays out of the SAI: a SAI
+ * either shadows the route with the neighbor's host entry or keeps both in one
+ * hardware entry, which removing either one deletes. Without such a route the
+ * neighbor is programmed; if its MAC is behind a tunnel, the SAI resolves it
+ * through the FDB entry on the tunnel.
+ */
+bool NeighOrch::hasTunnelHostRoute(const Port &vlan, const IpAddress &ip) const
+{
+    if (m_tunnelHostRoutes.empty() || vlan.m_type != Port::VLAN)
+    {
+        return false;
+    }
+
+    sai_object_id_t vrf_id = vlan.m_vr_id == SAI_NULL_OBJECT_ID ? gVirtualRouterId : vlan.m_vr_id;
+    return m_tunnelHostRoutes.count(make_pair(vrf_id, ip)) != 0;
+}
+
+bool NeighOrch::isMacBehindTunnel(const string &alias, const MacAddress &mac)
+{
+    Port vlan;
+    if (!m_portsOrch->getPort(alias, vlan) || vlan.m_type != Port::VLAN)
+    {
+        return false;
+    }
+
+    FdbEntry entry;
+    entry.mac = mac;
+    entry.bv_id = vlan.m_vlan_info.vlan_oid;
+    return m_fdbOrch->is_fdb_programmed_to_vxlan_tunnel(entry);
+}
+
+/*
+ * The FDB entry of a MAC changed (programmed, moved, learned or removed): retry
+ * the neighbors on that MAC that were kept out of the SAI while it sat behind a
+ * tunnel. addNeighbor() keeps them out again if that still holds.
+ */
+void NeighOrch::processFDBRemoteUpdate(const FdbEntry &entry)
+{
+    if (m_tunnelMacNeighbors.empty())
+    {
+        return;
+    }
+
+    Port vlan;
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+        return;
+    }
+
+    /* addNeighbor() edits the set */
+    vector<NeighborEntry> retry;
+    for (const auto &neighborEntry : m_tunnelMacNeighbors)
+    {
+        auto it = m_syncdNeighbors.find(neighborEntry);
+        if (neighborEntry.alias == vlan.m_alias && it != m_syncdNeighbors.end() &&
+            it->second.mac == entry.mac && !hasTunnelHostRoute(vlan, neighborEntry.ip_address))
+        {
+            retry.push_back(neighborEntry);
+        }
+    }
+
+    for (const auto &neighborEntry : retry)
+    {
+        enableNeighbor(neighborEntry);
+    }
+}
+
+/*
+ * A MAC behind a VxLAN tunnel was withdrawn. The neighbors programmed on it have
+ * no path left: ask the kernel to resolve them again, as for a local MAC that
+ * aged out. Those kept in software are no longer behind a tunnel: retry them.
+ */
+void NeighOrch::processFDBRemoteDelete(const FdbEntry &entry)
+{
+    Port vlan;
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+        return;
+    }
+
+    for (const auto &neighborEntry : m_syncdNeighbors)
+    {
+        if (neighborEntry.first.alias == vlan.m_alias &&
+            neighborEntry.second.mac == entry.mac &&
+            neighborEntry.second.hw_configured)
+        {
+            resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
+            m_neighborToRefresh.insert(neighborEntry.first);
+        }
+    }
+
+    processFDBRemoteUpdate(entry);
+}
+
+/*
+ * RouteOrch reports whether vrf_id holds a host route for ip over VxLAN tunnel
+ * next hops: before it programs such a route, and after it removes the route or
+ * moves it off tunnel next hops. The VLAN neighbors of that address leave the
+ * SAI before the route is programmed and are programmed again once it is gone,
+ * so the two never share a hardware entry.
+ */
+void NeighOrch::updateTunnelHostRoute(sai_object_id_t vrf_id, const IpAddress &ip, bool present)
+{
+    auto key = make_pair(vrf_id, ip);
+    if (present == (m_tunnelHostRoutes.count(key) != 0))
+    {
+        return;
+    }
+
+    if (present)
+    {
+        m_tunnelHostRoutes.insert(key);
+    }
+    else
+    {
+        m_tunnelHostRoutes.erase(key);
+    }
+
+    /* The table is ordered by address first */
+    vector<NeighborEntry> candidates;
+    for (auto it = m_syncdNeighbors.lower_bound(NeighborEntry(ip, string())); it != m_syncdNeighbors.end() &&
+         it->first.ip_address == ip; it++)
+    {
+        candidates.push_back(it->first);
+    }
+
+    for (const auto &neighborEntry : candidates)
+    {
+        Port vlan;
+        if (!m_portsOrch->getPort(neighborEntry.alias, vlan) || vlan.m_type != Port::VLAN ||
+            (vlan.m_vr_id == SAI_NULL_OBJECT_ID ? gVirtualRouterId : vlan.m_vr_id) != vrf_id)
+        {
+            continue;
+        }
+
+        if (!present)
+        {
+            if (m_tunnelMacNeighbors.count(neighborEntry))
+            {
+                enableNeighbor(neighborEntry);
+            }
+        }
+        else if (isHwConfigured(neighborEntry))
+        {
+            if (disableNeighbor(neighborEntry) && !isHwConfigured(neighborEntry))
+            {
+                m_tunnelMacNeighbors.insert(neighborEntry);
+            }
+            else
+            {
+                SWSS_LOG_WARN("Neighbor %s on %s stays programmed next to its host route over a vxlan tunnel",
+                              ip.to_string().c_str(), neighborEntry.alias.c_str());
+            }
         }
     }
 }
@@ -1161,6 +1330,16 @@ void NeighOrch::doTask(Consumer &consumer)
             else
             {
                 /* Duplicate entry */
+                if (m_tunnelMacNeighbors.count(neighbor_entry) &&
+                    !isMacBehindTunnel(neighbor_entry.alias, mac_address))
+                {
+                    /* Kept out of the SAI while its MAC was behind a tunnel */
+                    if (!addNeighbor(ctx))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
                 clearNeighborRefresh(neighbor_entry);
                 it = consumer.m_toSync.erase(it);
             }
@@ -1428,6 +1607,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     auto vlan_ports = ports_orch->getAllVlans();
 
     bool is_alias_vlan = false;
+    bool mac_on_tunnel = false;
 
     for (auto vlan_port: vlan_ports)
     {
@@ -1510,11 +1690,17 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         entry.mac = macAddress;
         entry.bv_id = vlanPort.m_vlan_info.vlan_oid;
 
-        if (m_fdbOrch->is_fdb_programmed_to_vxlan_tunnel(entry))
+        mac_on_tunnel = m_fdbOrch->is_fdb_programmed_to_vxlan_tunnel(entry);
+        if (!hw_config && hasTunnelHostRoute(vlanPort, ip_address))
         {
-            /* The fdb is still in vxlan port, just save neighbor info */
-            SWSS_LOG_NOTICE("Mac %s is still in vxlan port, skip hw programming!", macAddress.to_string().c_str());
+            /* A host route over a vxlan tunnel carries the host, just save neighbor info */
+            SWSS_LOG_NOTICE("Neighbor %s has a host route over a vxlan tunnel, skip hw programming!",
+                            ip_address.to_string().c_str());
             m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
+            if (!hw_config)
+            {
+                m_tunnelMacNeighbors.insert(neighborEntry);
+            }
             return true;
         }
     }
@@ -1540,6 +1726,20 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
                 SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
                 /* Returning True so as to skip retry */
+                return true;
+            }
+            else if (mac_on_tunnel && !isSaiStatusResourceFull(status))
+            {
+                /*
+                 * This SAI has no next hop to a MAC behind a tunnel. Keep the
+                 * neighbor in software, as for an L3 VNI VLAN; the next FDB
+                 * update of its MAC retries it.
+                 */
+                SWSS_LOG_WARN("Neighbor %s on %s not programmed, mac %s is behind a vxlan tunnel, rv:%d",
+                              ip_address.to_string().c_str(), alias.c_str(),
+                              macAddress.to_string().c_str(), status);
+                m_syncdNeighbors[neighborEntry] = { macAddress, false, 0, prefix_route };
+                m_tunnelMacNeighbors.insert(neighborEntry);
                 return true;
             }
             else
@@ -1612,6 +1812,30 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         for (auto itr : neighbor_attrs)
         {
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
+            if (status != SAI_STATUS_SUCCESS && mac_on_tunnel &&
+                itr.id == SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS && !isSaiStatusResourceFull(status))
+            {
+                /*
+                 * This SAI has no next hop to a MAC behind a tunnel: take the
+                 * neighbor out and keep it in software, as a refused create does.
+                 */
+                SWSS_LOG_WARN("Neighbor %s on %s not moved to mac %s behind a vxlan tunnel, rv:%d",
+                              ip_address.to_string().c_str(), alias.c_str(),
+                              macAddress.to_string().c_str(), status);
+                if (!disableNeighbor(neighborEntry) || isHwConfigured(neighborEntry))
+                {
+                    /*
+                     * Still referenced by a route. The old MAC stays cached, so the
+                     * next update from the kernel is not a duplicate and tries again.
+                     */
+                    SWSS_LOG_ERROR("Neighbor %s on %s keeps its old mac, it is still referenced",
+                                   ip_address.to_string().c_str(), alias.c_str());
+                    return true;
+                }
+                m_syncdNeighbors[neighborEntry] = { macAddress, false, 0, prefix_route };
+                m_tunnelMacNeighbors.insert(neighborEntry);
+                return true;
+            }
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to update neighbor %s on %s, attr.id=0x%x, rv:%d",
@@ -1693,6 +1917,10 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
+    if (hw_config)
+    {
+        m_tunnelMacNeighbors.erase(neighborEntry);
+    }
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
@@ -1872,6 +2100,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     }
 
     m_syncdNeighbors.erase(neighborEntry);
+    m_tunnelMacNeighbors.erase(neighborEntry);
     clearNeighborRefresh(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
@@ -1987,6 +2216,7 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
     }
 
     m_syncdNeighbors[neighborEntry] = { macAddress, true };
+    m_tunnelMacNeighbors.erase(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
