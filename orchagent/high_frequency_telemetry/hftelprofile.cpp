@@ -519,6 +519,28 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         }
         m_sai_tam_report_objs.erase(shared_key);
     }
+    else
+    {
+        // Other groups still share this tel_type. The cached combined
+        // template was built from the label set that included the group
+        // just removed, so it now describes labels that no longer exist -
+        // discard it unconditionally so it can never be reused stale.
+        m_sai_tam_tel_type_templates.erase(mapKey(sai_object_type));
+
+        // Drive a remaining group through tryCommitConfig() to force
+        // CREATE_CONFIG regeneration (republished via the existing
+        // notifyConfigReady path) before the next START_STREAM. Only do
+        // this from STOP_STREAM: the state machine has no STOP_STREAM
+        // requirement here, but START_STREAM -> CREATE_CONFIG is a
+        // separately unimplemented transition (see setStreamState's
+        // "Transfer from start to create config" TODO) that would throw.
+        // Live group deletion while streaming is already out of scope for
+        // that reason; this only closes the stop -> delete -> start gap.
+        if (getTelemetryTypeState(sai_object_type) == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
+        {
+            tryCommitConfig(m_groups.begin()->first);
+        }
+    }
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
 }
