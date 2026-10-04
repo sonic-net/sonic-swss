@@ -21,6 +21,32 @@ void HFTelGroup::updateObjects(const set<string> &object_names, sai_uint16_t sta
     }
 }
 
+size_t HFTelGroup::updateObjectsPreservingLabels(const set<string> &object_names, sai_uint16_t start_label)
+{
+    SWSS_LOG_ENTER();
+
+    unordered_map<string, sai_uint16_t> next_objects;
+    next_objects.reserve(object_names.size());
+    size_t allocated = 0;
+
+    for (const auto &name : object_names)
+    {
+        auto itr = m_objects.find(name);
+        if (itr != m_objects.end())
+        {
+            next_objects.emplace(name, itr->second);
+        }
+        else
+        {
+            next_objects.emplace(name, start_label++);
+            ++allocated;
+        }
+    }
+
+    m_objects = move(next_objects);
+    return allocated;
+}
+
 void HFTelGroup::updateStatsIDs(std::set<sai_stat_id_t> &&stats_ids)
 {
     SWSS_LOG_ENTER();

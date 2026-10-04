@@ -287,21 +287,36 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     sai_object_type_t sai_object_type = HFTelUtils::group_name_to_sai_type(group_name);
 
+    auto itr = m_groups.lower_bound(sai_object_type);
+    const bool group_exists = itr != m_groups.end() && itr->first == sai_object_type;
+
     if (isMixedTypeMode())
     {
-        const auto next = static_cast<uint32_t>(m_next_label) + object_names.size();
+        size_t new_label_count = object_names.size();
+        if (group_exists)
+        {
+            const auto &existing = itr->second.getObjects();
+            new_label_count = 0;
+            for (const auto &name : object_names)
+            {
+                if (existing.find(name) == existing.end())
+                {
+                    ++new_label_count;
+                }
+            }
+        }
+
+        const auto next = static_cast<uint32_t>(m_next_label) + new_label_count;
         if (next > MAX_LABEL)
         {
             SWSS_LOG_ERROR(
-                "HFTel: cannot add group %s (%zu objects); label allocator would exceed the "
-                "15-bit IPFIX IE range (%u). Delete and recreate the profile to reset.",
-                group_name.c_str(), object_names.size(),
+                "HFTel: cannot update group %s (%zu new objects); label allocator would exceed "
+                "the 15-bit IPFIX IE range (%u). Delete and recreate the profile to reset.",
+                group_name.c_str(), new_label_count,
                 MAX_LABEL);
             return;
         }
     }
-
-    auto itr = m_groups.lower_bound(sai_object_type);
 
     // In MIXED_TYPE mode all groups in a profile share one IPFIX template and
     // labels must be globally unique within the profile. Allocate from
@@ -309,15 +324,19 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
     // (legacy behavior) so we keep the default start_label of 1.
     const sai_uint16_t start_label = isMixedTypeMode() ? m_next_label : 1;
 
-    if (itr == m_groups.end() || itr->first != sai_object_type)
+    if (!group_exists)
     {
         HFTelGroup group(group_name);
-        group.updateObjects(object_names, start_label);
-        m_groups.insert(itr, {sai_object_type, move(group)});
         if (isMixedTypeMode())
         {
-            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
+            m_next_label = static_cast<sai_uint16_t>(
+                start_label + group.updateObjectsPreservingLabels(object_names, start_label));
         }
+        else
+        {
+            group.updateObjects(object_names, start_label);
+        }
+        m_groups.insert(itr, {sai_object_type, move(group)});
     }
     else
     {
@@ -329,10 +348,14 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
         {
             delObjectSAIID(sai_object_type, obj.first.c_str());
         }
-        itr->second.updateObjects(object_names, start_label);
         if (isMixedTypeMode())
         {
-            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
+            m_next_label = static_cast<sai_uint16_t>(
+                start_label + itr->second.updateObjectsPreservingLabels(object_names, start_label));
+        }
+        else
+        {
+            itr->second.updateObjects(object_names, start_label);
         }
     }
     loadCounterNameCache(sai_object_type);
