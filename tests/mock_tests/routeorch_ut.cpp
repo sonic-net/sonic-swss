@@ -69,6 +69,9 @@ namespace routeorch_test
     shared_ptr<swss::DBConnector> m_chassis_app_db;
 
     int create_route_count = 0;
+    /* Called for each route entry the bulk create or remove is handed, when set */
+    std::function<void(const sai_route_entry_t &)> create_route_probe;
+    std::function<void(const sai_route_entry_t &)> remove_route_probe;
     int set_route_count = 0;
     int remove_route_count = 0;
     int sai_fail_count = 0;
@@ -90,6 +93,10 @@ namespace routeorch_test
         _Out_ sai_status_t *object_statuses)
     {
         create_route_count++;
+        for (uint32_t i = 0; create_route_probe && i < object_count; i++)
+        {
+            create_route_probe(route_entry[i]);
+        }
         return old_create_route_entries(object_count, route_entry, attr_count, attr_list, mode, object_statuses);
     }
 
@@ -100,6 +107,10 @@ namespace routeorch_test
         _Out_ sai_status_t *object_statuses)
     {
         remove_route_count++;
+        for (uint32_t i = 0; remove_route_probe && i < object_count; i++)
+        {
+            remove_route_probe(route_entry[i]);
+        }
         return old_remove_route_entries(object_count, route_entry, mode, object_statuses);
     }
 
@@ -1800,5 +1811,324 @@ namespace routeorch_test
         // After NHG destruction, refcounts must be decremented
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
+    }
+
+    /*
+     * Routes through neighbors on the SVI of a VNI VLAN (default VRF, no L3 VNI)
+     * whose MAC is behind a remote VTEP.
+     */
+    static const string TN_IP = "192.168.0.10";
+    static const string TN_IP2 = "192.168.0.11";
+    static const string TN_MAC = "62:f9:65:10:2f:01";
+    static const string TN_MAC2 = "62:f9:65:10:2f:03";
+    static const NeighborEntry TN_NEIGH = NeighborEntry(TN_IP, string("Vlan1000"));
+    static const NeighborEntry TN_NEIGH2 = NeighborEntry(TN_IP2, string("Vlan1000"));
+
+    class RouteOrchTunnelMacTest : public RouteOrchTest
+    {
+    protected:
+        VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
+
+        void TearDown() override
+        {
+            RouteOrchTest::TearDown();
+            delete m_vxlanTunnelOrch;
+            m_vxlanTunnelOrch = nullptr;
+        }
+
+        void SetUp() override
+        {
+            RouteOrchTest::SetUp();
+
+            /* FdbOrch resolves a remote VTEP to its tunnel port through this orch */
+            m_vxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            m_vxlanTunnelOrch->is_dip_tunnel_supported = true;
+            gDirectory.set(m_vxlanTunnelOrch);
+
+            Table vlanTable(m_app_db.get(), APP_VLAN_TABLE_NAME);
+            Table vlanMemberTable(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+            vlanTable.set("Vlan1000", { { "admin_status", "up" }, { "mtu", "9100" } });
+            vlanMemberTable.set("Vlan1000:Ethernet12", { { "tagging_mode", "untagged" } });
+            vlanMemberTable.set("Vlan1000:Ethernet16", { { "tagging_mode", "untagged" } });
+            vlanMemberTable.set("Vlan1000:Ethernet20", { { "tagging_mode", "untagged" } });
+            gPortsOrch->addExistingData(&vlanTable);
+            gPortsOrch->addExistingData(&vlanMemberTable);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            Table intfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+            intfTable.set("Vlan1000", { { "NULL", "NULL" }, { "mac_addr", "00:00:00:00:00:00" } });
+            intfTable.set("Vlan1000:192.168.0.1/24", { { "scope", "global" }, { "family", "IPv4" } });
+            gIntfsOrch->addExistingData(&intfTable);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+
+            /*
+             * The FDB API is the virtual switch here and wants a real bridge port:
+             * each tunnel port borrows the one of a spare VLAN member.
+             */
+            const map<string, string> tunnels = { { "1.1.1.1", "Ethernet16" }, { "2.2.2.2", "Ethernet20" } };
+            for (const auto &t : tunnels)
+            {
+                string alias = "Port_EVPN_" + t.first;
+                sai_object_id_t bp = gPortsOrch->m_portList[t.second].m_bridge_port_id;
+                ASSERT_NE(bp, SAI_NULL_OBJECT_ID);
+                Port port(alias, Port::TUNNEL);
+                port.m_bridge_port_id = bp;
+                gPortsOrch->m_portList[alias] = port;
+                gPortsOrch->saiOidToAlias[bp] = alias;
+                gPortsOrch->m_portList["Vlan1000"].m_members.insert(alias);
+            }
+        }
+
+        FdbEntry TnFdbEntry(const string &mac)
+        {
+            Port vlan_port;
+            gPortsOrch->getPort("Vlan1000", vlan_port);
+
+            FdbEntry fdb_entry;
+            fdb_entry.mac = MacAddress(mac);
+            fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+            return fdb_entry;
+        }
+
+        void LearnNeighbor(const string &ip, const string &mac)
+        {
+            Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+            string key = string("Vlan1000") + neigh_table.getTableNameSeparator() + ip;
+            neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });
+            gNeighOrch->addExistingData(&neigh_table);
+            static_cast<Orch *>(gNeighOrch)->doTask();
+            neigh_table.del(key);
+        }
+
+        void RemoteMac(const string &mac, const string &vtep, bool add = true)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ string("Vlan1000:") + mac, add ? SET_COMMAND : DEL_COMMAND, {
+                { "vni", "1000" }, { "type", "dynamic" }, { "remote_vtep", vtep } } });
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gFdbOrch)->doTask();
+        }
+
+        string MacPort(const string &mac)
+        {
+            auto it = gFdbOrch->m_entries.find(TnFdbEntry(mac));
+            Port port;
+            if (it == gFdbOrch->m_entries.end() ||
+                !gPortsOrch->getPortByBridgePortId(it->second.bridge_port_id, port))
+            {
+                return "";
+            }
+            return port.m_alias;
+        }
+
+        void LocalMacMove(const string &mac, sai_fdb_event_t event = SAI_FDB_EVENT_MOVE)
+        {
+            Port eth, vlan;
+            gPortsOrch->getPort("Ethernet12", eth);
+            gPortsOrch->getPort("Vlan1000", vlan);
+            sai_fdb_entry_t entry;
+            memcpy(entry.mac_address, MacAddress(mac).getMac(), 6);
+            entry.switch_id = gSwitchId;
+            entry.bv_id = vlan.m_vlan_info.vlan_oid;
+            gFdbOrch->update(event, &entry, eth.m_bridge_port_id, SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        }
+
+        void Route(const string &prefix, const string &nexthops, const string &ifnames)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ prefix, SET_COMMAND, { { "ifname", ifnames }, { "nexthop", nexthops } } });
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+
+        int NhRefs(const string &ip)
+        {
+            auto it = gNeighOrch->m_syncdNextHops.find(NextHopKey(IpAddress(ip), string("Vlan1000")));
+            return (it == gNeighOrch->m_syncdNextHops.end()) ? -1 : it->second.ref_count;
+        }
+
+        bool RouteInstalled(const string &prefix)
+        {
+            auto &table = gRouteOrch->m_syncdRoutes[gVirtualRouterId];
+            return table.find(IpPrefix(prefix)) != table.end();
+        }
+    };
+
+    /*
+     * A route through a neighbor on a VNI VLAN keeps its next hop while the
+     * neighbor's MAC moves local -> VTEP -> other VTEP -> withdrawn -> local.
+     */
+    TEST_F(RouteOrchTunnelMacTest, RouteFollowsMacMoves)
+    {
+        LocalMacMove(TN_MAC, SAI_FDB_EVENT_LEARNED);
+        ASSERT_EQ(MacPort(TN_MAC), "Ethernet12");
+        LearnNeighbor(TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+
+        Route("20.20.20.0/24", TN_IP, string("Vlan1000"));
+        ASSERT_TRUE(RouteInstalled("20.20.20.0/24"));
+        ASSERT_EQ(NhRefs(TN_IP), 1);
+        sai_object_id_t nh_id = gNeighOrch->m_syncdNextHops[NextHopKey(IpAddress(TN_IP), string("Vlan1000"))].next_hop_id;
+
+        RemoteMac(TN_MAC, "1.1.1.1");
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_1.1.1.1");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(NhRefs(TN_IP), 1);
+
+        RemoteMac(TN_MAC, "2.2.2.2");
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_2.2.2.2");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+
+        RemoteMac(TN_MAC, "2.2.2.2", false);
+        ASSERT_EQ(MacPort(TN_MAC), "");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(gNeighOrch->m_neighborToRefresh.count(TN_NEIGH), 1);
+
+        RemoteMac(TN_MAC, "1.1.1.1");
+        LocalMacMove(TN_MAC);
+        ASSERT_EQ(MacPort(TN_MAC), "Ethernet12");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(NhRefs(TN_IP), 1);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[NextHopKey(IpAddress(TN_IP), string("Vlan1000"))].next_hop_id, nh_id);
+        EXPECT_TRUE(RouteInstalled("20.20.20.0/24"));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* The route is known first; then one host in each arrival order. */
+    TEST_F(RouteOrchTunnelMacTest, RouteBeforeNeighborAndMac)
+    {
+        Route("20.20.20.0/24", TN_IP, string("Vlan1000"));
+        Route("30.30.30.0/24", TN_IP2, string("Vlan1000"));
+        EXPECT_FALSE(RouteInstalled("20.20.20.0/24"));
+        EXPECT_FALSE(RouteInstalled("30.30.30.0/24"));
+        /* host 1: remote MAC, then neighbor */
+        RemoteMac(TN_MAC, "1.1.1.1");
+        LearnNeighbor(TN_IP, TN_MAC);
+        /* host 2: neighbor, then remote MAC */
+        LearnNeighbor(TN_IP2, TN_MAC2);
+        RemoteMac(TN_MAC2, "2.2.2.2");
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_1.1.1.1");
+        ASSERT_EQ(MacPort(TN_MAC2), "Port_EVPN_2.2.2.2");
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_TRUE(RouteInstalled("20.20.20.0/24"));
+        EXPECT_TRUE(RouteInstalled("30.30.30.0/24"));
+        EXPECT_EQ(NhRefs(TN_IP), 1);
+        EXPECT_EQ(NhRefs(TN_IP2), 1);
+    }
+
+    /* ECMP over two hosts behind different VTEPs; one MAC moves, the other is withdrawn. */
+    TEST_F(RouteOrchTunnelMacTest, EcmpOverTwoVteps)
+    {
+        RemoteMac(TN_MAC, "1.1.1.1");
+        RemoteMac(TN_MAC2, "2.2.2.2");
+        LearnNeighbor(TN_IP, TN_MAC);
+        LearnNeighbor(TN_IP2, TN_MAC2);
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_1.1.1.1");
+        ASSERT_EQ(MacPort(TN_MAC2), "Port_EVPN_2.2.2.2");
+
+        Route("20.20.20.0/24", TN_IP + "," + TN_IP2, string("Vlan1000") + "," + string("Vlan1000"));
+        NextHopGroupKey nhg(TN_IP + "@" + string("Vlan1000") + "," + TN_IP2 + "@" + string("Vlan1000"));
+        ASSERT_TRUE(RouteInstalled("20.20.20.0/24"));
+        ASSERT_TRUE(gRouteOrch->hasNextHopGroup(nhg));
+        EXPECT_EQ(NhRefs(TN_IP), 1);
+        EXPECT_EQ(NhRefs(TN_IP2), 1);
+
+        RemoteMac(TN_MAC, "2.2.2.2");
+        RemoteMac(TN_MAC2, "2.2.2.2", false);
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_2.2.2.2");
+        ASSERT_EQ(MacPort(TN_MAC2), "");
+        EXPECT_TRUE(gRouteOrch->hasNextHopGroup(nhg));
+        EXPECT_EQ(NhRefs(TN_IP), 1);
+        EXPECT_EQ(NhRefs(TN_IP2), 1);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH2));
+    }
+
+    /*
+     * A host route over a tunnel (symmetric IRB) for a host behind a remote VTEP:
+     * its neighbor leaves the SAI before the route is created, stays out while
+     * the MAC moves between VTEPs and while the route is removed and created
+     * again in one batch, and is programmed again after the route is removed.
+     */
+    TEST_F(RouteOrchTunnelMacTest, TunnelHostRouteStepsNeighborAside)
+    {
+        RemoteMac(TN_MAC, "1.1.1.1");
+        LearnNeighbor(TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+
+        /* The tunnel next hop addRoute() would build, here over a real next hop object */
+        NextHopKey tunnel_nh("10.0.0.2@vniEthernet0@5000@00:00:0a:00:00:99", true);
+        NextHopEntry nh_entry;
+        nh_entry.next_hop_id = gNeighOrch->getNextHopId(NextHopKey(IpAddress("10.0.0.2"), string("Ethernet0")));
+        ASSERT_NE(nh_entry.next_hop_id, SAI_NULL_OBJECT_ID);
+        nh_entry.ref_count = 0;
+        nh_entry.nh_flags = 0;
+        gNeighOrch->m_syncdNextHops[tunnel_nh] = nh_entry;
+        gVrfOrch->l3vni_table_[5000].l3_vni = true;
+
+        int host_creates = 0;
+        bool neigh_programmed_at_create = true;
+        create_route_probe = [&](const sai_route_entry_t &e) {
+            if (e.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4 && e.destination.mask.ip4 == 0xffffffff)
+            {
+                host_creates++;
+                neigh_programmed_at_create = gNeighOrch->isHwConfigured(TN_NEIGH);
+            }
+        };
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ TN_IP + "/32", SET_COMMAND, { { "ifname", "Ethernet0" }, { "nexthop", "10.0.0.2" },
+                            { "vni_label", "5000" }, { "router_mac", "00:00:0a:00:00:99" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        create_route_probe = nullptr;
+
+        ASSERT_TRUE(RouteInstalled(TN_IP + "/32"));
+        EXPECT_EQ(host_creates, 1);
+        EXPECT_FALSE(neigh_programmed_at_create);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(NhRefs(TN_IP), -1);
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(TN_NEIGH), 1);
+
+        RemoteMac(TN_MAC, "2.2.2.2");
+        ASSERT_EQ(MacPort(TN_MAC), "Port_EVPN_2.2.2.2");
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(TN_NEIGH));
+
+        entries.clear();
+        entries.push_back({ TN_IP + "/32", DEL_COMMAND, {} });
+        entries.push_back({ TN_IP + "/32", SET_COMMAND, { { "ifname", "Ethernet0" }, { "nexthop", "10.0.0.2" },
+                            { "vni_label", "5000" }, { "router_mac", "00:00:0a:00:00:99" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(RouteInstalled(TN_IP + "/32"));
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(gNeighOrch->m_tunnelHostRoutes.size(), 1u);
+
+        int host_removes = 0;
+        bool neigh_programmed_at_remove = true;
+        remove_route_probe = [&](const sai_route_entry_t &e) {
+            if (e.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4 && e.destination.mask.ip4 == 0xffffffff)
+            {
+                host_removes++;
+                neigh_programmed_at_remove = gNeighOrch->isHwConfigured(TN_NEIGH);
+            }
+        };
+        entries.clear();
+        entries.push_back({ TN_IP + "/32", DEL_COMMAND, {} });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        remove_route_probe = nullptr;
+        EXPECT_EQ(host_removes, 1);
+        EXPECT_FALSE(neigh_programmed_at_remove);
+
+        EXPECT_FALSE(RouteInstalled(TN_IP + "/32"));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(TN_NEIGH));
+        EXPECT_EQ(NhRefs(TN_IP), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+        EXPECT_TRUE(gNeighOrch->m_tunnelHostRoutes.empty());
+        gNeighOrch->m_syncdNextHops.erase(tunnel_nh);
     }
 }

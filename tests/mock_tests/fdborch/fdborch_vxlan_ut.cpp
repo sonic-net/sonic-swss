@@ -1,4 +1,8 @@
 #include "ut_helper.h"
+#define private public
+#include "vrforch.h"
+#include "l2nhgorch.h"
+#undef private
 #include "mock_orchagent_main.h"
 
 #define SAI_MOCK_FILENAME fdborch_vxlan_ut
@@ -215,6 +219,7 @@ namespace fdborch_vxlan_ut
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+            gDirectory.set(gVrfOrch);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
 
@@ -616,6 +621,620 @@ namespace fdborch_vxlan_ut
         static_cast<Orch *>(gFdbOrch)->doTask();
 
         EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /*
+     * Neighbors on a VNI VLAN whose MAC is behind a single remote VTEP. The
+     * neighbor is programmed and follows the FDB, unless its host has a host route
+     * over a tunnel in the VLAN's VRF (symmetric IRB): then it stays in software.
+     */
+#define VXLAN_REMOTE2 "Port_EVPN_2.2.2.2"
+    static const string TN_IP = "100.1.1.47";
+    static const string TN_IP2 = "100.1.1.48";
+    static const string TN_MAC = "00:11:01:00:00:2e";
+    static const string TN_MAC2 = "00:11:01:00:00:2f";
+    static const vector<uint8_t> TN_MAC_BYTES = { 0x00, 0x11, 0x01, 0x00, 0x00, 0x2e };
+
+    static void tnPorts(DBConnector *appDb, PortsOrch *portsOrch)
+    {
+        Table portTable = Table(appDb, APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        portsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(portsOrch)->doTask();
+
+        setUpVlan(portsOrch);
+        setUpPort(portsOrch);
+        setUpVlanMember(portsOrch);
+        setUpVxlanPort(portsOrch);
+        setUpVxlanMember(portsOrch);
+        portsOrch->m_portList[VXLAN_REMOTE].m_type = Port::TUNNEL;
+
+        Port port2(VXLAN_REMOTE2, Port::TUNNEL);
+        port2.m_bridge_port_id = 0x3a000000002c36;
+        portsOrch->m_portList[VXLAN_REMOTE2] = port2;
+        portsOrch->saiOidToAlias[0x10000000004a7] = VXLAN_REMOTE2;
+        portsOrch->saiOidToAlias[port2.m_bridge_port_id] = VXLAN_REMOTE2;
+        portsOrch->m_portList[VLAN40].m_members.insert(VXLAN_REMOTE2);
+        /* NeighOrch finds its VLAN interfaces here */
+        portsOrch->m_vlanPorts.insert(VLAN40);
+    }
+
+    /*
+     * Bind Vlan40's interface to a VRF with an L3 VNI. With host_routes, both test
+     * hosts have a host route over a tunnel there, as RouteOrch reports it.
+     */
+    static sai_object_id_t tn_vrf;
+    static void tnHostRoutes(bool present)
+    {
+        gNeighOrch->updateTunnelHostRoute(tn_vrf, IpAddress(TN_IP), present);
+        gNeighOrch->updateTunnelHostRoute(tn_vrf, IpAddress(TN_IP2), present);
+    }
+
+    static void tnL3VniIntf(bool host_routes = true)
+    {
+        tn_vrf = SAI_NULL_OBJECT_ID;
+        ASSERT_EQ(sai_virtual_router_api->create_virtual_router(&tn_vrf, gSwitchId, 0, nullptr), SAI_STATUS_SUCCESS);
+        gVrfOrch->vrf_id_table_[tn_vrf] = "Vrf1";
+        gVrfOrch->vrf_table_["Vrf1"].vrf_id = tn_vrf;
+        gVrfOrch->vrf_vni_map_table_["Vrf1"] = 5000;
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40, tn_vrf));
+        if (host_routes)
+        {
+            tnHostRoutes(true);
+        }
+    }
+
+    static sai_status_t tnRefuseNeighborSet(const sai_neighbor_entry_t *, const sai_attribute_t *)
+    {
+        return SAI_STATUS_INVALID_PARAMETER;
+    }
+
+    static void tnRemoteMac(const string &mac, const string &vtep, bool add = true)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ string(VLAN40) + ":" + mac, add ? SET_COMMAND : DEL_COMMAND, {
+            { "vni", "40" }, { "type", "dynamic" }, { "remote_vtep", vtep } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+    }
+
+    static sai_object_id_t tnMacBridgePort(PortsOrch *portsOrch, const string &mac)
+    {
+        FdbEntry entry;
+        entry.mac = MacAddress(mac);
+        entry.bv_id = portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        auto it = gFdbOrch->m_entries.find(entry);
+        return (it == gFdbOrch->m_entries.end()) ? SAI_NULL_OBJECT_ID : it->second.bridge_port_id;
+    }
+
+    static int tnNhRefs(const string &ip)
+    {
+        auto it = gNeighOrch->m_syncdNextHops.find(NextHopKey(IpAddress(ip), VLAN40));
+        return (it == gNeighOrch->m_syncdNextHops.end()) ? -1 : it->second.ref_count;
+    }
+
+    /* The remote MAC is known first (the EVPN order): the neighbor is programmed. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborFdbFirstIsProgrammed)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* The neighbor is known first: same end state as the other order. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborNeighborFirstSameState)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* A host with a host route over a tunnel keeps its neighbor in software, as before. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborL3VniVrfStaysInSoftware)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf();
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), -1);
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+    }
+
+    /*
+     * Host route over a tunnel: the neighbor stays out while its MAC is local,
+     * moves to a VTEP and comes back; it is programmed when the route goes.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborHostRouteLocalMac)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf();
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_MOVE, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        tnHostRoutes(false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /*
+     * No L3 VNI: the neighbor and its next hop stay through local -> VTEP -> other
+     * VTEP -> local.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborFollowsMacMoves)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        sai_object_id_t nh_id = gNeighOrch->m_syncdNextHops[NextHopKey(IpAddress(TN_IP), VLAN40)].next_hop_id;
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[VXLAN_REMOTE2].m_bridge_port_id);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_MOVE, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[NextHopKey(IpAddress(TN_IP), VLAN40)].next_hop_id, nh_id);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* A withdrawn remote MAC leaves the neighbor programmed and asks the kernel to resolve it again. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborRemoteMacWithdrawn)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+
+        tnRemoteMac(TN_MAC, "1.1.1.1", false);
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_neighborToRefresh.count(neighbor), 1);
+
+        /* Advertised again from another VTEP: nothing to redo. */
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /*
+     * A SAI that cannot route to a tunnel MAC: the neighbor is kept in software,
+     * is not retried by the consumer, and is retried when the MAC is advertised again.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborSaiRefusalFallsBackAndRetries)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_INVALID_PARAMETER));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), -1);
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        /* No pending task, so no hot retry. */
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* Resource exhaustion is not a refusal: the task is retried the usual way. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborTableFullIsRetried)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry)
+            .WillOnce(testing::Return(SAI_STATUS_TABLE_FULL))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /* Removing a neighbor kept in software clears its retry record. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborRemoveClearsRetry)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf();
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+
+        auto consumer = dynamic_cast<Consumer *>(gNeighOrch->getExecutor(APP_NEIGH_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ string(VLAN40) + ":" + TN_IP, DEL_COMMAND, {} });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+    }
+
+    /* Host route over a tunnel: a MAC that moves from a VTEP to an ES next hop group keeps its neighbor out. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborL3VniVrfVtepToNhg)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        gL2NhgOrch->m_nhg_nh["536870913"].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh["536870913"].is_active = true;
+        tnL3VniIntf();
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ string(VLAN40) + ":" + TN_MAC, SET_COMMAND, {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", "536870913" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+    }
+
+    /* A neighbor kept in software is programmed once its remote MAC is withdrawn. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborSoftwareOnlyRetriedOnWithdraw)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_INVALID_PARAMETER));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        tnRemoteMac(TN_MAC, "1.1.1.1", false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+        /* It was not programmed on the withdrawn MAC, so nothing to re-resolve. */
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+    }
+
+    /* A neighbor kept in software is programmed when its MAC is learned on a local port. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborSoftwareOnlyRetriedOnLocalLearn)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_INVALID_PARAMETER));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        /* The FDB entry is gone without a notification NeighOrch acts on. */
+        FdbEntry entry;
+        entry.mac = MacAddress(TN_MAC);
+        entry.bv_id = vlan_oid;
+        gFdbOrch->m_entries.erase(entry);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /* A repeated neighbor update programs a software-only neighbor whose MAC left the tunnel. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborDuplicateSetRetriesOffTunnel)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_INVALID_PARAMETER));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        /* still behind the tunnel: the duplicate changes nothing */
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        FdbEntry entry;
+        entry.mac = MacAddress(TN_MAC);
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        gFdbOrch->m_entries.erase(entry);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    /*
+     * L3 VNI VRF, remote MAC first, then the neighbor, no host route: programmed.
+     * A host route over a tunnel for its address takes it out (the other host
+     * stays); FDB updates of its MAC keep it out while the route exists; the
+     * route's removal puts it back.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborL3VniHostRouteStepsAside)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf(false);
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        NeighborEntry local(TN_IP2, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, { 0x00, 0x11, 0x01, 0x00, 0x00, 0x2f },
+                      m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(2).WillRepeatedly(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP2, TN_MAC2);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(local));
+        EXPECT_EQ(tnNhRefs(TN_IP), 0);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        /* A route for the address in another VRF does not count */
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        gNeighOrch->updateTunnelHostRoute(gVirtualRouterId, IpAddress(TN_IP), true);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        gNeighOrch->updateTunnelHostRoute(gVirtualRouterId, IpAddress(TN_IP), false);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        gNeighOrch->updateTunnelHostRoute(tn_vrf, IpAddress(TN_IP), true);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), -1);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(local));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        /* re-advertised from another VTEP: still out */
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        gNeighOrch->updateTunnelHostRoute(tn_vrf, IpAddress(TN_IP), false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(tnNhRefs(TN_IP), 0);
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+        EXPECT_TRUE(gNeighOrch->m_tunnelHostRoutes.empty());
+    }
+
+    /*
+     * L3 VNI VRF, the neighbor first (MAC unknown, programmed), then its host
+     * route: out before the remote MAC arrives, and stays out after it.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborL3VniNeighborFirstThenRoute)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf(false);
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        tnHostRoutes(true);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        tnHostRoutes(false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /*
+     * Host route present: the MAC moves tunnel -> withdrawn -> local -> other
+     * VTEP. The neighbor stays out throughout, then is programmed when the route goes.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborL3VniHostRouteTunnelLocalTunnel)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        tnL3VniIntf();
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        tnRemoteMac(TN_MAC, "1.1.1.1");
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+
+        tnRemoteMac(TN_MAC, "1.1.1.1", false);
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        tnRemoteMac(TN_MAC, "2.2.2.2");
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[VXLAN_REMOTE2].m_bridge_port_id);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        tnHostRoutes(false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /* A SAI that refuses the MAC change onto a tunnel MAC: the neighbor is taken out and kept in software. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborSaiRefusesMacChange)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        tnRemoteMac(TN_MAC2, "1.1.1.1");
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        auto real_set = sai_neighbor_api->set_neighbor_entry_attribute;
+        sai_neighbor_api->set_neighbor_entry_attribute = tnRefuseNeighborSet;
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC2);
+        sai_neighbor_api->set_neighbor_entry_attribute = real_set;
+
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(neighbor), 1);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors[neighbor].mac, MacAddress(TN_MAC2));
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(neighbor), 1);
+    }
+
+    /* A MAC withdrawn from an ES next hop group does not re-resolve its neighbors. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborNhgMacWithdrawDoesNotResolve)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        gL2NhgOrch->m_nhg_nh["536870913"].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh["536870913"].is_active = true;
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ string(VLAN40) + ":" + TN_MAC, SET_COMMAND, {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", "536870913" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        entries.clear();
+        entries.push_back({ string(VLAN40) + ":" + TN_MAC, DEL_COMMAND, {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", "536870913" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+    }
+
+    /* No L3 VNI: a local MAC that moves behind an ES next hop group still takes its neighbor out. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborLocalToNhgStillRemoved)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        setUpNhgPort(m_portsOrch.get());
+        setUpNhg(m_portsOrch.get());
+        gL2NhgOrch->m_nhg_nh["536870913"].oid = 0x5000000000abcULL;
+        gL2NhgOrch->m_nhg_nh["536870913"].is_active = true;
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry neighbor(TN_IP, string(VLAN40));
+        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ string(VLAN40) + ":" + TN_MAC, SET_COMMAND, {
+            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", "536870913" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
     }
 
     TEST_F(VxlanFdbOrchTest, DISABLED_RemoteMacLearnAddDeleteForNhg)

@@ -2296,6 +2296,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
     }
 
+    if (ipPrefix.isFullMask() && nextHops.is_overlay_nexthop())
+    {
+        /* The VLAN neighbors of the address step aside before its host route over a tunnel is programmed */
+        m_neighOrch->updateTunnelHostRoute(vrf_id, ipPrefix.getIp(), true);
+    }
+
     /* Sync the route entry */
     sai_route_entry_t route_entry;
     route_entry.vr_id = vrf_id;
@@ -2319,6 +2325,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      */
     if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
     {
+        if (it_route != m_syncdRoutes.at(vrf_id).end() && ipPrefix.isFullMask() && nextHops.is_overlay_nexthop())
+        {
+            /* Removed and created again in this batch: the removal must not bring the neighbors back */
+            m_tunnelHostRouteRecreates.insert(make_pair(vrf_id, ipPrefix));
+        }
+
         if (blackhole)
         {
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
@@ -2423,6 +2435,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
+    m_tunnelHostRouteRecreates.erase(make_pair(vrf_id, ipPrefix));
     bool isFineGrained = false;
     bool blackhole = false;
 
@@ -2794,6 +2807,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index, ctx.context_index);
 
+    if (ipPrefix.isFullMask() && !nextHops.is_overlay_nexthop())
+    {
+        m_neighOrch->updateTunnelHostRoute(vrf_id, ipPrefix.getIp(), false);
+    }
+
     /* If this was a temp route, record the original desired NHG key
      * so the guard in addRoute can detect NHG membership changes. */
     if (ctx.tmp_next_hop.getSize() > 0)
@@ -2838,6 +2856,10 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     if (it_route_table == m_syncdRoutes.end())
     {
         SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
+        if (ipPrefix.isFullMask())
+        {
+            m_neighOrch->updateTunnelHostRoute(vrf_id, ipPrefix.getIp(), false);
+        }
         return true;
     }
 
@@ -2865,6 +2887,12 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
         }
         SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
                       ipPrefix.to_string().c_str());
+
+        if (ipPrefix.isFullMask())
+        {
+            /* A host route that never reached the SAI */
+            m_neighOrch->updateTunnelHostRoute(vrf_id, ipPrefix.getIp(), false);
+        }
  
         return true;
     }
@@ -3074,6 +3102,12 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     else
     {
         it_route_table->second.erase(ipPrefix);
+
+        if (ipPrefix.isFullMask() && !m_tunnelHostRouteRecreates.count(make_pair(vrf_id, ipPrefix)))
+        {
+            /* Neighbors that stepped aside for a host route over a tunnel come back */
+            m_neighOrch->updateTunnelHostRoute(vrf_id, ipPrefix.getIp(), false);
+        }
 
         /* Notify about the route next hop removal */
         notifyNextHopChangeObservers(vrf_id, ipPrefix, NextHopGroupKey(), false);
