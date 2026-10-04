@@ -314,6 +314,160 @@ namespace hftelprofile_ut
         EXPECT_TRUE(s.p->m_sai_tam_report_objs.empty());
     }
 
+    // Two-call pattern matching updateTemplates(): first call reports the
+    // size (BUFFER_OVERFLOW + count), second call fills the buffer. File-scope
+    // (not a class-static member) since this project builds with -std=c++14,
+    // which doesn't support inline variables.
+    static vector<uint8_t> g_clear_group_regen_template;
+
+    static sai_status_t mock_get_tam_tel_type_attribute_for_clear_group_regen(
+        sai_object_id_t /*id*/, uint32_t attr_count, sai_attribute_t *attr_list)
+    {
+        if (attr_count != 1 || !attr_list ||
+            attr_list[0].id != SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES)
+        {
+            return SAI_STATUS_INVALID_PARAMETER;
+        }
+        if (attr_list[0].value.u8list.list == nullptr)
+        {
+            attr_list[0].value.u8list.count = static_cast<uint32_t>(g_clear_group_regen_template.size());
+            return SAI_STATUS_BUFFER_OVERFLOW;
+        }
+        auto n = min(static_cast<uint32_t>(g_clear_group_regen_template.size()),
+                     attr_list[0].value.u8list.count);
+        memcpy(attr_list[0].value.u8list.list, g_clear_group_regen_template.data(), n);
+        attr_list[0].value.u8list.count = n;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /*
+     * Regression test for the stop -> delete one group -> start flow in a
+     * MIXED profile: clearGroup() must invalidate the shared cached
+     * template (it still described the deleted group's labels) and force
+     * CREATE_CONFIG regeneration for the remaining group, so a later
+     * re-enable uses a freshly-regenerated template instead of silently
+     * reusing the stale one cached before the deletion.
+     */
+    struct ClearGroupRegenerationTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        static sai_status_t mock_set_tam_tel_type_attribute(
+            sai_object_id_t /*tam_tel_type_id*/, const sai_attribute_t * /*attr*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.get_tam_tel_type_attribute = mock_get_tam_tel_type_attribute_for_clear_group_regen;
+            ut_api.set_tam_tel_type_attribute = mock_set_tam_tel_type_attribute;
+            sai_tam_api = &ut_api;
+            g_clear_group_regen_template.clear();
+        }
+
+        void TearDown() override { sai_tam_api = orig_api; }
+
+        struct Stub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                new (const_cast<sai_tam_tel_type_mode_t*>(&p->m_tel_type_mode))
+                    sai_tam_tel_type_mode_t(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+                p->m_poll_interval = 0;
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
+                new (&p->m_sai_tam_tel_type_templates) decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
+                new (&p->m_sai_tam_counter_subscription_objs) decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+                new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
+            }
+
+            ~Stub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_groups.~map();
+                p->m_name_sai_map.~unordered_map();
+                p->m_sai_tam_tel_type_templates.~unordered_map();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_tel_type_states.~unordered_map();
+                p->m_sai_tam_report_objs.~unordered_map();
+                p = nullptr;
+            }
+        };
+    };
+
+    TEST_F(ClearGroupRegenerationTest, Mixed_StopDeleteGroupStart_RegeneratesTemplateBeforeRestart)
+    {
+        Stub s;
+        s.init();
+
+        // Two groups sharing one tel_type: PORT stays, QUEUE gets deleted.
+        HFTelGroup port_group("port");
+        port_group.updateObjects({"Ethernet0"});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(port_group));
+        HFTelGroup queue_group("queue");
+        queue_group.updateObjects({"Ethernet0:0"});
+        s.p->m_groups.emplace(SAI_OBJECT_TYPE_QUEUE, move(queue_group));
+
+        // PORT already has a matching counter subscription, so
+        // isMonitoringObjectReady(PORT) is true and tryCommitConfig() does
+        // not need to (re)deploy subscriptions to proceed.
+        s.p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT][0x1000000000010ULL][SAI_PORT_STAT_IF_IN_OCTETS] =
+            make_shared<sai_object_id_t>(0x900);
+
+        auto guard = make_shared<sai_object_id_t>(0x700);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_NULL] = guard;
+        s.p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+
+        const vector<uint8_t> stale_template = {0xAA, 0xAA};
+        s.p->m_sai_tam_tel_type_templates[SAI_OBJECT_TYPE_NULL] = stale_template;
+
+        // --- delete QUEUE while stopped ---
+        s.p->clearGroup("queue");
+
+        // The stale template (built while QUEUE still existed) must not
+        // survive the deletion, and regeneration must have been requested.
+        EXPECT_EQ(s.p->m_sai_tam_tel_type_templates.count(SAI_OBJECT_TYPE_NULL), 0u);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+
+        // --- SAI/syncd confirms the regenerated config is ready ---
+        g_clear_group_regen_template = {0xBB, 0xBB, 0xBB};
+        s.p->notifyConfigReady(SAI_OBJECT_TYPE_PORT);
+
+        ASSERT_EQ(s.p->m_sai_tam_tel_type_templates.count(SAI_OBJECT_TYPE_NULL), 1u);
+        EXPECT_EQ(s.p->m_sai_tam_tel_type_templates.at(SAI_OBJECT_TYPE_NULL), g_clear_group_regen_template);
+        EXPECT_NE(s.p->m_sai_tam_tel_type_templates.at(SAI_OBJECT_TYPE_NULL), stale_template);
+        // Profile is still disabled, so notifyConfigReady settles back at
+        // STOP_STREAM rather than starting immediately.
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+
+        // --- re-enable: must use the regenerated template, not the stale one ---
+        s.p->setStreamState(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        EXPECT_EQ(s.p->m_sai_tam_tel_type_templates.at(SAI_OBJECT_TYPE_NULL), g_clear_group_regen_template);
+    }
+
     struct SetStatsIDsTest : public ::testing::Test
     {
         struct SetStatsIDsStub
