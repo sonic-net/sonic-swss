@@ -221,6 +221,7 @@ bool OrchDaemon::init()
     TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
+    TableConnector conf_gearbox_sensors(m_configDb, CFG_GEARBOX_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
     TableConnector conf_switch_fast_linkup(m_configDb, CFG_SWITCH_FAST_LINKUP_TABLE_NAME);
@@ -231,6 +232,7 @@ bool OrchDaemon::init()
         conf_switch_trim,
         conf_switch_fast_linkup,
         conf_asic_sensors,
+        conf_gearbox_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
     };
