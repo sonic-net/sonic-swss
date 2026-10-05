@@ -4434,4 +4434,60 @@ namespace fdborch_vxlan_ut
         EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
     }
 
+    vector<sai_attr_id_t> fdbSetAttrIds;
+
+    sai_status_t recordFdbSet(const sai_fdb_entry_t *, const sai_attribute_t *attr)
+    {
+        fdbSetAttrIds.push_back(attr->id);
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /*
+     * A remote MAC that may move is replaced by a provisioned dynamic MAC on Ethernet0.
+     * ALLOW_MAC_MOVE is valid only on a static entry, so it is set before the type
+     * turns dynamic.
+     */
+    TEST_F(VxlanFdbOrchTest, RemoteToLocalRowClearsMacMoveBeforeTypeTurnsDynamic)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set("Vlan40:7c:fe:90:12:22:ef", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"remote_vtep", "1.1.1.1"}
+        });
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        FdbEntry key;
+        key.mac = MacAddress("7c:fe:90:12:22:ef");
+        key.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+
+        fdbSetAttrIds.clear();
+        auto saved_set = sai_fdb_api->set_fdb_entry_attribute;
+        sai_fdb_api->set_fdb_entry_attribute = recordFdbSet;
+
+        Table fdbTable = Table(m_app_db.get(), APP_FDB_TABLE_NAME);
+        fdbTable.set("Vlan40:7c:fe:90:12:22:ef", {
+            {"port", ETH0},
+            {"type", "dynamic"}
+        });
+        gFdbOrch->addExistingData(&fdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        sai_fdb_api->set_fdb_entry_attribute = saved_set;
+
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+        EXPECT_EQ(gFdbOrch->m_entries[key].bridge_port_id, m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        EXPECT_EQ(gFdbOrch->m_entries[key].type, "dynamic");
+
+        auto move_it = std::find(fdbSetAttrIds.begin(), fdbSetAttrIds.end(), SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE);
+        auto type_it = std::find(fdbSetAttrIds.begin(), fdbSetAttrIds.end(), SAI_FDB_ENTRY_ATTR_TYPE);
+        ASSERT_NE(move_it, fdbSetAttrIds.end());
+        ASSERT_NE(type_it, fdbSetAttrIds.end());
+        EXPECT_LT(move_it - fdbSetAttrIds.begin(), type_it - fdbSetAttrIds.begin());
+    }
+
 }

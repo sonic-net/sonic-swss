@@ -2163,7 +2163,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         {
             attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
             attr.value.booldata = false;
-            attrs.push_back(attr);
+            /* Valid only on a static entry: on a set, it goes before the type turns dynamic */
+            attrs.insert((fdbData.sai_fdb_type == SAI_FDB_ENTRY_TYPE_DYNAMIC) ? attrs.begin() : attrs.end(), attr);
         }
     }
     attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
