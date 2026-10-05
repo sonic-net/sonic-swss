@@ -504,6 +504,50 @@ class TestVlan(object):
         self.dvs_vlan.get_and_verify_vlan_ids(0)
         self.dvs_vlan.get_and_verify_vlan_hostif_ids(len(dvs.asic_db.hostif_name_map) - 1)
 
+    def test_VlanMacSetAndSkipUnchanged(self, dvs):
+        # Regression guard for the skip-if-unchanged optimization in
+        # VlanMgr::setHostVlanMac. Verifies that:
+        #   1. the configured VLAN MAC is applied to the host interface, and
+        #   2. re-applying the SAME MAC is SKIPPED (no interface flap).
+        # Point (2) is what distinguishes the fix from the old behavior, so it is
+        # asserted explicitly via the "no update needed" log the skip path emits —
+        # a check that FAILS on the pre-fix code (which flapped unconditionally).
+        vlan = "2"
+        mac = "00:aa:bb:cc:dd:ee"
+
+        # Surface vlanmgrd's INFO "no update needed" message so we can assert on it.
+        dvs.runcmd("swssloglevel -l INFO -c vlanmgrd")
+
+        def mac_applied():
+            rc, res = dvs.runcmd("cat /sys/class/net/Vlan{}/address".format(vlan))
+            return (res.strip("\n").lower() == mac, res)
+
+        def skip_logged(marker):
+            # Count vlanmgrd "no update needed" lines for this VLAN emitted since `marker`.
+            _, num = dvs.runcmd(
+                ["sh", "-c",
+                 "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog "
+                 "| grep vlanmgrd | grep 'no update needed' | grep -ic 'Vlan{}'".format(marker, vlan)])
+            return (int(num.strip() or "0") >= 1, num)
+
+        # First apply: MAC differs from the switch default, so it is programmed.
+        self.dvs_vlan.create_vlan_with_mac(vlan, mac)
+        self.dvs_vlan.get_and_verify_vlan_ids(1)
+        wait_for_result(mac_applied, PollingConfig(), "VLAN MAC was not applied to the interface")
+
+        # Re-apply the identical MAC and assert the skip path ran (i.e. NO flap).
+        marker = dvs.add_log_marker()
+        self.dvs_vlan.create_vlan_with_mac(vlan, mac)
+        wait_for_result(lambda: skip_logged(marker), PollingConfig(),
+                        "Re-applying the same VLAN MAC did not hit the skip path "
+                        "(the interface would have been flapped)")
+
+        # ...and the MAC must remain correct after the skipped re-apply.
+        wait_for_result(mac_applied, PollingConfig(), "VLAN MAC changed after re-applying the same value")
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     def test_VlanGratArp(self, dvs):
         def arp_accept_enabled():
             rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
