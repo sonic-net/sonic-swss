@@ -1698,7 +1698,6 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
     // Set up route bulk context
     string key = vnet_name + ":" + ipPrefix.to_string();
     RouteBulkContext ctx(key, (op == SET_COMMAND));
-    auto bulkerGuard = gRouteOrch->guardRouteBulker();
     ctx.vrf_id = vr_id;
     ctx.ip_prefix = ipPrefix;
     ctx.nhg = nhg;

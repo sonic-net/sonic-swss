@@ -237,10 +237,6 @@ public:
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
     void flushRouteBulker() { gRouteBulker.flush(); }
-    BulkerClearGuard<EntityBulker<sai_route_api_t>> guardRouteBulker()
-    {
-        return BulkerClearGuard<EntityBulker<sai_route_api_t>>(gRouteBulker);
-    }
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
 

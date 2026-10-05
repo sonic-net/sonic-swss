@@ -1,8 +1,6 @@
 #pragma once
 
-#include <algorithm>
 #include <assert.h>
-#include <limits>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -513,46 +511,6 @@ struct SaiBulkerTraits<sai_dash_outbound_port_map_api_t>
     using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn;
 };
 
-static constexpr sai_status_t BULK_STATUS_UNSET = std::numeric_limits<sai_status_t>::min();
-
-static inline void normalizeBulkStatuses(
-    sai_status_t overallStatus,
-    std::vector<sai_status_t>& statuses)
-{
-    const sai_status_t fallback =
-        overallStatus == SAI_STATUS_SUCCESS ? SAI_STATUS_SUCCESS : SAI_STATUS_FAILURE;
-    std::replace(statuses.begin(), statuses.end(), BULK_STATUS_UNSET, fallback);
-}
-
-// Declare after the storage whose pointers the bulker borrows.
-template <typename Bulker>
-class BulkerClearGuard
-{
-public:
-    explicit BulkerClearGuard(Bulker& bulker) : m_bulker(&bulker)
-    {
-    }
-
-    BulkerClearGuard(const BulkerClearGuard&) = delete;
-    BulkerClearGuard& operator=(const BulkerClearGuard&) = delete;
-
-    BulkerClearGuard(BulkerClearGuard&& other) noexcept : m_bulker(other.m_bulker)
-    {
-        other.m_bulker = nullptr;
-    }
-
-    ~BulkerClearGuard()
-    {
-        if (m_bulker)
-        {
-            m_bulker->clear();
-        }
-    }
-
-private:
-    Bulker* m_bulker;
-};
-
 template <typename T>
 class EntityBulker
 {
@@ -675,7 +633,15 @@ public:
 
     void flush()
     {
-        BulkerClearGuard<EntityBulker<T>> guard(*this);
+        class ClearOnExit
+        {
+        public:
+            explicit ClearOnExit(EntityBulker& bulker) : m_bulker(bulker) {}
+            ~ClearOnExit() { m_bulker.clear(); }
+
+        private:
+            EntityBulker& m_bulker;
+        } clearOnExit(*this);
 
         // Removing
         if (!removing_entries.empty())
@@ -871,9 +837,8 @@ private:
             return SAI_STATUS_SUCCESS;
         }
         size_t count = rs.size();
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("EntityBulker.flush removing_entries %zu\n", count);
@@ -909,10 +874,9 @@ private:
             return SAI_STATUS_SUCCESS;
         }
         size_t count = rs.size();
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
             , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("EntityBulker.flush creating_entries %zu\n", count);
@@ -950,10 +914,9 @@ private:
             return SAI_STATUS_SUCCESS;
         }
         size_t count = rs.size();
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
             , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("EntityBulker.flush setting_entries, count %zu\n", count);
@@ -1144,8 +1107,6 @@ public:
 
     void flush()
     {
-        BulkerClearGuard<ObjectBulker<T>> guard(*this);
-
         // Removing
         if (!removing_entries.empty())
         {
@@ -1295,9 +1256,8 @@ private:
             return SAI_STATUS_SUCCESS;
         }
         size_t count = rs.size();
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
@@ -1331,10 +1291,9 @@ private:
         }
         size_t count = rs.size();
         std::vector<sai_object_id_t> object_ids(count);
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
             , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_ids.data(), statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("ObjectBulker.flush creating_entries %zu\n", count);
@@ -1368,10 +1327,9 @@ private:
             return SAI_STATUS_SUCCESS;
         }
         size_t count = rs.size();
-        std::vector<sai_status_t> statuses(count, BULK_STATUS_UNSET);
+        std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data(),
                                SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-        normalizeBulkStatuses(status, statuses);
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", count);
