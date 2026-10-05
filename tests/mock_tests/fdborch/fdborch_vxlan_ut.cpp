@@ -4243,4 +4243,195 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
     }
 
+    /* Vlan40 with Ethernet0 and the tunnel port as members */
+    void setUpLocalAndTunnelMembers(DBConnector *appDb, PortsOrch *portsOrch)
+    {
+        Table portTable = Table(appDb, APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        portsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(portsOrch)->doTask();
+
+        setUpVlan(portsOrch);
+        setUpPort(portsOrch);
+        setUpVlanMember(portsOrch);
+        setUpVxlanPort(portsOrch);
+        setUpVxlanMember(portsOrch);
+    }
+
+    const sai_attribute_t *findFdbAttr(const vector<sai_attribute_t> &attrs, sai_attr_id_t id)
+    {
+        for (const auto &attr : attrs)
+        {
+            if (attr.id == id)
+            {
+                return &attr;
+            }
+        }
+        return nullptr;
+    }
+
+    /*
+     * A MAC learned on Ethernet0 is replaced by a remote MAC of the given type, and the
+     * SAI's AGED event for the removed local entry is delivered after the remote entry
+     * exists. The remote entry must stay, and the only entry given to the SAI is the
+     * remote one.
+     */
+    void staleAgeAfterLocalToRemote(DBConnector *appDb, PortsOrch *portsOrch, const string &type)
+    {
+        setUpLocalAndTunnelMembers(appDb, portsOrch);
+
+        const sai_object_id_t local_bp = portsOrch->m_portList[ETH0].m_bridge_port_id;
+        const sai_object_id_t tunnel_bp = portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id;
+        const sai_object_id_t vlan_oid = portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        ASSERT_NE(local_bp, tunnel_bp);
+
+        vector<vector<sai_attribute_t>> created;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillRepeatedly(testing::Invoke(
+                [&](const sai_fdb_entry_t *, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    created.emplace_back(attr_list, attr_list + attr_count);
+                    return SAI_STATUS_SUCCESS;
+                }));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+
+        vector<uint8_t> mac_addr = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xec};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac_addr, local_bp, vlan_oid);
+        ASSERT_EQ(portsOrch->m_portList[ETH0].m_fdb_count, 1);
+
+        Table vxlanFdbTable = Table(appDb, APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set("Vlan40:7c:fe:90:12:22:ec", {
+            {"vni", "40"},
+            {"type", type},
+            {"remote_vtep", "1.1.1.1"}
+        });
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        FdbEntry key;
+        key.mac = MacAddress("7c:fe:90:12:22:ec");
+        key.bv_id = vlan_oid;
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+        ASSERT_EQ(gFdbOrch->m_entries[key].bridge_port_id, tunnel_bp);
+        ASSERT_EQ(created.size(), 1);
+
+        /* The AGED event of the removed local entry arrives now */
+        created.clear();
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr, local_bp, vlan_oid);
+
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+        EXPECT_EQ(gFdbOrch->m_entries[key].bridge_port_id, tunnel_bp);
+        EXPECT_EQ(gFdbOrch->m_entries[key].origin, FDB_ORIGIN_VXLAN_ADVERTIZED);
+        EXPECT_EQ(gFdbOrch->m_entries[key].type, type);
+        EXPECT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        EXPECT_EQ(portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+        EXPECT_EQ(portsOrch->m_portList[ETH0].m_fdb_count, 0);
+
+        /* Nothing is created on the old local port; the remote entry goes back whole */
+        ASSERT_EQ(created.size(), 1);
+        auto bp_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID);
+        ASSERT_NE(bp_attr, nullptr);
+        EXPECT_EQ(bp_attr->value.oid, tunnel_bp);
+        auto type_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_TYPE);
+        ASSERT_NE(type_attr, nullptr);
+        EXPECT_EQ(type_attr->value.s32, SAI_FDB_ENTRY_TYPE_STATIC);
+        auto ip_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_ENDPOINT_IP);
+        ASSERT_NE(ip_attr, nullptr);
+        EXPECT_EQ(ip_attr->value.ipaddr.addr_family, SAI_IP_ADDR_FAMILY_IPV4);
+        EXPECT_EQ(ip_attr->value.ipaddr.addr.ip4, IpAddress("1.1.1.1").getV4Addr());
+
+        /* The remote MAC can still be withdrawn */
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan40:7c:fe:90:12:22:ec", "DEL", {
+            {"vni", "40"},
+            {"type", type},
+            {"remote_vtep", "1.1.1.1"}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        EXPECT_EQ(gFdbOrch->m_entries.count(key), 0);
+        EXPECT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 0);
+    }
+
+    TEST_F(VxlanFdbOrchTest, StaleAgeAfterLocalToRemoteStaticKeepsRemoteMac)
+    {
+        staleAgeAfterLocalToRemote(m_app_db.get(), m_portsOrch.get(), "static");
+    }
+
+    TEST_F(VxlanFdbOrchTest, StaleAgeAfterLocalToRemoteDynamicKeepsRemoteMac)
+    {
+        staleAgeAfterLocalToRemote(m_app_db.get(), m_portsOrch.get(), "dynamic");
+    }
+
+    /* An AGED event on another bridge port still removes a learned entry */
+    TEST_F(VxlanFdbOrchTest, AgeOnOtherBridgePortRemovesLearnedMac)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        const sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _)).Times(0);
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(0);
+
+        vector<uint8_t> mac_addr = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xed};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac_addr,
+                      m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr,
+                      m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id, vlan_oid);
+
+        FdbEntry key;
+        key.mac = MacAddress("7c:fe:90:12:22:ed");
+        key.bv_id = vlan_oid;
+        EXPECT_EQ(gFdbOrch->m_entries.count(key), 0);
+        EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 0);
+        EXPECT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 0);
+    }
+
+    /* A provisioned static MAC that the SAI reports as aged goes back on its own port */
+    TEST_F(VxlanFdbOrchTest, AgeOfStaticMacReAddsItOnItsPort)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        const sai_object_id_t local_bp = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        const sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        vector<vector<sai_attribute_t>> created;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillRepeatedly(testing::Invoke(
+                [&](const sai_fdb_entry_t *, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    created.emplace_back(attr_list, attr_list + attr_count);
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        Table fdbTable = Table(m_app_db.get(), APP_FDB_TABLE_NAME);
+        fdbTable.set("Vlan40:7c:fe:90:12:22:ee", {
+            {"port", ETH0},
+            {"type", "static"}
+        });
+        gFdbOrch->addExistingData(&fdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(created.size(), 1);
+
+        created.clear();
+        vector<uint8_t> mac_addr = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xee};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr, local_bp, vlan_oid);
+
+        ASSERT_EQ(created.size(), 1);
+        auto bp_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID);
+        ASSERT_NE(bp_attr, nullptr);
+        EXPECT_EQ(bp_attr->value.oid, local_bp);
+        EXPECT_EQ(findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_ENDPOINT_IP), nullptr);
+        EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+    }
+
 }

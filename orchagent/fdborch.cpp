@@ -19,6 +19,7 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "swssnet.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -33,6 +34,21 @@ extern L2NhgOrch*       gL2NhgOrch;
 extern FdbOrch*         gFdbOrch;
 
 const int FdbOrch::fdborch_pri = 20;
+
+/* Adds the remote VTEP of a tunnel FDB entry to its SAI attributes */
+static void addEndpointIpAttr(const FdbData &fdbData, vector<sai_attribute_t> &attrs)
+{
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED || fdbData.dest_type != FdbDest::VTEP)
+    {
+        return;
+    }
+
+    IpAddress remote = IpAddress(fdbData.dest_value);
+    sai_attribute_t attr;
+    attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+    copy(attr.value.ipaddr, remote);
+    attrs.push_back(attr);
+}
 
 FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
     TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port,
@@ -669,9 +685,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
                 attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
                 attrs.push_back(attr);
+                /* The entry goes back as stored: a stale event carries the bridge port of
+                   an entry replaced since, and sairedis forgets the key on any AGED event. */
                 attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-                attr.value.oid = bridge_port_id;
+                attr.value.oid = existing_entry->second.bridge_port_id;
                 attrs.push_back(attr);
+                addEndpointIpAttr(existing_entry->second, attrs);
                 auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -712,6 +731,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
             attr.value.oid = existing_entry->second.bridge_port_id;
             attrs.push_back(attr);
+            addEndpointIpAttr(existing_entry->second, attrs);
 
             SWSS_LOG_NOTICE("fdbEvent: MAC age event received, MAC is %s, added back"
                 "to HW type %s FDB %s in %s on %s",
