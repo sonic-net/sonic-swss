@@ -19,17 +19,29 @@ using namespace mock_orch_test;
 using namespace testing;
 using namespace swss;
 
-DEFINE_SAI_GENERIC_API_MOCK(virtual_router, virtual_router);
+DEFINE_SAI_GENERIC_API_MOCK_WITH_SET(virtual_router, virtual_router);
 
 class VrfOrchTest : public MockOrchTest
 {
   protected:
     EvpnNvoOrch *m_evpn_nvo_orch = nullptr;
+    VxlanTunnelMapOrch *m_vxlan_tunnel_map_orch = nullptr;
+    VxlanVrfMapOrch *m_vxlan_vrf_map_orch = nullptr;
 
     void PostSetUp() override
     {
         INIT_SAI_API_MOCK(virtual_router);
         MockSaiApis();
+
+        m_vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(
+            m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
+        gDirectory.set(m_vxlan_tunnel_map_orch);
+        ut_orch_list.push_back((Orch **)&m_vxlan_tunnel_map_orch);
+
+        m_vxlan_vrf_map_orch = new VxlanVrfMapOrch(
+            m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+        gDirectory.set(m_vxlan_vrf_map_orch);
+        ut_orch_list.push_back((Orch **)&m_vxlan_vrf_map_orch);
     }
 
     void PreTearDown() override
@@ -48,6 +60,27 @@ class VrfOrchTest : public MockOrchTest
         {
             vxlan_ut_helpers::setUpVxlanPort("2.2.2.2", 0x111);
         }
+    }
+
+    void addVrf(const string& name, uint32_t vni = 0)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        vector<FieldValueTuple> fields;
+        if (vni != 0)
+        {
+            fields.emplace_back("vni", to_string(vni));
+        }
+        consumer->addToSync({{name, "SET", fields}});
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists(name));
+    }
+
+    Consumer *vxlanVrfConsumer()
+    {
+        return dynamic_cast<Consumer *>(
+            m_vxlan_vrf_map_orch->getExecutor(APP_VXLAN_VRF_TABLE_NAME));
     }
 };
 
@@ -378,6 +411,109 @@ TEST_F(VrfOrchTest, DefaultVrfDeleteWaitsForLogicalReferences)
 
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_FALSE(gVrfOrch->isVRFexists("default"));
+}
+
+TEST_F(VrfOrchTest, ExistingDefaultVrfIgnoresNonVniAttributes)
+{
+    addVrf("default");
+    auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    EXPECT_CALL(*mock_sai_virtual_router_api, set_virtual_router_attribute(_, _)).Times(0);
+
+    consumer->addToSync({{"default", "SET", {{"v4", "false"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(gVrfOrch->isVRFexists("default"));
+    EXPECT_EQ(gVrfOrch->getVRFid("default"), gVirtualRouterId);
+}
+
+TEST_F(VrfOrchTest, ExistingDefaultVrfVniWaitsForEvpnVtep)
+{
+    addVrf("default");
+    provisionEvpnVtep(false);
+    auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+
+    consumer->addToSync({{"default", "SET", {{"vni", "4900"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+
+    EXPECT_TRUE(gVrfOrch->isVRFexists("default"));
+    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 0u);
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+}
+
+TEST_F(VrfOrchTest, NamedVrfAttributeUpdateSaiFailureIsConsumed)
+{
+    addVrf("VrfTenant");
+    auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+
+    EXPECT_CALL(*mock_sai_virtual_router_api, set_virtual_router_attribute(_, _))
+        .WillOnce(Return(SAI_STATUS_FAILURE));
+
+    consumer->addToSync({{"VrfTenant", "SET", {{"v4", "false"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(gVrfOrch->isVRFexists("VrfTenant"));
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapRejectsDuplicateDefaultAndVniOwnership)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    const string first_map = "EVPN_2.2.2.2:map_default_5000";
+    consumer->addToSync({{first_map, "SET", {{"vni", "5000"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(first_map));
+
+    // A second map for the default VRF is rejected even if it uses another VNI.
+    const string duplicate_default = "EVPN_2.2.2.2:map_default_5001";
+    consumer->addToSync({{duplicate_default, "SET", {{"vni", "5001"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(duplicate_default));
+
+    addVrf("VrfTenant");
+
+    // The VNI owned by the default VRF cannot be assigned to another VRF.
+    const string duplicate_vni = "EVPN_2.2.2.2:map_tenant_5000";
+    consumer->addToSync({{duplicate_vni, "SET", {{"vni", "5000"}, {"vrf", "VrfTenant"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(duplicate_vni));
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(first_map));
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    // The map name intentionally contains no "Vrf" token. Deletion must use
+    // the VRF name saved in the table entry rather than parsing the key.
+    const string map_key = "EVPN_2.2.2.2:map_default_5100";
+    consumer->addToSync({{map_key, "SET", {{"vni", "5100"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+    ASSERT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+
+    consumer->addToSync({{map_key, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
 }
 
 } // namespace vrforch_test
