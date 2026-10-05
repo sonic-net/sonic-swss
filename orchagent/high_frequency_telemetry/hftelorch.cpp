@@ -304,7 +304,7 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
 
     if (!single_supported && !mixed_supported)
     {
-        SWSS_LOG_NOTICE("HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled");
+        SWSS_LOG_WARN("HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled");
         return false;
     }
 
@@ -332,7 +332,7 @@ bool HFTelOrch::querySupportedTelTypeModes(
         SAI_TAM_TEL_TYPE_ATTR_MODE);
     if (!meta || (!meta->isenum && !meta->isenumlist))
     {
-        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE is not an enum attribute");
+        SWSS_LOG_WARN("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE is not an enum attribute");
         return false;
     }
 
