@@ -501,6 +501,9 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 
     auto it_intfs = m_syncdIntfses.find(alias);
 
+    bool restore_proxy_arp = false;
+    bool restore_sag = false;
+
     /*
      * VRF change on an existing non-loopback router interface issues a DEL then SET
      * on the same INTF_TABLE key; the ProducerStateTable coalesces these into a single SET,
@@ -531,12 +534,17 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         }
 
         sai_object_id_t old_vrf_id = it_intfs->second.vrf_id;
-        bool sag_enabled = it_intfs->second.sag_enabled;
 
-        if (it_intfs->second.proxy_arp)
-        {
-            setIntfProxyArp(alias, "disabled");
-        }
+        /*
+         * Proxy ARP and SAG are interface settings rather than RIF attributes, and the
+         * coalesced SET that moves the VRF need not carry either field. Carry them across
+         * to the entry recreated below so the VRF change does not silently clear them.
+         * Proxy ARP maps to a VLAN attribute that the RIF teardown leaves alone, so only
+         * the bookkeeping has to follow; the SAG link local route is per VRF and has to be
+         * moved.
+         */
+        restore_proxy_arp = it_intfs->second.proxy_arp;
+        restore_sag = it_intfs->second.sag_enabled;
 
         if (!removeRouterIntfs(port))
         {
@@ -547,7 +555,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 
         gPortsOrch->decreasePortRefCount(alias);
 
-        if (sag_enabled)
+        if (restore_sag)
         {
             removeLinkLocalRouteToMeSag(old_vrf_id);
         }
@@ -615,6 +623,17 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
                 gPortsOrch->setPort(alias, port);
             }
         }
+    }
+
+    if (restore_proxy_arp)
+    {
+        m_syncdIntfses[alias].proxy_arp = true;
+    }
+
+    if (restore_sag)
+    {
+        m_syncdIntfses[alias].sag_enabled = true;
+        addLinkLocalRouteToMeSag(vrf_id);
     }
 
     if (!ip_prefix || m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))

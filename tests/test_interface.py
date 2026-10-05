@@ -779,13 +779,28 @@ class TestRouterInterface(object):
         assert len(intf_entries) == 1
         return intf_entries[0]
 
-    def test_PortInterfaceVrfChangeOnCoalescedSet(self, dvs, testlog):
+    def get_vlan_flood_type(self, vlan_id):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        for key in tbl.getKeys():
+            (status, fvs) = tbl.get(key)
+            if not status:
+                continue
+            attrs = dict(fvs)
+            if attrs.get("SAI_VLAN_ATTR_VLAN_ID") == vlan_id:
+                return attrs.get("SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE")
+        return None
+
+    def test_VLanInterfaceVrfChangeOnCoalescedSet(self, dvs, testlog):
         self.setup_db(dvs)
 
-        intf_name = "Ethernet12"
+        vlan_id = "100"
+        intf_name = "Vlan" + vlan_id
+        member = "Ethernet12"
 
-        # bring up interface
-        self.set_admin_status(dvs, intf_name, "up")
+        # bring up a vlan with one member
+        self.create_vlan(vlan_id)
+        self.create_vlan_member(vlan_id, member)
+        self.set_admin_status(dvs, member, "up")
 
         # create both vrfs
         old_vrf_oid = self.create_vrf("Vrf_old")
@@ -795,12 +810,12 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         old_intf_entries = set(tbl.getKeys())
 
-        # create the router interface in the old vrf, with proxy arp enabled so
-        # that the vrf change has to tear it down too
+        # create the router interface in the old vrf with proxy arp enabled
         self.set_intf_appl_db(intf_name, "Vrf_old", proxy_arp="enabled")
 
         old_rif_oid = self.get_added_rif_oid(old_intf_entries)
         assert self.get_rif_vrf_oid(old_rif_oid) == old_vrf_oid
+        assert self.get_vlan_flood_type(vlan_id) == "SAI_VLAN_FLOOD_CONTROL_TYPE_NONE"
 
         # a SET carrying the new vrf with no preceding DEL is what orchagent sees
         # once the ProducerStateTable coalesces the DEL+SET pair
@@ -811,13 +826,17 @@ class TestRouterInterface(object):
         assert new_rif_oid != old_rif_oid
         assert self.get_rif_vrf_oid(new_rif_oid) == new_vrf_oid
 
-        # remove interface and vrfs
+        # the SET carried no proxy_arp field, so the setting has to survive the
+        # recreation rather than falling back to the default
+        assert self.get_vlan_flood_type(vlan_id) == "SAI_VLAN_FLOOD_CONTROL_TYPE_NONE"
+
+        # remove interface, vrfs and vlan
         self.remove_intf_appl_db(intf_name)
         self.remove_vrf("Vrf_old")
         self.remove_vrf("Vrf_new")
-
-        # bring down interface
-        self.set_admin_status(dvs, intf_name, "down")
+        self.set_admin_status(dvs, member, "down")
+        self.remove_vlan_member(vlan_id, member)
+        self.remove_vlan(vlan_id)
 
         # check ASIC router interface database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
