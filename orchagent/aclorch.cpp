@@ -130,16 +130,6 @@ static acl_rule_attr_lookup_t aclMirrorStageLookup =
     { ACTION_MIRROR_EGRESS_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS},
 };
 
-static acl_rule_attr_lookup_t aclDTelActionLookup =
-{
-    { ACTION_DTEL_FLOW_OP,                  SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
-    { ACTION_DTEL_INT_SESSION,              SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
-    { ACTION_DTEL_DROP_REPORT_ENABLE,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
-    { ACTION_DTEL_TAIL_DROP_REPORT_ENABLE,  SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE },
-    { ACTION_DTEL_FLOW_SAMPLE_PERCENT,      SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
-    { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
-};
-
 static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
     { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
@@ -156,14 +146,6 @@ static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
 {
     { ACTION_META_DATA,                     SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA},
     { ACTION_DSCP,                          SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP}
-};
-
-static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
-{
-    { DTEL_FLOW_OP_NOP,                SAI_ACL_DTEL_FLOW_OP_NOP },
-    { DTEL_FLOW_OP_POSTCARD,           SAI_ACL_DTEL_FLOW_OP_POSTCARD },
-    { DTEL_FLOW_OP_INT,                SAI_ACL_DTEL_FLOW_OP_INT },
-    { DTEL_FLOW_OP_IOAM,               SAI_ACL_DTEL_FLOW_OP_IOAM }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -914,7 +896,6 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
 
         auto l3Action = aclL3ActionLookup.find(action);
         auto mirrorAction = aclMirrorStageLookup.find(action);
-        auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
         auto innerAction = aclInnerActionLookup.find(action);
@@ -929,10 +910,6 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         else if (mirrorAction != aclMirrorStageLookup.end())
         {
             saiActionAttr = mirrorAction->second;
-        }
-        else if (dtelAction != aclDTelActionLookup.end())
-        {
-            saiActionAttr = dtelAction->second;
         }
         else if (otherAction != aclOtherActionLookup.end())
         {
@@ -1990,7 +1967,7 @@ uint32_t AclRule::getPriority() const
     return m_priority;
 }
 
-shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
+shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
 {
     shared_ptr<AclRule> aclRule;
 
@@ -2013,15 +1990,6 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
-        }
-        else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
-        {
-            if (!dtel)
-            {
-                throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
-            }
-
-            return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
         }
     }
 
@@ -3396,245 +3364,6 @@ bool AclTable::clear()
     return true;
 }
 
-AclRuleDTelWatchListEntry::AclRuleDTelWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
-        AclRule(aclOrch, rule, table),
-        m_pDTelOrch(dtel)
-{
-}
-
-bool AclRuleDTelWatchListEntry::validateAddAction(string attr_name, string attr_val)
-{
-    SWSS_LOG_ENTER();
-
-    sai_acl_action_data_t actionData;
-    string attr_value = to_upper(attr_val);
-    sai_object_id_t session_oid;
-
-    if (!m_pDTelOrch ||
-        (attr_name != ACTION_DTEL_FLOW_OP &&
-        attr_name != ACTION_DTEL_INT_SESSION &&
-        attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS &&
-        attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE))
-    {
-        return false;
-    }
-
-    if (attr_name == ACTION_DTEL_FLOW_OP)
-    {
-        auto it = aclDTelFlowOpTypeLookup.find(attr_value);
-
-        if (it == aclDTelFlowOpTypeLookup.end())
-        {
-            return false;
-        }
-
-        actionData.parameter.s32 = it->second;
-
-        if (attr_value == DTEL_FLOW_OP_INT)
-        {
-            INT_enabled = true;
-        }
-        else
-        {
-            INT_enabled = false;
-        }
-    }
-
-    if (attr_name == ACTION_DTEL_INT_SESSION)
-    {
-        m_intSessionId = attr_value;
-
-        bool ret = m_pDTelOrch->getINTSessionOid(attr_value, session_oid);
-        if (ret)
-        {
-            actionData.parameter.oid = session_oid;
-
-            // Increase session reference count regardless of state to deny
-            // attempt to remove INT session with attached ACL rules.
-            if (!m_pDTelOrch->increaseINTSessionRefCount(m_intSessionId))
-            {
-                SWSS_LOG_ERROR("Failed to increase INT session %s reference count", m_intSessionId.c_str());
-                return false;
-            }
-
-            INT_session_valid = true;
-        } else {
-            SWSS_LOG_ERROR("Invalid INT session id %s used for ACL action", m_intSessionId.c_str());
-            INT_session_valid = false;
-        }
-    }
-
-    if (attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT)
-    {
-        actionData.parameter.u8 = to_uint<uint8_t>(attr_value);
-    }
-
-    actionData.enable = true;
-
-    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS ||
-        attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
-        attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
-    {
-        actionData.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
-        actionData.enable = (attr_value == DTEL_ENABLED) ? true : false;
-    }
-
-    return setAction(aclDTelActionLookup[attr_name], actionData);
-}
-
-bool AclRuleDTelWatchListEntry::validate()
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() == 0)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool AclRuleDTelWatchListEntry::createRule()
-{
-    SWSS_LOG_ENTER();
-
-    return activate();
-}
-
-bool AclRuleDTelWatchListEntry::removeRule()
-{
-    return deactivate();
-}
-
-bool AclRuleDTelWatchListEntry::activate()
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    if (INT_enabled && !INT_session_valid)
-    {
-        return true;
-    }
-
-    return AclRule::createRule();
-}
-
-bool AclRuleDTelWatchListEntry::deactivate()
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    if (INT_enabled && !INT_session_valid)
-    {
-        return true;
-    }
-
-    if (!AclRule::removeRule())
-    {
-        return false;
-    }
-
-    if (INT_enabled && INT_session_valid)
-    {
-        if (!m_pDTelOrch->decreaseINTSessionRefCount(m_intSessionId))
-        {
-            SWSS_LOG_ERROR("Could not decrement INT session %s reference count", m_intSessionId.c_str());
-            return false;
-        }
-    }
-
-    return true;
-}
-
-void AclRuleDTelWatchListEntry::onUpdate(SubjectType type, void *cntx)
-{
-    sai_acl_action_data_t actionData;
-    sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
-
-    if (!m_pDTelOrch)
-    {
-        return;
-    }
-
-    if (type != SUBJECT_TYPE_INT_SESSION_CHANGE || !INT_enabled)
-    {
-        return;
-    }
-
-    DTelINTSessionUpdate *update = static_cast<DTelINTSessionUpdate *>(cntx);
-
-    if (m_intSessionId != update->session_id)
-    {
-        return;
-    }
-
-    if (update->active)
-    {
-        SWSS_LOG_INFO("Activating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
-
-        bool ret = m_pDTelOrch->getINTSessionOid(m_intSessionId, session_oid);
-        if (!ret)
-        {
-            SWSS_LOG_ERROR("Invalid INT session id used for ACL action");
-            return;
-        }
-
-        actionData.enable = true;
-        actionData.parameter.oid = session_oid;
-
-        // Increase session reference count regardless of state to deny
-        // attempt to remove INT session with attached ACL rules.
-        if (!m_pDTelOrch->increaseINTSessionRefCount(m_intSessionId))
-        {
-            throw runtime_error("Failed to increase INT session reference count");
-        }
-
-        if (!setAction(SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION, actionData))
-        {
-            SWSS_LOG_ERROR("Failed to set action SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION");
-            return;
-        }
-
-        INT_session_valid = true;
-
-        activate();
-    }
-    else
-    {
-        SWSS_LOG_INFO("Deactivating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
-        deactivate();
-        INT_session_valid = false;
-    }
-}
-
-bool AclRuleDTelWatchListEntry::update(const AclRule& rule)
-{
-    auto dtelWatchListRule = dynamic_cast<const AclRuleDTelWatchListEntry*>(&rule);
-    if (!dtelWatchListRule)
-    {
-        SWSS_LOG_ERROR("Cannot update DTEL watch list rule with a rule of a different type");
-        return false;
-    }
-
-    SWSS_LOG_ERROR("Updating DTEL watch list rule is currently not implemented");
-    return false;
-}
-
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
     m_oid(oid), m_refCnt(0), m_min(min), m_max(max), m_type(type)
 {
@@ -4340,9 +4069,6 @@ void AclOrch::queryAclActionCapability()
     queryAclActionAttrEnumValues(ACTION_PACKET_ACTION,
                                  aclL3ActionLookup,
                                  aclPacketActionLookup);
-    queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
-                                 aclDTelActionLookup,
-                                 aclDTelFlowOpTypeLookup);
 }
 
 void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
@@ -4362,7 +4088,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, metadataActionLookup, aclInnerActionLookup})
     {
         for (const auto& it: action_map)
         {
@@ -4487,7 +4213,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
 }
 
 AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, SwitchOrch *switchOrch,
-        PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
+        PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
         m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
@@ -4496,7 +4222,6 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch),
-        m_dTelOrch(dtelOrch),
         m_flex_counter_manager(
             ACL_COUNTER_FLEX_COUNTER_GROUP,
             StatsMode::READ,
@@ -4512,24 +4237,11 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
      * failures can be parked and retried only when resources are freed. */
     createRetryCache(CFG_ACL_RULE_TABLE_NAME);
     createRetryCache(APP_ACL_RULE_TABLE_NAME);
-
-    if (m_dTelOrch)
-    {
-        m_dTelOrch->attach(this);
-        createDTelWatchListTables();
-    }
 }
 
 AclOrch::~AclOrch()
 {
     m_mirrorOrch->detach(this);
-
-    if (m_dTelOrch)
-    {
-        m_dTelOrch->detach(this);
-    }
-
-    deleteDTelWatchListTables();
 
     gAclOrch = nullptr;
 }
@@ -4539,14 +4251,13 @@ void AclOrch::update(SubjectType type, void *cntx)
     SWSS_LOG_ENTER();
 
     if (type != SUBJECT_TYPE_MIRROR_SESSION_CHANGE &&
-            type != SUBJECT_TYPE_INT_SESSION_CHANGE &&
             type != SUBJECT_TYPE_PORT_CHANGE)
     {
         return;
     }
 
     // ACL table deals with port change
-    // ACL rule deals with mirror session change and int session change
+    // ACL rule deals with mirror session change
     for (auto& table : m_AclTables)
     {
         if (type == SUBJECT_TYPE_PORT_CHANGE)
@@ -6058,7 +5769,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
             try
             {
-                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t, &m_metaDataMgr);
+                newRule = AclRule::makeShared(this, m_mirrorOrch, rule_id, table_id, t, &m_metaDataMgr);
             }
             catch (exception &e)
             {
@@ -6419,58 +6130,6 @@ sai_status_t AclOrch::bindAclTable(AclTable &aclTable, bool bind)
     bind ? aclTable.bind() : aclTable.unbind();
 
     return status;
-}
-
-void AclOrch::createDTelWatchListTables()
-{
-    SWSS_LOG_ENTER();
-
-    AclTableTypeBuilder builder;
-
-    AclTable dtelWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
-
-    dtelWLTable.validateAddStage(ACL_STAGE_INGRESS);
-    dtelWLTable.validateAddType(builder
-        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_ETHER_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_DST_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
-        .withAction(SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT)
-        .build()
-    );
-    dtelWLTable.setDescription("Dataplane Telemetry Watchlist table");
-
-    addAclTable(dtelWLTable);
-}
-
-void AclOrch::deleteDTelWatchListTables()
-{
-    SWSS_LOG_ENTER();
-
-    removeAclTable(TABLE_TYPE_DTEL_FLOW_WATCHLIST);
 }
 
 void AclOrch::registerFlexCounter(const AclRule& rule)

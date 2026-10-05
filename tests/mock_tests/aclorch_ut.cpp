@@ -1365,12 +1365,7 @@ namespace aclorch_test
                                                                 SET_COMMAND,
                                                                 { { ACTION_PACKET_ACTION, acl_rule_pkg_action },
 
-                                                                  // if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
-                                                                  // attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
-                                                                  // attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
-                                                                  // attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
-                                                                  // attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
-                                                                  // attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+                                                                  // if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION)
                                                                   //
                                                                   // TODO: required field (add new test cases for that ....)
                                                                   //
@@ -1455,12 +1450,7 @@ namespace aclorch_test
                                                                 SET_COMMAND,
                                                                 { { ACTION_PACKET_ACTION, acl_rule_pkg_action },
 
-                                                                  // if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
-                                                                  // attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
-                                                                  // attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
-                                                                  // attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
-                                                                  // attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
-                                                                  // attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+                                                                  // if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION)
                                                                   //
                                                                   // TODO: required field (add new test cases for that ....)
                                                                   //
