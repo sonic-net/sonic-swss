@@ -2654,7 +2654,23 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
     {
-        nl_cache_refill(m_nl_sock, m_link_cache);
+        /* Apply this link notification to the cache rather than dumping all
+         * links again. During startup, each link emits a notification and a
+         * full refill for every notification makes the work grow with the
+         * number of links squared.
+         */
+        int err = nl_cache_include(m_link_cache, obj, nullptr, nullptr);
+        if (err < 0)
+        {
+            SWSS_LOG_WARN("Failed to update link cache from netlink message %d: %s; refreshing cache",
+                          nlmsg_type, nl_geterror(err));
+            err = nl_cache_refill(m_nl_sock, m_link_cache);
+            if (err < 0)
+            {
+                SWSS_LOG_ERROR("Failed to refresh link cache after netlink message %d: %s",
+                               nlmsg_type, nl_geterror(err));
+            }
+        }
         return;
     }
 
