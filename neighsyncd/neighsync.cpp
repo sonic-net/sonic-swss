@@ -143,6 +143,7 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+    m_cfgSubInterfaceTable(cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME),
     m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
     m_cfgEvpnNvoTable(cfgDb, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
     m_nl_sock(NULL), m_link_cache(NULL)
@@ -625,7 +626,20 @@ bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
 
-    if (!port.compare(0, strlen("Vlan"), "Vlan"))
+    // Sub-ports own their mode in VLAN_SUB_INTERFACE, independently of the
+    // parent. Eth/Po also cover the shortened Linux subinterface names.
+    const bool subPort = port.find('.') != string::npos &&
+        (!port.compare(0, strlen("Eth"), "Eth") ||
+         !port.compare(0, strlen("Po"), "Po"));
+    if (subPort)
+    {
+        if (!m_cfgSubInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else if (!port.compare(0, strlen("Vlan"), "Vlan"))
     {
         if (!m_cfgVlanInterfaceTable.get(port, values))
         {
