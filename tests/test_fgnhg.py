@@ -32,22 +32,21 @@ def remove_entry(db, table, key):
     db.delete_entry(table, key)
     db.wait_for_deleted_entry(table,key)
 
-def get_asic_route_key(asic_db, ipprefix, vr=None):
+def get_asic_route_key(asic_db, ipprefix):
     route_exists = False
     key = ''
     keys = asic_db.get_keys(ASIC_ROUTE_TB)
     for k in keys:
         rt_key = json.loads(k)
+
         if rt_key['dest'] == ipprefix:
-            if vr is None or rt_key.get('vr') == vr:
-                route_exists = True
-                key = k
-                break
-        
+            route_exists = True
+            key = k
+            break
     assert route_exists
     return key
 
-def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size, vr=None):
+def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
     def _access_function():
         false_ret = (False, '')
         keys = asic_db.get_keys(ASIC_ROUTE_TB)
@@ -56,10 +55,8 @@ def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size, vr=None):
         for k in keys:
             rt_key = json.loads(k)
             if rt_key['dest'] == ipprefix:
-                if vr is None or rt_key.get('vr') == vr:
-                    route_exists = True
-                    key = k
-                    break
+                route_exists = True
+                key = k
         if not route_exists:
             return false_ret
 
@@ -141,12 +138,6 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
     _, result = wait_for_result(_access_function, failure_message="SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP not found")
     return result
 
-def get_expected_key(vnet_name, fg_nhg_prefix):
-    if vnet_name == "":
-        return fg_nhg_prefix
-    else:
-        return vnet_name + "|" + fg_nhg_prefix
-
 def get_nh_oid_map(asic_db):
     nh_oid_map = {}
     keys = asic_db.get_keys(ASIC_NH_TB)
@@ -197,7 +188,7 @@ def verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh
                 if nh_oid_map.get(nh_oid,"NULL") == "NULL":
                     print("nh_oid is null")
                 if nh_oid_map.get(nh_oid) not in nh_memb_exp_count:
-                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + str(nh_oid_map.get(nh_oid)))
+                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + nh_oid_map.get(nh_oid))
                 return false_ret
             memb_dict[index] = nh_oid_map.get(nh_oid)
         idxs = [0]*bucket_size
@@ -239,13 +230,12 @@ def run_warm_reboot(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
 
-def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count, vnet_name=""):
+def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count):
     memb_dict = nh_memb_exp_count
     keys = state_db.get_keys("FG_ROUTE_TABLE")
     assert len(keys) !=  0
-    expected_key = get_expected_key(vnet_name, fg_nhg_prefix)
     for key in keys:
-        if key != expected_key:
+        if key != fg_nhg_prefix:
             continue
         fvs = state_db.get_entry("FG_ROUTE_TABLE", key)
         assert fvs != {}
@@ -256,16 +246,15 @@ def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_cou
     for idx,memb in memb_dict.items():
         assert memb == 0
 
-def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, nh_ip_count, vnet_name=""):
+def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, nh_ip_count):
     def _access_function():
         false_ret = (False, '')
         ret = True
         keys = state_db.get_keys("FG_ROUTE_TABLE")
         if not keys:
             return false_ret
-        expected_key = get_expected_key(vnet_name, fg_nhg_prefix)
         for key in keys:
-            if key != expected_key:
+            if key != fg_nhg_prefix:
                 continue
             fvs = state_db.get_entry("FG_ROUTE_TABLE", key)
             if not fvs:
@@ -293,17 +282,17 @@ def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_siz
     assert status, f"Member count distribution is uneven"
 
 def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map, prev_memb_dict, num_exp_changes,
-                                fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name=""):
+                                fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
     state_db_entry_memb_exp_count = {}
 
     for ip, cnt in nh_memb_exp_count.items():
         state_db_entry_memb_exp_count[ip + '@' + ip_to_if_map[ip]] = cnt
     next_memb_dict = verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
-    verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, state_db_entry_memb_exp_count, vnet_name)
+    verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, state_db_entry_memb_exp_count)
     return next_memb_dict
 
 def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_to_if_map, prev_memb_dict, num_exp_changes,
-                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name=""):
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
     ips = ""
     ifs = ""
     for ip in nh_memb_exp_count:
@@ -318,10 +307,10 @@ def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_t
     fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
     ps.set(fg_nhg_prefix, fvs)
     new_memb_dict = validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
-                        prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
+                        prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
     return new_memb_dict
 
-def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_nhg_prefix, nh_ips, bucket_size, vnet_name=""):
+def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_nhg_prefix, nh_ips, bucket_size):
     ips = ""
     ifs = ""
     for ip in nh_ips:
@@ -335,7 +324,7 @@ def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_
     ps = swsscommon.ProducerStateTable(app_db, ROUTE_TB)
     fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
     ps.set(fg_nhg_prefix, fvs)
-    verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, len(nh_ips), vnet_name)
+    verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, len(nh_ips))
 
 def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_name):
     ip_to_if_map = {}
