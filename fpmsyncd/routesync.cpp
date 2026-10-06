@@ -187,6 +187,72 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+
+    // On the ZMQ route path, steady-state route/label-route writes are coalesced
+    // and drained in batches by a dedicated send thread, so ingest never blocks
+    // on a full ZMQ socket.
+    if (isNbZmqEnabled())
+    {
+        try
+        {
+            m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
+        }
+        catch (const std::exception &e)
+        {
+            // Telemetry is best-effort: start the coalescer without a STATE_DB
+            // handle rather than fail route delivery.
+            m_stateDb.reset();
+            SWSS_LOG_WARN("route-send telemetry disabled, STATE_DB connect failed: %s",
+                          e.what());
+        }
+        m_routeCoalescer = std::make_shared<RouteSendCoalescer>(
+            m_routeTable.get(), m_label_routeTable.get(), m_zmqClient.get(), m_stateDb.get());
+    }
+}
+
+void RouteSync::startRouteCoalescer()
+{
+    if (m_routeCoalescer)
+    {
+        m_routeCoalescer->start();
+    }
+}
+
+void RouteSync::retireRouteCoalescer()
+{
+    if (m_routeCoalescer)
+    {
+        // stop() joins the send thread, so no coalesced write can land after
+        // reconcile has decided the delta. Entries it cannot deliver are
+        // counted in routes_lost_total.
+        if (m_routeCoalescer->stop())
+        {
+            SWSS_LOG_NOTICE("route send coalescer retired for warm restart");
+        }
+        m_routeCoalescer.reset();
+    }
+}
+
+bool RouteSync::zmqTableId(const ProducerStateTable & table, RouteSendCoalescer::TableId & id) const
+{
+    if (&table == m_routeTable.get())
+    {
+        id = RouteSendCoalescer::TableId::Route;
+        return true;
+    }
+    if (&table == m_label_routeTable.get())
+    {
+        id = RouteSendCoalescer::TableId::LabelRoute;
+        return true;
+    }
+    return false;
+}
+
+bool RouteSync::coalescerActive() const
+{
+    // Null once warm restart starts (retireRouteCoalescer), so reconcile owns
+    // the route tables for the rest of the process.
+    return m_routeCoalescer != nullptr;
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
@@ -203,7 +269,26 @@ void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
 
     if (!warmRestartInProgress)
     {
-        table.set(fvw.KeyOpFieldsValuesTupleVector());
+        RouteSendCoalescer::TableId tblId;
+        if (coalescerActive() && zmqTableId(table, tblId))
+        {
+            // Steady-state ZMQ route write: upsert into the coalescing map and
+            // let the send thread own the ZMQ post. The ZMQ wrapper emits a
+            // single SET, so [0] is that SET; the non-ZMQ wrapper prefixes a DEL.
+            // Const ref to lifetime-extend the returned vector.
+            const auto &kcoVec = fvw.KeyOpFieldsValuesTupleVector();
+            if (kcoVec.size() != 1)
+            {
+                SWSS_LOG_ERROR("Dropping route: coalescer expects the single-SET ZMQ "
+                               "KCO layout, got %zu tuples", kcoVec.size());
+                return;
+            }
+            m_routeCoalescer->upsertKco(tblId, kcoVec[0]);
+        }
+        else
+        {
+            table.set(fvw.KeyOpFieldsValuesTupleVector());
+        }
     }
     else
     {
@@ -234,7 +319,15 @@ void RouteSync::delTableWithWarmRestart(FieldValueTupleWrapperBase &&fvw,
 {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
     if (!warmRestartInProgress) {
-        table.del(fvw.key);
+        RouteSendCoalescer::TableId tblId;
+        if (coalescerActive() && zmqTableId(table, tblId))
+        {
+            m_routeCoalescer->upsertDel(tblId, fvw.key);
+        }
+        else
+        {
+            table.del(fvw.key);
+        }
     } else {
         m_warmStartHelper.insertRefreshMap(tableName, fvw.KeyOpFieldsValuesTupleVectorForDel());
     }
@@ -242,6 +335,12 @@ void RouteSync::delTableWithWarmRestart(FieldValueTupleWrapperBase &&fvw,
 
 RouteSync::~RouteSync()
 {
+    // Stop the send thread first so it stops touching the ZMQ tables before they
+    // are torn down (best-effort final drain happens inside stop()).
+    if (m_routeCoalescer)
+    {
+        m_routeCoalescer->stop();
+    }
     if (m_link_cache)
     {
         nl_cache_free(m_link_cache);
@@ -1965,7 +2064,14 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
                 FieldValueTuple wg("weight", weights.c_str());
                 fvVector.push_back(wg);
             }
-            m_routeTable->set(routeTableKey, fvVector);
+            if (coalescerActive())
+            {
+                m_routeCoalescer->upsertSet(RouteSendCoalescer::TableId::Route, routeTableKey, fvVector);
+            }
+            else
+            {
+                m_routeTable->set(routeTableKey, fvVector);
+            }
 
             SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
@@ -1993,7 +2099,14 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
             fvVectorVpnRoute.push_back(vpn_sid);
             fvVectorVpnRoute.push_back(seg_srcs_route);
             fvVectorVpnRoute.push_back(intf);
-            m_routeTable->set(routeTableKey, fvVectorVpnRoute);
+            if (coalescerActive())
+            {
+                m_routeCoalescer->upsertSet(RouteSendCoalescer::TableId::Route, routeTableKey, fvVectorVpnRoute);
+            }
+            else
+            {
+                m_routeTable->set(routeTableKey, fvVectorVpnRoute);
+            }
         }
     }
 
@@ -3795,6 +3908,8 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
 
     if (m_warmStartHelper.inProgress())
     {
+        // Reconcile writes the route tables directly on this thread; the
+        // coalescer was retired when the warm-restart window opened.
         m_warmStartHelper.reconcile();
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
     }

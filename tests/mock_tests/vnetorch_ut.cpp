@@ -2730,6 +2730,47 @@ namespace vnetorch_test
         EXPECT_TRUE(saiMacEquals(nh.mac, "00:12:34:56:78:9A"));
     }
 
+    // A tunnel next hop create that fails with a status handleSaiCreateStatus()
+    // treats as "handled" (ITEM_NOT_FOUND) must not be cached. sairedis releases
+    // the object id it allocated but leaves it in the out parameter, which the
+    // injected failure imitates; caching it would hand every later user of this
+    // endpoint an id that does not exist.
+    TEST_F(VNetOrchTest, VnetTunnelNextHopCreateFailureIsNotCached)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnet("Vnet_2000", "tunnel_v4", "2000", "");
+
+        IpAddress endpoint("10.10.10.1");
+        const sai_object_id_t releasedOid = 0x5000000000abcULL;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([releasedOid](sai_object_id_t *id, sai_object_id_t,
+                                                uint32_t, const sai_attribute_t *) {
+                *id = releasedOid;
+                return SAI_STATUS_ITEM_NOT_FOUND;
+            }));
+
+        EXPECT_EQ(m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0),
+                  SAI_NULL_OBJECT_ID);
+        VxlanTunnel *tunnel = m_VxlanTunnelOrch->getVxlanTunnel("tunnel_v4");
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), SAI_NULL_OBJECT_ID);
+
+        // Once the SAI accepts the next hop, the next request creates and caches it.
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([](sai_object_id_t *id, sai_object_id_t sw,
+                                     uint32_t n, const sai_attribute_t *l) {
+                return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            }));
+
+        const sai_object_id_t nhOid =
+            m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0);
+        EXPECT_NE(nhOid, SAI_NULL_OBJECT_ID);
+        EXPECT_NE(nhOid, releasedOid);
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), nhOid);
+
+        EXPECT_TRUE(m_VxlanTunnelOrch->removeNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0));
+        EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), SAI_NULL_OBJECT_ID);
+    }
+
     // A multi-endpoint route programs one tunnel encap next hop per endpoint, a
     // next hop group binding them, and a route entry pointing at the group --
     // the mock equivalent of vnet_lib.check_vnet_ecmp_routes().
@@ -2782,6 +2823,233 @@ namespace vnetorch_test
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->vr, vnetVr);
         EXPECT_EQ(r->next_hop_id, nhg);
+    }
+
+    // If one endpoint's tunnel next hop cannot be created, no next hop group is
+    // created and the tunnel next hops already referenced for the other
+    // endpoints are released instead of leaking. A later SET programs the route
+    // once the SAI accepts the next hop.
+    TEST_F(VNetOrchTest, VnetEcmpRouteTunnelNextHopFailureReleasesNextHops)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        vector<sai_object_id_t> created;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([&created](sai_object_id_t *id, sai_object_id_t sw,
+                                             uint32_t n, const sai_attribute_t *l) -> sai_status_t {
+                auto ip = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_IP);
+                if (ip && ipAddrEquals(ip->value.ipaddr, "7.0.0.2"))
+                {
+                    return SAI_STATUS_TABLE_FULL;
+                }
+                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    created.push_back(*id);
+                }
+                return st;
+            }));
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        EXPECT_TRUE(m_rt.groups.empty());
+        EXPECT_TRUE(m_rt.members.empty());
+        EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+        ASSERT_FALSE(created.empty());
+        for (auto oid : created)
+        {
+            EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), oid),
+                      m_rt.removedNexthops.end()) << "tunnel next hop leaked: " << hex << oid;
+        }
+        VxlanTunnel *tunnel = m_VxlanTunnelOrch->getVxlanTunnel("tunnel_v4");
+        for (const char *ep : {"7.0.0.1", "7.0.0.2", "7.0.0.3"})
+        {
+            IpAddress ip(ep);
+            EXPECT_EQ(tunnel->getNextHop(ip, MacAddress(), 0), SAI_NULL_OBJECT_ID) << ep;
+        }
+
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([](sai_object_id_t *id, sai_object_id_t sw,
+                                     uint32_t n, const sai_attribute_t *l) {
+                return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            }));
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.members.size(), 3U);
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, m_rt.groups[0].oid);
+    }
+
+    // A next hop group create failure releases the tunnel next hops referenced
+    // for its members.
+    TEST_F(VNetOrchTest, VnetEcmpRouteGroupCreateFailureReleasesNextHops)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Return(SAI_STATUS_TABLE_FULL));
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        EXPECT_TRUE(m_rt.members.empty());
+        EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+        ASSERT_EQ(m_rt.nexthops.size(), 3U);
+        for (const auto &nh : m_rt.nexthops)
+        {
+            EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh.oid),
+                      m_rt.removedNexthops.end()) << "tunnel next hop leaked: " << hex << nh.oid;
+        }
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_group_api->create_next_hop_group(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    RouteCaptures::Group g;
+                    g.oid = *id;
+                    m_rt.groups.push_back(g);
+                }
+                return st;
+            }));
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.members.size(), 3U);
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, m_rt.groups[0].oid);
+    }
+
+    // A single-endpoint route whose tunnel next hop cannot be created is not
+    // programmed with a null next hop.
+    TEST_F(VNetOrchTest, VnetRouteTunnelNextHopFailureProgramsNoRoute)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnet("Vnet_2000", "tunnel_v4", "2000", "");
+
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Return(SAI_STATUS_TABLE_FULL));
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+
+        EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+
+        sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                           uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    nhOid = *id;
+                }
+                return st;
+            }));
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+
+        ASSERT_NE(nhOid, SAI_NULL_OBJECT_ID);
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhOid);
+    }
+
+    // A failed tunnel next hop create is not remembered for the endpoint: another
+    // route to the same endpoint in the VNET creates the next hop again and uses
+    // it, and no route entry is ever created with a null next hop.
+    TEST_F(VNetOrchTest, VnetRouteTunnelNextHopFailureIsNotReused)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnet("Vnet_2000", "tunnel_v4", "2000", "");
+
+        int createAttempts = 0;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([&createAttempts](sai_object_id_t *, sai_object_id_t,
+                                                    uint32_t, const sai_attribute_t *) {
+                createAttempts++;
+                return SAI_STATUS_INVALID_PARAMETER;
+            }));
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+
+        EXPECT_EQ(createAttempts, 1);
+        EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+
+        sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                           uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    nhOid = *id;
+                }
+                return st;
+            }));
+
+        setVnetRoute("Vnet_2000", "100.100.2.1/32", "10.10.10.1");
+
+        ASSERT_NE(nhOid, SAI_NULL_OBJECT_ID);
+        const RouteCaptures::Route *r = findRoute("100.100.2.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhOid);
+        for (const auto &route : m_rt.routes)
+        {
+            if (prefixAddrEquals(route.dest, "100.100.1.1") ||
+                prefixAddrEquals(route.dest, "100.100.2.1"))
+            {
+                EXPECT_NE(route.next_hop_id, SAI_NULL_OBJECT_ID);
+            }
+        }
+    }
+
+    // Deleting a single-endpoint route whose tunnel next hop was never created
+    // removes nothing from the SAI, and the same route programs normally once
+    // the next hop can be created.
+    TEST_F(VNetOrchTest, VnetRouteDeleteAfterTunnelNextHopFailure)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnet("Vnet_2000", "tunnel_v4", "2000", "");
+
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Return(SAI_STATUS_INVALID_PARAMETER));
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+        EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+
+        delVnetRoute("Vnet_2000", "100.100.1.1/32");
+
+        EXPECT_TRUE(m_rt.removedNexthops.empty());
+        for (const auto &d : m_rt.removedRoutes)
+        {
+            EXPECT_FALSE(prefixAddrEquals(d, "100.100.1.1"));
+        }
+
+        sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
+        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
+            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                           uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    nhOid = *id;
+                }
+                return st;
+            }));
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+
+        ASSERT_NE(nhOid, SAI_NULL_OBJECT_ID);
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhOid);
     }
 
     // Deleting a single-endpoint route removes its route entry and the tunnel
@@ -2937,6 +3205,25 @@ namespace vnetorch_test
         EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nhOid),
                   m_rt.removedNexthops.end());
         checkStateDbRouteRemoved("Vnet15", "fd:8:10::32/128");
+    }
+
+    TEST_F(VNetOrchTest, VnetDefaultBfdSharedNextHopGroupCleanup)
+    {
+        setVxlanTunnel("tunnel_shared_bfd", "9.9.9.9");
+        setVnet("VnetSharedBfd", "tunnel_shared_bfd", "10001", "");
+
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32", "9.1.0.1", "9.2.0.1");
+        setVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32", "9.1.0.1", "9.2.0.1");
+        ASSERT_TRUE(bfdSessionExists("9.2.0.1"));
+
+        // Default BFD is owned by the shared NHG, not by each route.
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.1.1/32");
+        EXPECT_TRUE(bfdSessionExists("9.2.0.1"));
+        delVnetRouteMonitored("VnetSharedBfd", "100.100.2.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.2.0.1"));
+
+        delVnet("VnetSharedBfd");
+        delVxlanTunnel("tunnel_shared_bfd");
     }
 
     // BFD-monitored ECMP VNET route lifecycle -- the mock equivalent of
@@ -4625,6 +4912,28 @@ namespace vnetorch_test
         // 9.1.0.1 is a directly-connected local endpoint on Ethernet4 (/32).
         createL3Interface("Ethernet4", "9.1.0.1/32");
         addNeighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05");
+
+        // Recreating a local-only route must recreate its custom BFD session,
+        // even though the directly-connected next-hop group is reused.
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
+
+        setVnetRoutePriority("vnet34", "100.100.1.1/32", "9.1.0.1",
+                             "9.1.0.1", /*primary=*/"9.1.0.1",
+                             /*monitoring=*/"custom_bfd",
+                             /*adv_prefix=*/"100.100.1.1/32", /*profile=*/"",
+                             /*check_directly_connected=*/true,
+                             /*rx_monitor_timer=*/100, /*tx_monitor_timer=*/100);
+        EXPECT_TRUE(bfdSessionExists("9.1.0.1"));
+        delVnetRouteMonitored("vnet34", "100.100.1.1/32");
+        EXPECT_FALSE(bfdSessionExists("9.1.0.1"));
 
         // Priority route: primary 9.1.0.1 (local), secondary 9.1.0.2 (remote),
         // custom_bfd monitoring with per-endpoint monitor timers.
