@@ -428,19 +428,40 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
     SWSS_LOG_ENTER();
     auto profile = getProfile(profile_name);
 
-    if (!profile->canBeUpdated())
-    {
-        return task_process_status::task_need_retry;
-    }
-
+    // Parse stream_state (if present) up front without applying it yet, so
+    // the poll_interval gate below can see where this same call is already
+    // headed.
     auto value_opt = fvsGetValue(values, "stream_state", true);
     string stream_state = "disable";
     sai_tam_tel_type_state_t state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
     if (value_opt)
     {
         lexical_convert(*value_opt, state);
-        profile->setStreamState(state);
         stream_state = *value_opt;
+    }
+
+    // poll_interval is a configuration field, so - like group configuration
+    // via canBeUpdated(type) - it's only accepted while fully stopped.
+    // A stream_state=disabled in this *same* call also counts as eligible,
+    // even though canBeUpdated() still reflects the pre-call state here:
+    // setStreamState(STOP_STREAM) below always safely succeeds regardless
+    // of current state (disable is the only way to reach STOP_STREAM from a
+    // running profile), so without this, disabling a running profile
+    // together with a poll_interval change would retry forever - the gate
+    // would never pass, because the disable that would satisfy it is never
+    // reached. stream_state=enabled does not grant this exception: nothing
+    // in that request stops the profile, so poll_interval correctly keeps
+    // retrying until a separate disable is issued, consistent with the
+    // stopped-only rule.
+    const bool disabling_this_call = value_opt && state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    if (fvsGetValue(values, "poll_interval", true) && !profile->canBeUpdated() && !disabling_this_call)
+    {
+        return task_process_status::task_need_retry;
+    }
+
+    if (value_opt)
+    {
+        profile->setStreamState(state);
 
         // If the telemetry session state entry already exists, keep its stream_status in sync.
         // The entry is created/updated in doTask(NotificationConsumer&) when TAM notifies config readiness.
@@ -531,10 +552,34 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         return task_process_status::task_failed;
     }
 
+    // Configuration changes (object_names, object_counters, and - via
+    // groupTableDel's own canBeUpdated(type) check - group deletion) go
+    // through canBeUpdated(type); see its comment for what "can" means in
+    // each mode. task_need_retry (not task_failed) because the block is
+    // transient and orchagent's own retry queue re-attempts task_need_retry
+    // items on every doTask pass - no new CONFIG_DB write is needed to
+    // trigger the retry. In MIXED mode specifically, that retry only
+    // resolves once an operator explicitly disables the profile: the
+    // GCU-based apply path only writes CONFIG_DB deltas, so resubmitting an
+    // identical desired config produces no new write and so no new
+    // notification either.
+    const string blocked_key = profile_name + "|" + group_name;
     if (!profile->canBeUpdated(type))
     {
+        if (m_group_update_blocked.insert(blocked_key).second)
+        {
+            // .second is true only on first insertion, so this fires once
+            // per block, not on every retry.
+            SWSS_LOG_WARN(
+                "HFTel: group %s:%s configuration update is pending - %s",
+                profile_name.c_str(), group_name.c_str(),
+                profile->isMixedTypeMode()
+                    ? "MIXED mode doesn't support live reconfiguration; disable the profile to apply it"
+                    : "a commit is already in progress for this group; it will be applied once that completes");
+        }
         return task_process_status::task_need_retry;
     }
+    m_group_update_blocked.erase(blocked_key);
 
     auto arg_object_names = fvsGetValue(values, "object_names", true);
     if (arg_object_names && !arg_object_names->empty())
@@ -542,7 +587,14 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         vector<string> buffer;
         boost::split(buffer, *arg_object_names, boost::is_any_of(","));
         set<string> object_names(buffer.begin(), buffer.end());
-        profile->setObjectNames(group_name, move(object_names));
+        if (!profile->setObjectNames(group_name, move(object_names)))
+        {
+            // Rejected (logged by setObjectNames itself): the label
+            // allocator would exceed the 15-bit IPFIX IE range. This is a
+            // permanent condition for this exact request, not a transient
+            // one, so fail the task instead of retrying it forever.
+            return task_process_status::task_failed;
+        }
     }
 
     auto arg_object_counters = fvsGetValue(values, "object_counters", true);
@@ -597,6 +649,7 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
     profile->clearGroup(group_name);
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + HFTelUtils::sai_type_to_group_name(type));
+    m_group_update_blocked.erase(profile_name + "|" + group_name);
 
     SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
 
