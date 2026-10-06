@@ -336,6 +336,44 @@ class NeighSyncTest : public ::testing::Test
     std::unique_ptr<NeighSync> m_sync;
 };
 
+TEST_F(NeighSyncTest, SubPortLinkLocalUsesOwnConfigurationTable)
+{
+    Table subInterfaces(m_configDb.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+    Table interfaces(m_configDb.get(), CFG_INTF_TABLE_NAME);
+    Table lags(m_configDb.get(), CFG_LAG_INTF_TABLE_NAME);
+    Table neighbors(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    interfaces.set("Ethernet0", {{"ipv6_use_link_local_only", "enable"}});
+    lags.set("PortChannel1", {{"ipv6_use_link_local_only", "enable"}});
+
+    for (const std::string name : {"Ethernet0.100", "PortChannel1.100", "Eth0.100", "Po1.100"})
+    {
+        mockInterfaceName = name;
+        const std::string key = name + ":fe80::2";
+        auto neigh = createNeighbor(AF_INET6, "fe80::2", NUD_PERMANENT);
+        ASSERT_TRUE(neigh.get() != nullptr);
+        auto *object = reinterpret_cast<struct nl_object *>(neigh.get());
+        std::vector<FieldValueTuple> fields;
+
+        // Neither parent mode nor a duplicate legacy row enables a sub-port.
+        interfaces.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        lags.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+
+        subInterfaces.set(name, {{"ipv6_use_link_local_only", "disable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+        subInterfaces.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_TRUE(neighbors.get(key, fields));
+        m_sync->onMsg(RTM_DELNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+        subInterfaces.del(name);
+        interfaces.del(name);
+        lags.del(name);
+    }
+}
+
 TEST_F(NeighSyncTest, PublishesDualTorFailedIpv6Neighbor)
 {
     enableDualTor();

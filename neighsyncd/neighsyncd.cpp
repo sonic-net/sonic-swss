@@ -76,7 +76,8 @@ int main(int argc, char **argv)
             SubscriberStateTable interfaces(&cfgDb, CFG_INTF_TABLE_NAME);
             SubscriberStateTable lags(&cfgDb, CFG_LAG_INTF_TABLE_NAME);
             SubscriberStateTable vlans(&cfgDb, CFG_VLAN_INTF_TABLE_NAME);
-            SubscriberStateTable *interfaceTables[] = {&interfaces, &lags, &vlans};
+            SubscriberStateTable subInterfaces(&cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME);
+            SubscriberStateTable *interfaceTables[] = {&interfaces, &lags, &vlans, &subInterfaces};
             LinkLocalResyncState resyncState;
             for (auto *table : interfaceTables)
             {

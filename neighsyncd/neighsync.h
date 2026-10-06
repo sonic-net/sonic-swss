@@ -58,7 +58,7 @@ private:
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
     AppRestartAssist  *m_AppRestartAssist;
-    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable, m_cfgSubInterfaceTable;
     bool m_isEvpnNvoExist = false;
 
     bool isLinkLocalEnabled(const std::string &port);
