@@ -1167,8 +1167,7 @@ namespace vnetorch_test
         }
 
         // The mock Table::set / ProducerStateTable::set merge fields into an
-        // existing row, so dropping consistent_hashing_buckets needs an explicit
-        // hdel from both the CONFIG_DB row and the APP_DB row it was mirrored to.
+        // existing row, so dropping a field needs an explicit remove
         void setVnetRouteRegularEcmp(const string &vnet, const string &prefix,
                                      const string &endpoints)
         {
