@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -118,6 +119,9 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
+    /* "port|vlan|type" flushed after the port left the VLAN, until a MAC is added there again */
+    std::unordered_set<std::string> m_leftVlanFlushed;
+
     void macDelVxlanEntry(struct m_fdb_info *info);
 
     void macUpdateCache(struct m_fdb_info *info);
@@ -126,6 +130,7 @@ private:
     bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
+    bool flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type);
 
     void updateAllLocalMac();
 
