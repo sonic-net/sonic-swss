@@ -47,6 +47,7 @@ extern string gMySwitchType;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
+#define GBPORT_KEY                  "GBPORT"
 #define PORT_PHY_ATTR_KEY           "PORT_PHY_ATTR"
 #define PORT_PHY_SERDES_ATTR_KEY    "PORT_PHY_SERDES_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
@@ -71,6 +72,7 @@ extern string gMySwitchType;
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"GBPORT", GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_PHY_SERDES_ATTR", PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
@@ -203,11 +205,21 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
                 if (field == POLL_INTERVAL_FIELD)
                 {
+                    if (key == GBPORT_KEY)
+                    {
+                        /* Gearbox port counters poll in their own group with an
+                         * independently configurable interval. */
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                        {
+                            setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
+                        }
+                        continue;
+                    }
                     setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                     {
-                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        if (key.rfind("MACSEC", 0) == 0)
                         {
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
@@ -385,11 +397,25 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         gPortsOrch->flushCounters();
                     }
 
+                    if (key == GBPORT_KEY)
+                    {
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                        {
+                            setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
+                        }
+                        continue;
+                    }
                     setFlexCounterGroupOperation(flexCounterGroupMap[key], value);
 
                     if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                     {
-                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        if (key == PORT_KEY)
+                        {
+                            /* PORT enable/disable also controls the gearbox
+                             * port counter group. */
+                            setFlexCounterGroupOperation(flexCounterGroupMap[GBPORT_KEY], value, true);
+                        }
+                        else if (key.rfind("MACSEC", 0) == 0)
                         {
                             setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
                         }
