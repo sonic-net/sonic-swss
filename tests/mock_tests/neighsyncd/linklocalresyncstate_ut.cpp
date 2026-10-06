@@ -171,4 +171,41 @@ TEST(LinkLocalResyncStateTest, ReportsRepeatedAuthoritativeDisable)
     EXPECT_TRUE(state.getPendingInterfaces().empty());
 }
 
+TEST(LinkLocalResyncStateTest, SubPortsDoNotInheritParentModeOrSiblingTransitions)
+{
+    LinkLocalResyncState state;
+    state.initialize(entries(makeEntry(
+        "Ethernet0", SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}})));
+    state.process({
+        makeEntry("Ethernet0.100", SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}}),
+        makeEntry("Ethernet0.200", SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}}),
+    });
+    EXPECT_EQ(state.getPendingInterfaces(),
+              std::set<std::string>({"Ethernet0.100", "Ethernet0.200"}));
+    state.process(entries(makeEntry("Ethernet0.100", DEL_COMMAND)));
+    EXPECT_EQ(state.getPendingInterfaces(), std::set<std::string>({"Ethernet0.200"}));
+    state.process(entries(makeEntry("Ethernet0", DEL_COMMAND)));
+    EXPECT_EQ(state.getPendingInterfaces(), std::set<std::string>({"Ethernet0.200"}));
+    state.markResyncComplete("Ethernet0.200");
+    state.process(entries(makeEntry(
+        "Ethernet0.200", SET_COMMAND,
+        {{"ipv6_use_link_local_only", "enable"}, {"admin_status", "up"}})));
+    EXPECT_TRUE(state.getPendingInterfaces().empty());
+}
+
+TEST(LinkLocalResyncStateTest, SubPortAddressUpdateAndDisableReenable)
+{
+    LinkLocalResyncState state;
+    state.process(entries(makeEntry(
+        "Po1.100", SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}})));
+    state.process(entries(makeEntry("Po1.100|2001:db8::1/64", DEL_COMMAND)));
+    EXPECT_EQ(state.getPendingInterfaces(), std::set<std::string>({"Po1.100"}));
+    state.process(entries(makeEntry(
+        "Po1.100", SET_COMMAND, {{"ipv6_use_link_local_only", "disable"}})));
+    EXPECT_TRUE(state.getPendingInterfaces().empty());
+    state.process(entries(makeEntry(
+        "Po1.100", SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}})));
+    EXPECT_EQ(state.getPendingInterfaces(), std::set<std::string>({"Po1.100"}));
+}
+
 }
