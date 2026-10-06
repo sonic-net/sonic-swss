@@ -128,9 +128,10 @@ FdbSync::~FdbSync()
 
 bool FdbSync::checkFdbProtoSupport()
 {
-    /* Test whether the local bridge command and kernel both support the
-     * exact proto syntax used below. Some iproute2 versions advertise a
-     * protocol field but still reject the "proto hw" spelling/name. */
+    /* The bridge command must take a protocol and know the name "hw" (some iproute2
+     * versions advertise the field but reject the name). The name is checked with a
+     * read-only route query: the kernel refuses an FDB add on lo, and an add on a real
+     * Ethernet device would change its address list. */
     std::string res;
     int ret = swss::exec("bridge fdb help 2>&1 | grep -q proto", res);
     if (ret != 0)
@@ -139,11 +140,10 @@ bool FdbSync::checkFdbProtoSupport()
         return false;
     }
 
-    ret = swss::exec("bridge fdb add 00:00:00:00:00:00 dev lo proto hw 2>/dev/null", res);
-    swss::exec("bridge fdb del 00:00:00:00:00:00 dev lo 2>/dev/null", res);
+    ret = swss::exec("ip route show table local proto hw >/dev/null 2>&1", res);
     if (ret != 0)
     {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
+        SWSS_LOG_NOTICE("bridge fdb proto support not detected: protocol name hw is unknown");
         return false;
     }
 
