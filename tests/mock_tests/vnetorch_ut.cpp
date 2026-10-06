@@ -8,6 +8,7 @@
 #include "macaddress.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
+#include "swssnet.h"
 
 #include <gtest/gtest.h>
 
@@ -262,6 +263,7 @@ namespace vnetorch_test
         // create -- used by the duplicate-route regression test to prove the
         // conflicting create actually hit an ITEM_ALREADY_EXISTS/NOT_EXECUTED.
         vector<sai_status_t> lastBulkCreateStatuses;
+        bool splitBulkCreates = false;
     };
 
     // Captured SAI BFD sessions gBfdOrch programs for a monitored VNET route's
@@ -334,8 +336,26 @@ namespace vnetorch_test
         const sai_attribute_t **attr_list, sai_bulk_op_error_mode_t mode,
         sai_status_t *statuses)
     {
-        sai_status_t st = g_savedCreateRouteEntries(count, entries, attr_count,
-                                                    attr_list, mode, statuses);
+        sai_status_t st = SAI_STATUS_SUCCESS;
+        if (g_activeRouteCaptures && g_activeRouteCaptures->splitBulkCreates)
+        {
+            // libsaivs prevalidation rejects the entire bulk on a duplicate.
+            // Separate calls exercise mixed results in one RouteOrch bulk while
+            // still creating/checking real SAI objects for each entry.
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                auto result = g_savedCreateRouteEntries(1, entries + i, attr_count + i,
+                                                       attr_list + i, mode, statuses + i);
+                if (result != SAI_STATUS_SUCCESS)
+                {
+                    st = result;
+                }
+            }
+        }
+        else
+        {
+            st = g_savedCreateRouteEntries(count, entries, attr_count, attr_list, mode, statuses);
+        }
         if (g_activeRouteCaptures)
         {
             g_activeRouteCaptures->lastBulkCreateStatuses.assign(statuses, statuses + count);
@@ -1473,6 +1493,335 @@ namespace vnetorch_test
             static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
             Table tbl(m_app_db.get(), APP_ROUTE_TABLE_NAME);
             tbl.del(prefix);
+        }
+
+        // A duplicate create must not transfer ownership from VNetRouteOrch.
+        void checkDuplicateRouteOwnership(bool ecmp, bool withdrawBgp)
+        {
+            const string prefix = "100.100.1.0/24";
+            const IpPrefix ipPrefix(prefix);
+            setVxlanTunnel("tunnel_collision", "10.10.10.10");
+            setVnet("Vnet_collision", "tunnel_collision", "2000", "", false, "", "default");
+            setVnetRoute("Vnet_collision", prefix, "10.10.10.3");
+            const auto *vnetRoute = findRoute("100.100.1.0");
+            ASSERT_NE(vnetRoute, nullptr);
+            ASSERT_EQ(vnetRoute->vr, gVirtualRouterId);
+            const auto vnetNextHop = vnetRoute->next_hop_id;
+
+            createL3Interface("Ethernet0", "10.10.10.1/24");
+            setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+            addNeighbor("Ethernet0", "10.10.10.3", "00:00:00:00:00:03");
+            if (ecmp)
+            {
+                addNeighbor("Ethernet0", "10.10.10.4", "00:00:00:00:00:04");
+            }
+            const NextHopKey nh1("10.10.10.3@Ethernet0");
+            const NextHopKey nh2("10.10.10.4@Ethernet0");
+            const NextHopGroupKey nhg(ecmp ? "10.10.10.3@Ethernet0,10.10.10.4@Ethernet0" :
+                                             "10.10.10.3@Ethernet0");
+            const auto nh1Refs = gNeighOrch->getNextHopRefCount(nh1);
+            const auto nh2Refs = ecmp ? gNeighOrch->getNextHopRefCount(nh2) : 0;
+            const auto nhgCount = gRouteOrch->getNhgCount();
+            auto usedRoutes = []() {
+                return Portal::CrmOrchInternal::getResourceMap(gCrmOrch)
+                    .at(CrmResourceType::CRM_IPV4_ROUTE).countersMap.at("STATS").usedCounter;
+            };
+            const auto routeCount = usedRoutes();
+            auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+
+            // Read libsaivs itself, not just the append-only route captures.
+            sai_route_entry_t entry{};
+            entry.switch_id = gSwitchId;
+            entry.vr_id = gVirtualRouterId;
+            copy(entry.destination, ipPrefix);
+            auto checkVnetRoute = [&]() {
+                sai_attribute_t attr{};
+                attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                ASSERT_EQ(old_sai_route_api->get_route_entry_attribute(&entry, 1, &attr), SAI_STATUS_SUCCESS);
+                EXPECT_EQ(attr.value.oid, vnetNextHop);
+            };
+
+            setSaiFailureStatus(false, "");
+            m_rt.lastBulkCreateStatuses.clear();
+            setRoute(prefix, ecmp ? "10.10.10.3,10.10.10.4" : "10.10.10.3",
+                     ecmp ? "Ethernet0,Ethernet0" : "Ethernet0");
+            EXPECT_NE(find(m_rt.lastBulkCreateStatuses.begin(), m_rt.lastBulkCreateStatuses.end(),
+                           SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastBulkCreateStatuses.end());
+
+            for (int retry = 0; retry < 3; ++retry)
+            {
+                SCOPED_TRACE(retry);
+                EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, ipPrefix));
+                EXPECT_EQ(consumer->m_toSync.count(prefix), 1U);
+                EXPECT_EQ(usedRoutes(), routeCount);
+                EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh1), nh1Refs);
+                if (ecmp)
+                {
+                    EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh2), nh2Refs);
+                    EXPECT_FALSE(gRouteOrch->hasNextHopGroup(nhg));
+                }
+                EXPECT_EQ(gRouteOrch->getNhgCount(), nhgCount);
+                checkVnetRoute();
+                static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+            }
+
+            if (withdrawBgp)
+            {
+                const auto removes = m_rt.removedRoutes.size();
+                delRoute(prefix);
+                EXPECT_EQ(consumer->m_toSync.count(prefix), 0U);
+                EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, ipPrefix));
+                EXPECT_EQ(m_rt.removedRoutes.size(), removes);
+                EXPECT_EQ(usedRoutes(), routeCount);
+                checkVnetRoute();
+                delVnetRoute("Vnet_collision", prefix);
+                // A withdrawn pending SET must not resurrect after VNET removal.
+                static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+                EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, ipPrefix));
+                EXPECT_EQ(findRoute("100.100.1.0"), nullptr);
+                EXPECT_EQ(usedRoutes(), routeCount - 1);
+            }
+            else
+            {
+                delVnetRoute("Vnet_collision", prefix);
+                EXPECT_EQ(usedRoutes(), routeCount - 1);
+                // No new BGP SET: the retained intent becomes the fallback.
+                static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+                EXPECT_EQ(consumer->m_toSync.count(prefix), 0U);
+                ASSERT_TRUE(gRouteOrch->isRouteExists(gVirtualRouterId, ipPrefix));
+                EXPECT_EQ(usedRoutes(), routeCount);
+                sai_attribute_t attr{};
+                attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                ASSERT_EQ(old_sai_route_api->get_route_entry_attribute(&entry, 1, &attr), SAI_STATUS_SUCCESS);
+                if (ecmp)
+                {
+                    ASSERT_TRUE(gRouteOrch->hasNextHopGroup(nhg));
+                    EXPECT_EQ(attr.value.oid, gRouteOrch->getNextHopGroupId(nhg));
+                    EXPECT_EQ(gRouteOrch->getNextHopGroupRefCount(nhg), 1);
+                }
+                else
+                {
+                    EXPECT_EQ(attr.value.oid, gNeighOrch->getNextHopId(nh1));
+                }
+                delRoute(prefix);
+                EXPECT_EQ(usedRoutes(), routeCount - 1);
+            }
+
+            EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh1), nh1Refs);
+            if (ecmp)
+            {
+                EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh2), nh2Refs);
+                EXPECT_FALSE(gRouteOrch->hasNextHopGroup(nhg));
+            }
+            EXPECT_EQ(gRouteOrch->getNhgCount(), nhgCount);
+            string saiErr;
+            EXPECT_FALSE(getSaiFailureStatus(saiErr)) << saiErr;
+            delVnet("Vnet_collision");
+            delVxlanTunnel("tunnel_collision");
+        }
+
+        // Exercise provisional allocations through real RouteOrch/SAI creates,
+        // not by manufacturing a failed RouteBulkContext. Two rejected routes
+        // share resources to catch accidental deduplication of SRv6 VPN releases.
+        void checkDuplicateRouteResources(const string &kind, bool ecmp, bool sibling,
+                          bool mixedRejectedGroup = false)
+        {
+            setVxlanTunnel("tunnel_resources", "10.10.10.10");
+            setVnet("Vnet_resources", "tunnel_resources", "2000", "", false, "", "default");
+            setVnetRoute("Vnet_resources", "100.100.1.0/24", "10.10.10.9");
+            setVnetRoute("Vnet_resources", "100.100.2.0/24", "10.10.10.9");
+            const auto ownerNh = findRoute("100.100.1.0")->next_hop_id;
+
+            vector<FieldValueTuple> fields;
+            NextHopGroupKey nhg;
+            unique_ptr<EvpnNvoOrch> nvo;
+            if (kind == "mpls")
+            {
+                createL3Interface("Ethernet0", "10.10.10.1/24");
+                setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+                addNeighbor("Ethernet0", "10.10.10.3", "00:00:00:00:00:03");
+                addNeighbor("Ethernet0", "10.10.10.4", "00:00:00:00:00:04");
+                fields = {{"nexthop", ecmp ? "10.10.10.3,10.10.10.4" : "10.10.10.3"},
+                          {"ifname", ecmp ? "Ethernet0,Ethernet0" : "Ethernet0"},
+                          {"mpls_nh", ecmp ? "push100,push200" : "push100"}};
+                nhg = NextHopGroupKey(ecmp ? "push100+10.10.10.3@Ethernet0,push200+10.10.10.4@Ethernet0" :
+                                            "push100+10.10.10.3@Ethernet0");
+            }
+            else if (kind == "overlay")
+            {
+                nvo = make_unique<EvpnNvoOrch>(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+                gDirectory.set(nvo.get());
+                Table nvoTable(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+                nvoTable.set("nvo_resources", {{"source_vtep", "tunnel_resources"}});
+                nvo->addExistingData(&nvoTable);
+                static_cast<Orch *>(nvo.get())->doTask();
+                ASSERT_NE(nvo->getEVPNVtep(), nullptr);
+                auto *vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+                vrfConsumer->addToSync({{"Vrf_resources", SET_COMMAND, {{"vni", "5000"}}}});
+                static_cast<Orch *>(gVrfOrch)->doTask(*vrfConsumer);
+                ASSERT_TRUE(gVrfOrch->isL3VniVlan(5000));
+                fields = {{"nexthop", ecmp ? "10.10.10.3,10.10.10.4" : "10.10.10.3"},
+                          {"ifname", ecmp ? "5000,5000" : "5000"},
+                          {"vni_label", ecmp ? "5000,5000" : "5000"},
+                          {"router_mac", ecmp ? "00:00:00:00:00:03,00:00:00:00:00:04" : "00:00:00:00:00:03"}};
+                nhg = NextHopGroupKey(ecmp ? "10.10.10.3@vni5000@5000@00:00:00:00:00:03,10.10.10.4@vni5000@5000@00:00:00:00:00:04" :
+                                            "10.10.10.3@vni5000@5000@00:00:00:00:00:03", true);
+            }
+            else
+            {
+                fields = {{"nexthop", ecmp ? "2001:db8::3,2001:db8::4" : "2001:db8::3"},
+                          {"ifname", ecmp ? "Ethernet0,Ethernet0" : "Ethernet0"},
+                          {"seg_src", ecmp ? "2001:db8::1,2001:db8::1" : "2001:db8::1"},
+                          {"vpn_sid", ecmp ? "2001:db8:1::3,2001:db8:1::4" : "2001:db8:1::3"}};
+                nhg = NextHopGroupKey(ecmp ? "2001:db8::3@@2001:db8::1@2001:db8:1::3@,2001:db8::4@@2001:db8::1@2001:db8:1::4@" :
+                                            "2001:db8::3@@2001:db8::1@2001:db8:1::3@", false, true);
+            }
+
+            auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            const auto groupCount = gRouteOrch->getNhgCount();
+            auto prepareOverlayEcmp = [&]() {
+                // Overlay ECMP normally takes an extra pass to resolve its
+                // endpoints. Reproduce that allocation before each attempt so
+                // these tests exercise the full group, not a temporary route.
+                if (nvo && ecmp)
+                {
+                    for (const auto &nh : nhg.getNextHops())
+                    {
+                        if (!gNeighOrch->hasNextHop(nh))
+                        {
+                            ASSERT_TRUE(gRouteOrch->createRemoteVtep(gVirtualRouterId, nh));
+                            ASSERT_NE(gNeighOrch->addTunnelNextHop(nh), SAI_NULL_OBJECT_ID);
+                        }
+                    }
+                }
+            };
+            auto checkSaiRoute = [&](const string &prefix, sai_object_id_t expected) {
+                sai_route_entry_t entry{};
+                entry.switch_id = gSwitchId;
+                entry.vr_id = gVirtualRouterId;
+                copy(entry.destination, IpPrefix(prefix));
+                sai_attribute_t attr{};
+                attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                ASSERT_EQ(old_sai_route_api->get_route_entry_attribute(&entry, 1, &attr), SAI_STATUS_SUCCESS);
+                EXPECT_EQ(attr.value.oid, expected);
+            };
+            auto checkResources = [&](bool inUse) {
+                EXPECT_EQ(gRouteOrch->getNhgCount(), groupCount + (inUse && ecmp ? 1 : 0));
+                if (ecmp)
+                {
+                    EXPECT_EQ(gRouteOrch->hasNextHopGroup(nhg), inUse);
+                }
+                for (const auto &nh : nhg.getNextHops())
+                {
+                    EXPECT_EQ(gNeighOrch->hasNextHop(nh), inUse) << nh.to_string();
+                    if (inUse && gNeighOrch->hasNextHop(nh))
+                    {
+                        EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh), 1);
+                        sai_attribute_t attr{};
+                        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+                        EXPECT_EQ(old_sai_next_hop_api->get_next_hop_attribute(
+                                      gNeighOrch->getNextHopId(nh), 1, &attr), SAI_STATUS_SUCCESS);
+                    }
+                    if (nvo)
+                    {
+                        // -1 means the remote endpoint has been erased.
+                        EXPECT_EQ(nvo->getEVPNVtep()->getRemoteEndPointIPRefCnt(nh.ip_address.to_string()), inUse ? 1 : -1);
+                    }
+                }
+                if (kind == "srv6")
+                {
+                    size_t liveVpns = 0;
+                    for (const auto &entry : m_tun.mapEntries)
+                        if (entry.map_type == SAI_TUNNEL_MAP_TYPE_PREFIX_AGG_ID_TO_SRV6_VPN_SID &&
+                            count(m_tun.removedMapEntries.begin(), m_tun.removedMapEntries.end(), entry.oid) == 0)
+                            ++liveVpns;
+                    EXPECT_EQ(liveVpns, inUse ? nhg.getSize() : 0U);
+                    for (const auto &tunnel : m_tun.tunnels)
+                        if (tunnel.type == SAI_TUNNEL_TYPE_SRV6 && !inUse)
+                        {
+                            EXPECT_EQ(count(m_tun.removedTunnels.begin(), m_tun.removedTunnels.end(), tunnel.oid), 1);
+                        }
+                }
+            };
+
+            setSaiFailureStatus(false, "");
+            auto firstFields = fields;
+            if (mixedRejectedGroup)
+            {
+                // A rejected single next hop also belongs to the rejected
+                // ECMP group. Group cleanup can delete it before the single
+                // next-hop sweep; the latter must not look up an erased NH.
+                for (auto &field : firstFields)
+                {
+                    fvValue(field) = fvValue(field).substr(0, fvValue(field).find(','));
+                }
+            }
+            consumer->addToSync({{"100.100.1.0/24", SET_COMMAND, firstFields},
+                                 {"100.100.2.0/24", SET_COMMAND, fields}});
+            if (sibling) consumer->addToSync({{"100.100.3.0/24", SET_COMMAND, fields}});
+            // Keep real SAI validation but avoid libsaivs rejecting an entire
+            // bulk at prevalidation just because one entry is a duplicate.
+            m_rt.splitBulkCreates = true;
+            for (int retry = 0; retry < 3; ++retry)
+            {
+                SCOPED_TRACE(retry);
+                prepareOverlayEcmp();
+                static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+                ASSERT_GE(m_rt.lastBulkCreateStatuses.size(), 2U);
+                EXPECT_EQ(m_rt.lastBulkCreateStatuses[0], SAI_STATUS_ITEM_ALREADY_EXISTS);
+                EXPECT_EQ(m_rt.lastBulkCreateStatuses[1], SAI_STATUS_ITEM_ALREADY_EXISTS);
+                EXPECT_EQ(consumer->m_toSync.size(), 2U);
+                EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.1.0/24")));
+                EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.2.0/24")));
+                checkSaiRoute("100.100.1.0/24", ownerNh);
+                checkSaiRoute("100.100.2.0/24", ownerNh);
+                checkResources(sibling);
+                if (sibling)
+                {
+                    ASSERT_TRUE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.3.0/24")));
+                    checkSaiRoute("100.100.3.0/24", ecmp ? gRouteOrch->getNextHopGroupId(nhg) :
+                                  gNeighOrch->getNextHopId(*nhg.getNextHops().begin()));
+                }
+            }
+
+            prepareOverlayEcmp();
+            delRoute("100.100.1.0/24");
+            checkSaiRoute("100.100.1.0/24", ownerNh);
+            checkResources(sibling);
+            if (sibling)
+            {
+                delRoute("100.100.2.0/24");
+                checkSaiRoute("100.100.2.0/24", ownerNh);
+                checkResources(true);
+                delRoute("100.100.3.0/24");
+            }
+            else
+            {
+                // The other pending SET must recreate its dependencies and
+                // succeed after the original owner withdraws (no new SET).
+                delVnetRoute("Vnet_resources", "100.100.2.0/24");
+                prepareOverlayEcmp();
+                static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+                ASSERT_TRUE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.2.0/24")));
+                checkResources(true);
+                delRoute("100.100.2.0/24");
+            }
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            checkResources(false);
+            string saiError;
+            EXPECT_FALSE(getSaiFailureStatus(saiError)) << saiError;
+            delVnetRoute("Vnet_resources", "100.100.1.0/24");
+            if (sibling) delVnetRoute("Vnet_resources", "100.100.2.0/24");
+            delVnet("Vnet_resources");
+            if (nvo)
+            {
+                auto *vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+                vrfConsumer->addToSync({{"Vrf_resources", DEL_COMMAND, {}}});
+                static_cast<Orch *>(gVrfOrch)->doTask(*vrfConsumer);
+            }
+            delVxlanTunnel("tunnel_resources");
         }
 
         // Assert the (still-present) next hop for endpoint ip carries the given
@@ -4956,16 +5305,8 @@ namespace vnetorch_test
     // APP_DB ROUTE_TABLE write (that netlink->APP_DB translation is covered by
     // test_route + tests_fpmsyncd, plan Sec 8.4) -- then drives gRouteOrch, which
     // is unaware of the VNET route and tries to program the same prefix in the
-    // same VR. libsaivs returns SAI_STATUS_ITEM_ALREADY_EXISTS (or NOT_EXECUTED
-    // for the other entries of a multi-route bulk) for that create, and
-    // handleSaiCreateStatus must treat it as success instead of calling
-    // handleSaiFailure (which records an unhealthy status + logs "Encountered
-    // failure in create operation"). The VS test asserts this via check_syslog
-    // for the ABSENCE of that failure message; the mock equivalent is
-    // getSaiFailureStatus() staying false. The remove side is symmetric
-    // (handleSaiRemoveStatus with ITEM_NOT_FOUND/NOT_EXECUTED). The captured
-    // duplicate status proves the conflicting create was really exercised, and
-    // the surviving route entry is the check_route_entries equivalent.
+    // same VR. The duplicate must be nonfatal without granting RouteOrch
+    // ownership: withdrawing the regular route must preserve the VNET route.
     TEST_F(VNetOrchTest, VnetDuplicateRouteHandledGracefully)
     {
         // scope=default -> the VNET reuses gVirtualRouterId (no VR of its own).
@@ -5006,9 +5347,7 @@ namespace vnetorch_test
         EXPECT_TRUE(sawDup) << "expected the duplicate route create to return "
                                "ITEM_ALREADY_EXISTS/NOT_EXECUTED from libsaivs";
 
-        // The mock equivalent of the VS check_syslog: handleSaiCreateStatus
-        // swallowed the duplicate, so orchagent recorded no SAI failure. Without
-        // the graceful handling this flag would be set and the failure logged.
+        // Duplicate handling must not mark orchagent unhealthy.
         std::string saiErr;
         EXPECT_FALSE(getSaiFailureStatus(saiErr))
             << "unexpected SAI failure on duplicate route create: " << saiErr;
@@ -5016,17 +5355,165 @@ namespace vnetorch_test
         // Route still present (check_route_entries equivalent).
         EXPECT_NE(findRoute("100.100.1.0"), nullptr);
 
-        // Tear down mirroring the VS order (remove FRR route, then the VNET
-        // route) -- exercising the graceful *remove* path: the second remove of
-        // the now-shared prefix returns ITEM_NOT_FOUND/NOT_EXECUTED, which
-        // handleSaiRemoveStatus must also swallow.
+        // The BGP withdrawal must not remove the route that VNET owns.
         delRoute("100.100.1.0/24");
+        EXPECT_NE(findRoute("100.100.1.0"), nullptr);
         delVnetRoute("Vnet_2000", "100.100.1.0/24");
         EXPECT_FALSE(getSaiFailureStatus(saiErr))
             << "unexpected SAI failure on duplicate route remove: " << saiErr;
 
         delVnet("Vnet_2000");
         delVxlanTunnel("tunnel_24");
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateRouteWithdrawalPreservesVnet)
+    {
+        checkDuplicateRouteOwnership(false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateEcmpRouteWithdrawalPreservesVnet)
+    {
+        checkDuplicateRouteOwnership(true, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateRouteRetriesAfterVnetRemoval)
+    {
+        checkDuplicateRouteOwnership(false, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateEcmpRouteRetriesAfterVnetRemoval)
+    {
+        checkDuplicateRouteOwnership(true, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateRoutePreservesSharedEcmpGroup)
+    {
+        setVxlanTunnel("tunnel_shared", "10.10.10.10");
+        setVnet("Vnet_shared", "tunnel_shared", "2000", "", false, "", "default");
+        setVnetRoute("Vnet_shared", "100.100.1.0/24", "10.10.10.3");
+        createL3Interface("Ethernet0", "10.10.10.1/24");
+        setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+        addNeighbor("Ethernet0", "10.10.10.3", "00:00:00:00:00:03");
+        addNeighbor("Ethernet0", "10.10.10.4", "00:00:00:00:00:04");
+
+        auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        const vector<FieldValueTuple> fields = {
+            {"nexthop", "10.10.10.3,10.10.10.4"}, {"ifname", "Ethernet0,Ethernet0"}};
+        consumer->addToSync({{"100.100.1.0/24", SET_COMMAND, fields},
+                             {"100.100.2.0/24", SET_COMMAND, fields}});
+        m_rt.splitBulkCreates = true;
+        static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+        m_rt.splitBulkCreates = false;
+        ASSERT_EQ(m_rt.lastBulkCreateStatuses.size(), 2U);
+        EXPECT_EQ(m_rt.lastBulkCreateStatuses[0], SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(m_rt.lastBulkCreateStatuses[1], SAI_STATUS_SUCCESS);
+
+        const NextHopGroupKey nhg("10.10.10.3@Ethernet0,10.10.10.4@Ethernet0");
+        EXPECT_FALSE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.1.0/24")));
+        EXPECT_TRUE(gRouteOrch->isRouteExists(gVirtualRouterId, IpPrefix("100.100.2.0/24")));
+        EXPECT_EQ(consumer->m_toSync.count("100.100.1.0/24"), 1U);
+        EXPECT_EQ(consumer->m_toSync.count("100.100.2.0/24"), 0U);
+        ASSERT_TRUE(gRouteOrch->hasNextHopGroup(nhg));
+        EXPECT_EQ(gRouteOrch->getNextHopGroupRefCount(nhg), 1);
+
+        const auto groupId = gRouteOrch->getNextHopGroupId(nhg);
+        EXPECT_EQ(activeMembers(groupId), 2U);
+        for (const auto &member : m_rt.members)
+        {
+            if (member.nhg != groupId)
+            {
+                continue;
+            }
+            sai_attribute_t attr{};
+            attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+            ASSERT_EQ(old_sai_next_hop_group_api->get_next_hop_group_member_attribute(
+                          member.oid, 1, &attr), SAI_STATUS_SUCCESS);
+            EXPECT_EQ(attr.value.oid, member.nh);
+        }
+
+        delRoute("100.100.1.0/24");
+        EXPECT_NE(findRoute("100.100.1.0"), nullptr);
+        delRoute("100.100.2.0/24");
+        EXPECT_FALSE(gRouteOrch->hasNextHopGroup(nhg));
+        delVnetRoute("Vnet_shared", "100.100.1.0/24");
+        delVnet("Vnet_shared");
+        delVxlanTunnel("tunnel_shared");
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateMplsResources)
+    {
+        checkDuplicateRouteResources("mpls", false, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateMplsSharedResources)
+    {
+        checkDuplicateRouteResources("mpls", false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateMplsEcmpResources)
+    {
+        checkDuplicateRouteResources("mpls", true, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateMplsEcmpSharedResources)
+    {
+        checkDuplicateRouteResources("mpls", true, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateOverlayResources)
+    {
+        checkDuplicateRouteResources("overlay", false, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateOverlaySharedResources)
+    {
+        checkDuplicateRouteResources("overlay", false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateOverlayEcmpResources)
+    {
+        checkDuplicateRouteResources("overlay", true, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateOverlayEcmpSharedResources)
+    {
+        checkDuplicateRouteResources("overlay", true, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateSrv6Resources)
+    {
+        checkDuplicateRouteResources("srv6", false, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateSrv6SharedResources)
+    {
+        checkDuplicateRouteResources("srv6", false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateSrv6EcmpResources)
+    {
+        checkDuplicateRouteResources("srv6", true, false);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateSrv6EcmpSharedResources)
+    {
+        checkDuplicateRouteResources("srv6", true, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateMplsMixedSingleEcmpResources)
+    {
+        checkDuplicateRouteResources("mpls", true, false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateOverlayMixedSingleEcmpResources)
+    {
+        checkDuplicateRouteResources("overlay", true, false, true);
+    }
+
+    TEST_F(VNetOrchTest, VnetDuplicateSrv6MixedSingleEcmpResources)
+    {
+        checkDuplicateRouteResources("srv6", true, false, true);
     }
 
     // A (non-default-scope) VNET VR gets an IPv6 link-local (fe80::/10) trap
