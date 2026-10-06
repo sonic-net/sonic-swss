@@ -119,6 +119,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    string primary_nh_count = string();
     bool includeEmptyFields = false;
 };
 
@@ -231,6 +232,31 @@ public:
 
     void setSuppressionEnabled(bool enabled);
 
+    /*
+     * BGP PIC backup nexthops travel as the SONiC-private FPM_RTA_BACKUP_NH
+     * top-level attribute. libnl's rtnl_route parser doesn't know the
+     * attribute number (it's above RTA_MAX), so FpmLink hands the raw
+     * nlmsghdr to setPendingBackupNexthopsFromRawMsg() before dispatching
+     * the libnl-converted message; getNextHopList()/getNextHopWt() then
+     * append the parsed backups onto the same comma-separated lists they
+     * already build for primaries, with primary_nh_count marking the
+     * boundary. The pending state is overwritten on each call, so it always
+     * scopes to the in-flight message.
+     *
+     * Each backup carries gateway, ifindex and weight. An SRv6 backup also
+     * carries its SID and encap source, in the same encap block an SRv6
+     * steer route uses; MPLS labels aren't carried by the encoder.
+     */
+    struct BackupNexthop
+    {
+        std::string gw;     // formatted gateway (e.g. "10.0.0.99" or "::")
+        int if_index{0};
+        uint8_t weight{1};
+        std::string vpn_sid;    // SRv6 SID; empty for a plain IP backup
+        std::string seg_src;    // SRv6 encap source; empty if not sent
+    };
+    void setPendingBackupNexthopsFromRawMsg(struct nlmsghdr *h);
+
     bool isSuppressionEnabled() const
     {
         return m_isSuppressionEnabled;
@@ -327,10 +353,18 @@ private:
     map<uint32_t,NextHopGroup> m_nh_groups;
     /* SID list to refcount */
     map<string, uint32_t> m_srv6_sidlist_refcnt;
+    /* Route key to the SRV6_SID_LIST_TABLE keys its SRv6 backups hold */
+    map<string, vector<string>> m_routeBackupSidLists;
 
     WarmStartHelper  m_warmStartHelper;
 
     bool                m_isSuppressionEnabled{false};
+
+    /* Backup nexthops parsed from the in-flight message's FPM_RTA_BACKUP_NH;
+     * see setPendingBackupNexthopsFromRawMsg(). Written by FpmLink and read
+     * by getNextHopList()/getNextHopWt() in the same dispatch path on
+     * fpmsyncd's single thread, so no synchronization is needed. */
+    std::vector<BackupNexthop> m_pendingBackupNexthops;
     FpmInterface*       m_fpmInterface {nullptr};
 
     MacSync*            m_macsync {nullptr};
@@ -344,6 +378,16 @@ private:
     void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac);
 
     void parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid, string &src_addr);
+    /* Take or drop a reference on an SRV6_SID_LIST_TABLE entry; the entry
+     * is written on the first reference and removed with the last one. */
+    void addSrv6SidListRef(const string &sidListKey);
+    void delSrv6SidListRef(const string &sidListKey);
+    /* Record the SID lists a route's SRv6 backups hold, dropping the ones
+     * it held before; an empty list releases them all. */
+    void setRouteBackupSidLists(const string &routeKey, vector<string> sidListKeys);
+    /* Build segment/seg_src for a route whose backups include SRv6 ones */
+    void getBackupSegmentLists(int primary_count, string &segment,
+                               string &seg_src, vector<string> &sidLists);
     bool parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id, uint32_t &nhg_id);
 
     bool parseSrv6MySid(struct rtattr *tb[], string &block_len,
@@ -403,9 +447,9 @@ private:
     bool getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
                                struct rtattr *tb[], uint32_t &pic_id,uint32_t &nhg_id);
 
-    /* Get next hop list */
-    void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
-                        string& mpls_list, string& intf_list);
+    /* Get next hop list, returns the number of primary nexthops */
+    int getNextHopList(struct rtnl_route *route_obj, string& gw_list,
+                       string& mpls_list, string& intf_list);
 
     /* Get next hop gateway IP addresses */
     string getNextHopGw(struct rtnl_route *route_obj);
