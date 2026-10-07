@@ -286,6 +286,25 @@ namespace nbrmgr_ut
         EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
     }
 
+    TEST_F(NbrMgrTest, LeavesFailedRoutedIpv6NeighborsToKernel)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        for (const auto& key : {"PortChannel101:fc00::72",
+                               "Ethernet0:2001:db8::1",
+                               "Loopback0:2001:db8::2"})
+        {
+            SCOPED_TRACE(key);
+            processFailedNeighborRequest(nbrmgr, key);
+
+            EXPECT_TRUE(capturedNeighborRequests.empty());
+            EXPECT_TRUE(mockCallArgs.empty());
+            EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+        }
+    }
+
     TEST_F(NbrMgrTest, NoSolicitationResponseIsSuccess)
     {
         std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
