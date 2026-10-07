@@ -92,12 +92,45 @@ struct RouteNhg
      */
     NextHopGroupKey desired_nhg_key;
 
+    /*
+     * Key into NhgOrch::m_protNhgs for routes using a software-driven,
+     * two-level protection NHG (primary_nh_count partitioning). Empty for
+     * ECMP/non-protection routes.
+     *
+     * This does NOT replace nhg_key -- both are populated for a protected
+     * route. nhg_key holds the route's full next-hop set across both roles,
+     * unordered, so it cannot express the primary/standby split (a 2:2, a 1:3
+     * and a plain ECMP route over the same next hops all yield the same
+     * nhg_key). prot_nhg_key is the owning handle, the sharing identity for
+     * refcounting, and part of operator== so a re-partition is seen as a change.
+     *
+     *   route kind        nhg_key            nhg_index  prot_nhg_key  group owned by
+     *   single next hop   1 NH               -          -             n/a
+     *   RouteOrch ECMP    >1 NH              -          -             m_syncdNextHopGroups
+     *   NhgOrch-owned     >1 NH              set        -             NhgOrch::m_syncdNextHopGroups
+     *   protection        full set, 2 roles  -          set           NhgOrch::m_protNhgs
+     *
+     * Consequently nhg_key.getSize() > 1 no longer implies an entry in
+     * RouteOrch::m_syncdNextHopGroups. Dispatch on ownership (prot_nhg_key,
+     * then nhg_index, then RouteOrch) before looking nhg_key up in that map --
+     * see removeRoutePost() and the fine-grained transition in addRoutePost().
+     *
+     * Not currently supported: a protected route whose next hops are mux next
+     * hops. The mux paths iterate the full nhg_key, which spans both roles.
+     */
+    std::string prot_nhg_key;
+
     RouteNhg() = default;
-    RouteNhg(const NextHopGroupKey& key, const std::string& index, const std::string &context_index = "") :
-        nhg_key(key), nhg_index(index), context_index(context_index) {}
+    RouteNhg(const NextHopGroupKey& key, const std::string& index,
+             const std::string &context_index = "",
+             const std::string &prot_key = "") :
+        nhg_key(key), nhg_index(index), context_index(context_index),
+        prot_nhg_key(prot_key) {}
 
     bool operator==(const RouteNhg& rnhg)
-       { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index) && (context_index == rnhg.context_index)); }
+       { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index) &&
+                 (context_index == rnhg.context_index) &&
+                 (prot_nhg_key == rnhg.prot_nhg_key)); }
     bool operator!=(const RouteNhg& rnhg) { return !(*this == rnhg); }
 };
 
@@ -157,6 +190,17 @@ struct RouteBulkContext
     std::vector<string>                 rmacv;
     bool                                vrf_group_flag;
 
+    /*
+     * Two-level protection NHG plumbing. Filled when protection NHGs are
+     * supported and the APPL_DB route has 0 < primary_nh_count < total
+     * nexthops. primary_nhg_key / standby_nhg_key partition the nexthops
+     * into roles; prot_nhg_key is the outer NhgOrch-owned PROTECTION group.
+     * The inner ECMPs are privately owned by the ProtNhg.
+     */
+    std::string                         prot_nhg_key;
+    NextHopGroupKey                     primary_nhg_key;
+    NextHopGroupKey                     standby_nhg_key;
+
     std::string                         key;       // Key in database table
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
@@ -186,6 +230,9 @@ struct RouteBulkContext
         protocol.clear();
         fallback_to_default_route = false;
         retry_cst = DUMMY_CONSTRAINT;
+        prot_nhg_key.clear();
+        primary_nhg_key.clear();
+        standby_nhg_key.clear();
     }
 };
 

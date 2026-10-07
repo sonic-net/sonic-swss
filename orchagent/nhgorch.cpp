@@ -470,6 +470,8 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
+    bool success = true;
+
     /*
      * Iterate through all groups and validate the next hop in those who
      * contain it.
@@ -481,15 +483,16 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
         if (nhg->hasMember(nh_key))
         {
             /*
-             * If sync fails, exit right away, as we expect it to be due to a
-             * raeson for which any other future validations will fail too.
+             * If sync fails, stop iterating, as we expect it to be due to a
+             * reason for which any other future validations will fail too.
              */
             if (!nhg->validateNextHop(nh_key))
             {
                 SWSS_LOG_ERROR("Failed to validate next hop %s in group %s",
                                 nh_key.to_string().c_str(),
                                 it.first.c_str());
-                return false;
+                success = false;
+                break;
             }
         }
     }
@@ -499,9 +502,6 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
      * is what completes deferred member resolution: a protection NHG may be
      * created before its next hops resolve, and its members stay unsynced until
      * the next hop turns up here.
-     *
-     * There is deliberately no counterpart in invalidateNextHop(); see the
-     * comment there.
      */
     for (auto& it : m_protNhgs)
     {
@@ -509,17 +509,26 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 
         /* Members are keyed by role, so there is no membership test to make
          * here: the group decides for itself which of its members, if any,
-         * this next hop unblocks. */
+         * this next hop unblocks. Each group is independent, so a failure in
+         * one must not skip the rest: log-and-continue. */
         if (!nhg->validateNextHop(nh_key))
         {
             SWSS_LOG_ERROR("Failed to validate next hop %s in protection group %s",
                             nh_key.to_string().c_str(),
                             it.first.c_str());
-            return false;
+            success = false;
+        }
+
+        /* Switchback for a group that elected NeighOrch liveness as its
+         * observation source; a no-op for every other group. */
+        if (!nhg->updateSwitchoverState())
+        {
+            SWSS_LOG_WARN("Failed to update switchover state for protection NHG %s",
+                          it.first.c_str());
         }
     }
 
-    return true;
+    return success;
 }
 
 /*
@@ -535,6 +544,8 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
+    bool success = true;
+
     /*
      * Iterate through all groups and invalidate the next hop from those who
      * contain it.
@@ -545,26 +556,37 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 
         if (nhg->hasMember(nh_key))
         {
-            /* If the remove fails, exit right away. */
+            /* If the remove fails, stop iterating. */
             if (!nhg->invalidateNextHop(nh_key))
             {
                 SWSS_LOG_WARN("Failed to invalidate next hop %s from group %s",
                                 nh_key.to_string().c_str(),
                                 it.first.c_str());
-                return false;
+                success = false;
+                break;
             }
         }
     }
 
     /*
-     * Protection NHGs are deliberately skipped: both legs stay programmed and
-     * switching to the standby is the owning application's decision, applied
-     * with SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER or left to the hardware via
-     * the monitored object.  Dropping a member here would pre-empt that, and
-     * would delete the primary's monitored object with it.
+     * Protection NHGs keep both legs programmed and switch over rather than
+     * dropping a member, so no outer member is removed here. Switching is the
+     * owner's decision: applied with SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER,
+     * left to the hardware via the monitored object, or -- for a group whose
+     * owner elected NeighOrch liveness as its observation source -- derived
+     * here from this event. Groups are independent: log-and-continue.
      */
+    for (auto& it : m_protNhgs)
+    {
+        if (!it.second.nhg->handleNextHopDown(nh_key))
+        {
+            SWSS_LOG_WARN("Failed to handle next hop %s going down in protection "
+                          "group %s", nh_key.to_string().c_str(), it.first.c_str());
+            success = false;
+        }
+    }
 
-    return true;
+    return success;
 }
 
 /*
@@ -1771,6 +1793,21 @@ bool NhgOrch::setProtNhgSwitchover(const string &key, bool enable)
     return it->second.nhg->setSwitchover(enable);
 }
 
+bool NhgOrch::setProtNhgObservationSource(const string &key,
+                                          ProtNhgObservationSource source)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->setObservationSource(source);
+}
+
 bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
                                             ProtNhgRole role,
                                             sai_object_id_t monitored_oid)
@@ -1891,6 +1928,18 @@ bool NhgOrch::detachProtNhgMonitoredObject(const string &key, ProtNhgRole role)
                     (role == ProtNhgRole::PRIMARY) ? "primary" : "standby",
                     key.c_str());
 
+    /*
+     * While the hardware owned the switchover, SET_SWITCHOVER was cleared by
+     * the attach and the active leg may have moved without us. A group whose
+     * owner elected NEIGH_LIVENESS re-derives the leg from current liveness
+     * now that software decides again; for any other group this is a no-op.
+     */
+    if (!nhg.updateSwitchoverState())
+    {
+        SWSS_LOG_WARN("Protection NHG %s: switchover re-evaluation after detach "
+                      "failed; the next liveness event retries it", key.c_str());
+    }
+
     return true;
 }
 
@@ -1981,4 +2030,16 @@ void NhgOrch::decProtNhgRefCount(const string &key)
     auto &entry = m_protNhgs.at(key);
     assert(entry.ref_count > 0);
     --entry.ref_count;
+}
+
+uint32_t NhgOrch::getProtNhgRefCount(const string &key) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        return 0;
+    }
+    return it->second.ref_count;
 }

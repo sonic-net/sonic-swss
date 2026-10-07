@@ -38,6 +38,21 @@ enum class ProtNhgMemberType
 };
 
 /*
+ * Who supplies the up/down observation that drives a SW-driven group's
+ * switchover. NONE is the default: the owning application decides and calls
+ * NhgOrch::setProtNhgSwitchover(). NEIGH_LIVENESS lets the owner elect
+ * NeighOrch's next hop state as its observation source instead: on every next
+ * hop up/down event NhgOrch derives the role from the liveness of each leg and
+ * applies it. The signal is still the owner's choice; NhgOrch only applies it,
+ * and never while the group is HW-autonomous.
+ */
+enum class ProtNhgObservationSource
+{
+    NONE,
+    NEIGH_LIVENESS,
+};
+
+/*
  * ProtNhgMember represents a member of a protection next hop group.
  * A member is identified by its role, not by what it forwards to: the role is
  * the only identity that is known up front and never changes, whereas the
@@ -90,6 +105,9 @@ public:
     /* Meaningful only for SHARED_NHG members; empty otherwise. */
     inline const string& getNhgIndex() const { return m_nhg_index; }
 
+    /* Meaningful only for OWNED_NHG members; nullptr otherwise. */
+    inline const NextHopGroup* getOwnedNhg() const { return m_owned_nhg.get(); }
+
     /*
      * Resolved on every call rather than cached, so a member always programs
      * against the nested group's current SAI ID.
@@ -116,6 +134,15 @@ public:
      * types, and for a next hop the group does not contain.
      */
     bool validateOwnedNextHop(const NextHopKey &nh_key);
+
+    /*
+     * Prune a next hop that went down from an owned nested group, the mirror
+     * of validateOwnedNextHop(). A no-op for the other member types, for a
+     * next hop the group does not contain, and for a single-next-hop group:
+     * that one aliases its next hop's SAI ID, which is what this member is
+     * programmed with, so there is nothing to shrink.
+     */
+    bool invalidateOwnedNextHop(const NextHopKey &nh_key);
 
     /* Query the hardware-observed role (active/inactive) from SAI. */
     bool getObservedRole(sai_next_hop_group_member_observed_role_t &observed_role) const;
@@ -214,6 +241,38 @@ public:
     /* Trigger switchover from primary to standby -- SW-driven only. */
     bool setSwitchover(bool enable);
 
+    /*
+     * Elect (or clear) the observation source for this group's switchover.
+     * Electing NEIGH_LIVENESS evaluates the role right away, in case a leg
+     * was already dead when the group was created.
+     */
+    bool setObservationSource(ProtNhgObservationSource source);
+    inline ProtNhgObservationSource getObservationSource() const
+        { return m_observation_source; }
+
+    /*
+     * A next hop this group forwards through went down. Acts only when the
+     * owner elected NEIGH_LIVENESS and the group is SW-driven: switches over
+     * first if the active leg just lost its last live next hop and the other
+     * leg has one, then prunes the next hop from an owned leg. A shared leg is
+     * pruned by NhgOrch's own ECMP walk before this runs, so for it only the
+     * role is re-evaluated. Outer members are never removed, so both legs
+     * stay programmed.
+     */
+    bool handleNextHopDown(const NextHopKey &nh_key);
+
+    /*
+     * Re-evaluate the active leg from the liveness of the primary leg, tracked
+     * via NeighOrch: switch to the standby when no primary next hop is live,
+     * back to the primary when one is. Never switches onto a leg with no live
+     * next hop. No-op unless the owner elected NEIGH_LIVENESS, and for
+     * HW-autonomous or unsynced groups.
+     */
+    bool updateSwitchoverState();
+
+    /* True when the standby leg is the active one (SET_SWITCHOVER=true). */
+    inline bool isSwitchedOver() const { return m_switched_over; }
+
     /* Role-addressed member operations; these reach every member type. */
     bool updateMemberMonitoredObject(ProtNhgRole role,
                                      sai_object_id_t monitored_oid);
@@ -247,6 +306,24 @@ public:
     string to_string() const override { return m_key; }
 
 private:
+    ProtNhgObservationSource m_observation_source = ProtNhgObservationSource::NONE;
+
+    /* Tracks software-driven switchover state for SW-driven groups. */
+    bool m_switched_over = false;
+
+    /* True while NhgOrch is to derive and apply this group's role. */
+    bool drivesOwnSwitchover() const;
+
+    /* True if the given role's leg has at least one live next hop: resolved
+     * in NeighOrch with its interface up. Used to gate switchover so
+     * it never targets an empty leg. */
+    bool roleHasLiveMember(ProtNhgRole role) const;
+
+    /* Before the active leg loses its last live next hop, move traffic to the
+     * other leg if that one has a live next hop. False only on a failed SAI
+     * write. */
+    bool switchAwayFromDyingLeg(ProtNhgRole role);
+
     /* Find the NEXT_HOP member resolving to nh_key, or nullptr. */
     const ProtNhgMember* findMemberByNextHop(const NextHopKey &nh_key) const;
     ProtNhgMember* findMemberByNextHop(const NextHopKey &nh_key);

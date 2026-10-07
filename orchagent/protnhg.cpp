@@ -280,6 +280,31 @@ bool ProtNhgMember::validateOwnedNextHop(const NextHopKey &nh_key)
     return m_owned_nhg->validateNextHop(nh_key);
 }
 
+bool ProtNhgMember::invalidateOwnedNextHop(const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_type != ProtNhgMemberType::OWNED_NHG || !m_owned_nhg)
+    {
+        return true;
+    }
+
+    if (!m_owned_nhg->isSynced() || !m_owned_nhg->hasMember(nh_key))
+    {
+        return true;
+    }
+
+    /* A single-next-hop group has no SAI group of its own: its ID is the next
+     * hop's, and so is this member's NEXT_HOP_ID. Invalidating it would null
+     * that ID under a live member. Switchover is the only remedy for it. */
+    if (m_owned_nhg->getSize() == 1)
+    {
+        return true;
+    }
+
+    return m_owned_nhg->invalidateNextHop(nh_key);
+}
+
 bool ProtNhgMember::getObservedRole(
     sai_next_hop_group_member_observed_role_t &observed_role) const
 {
@@ -372,7 +397,9 @@ ProtNhg::ProtNhg(const string &key,
 }
 
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
-    NhgCommon(move(nhg))
+    NhgCommon(move(nhg)),
+    m_observation_source(nhg.m_observation_source),
+    m_switched_over(nhg.m_switched_over)
 {
     SWSS_LOG_ENTER();
 }
@@ -655,7 +682,239 @@ bool ProtNhg::setSwitchover(bool enable)
     SWSS_LOG_NOTICE("Set switchover %s on protection NHG %s",
                     enable ? "true" : "false", m_key.c_str());
 
+    /* The cache mirrors the last successful write, whoever made it: our
+     * liveness logic, the owner via setProtNhgSwitchover(), or the attach
+     * path clearing a standing switchover before handing over to hardware. */
+    m_switched_over = enable;
+
     return true;
+}
+
+bool ProtNhg::roleHasLiveMember(ProtNhgRole role) const
+{
+    SWSS_LOG_ENTER();
+
+    /*
+     * The role's leg has at least one live next hop: for a plain member its
+     * own next hop, for a nested NHG (owned or shared) any member of that
+     * group. "Live" == present in NeighOrch with its interface up,
+     * the same test NeighOrch applies before pruning an ECMP member.
+     */
+    const ProtNhgMember *mbr = getMember(role);
+    if (mbr == nullptr)
+    {
+        return false;
+    }
+
+    set<NextHopKey> nhs;
+
+    switch (mbr->getType())
+    {
+        case ProtNhgMemberType::NEXT_HOP:
+            nhs.insert(mbr->getNextHopKey());
+            break;
+
+        case ProtNhgMemberType::SHARED_NHG:
+            if (gNhgOrch->hasNhg(mbr->getNhgIndex()))
+            {
+                nhs = gNhgOrch->getNhg(mbr->getNhgIndex()).getKey().getNextHops();
+            }
+            break;
+
+        case ProtNhgMemberType::OWNED_NHG:
+            if (mbr->getOwnedNhg() != nullptr)
+            {
+                nhs = mbr->getOwnedNhg()->getKey().getNextHops();
+            }
+            break;
+    }
+
+    for (const auto &nh : nhs)
+    {
+        if (gNeighOrch->hasNextHop(nh) && !gNeighOrch->isNextHopFlagSet(nh, NHFLAGS_IFDOWN))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ProtNhg::drivesOwnSwitchover() const
+{
+    SWSS_LOG_ENTER();
+
+    return m_observation_source == ProtNhgObservationSource::NEIGH_LIVENESS &&
+           isSynced() && !isHwAutonomous();
+}
+
+bool ProtNhg::setObservationSource(ProtNhgObservationSource source)
+{
+    SWSS_LOG_ENTER();
+
+    m_observation_source = source;
+
+    return updateSwitchoverState();
+}
+
+bool ProtNhg::switchAwayFromDyingLeg(ProtNhgRole role)
+{
+    SWSS_LOG_ENTER();
+
+    bool active = (role == ProtNhgRole::PRIMARY) ? !m_switched_over
+                                                  : m_switched_over;
+
+    /* NeighOrch flags the next hop down before calling in, so the leg's
+     * liveness already excludes it: a live member left means no move. */
+    if (!active || roleHasLiveMember(role))
+    {
+        return true;
+    }
+
+    ProtNhgRole other = (role == ProtNhgRole::PRIMARY) ? ProtNhgRole::STANDBY
+                                                        : ProtNhgRole::PRIMARY;
+
+    /* All-paths-dead guard: nowhere to move to. Stay put and
+     * black-hole; the caller keeps the leg's last member for the same reason. */
+    if (!roleHasLiveMember(other))
+    {
+        SWSS_LOG_NOTICE("Protection NHG %s: all paths down; not switching over",
+                        m_key.c_str());
+        return true;
+    }
+
+    return setSwitchover(other == ProtNhgRole::STANDBY);
+}
+
+bool ProtNhg::handleNextHopDown(const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (!drivesOwnSwitchover())
+    {
+        return true;
+    }
+
+    bool touched = false;
+    bool success = true;
+
+    for (auto &entry : m_members)
+    {
+        ProtNhgMember &mbr = entry.second;
+
+        switch (mbr.getType())
+        {
+            case ProtNhgMemberType::NEXT_HOP:
+                /* Nothing to prune: the outer member stays programmed and
+                 * switchover alone steers traffic off it. */
+                if (mbr.getNextHopKey() == nh_key)
+                {
+                    touched = true;
+                }
+                break;
+
+            case ProtNhgMemberType::OWNED_NHG:
+            {
+                const NextHopGroup *owned = mbr.getOwnedNhg();
+
+                if (owned == nullptr || !owned->hasMember(nh_key))
+                {
+                    break;
+                }
+
+                touched = true;
+
+                /*
+                 * Move traffic before the leg empties. When that is impossible
+                 * (all paths dead) keep the leg's last member instead: an
+                 * emptied active ECMP is realized as a drop.
+                 */
+                if (!switchAwayFromDyingLeg(entry.first))
+                {
+                    success = false;
+                    break;
+                }
+
+                bool active = (entry.first == ProtNhgRole::PRIMARY)
+                                  ? !m_switched_over : m_switched_over;
+
+                if (active && !roleHasLiveMember(entry.first))
+                {
+                    SWSS_LOG_NOTICE("Protection NHG %s: keeping the last member "
+                                    "of the active %s leg", m_key.c_str(),
+                                    roleToString(entry.first));
+                    break;
+                }
+
+                if (!mbr.invalidateOwnedNextHop(nh_key))
+                {
+                    success = false;
+                }
+                break;
+            }
+
+            case ProtNhgMemberType::SHARED_NHG:
+                /*
+                 * NhgOrch pruned its own group in the ECMP loop that runs
+                 * before this walk, so there is nothing to shrink here and no
+                 * switch-before-shrink ordering to enforce: the shared leg
+                 * may already be empty by the time we look. What is ours is
+                 * the role, so mark the event as ours when the dying next hop
+                 * is a member of the shared group backing this leg.
+                 */
+                if (gNhgOrch->hasNhg(mbr.getNhgIndex()) &&
+                    gNhgOrch->getNhg(mbr.getNhgIndex()).hasMember(nh_key))
+                {
+                    touched = true;
+                }
+                break;
+        }
+    }
+
+    if (!touched)
+    {
+        return true;
+    }
+
+    if (!updateSwitchoverState())
+    {
+        success = false;
+    }
+
+    return success;
+}
+
+bool ProtNhg::updateSwitchoverState()
+{
+    SWSS_LOG_ENTER();
+
+    if (!drivesOwnSwitchover())
+    {
+        return true;
+    }
+
+    bool wanted = !roleHasLiveMember(ProtNhgRole::PRIMARY);
+    if (wanted == m_switched_over)
+    {
+        return true;
+    }
+
+    /*
+     * All-paths-dead guard: never switch onto a leg that has
+     * no live member. If the last primary is gone but no standby is live either,
+     * do not issue SET_SWITCHOVER -- stay Primary_Active and black-hole. The next
+     * validate re-runs this once any path recovers (self-heal). We pre-check
+     * here rather than relying on a SAI/SDK rejection.
+     */
+    if (wanted && !roleHasLiveMember(ProtNhgRole::STANDBY))
+    {
+        SWSS_LOG_NOTICE("Protection NHG %s: all primaries down and no live "
+                        "standby; not switching over (black-hole until recovery)",
+                        m_key.c_str());
+        return true;
+    }
+
+    return setSwitchover(wanted);
 }
 
 bool ProtNhg::updateMemberMonitoredObject(ProtNhgRole role,

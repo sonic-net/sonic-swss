@@ -242,6 +242,15 @@ public:
     bool setProtNhgSwitchover(const string &key, bool enable);
 
     /*
+     * Elect who observes for a SW-driven group. With NEIGH_LIVENESS NhgOrch
+     * derives the group's role from NeighOrch next hop liveness on every
+     * validate/invalidate event and applies it; with NONE (the default) the
+     * owner drives setProtNhgSwitchover() itself.
+     */
+    bool setProtNhgObservationSource(const string &key,
+                                     ProtNhgObservationSource source);
+
+    /*
      * Attach a monitored object to a protection NHG member, promoting the
      * group from SW-driven to HW-autonomous. Rejected if the object's type is
      * not in getSupportedMonitoredObjectTypes(); the group is left SW-driven
@@ -278,6 +287,7 @@ public:
     /* Ref counting for protection NHGs. */
     void incProtNhgRefCount(const string &key);
     void decProtNhgRefCount(const string &key);
+    uint32_t getProtNhgRefCount(const string &key) const;
 
 private:
     void doTask(Consumer& consumer) override;

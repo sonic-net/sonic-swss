@@ -63,6 +63,32 @@ namespace protnhg_test
         gNeighOrch->m_syncdNextHops.erase(nh);
     }
 
+    /* Resolve every next hop of a NextHopGroupKey in NeighOrch, so an owned
+     * leg built from it can sync all its members. */
+    static void registerNhgKey(const NextHopGroupKey &nhg_key)
+    {
+        for (const auto &nh : nhg_key.getNextHops())
+        {
+            registerNextHop(nh);
+        }
+    }
+
+    static void unregisterNhgKey(const NextHopGroupKey &nhg_key)
+    {
+        for (const auto &nh : nhg_key.getNextHops())
+        {
+            unregisterNextHop(nh);
+        }
+    }
+
+    /* What RouteOrch does right after creating a group: NeighOrch liveness
+     * becomes the observation source, so NhgOrch derives the role. */
+    static void electLiveness(const string &key)
+    {
+        ASSERT_TRUE(gNhgOrch->setProtNhgObservationSource(
+            key, ProtNhgObservationSource::NEIGH_LIVENESS));
+    }
+
     /*
      * A real port OID from the mock switch. attachProtNhgMonitoredObject()
      * resolves an object's type with sai_object_type_query(), so tests must
@@ -1808,5 +1834,446 @@ namespace protnhg_test
 
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
+    }
+
+    /*
+     * An unresolved member does not fail creation: the SAI group exists, the
+     * member is tracked but unsynced, and validateNextHop() completes it when
+     * the next hop resolves.
+     */
+    TEST_F(ProtNhgTest, UnresolvedMemberDefersCreate)
+    {
+        string key = "prot_nhg_unresolved_member";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(standby_nh);   /* primary deliberately unresolved */
+
+        EXPECT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(key));
+
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getSize(), 2u);
+        ASSERT_NE(nhg.getPrimaryMember(), nullptr);
+        EXPECT_FALSE(nhg.getPrimaryMember()->isSynced());
+        ASSERT_NE(nhg.getStandbyMember(), nullptr);
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+
+        /* The primary resolves; the deferred member is filled in. */
+        registerNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(primary_nh));
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    /*
+     * A shared leg is pruned by NhgOrch's ECMP loop, not by the protection
+     * group, but the role is still the protection group's to derive when
+     * the owner elected NEIGH_LIVENESS: losing the last live primary must
+     * switch over on the down event itself, not on the next unrelated up.
+     */
+    TEST_F(ProtNhgTest, SharedLegLivenessSwitchesOverOnDownEvent)
+    {
+        NextHopKey p1(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey p2(IpAddress("10.0.0.2"), string("Ethernet0"));
+        NextHopKey s1(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(p1);
+        registerNextHop(p2);
+        registerNextHop(s1);
+
+        addEcmpNhg("ID100", NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"));
+        addEcmpNhg("ID200", NextHopGroupKey("10.0.0.100@Ethernet4"));
+
+        string key = "prot_shared_liveness";
+        ASSERT_TRUE(gNhgOrch->createProtNhgShared(key, "ID100", "ID200"));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        /* One primary of two: the leg is still live, no switchover. */
+        unregisterNextHop(p1);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(p1));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        /* The last primary: switch over in this same event. */
+        unregisterNextHop(p2);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(p2));
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        /* Both outer members were left programmed throughout. */
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+
+        /* A primary recovers: back to the primary. */
+        registerNextHop(p1);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(p1));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        removeEcmpNhg("ID100");
+        removeEcmpNhg("ID200");
+        unregisterNextHop(p1);
+        unregisterNextHop(p2);
+        unregisterNextHop(s1);
+    }
+
+    /*
+     * Attaching a monitored object clears SET_SWITCHOVER (upstream, so the
+     * hardware is not fought); the cache must follow, and detach must land
+     * the group on the right leg from current liveness rather than inherit
+     * whatever the attribute held while the hardware was in charge.
+     */
+    TEST_F(ProtNhgTest, AttachDetachKeepsLivenessStateCoherent)
+    {
+        string key = "prot_liveness_attach_detach";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        /* Primary dies: switched over. */
+        unregisterNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(primary_nh));
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        /* Attach clears the standing switchover; the cache says so too. */
+        EXPECT_TRUE(gNhgOrch->attachProtNhgMonitoredObject(
+            key, ProtNhgRole::PRIMARY, monitoredOid()));
+        EXPECT_TRUE(nhg.isHwAutonomous());
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        /* Liveness events are the hardware's business meanwhile. */
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(primary_nh));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        /* Detach: primary still dead, standby live -> switch over now,
+         * not on some later unrelated event. */
+        EXPECT_TRUE(gNhgOrch->detachProtNhgMonitoredObject(key, ProtNhgRole::PRIMARY));
+        EXPECT_FALSE(nhg.isHwAutonomous());
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        registerNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(primary_nh));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    /* The owner's own setProtNhgSwitchover() is a write like any other: the
+     * cache follows it, so a later election starts from the truth. */
+    TEST_F(ProtNhgTest, OwnerSwitchoverIsSeenByLivenessCache)
+    {
+        string key = "prot_owner_switchover";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        EXPECT_TRUE(gNhgOrch->setProtNhgSwitchover(key, true));
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        /* Electing liveness with a live primary switches back at once. */
+        electLiveness(key);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    /* Without an elected source a group follows upstream's contract: next
+     * hops going down and coming back change nothing, the owner drives
+     * setProtNhgSwitchover() itself. */
+    TEST_F(ProtNhgTest, NoObservationSourceLeavesSwitchoverToOwner)
+    {
+        string key = "prot_no_observer";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getObservationSource(), ProtNhgObservationSource::NONE);
+
+        unregisterNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(primary_nh));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+
+        registerNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(primary_nh));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    /* 1:1 with liveness elected: the primary going down switches over and
+     * leaves both outer members programmed; coming back switches back. */
+    TEST_F(ProtNhgTest, SwitchoverAndSwitchbackOnPrimaryLiveness)
+    {
+        string key = "prot_liveness_1_1";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_EQ(nhg.getObservationSource(), ProtNhgObservationSource::NEIGH_LIVENESS);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        sai_object_id_t primary_gm = nhg.getPrimaryMember()->getId();
+        sai_object_id_t standby_gm = nhg.getStandbyMember()->getId();
+
+        unregisterNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(primary_nh));
+        EXPECT_TRUE(nhg.isSwitchedOver());
+        EXPECT_EQ(nhg.getPrimaryMember()->getId(), primary_gm);
+        EXPECT_EQ(nhg.getStandbyMember()->getId(), standby_gm);
+
+        registerNextHop(primary_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(primary_nh));
+        EXPECT_FALSE(nhg.isSwitchedOver());
+        EXPECT_EQ(nhg.getPrimaryMember()->getId(), primary_gm);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    // When the last primary goes down and no standby is live,
+    // orchagent must NOT switch over onto the dead standby -- it stays
+    // Primary_Active (black-hole) and self-heals when any path recovers.
+    TEST_F(ProtNhgTest, NoSwitchoverWhenAllPathsDead)
+    {
+        string key = "prot_all_paths_dead";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        EXPECT_FALSE(nhg.isSwitchedOver());   // primary active
+
+        // Standby goes down first: no switchover.
+        unregisterNextHop(standby_nh);
+        gNhgOrch->invalidateNextHop(standby_nh);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        // Now the primary goes down: no live standby to target, so the group
+        // must NOT switch over.
+        unregisterNextHop(primary_nh);
+        gNhgOrch->invalidateNextHop(primary_nh);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        // Self-heal: standby recovers -> switchover is now permitted.
+        registerNextHop(standby_nh);
+        gNhgOrch->validateNextHop(standby_nh);
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        // Primary recovers -> back to the primary.
+        registerNextHop(primary_nh);
+        gNhgOrch->validateNextHop(primary_nh);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
+    }
+
+    // Two-level (owned legs) counterpart of NoSwitchoverWhenAllPathsDead for a
+    // 2:2 group. When every primary AND every standby next hop is down,
+    // orchagent must NOT switch onto the empty standby leg; it self-heals when
+    // any standby next hop recovers.
+    TEST_F(ProtNhgTest, TwoLevelNoSwitchoverWhenAllPathsDead)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4,10.0.0.101@Ethernet4");
+        NextHopKey primary_a(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey primary_b(IpAddress("10.0.0.2"), string("Ethernet0"));
+        NextHopKey standby_a(IpAddress("10.0.0.100"), string("Ethernet4"));
+        NextHopKey standby_b(IpAddress("10.0.0.101"), string("Ethernet4"));
+
+        registerNhgKey(primary_nhg_key);
+        registerNhgKey(standby_nhg_key);
+
+        string key = "prot_two_level_all_dead";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        const ProtNhgMember *primaries = nhg.getPrimaryMember();
+        ASSERT_NE(primaries, nullptr);
+        ASSERT_EQ(primaries->getType(), ProtNhgMemberType::OWNED_NHG);
+        EXPECT_FALSE(nhg.isSwitchedOver());   // primary active
+
+        // Whole standby leg goes down first: no switchover (primary live).
+        unregisterNextHop(standby_a);
+        gNhgOrch->invalidateNextHop(standby_a);
+        unregisterNextHop(standby_b);
+        gNhgOrch->invalidateNextHop(standby_b);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        // Now the primary leg goes down: no live standby to target, so the
+        // group must NOT switch over (black-hole until recovery).
+        unregisterNextHop(primary_a);
+        gNhgOrch->invalidateNextHop(primary_a);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        // The last live primary is different: emptying the active leg's inner
+        // ECMP would leave it with no SAI members, which the adapter realizes
+        // as a drop. With no live standby to switch to, keep that last member.
+        uint32_t members_before_last = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        unregisterNextHop(primary_b);
+        gNhgOrch->invalidateNextHop(primary_b);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER),
+                  members_before_last);
+
+        // Self-heal: one standby next hop recovers -> switchover now permitted.
+        registerNextHop(standby_a);
+        gNhgOrch->validateNextHop(standby_a);
+        EXPECT_TRUE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNextHop(primary_a);
+        unregisterNextHop(primary_b);
+        unregisterNextHop(standby_a);
+        unregisterNextHop(standby_b);
+    }
+
+    // Partial failure: a 2:2 group loses one primary of two. The owned inner
+    // ECMP shrinks, but the outer group's two members, its SAI OID and the
+    // switchover state all stay put -- then the next hop recovers. This is the
+    // case the feature exists for; the all-paths-dead tests do not cover it.
+    TEST_F(ProtNhgTest, TwoLevelPartialPrimaryFailure)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4,10.0.0.101@Ethernet4");
+        NextHopKey primary_a(IpAddress("10.0.0.1"), string("Ethernet0"));
+
+        registerNhgKey(primary_nhg_key);
+        registerNhgKey(standby_nhg_key);
+
+        string key = "prot_two_level_partial";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+
+        sai_object_id_t oid_before = nhg.getId();
+        ASSERT_NE(oid_before, SAI_NULL_OBJECT_ID);
+        ASSERT_NE(nhg.getPrimaryMember(), nullptr);
+        ASSERT_NE(nhg.getStandbyMember(), nullptr);
+        uint32_t members_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+        // One of two primary next hops goes down.
+        unregisterNextHop(primary_a);
+        gNhgOrch->invalidateNextHop(primary_a);
+
+        // The inner ECMP shrank by exactly one member...
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER),
+                  members_before - 1);
+        // ...while the outer group is untouched: same OID, same two members,
+        // and no switchover, since the primary leg still has a live next hop.
+        EXPECT_EQ(nhg.getId(), oid_before);
+        EXPECT_TRUE(nhg.getPrimaryMember()->isSynced());
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        // Recovery restores the inner membership, still without touching the
+        // outer group.
+        registerNextHop(primary_a);
+        gNhgOrch->validateNextHop(primary_a);
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER), members_before);
+        EXPECT_EQ(nhg.getId(), oid_before);
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNhgKey(primary_nhg_key);
+        unregisterNhgKey(standby_nhg_key);
+    }
+
+    /* A single-next-hop leg aliases its next hop and is never pruned: on its
+     * next hop going down nothing is removed and, with the primary live,
+     * nothing switches. */
+    TEST_F(ProtNhgTest, SingleNextHopLegIsNotPruned)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+
+        registerNhgKey(primary_nhg_key);
+        registerNhgKey(standby_nhg_key);
+
+        string key = "prot_single_standby";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        electLiveness(key);
+        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
+        uint32_t members_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+        unregisterNextHop(standby_nh);
+        EXPECT_TRUE(gNhgOrch->invalidateNextHop(standby_nh));
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER), members_before);
+        EXPECT_TRUE(nhg.getStandbyMember()->isSynced());
+        EXPECT_FALSE(nhg.isSwitchedOver());
+
+        registerNextHop(standby_nh);
+        EXPECT_TRUE(gNhgOrch->validateNextHop(standby_nh));
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER), members_before);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        unregisterNhgKey(primary_nhg_key);
+        unregisterNhgKey(standby_nhg_key);
+    }
+
+    /* A plain-ECMP RouteOrch group and a protection NHG with the same member
+     * set do not share a group -- the protection NHG's owned leg is private. */
+    TEST_F(ProtNhgTest, InnerEcmpNotSharedWithPlainEcmp)
+    {
+        NextHopGroupKey shared_set("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4,10.0.0.101@Ethernet4");
+        registerNhgKey(shared_set);
+        registerNhgKey(standby_nhg_key);
+
+        /* Stand in for an existing plain-ECMP RouteOrch group over the same
+         * member set (seed the map directly; addNextHopGroup's full SAI path
+         * is not wired in this fixture). */
+        const sai_object_id_t plain_oid = 0x8000000;
+        NextHopGroupEntry plain;
+        plain.next_hop_group_id = plain_oid;
+        plain.ref_count = 1;
+        gRouteOrch->m_syncdNextHopGroups[shared_set] = plain;
+
+        string key = "prot_private_inner";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, shared_set, standby_nhg_key));
+
+        /* The plain-ECMP entry is untouched: same OID, same ref count -- the
+         * protection NHG built its own owned leg rather than reusing (or
+         * ref-counting) the RouteOrch group. */
+        ASSERT_TRUE(gRouteOrch->hasNextHopGroup(shared_set));
+        EXPECT_EQ(gRouteOrch->getNextHopGroupId(shared_set), plain_oid);
+        EXPECT_EQ(gRouteOrch->getNextHopGroupRefCount(shared_set), 1);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        gRouteOrch->m_syncdNextHopGroups.erase(shared_set);
+        unregisterNhgKey(shared_set);
+        unregisterNhgKey(standby_nhg_key);
     }
  }

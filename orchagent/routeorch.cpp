@@ -742,6 +742,8 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 string srv6_segments;
                 string srv6_source;
                 string srv6_vpn_sids;
+                uint32_t primary_nh_count = 0;
+                bool primary_nh_count_set = false;
                 bool srv6_seg = false;
                 bool srv6_vpn = false;
                 bool srv6_nh = false;
@@ -789,6 +791,12 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     if (fvField(i) == "protocol" && fvValue(i) != "")
                     {
                         ctx.protocol = fvValue(i);
+                    }
+
+                    if (fvField(i) == "primary_nh_count" && fvValue(i) != "")
+                    {
+                        primary_nh_count = static_cast<uint32_t>(stoul(fvValue(i)));
+                        primary_nh_count_set = true;
                     }
 
                     if (fvField(i) == "fallback_to_default_route")
@@ -850,6 +858,121 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     srv6_segv = tokenize(srv6_segments, ',');
                     srv6_src = tokenize(srv6_source, ',');
                     srv6_vpn_sidv = tokenize(srv6_vpn_sids, ',');
+
+                    /*
+                     * primary_nh_count partitions the nexthop list:
+                     *   first primary_nh_count entries are primaries, rest are standbys.
+                     * field absent          : regular ECMP over the full set.
+                     * == 0 (explicitly set) : invalid -- a well-behaved producer omits
+                     *                        the field for non-protection routes; warn
+                     *                        and drop the row.
+                     * == ipv.size()         : regular ECMP over the full set.
+                     * >  ipv.size()         : invalid, drop the route.
+                     * 0 <  pc < ipv.size()  : either build a two-level protection NHG
+                     *                        (when the platform supports protection
+                     *                        NHGs and the route is a plain underlay
+                     *                        route), or fall back to ECMP over the
+                     *                        primaries only (truncate the standby tail).
+                     */
+                    if (primary_nh_count_set && primary_nh_count == 0)
+                    {
+                        SWSS_LOG_WARN("Route %s: primary_nh_count=0 is invalid "
+                                      "(omit the field for non-protection routes); "
+                                      "skipping row", key.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (primary_nh_count > ipv.size())
+                    {
+                        SWSS_LOG_ERROR("Route %s: primary_nh_count %u > %zu nexthops, skipping",
+                                       key.c_str(), primary_nh_count, ipv.size());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    /*
+                     * Eligibility for a two-level protection NHG: the ASIC
+                     * supports SAI_NEXT_HOP_GROUP_TYPE_PROTECTION, valid
+                     * primary_nh_count, and a plain underlay route. The group is
+                     * SW-driven; no monitored object is attached. No width bound here:
+                     * the outer group is always two members, and each role's
+                     * inner ECMP is bounded by the platform ECMP width like any
+                     * other group. gNhgOrch is dereferenced last as it may be
+                     * null.
+                     */
+                    uint32_t standby_count = static_cast<uint32_t>(ipv.size()) - primary_nh_count;
+                    bool prot_eligible =
+                        primary_nh_count > 0 && primary_nh_count < ipv.size() &&
+                        !overlay_nh && !srv6_nh && !blackhole &&
+                        gNhgOrch && gNhgOrch->isProtectionSupported();
+
+                    if (prot_eligible)
+                    {
+                        /*
+                         * Build the primary/standby NextHopGroupKeys directly
+                         * from the ordered raw vectors; NextHopGroupKey
+                         * internally sorts via std::set, so slice on the raw
+                         * index (which primary_nh_count depends on) before
+                         * inserting into either key.
+                         */
+                        ctx.primary_nhg_key.clear();
+                        ctx.standby_nhg_key.clear();
+                        for (size_t i = 0; i < ipv.size(); ++i)
+                        {
+                            string nh_str;
+                            if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
+                            {
+                                nh_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
+                            }
+                            nh_str += ipv[i] + NH_DELIMITER + (i < alsv.size() ? alsv[i] : "");
+                            NextHopKey nhk(nh_str);
+                            if (i < primary_nh_count)
+                            {
+                                ctx.primary_nhg_key.add(nhk);
+                            }
+                            else
+                            {
+                                ctx.standby_nhg_key.add(nhk);
+                            }
+                        }
+                        ctx.prot_nhg_key = NhgOrch::buildProtNhgKey(
+                                                ctx.primary_nhg_key,
+                                                ctx.standby_nhg_key);
+                        SWSS_LOG_INFO("Route %s: two-level protection NHG key %s "
+                                      "(%u primaries, %u standbys)",
+                                      key.c_str(),
+                                      ctx.prot_nhg_key.c_str(),
+                                      primary_nh_count,
+                                      standby_count);
+                    }
+                    else if (primary_nh_count > 0 && primary_nh_count < ipv.size())
+                    {
+                        /*
+                         * Protection NHG was indicated by the producer but we can't
+                         * honor it (SAI does not advertise PROTECTION groups, or
+                         * unsupported route flavor). Truncate the standby tail and
+                         * program ECMP over the primaries only -- never spread
+                         * traffic onto standbys.
+                         */
+                        SWSS_LOG_WARN("Route %s: %u primaries / %u standbys not eligible "
+                                      "for protection NHG (prot_supported=%d, total=%zu, "
+                                      "overlay=%d srv6=%d blackhole=%d); using ECMP over "
+                                      "primaries only",
+                                      key.c_str(), primary_nh_count, standby_count,
+                                      gNhgOrch && gNhgOrch->isProtectionSupported() ? 1 : 0,
+                                      ipv.size(),
+                                      overlay_nh ? 1 : 0, srv6_nh ? 1 : 0,
+                                      blackhole ? 1 : 0);
+
+                        if (ipv.size() > primary_nh_count) ipv.resize(primary_nh_count);
+                        if (alsv.size() > primary_nh_count) alsv.resize(primary_nh_count);
+                        if (mpls_nhv.size() > primary_nh_count) mpls_nhv.resize(primary_nh_count);
+                        if (vni_labelv.size() > primary_nh_count) vni_labelv.resize(primary_nh_count);
+                        if (rmacv.size() > primary_nh_count) rmacv.resize(primary_nh_count);
+                        if (srv6_segv.size() > primary_nh_count) srv6_segv.resize(primary_nh_count);
+                        if (srv6_src.size() > primary_nh_count) srv6_src.resize(primary_nh_count);
+                        if (srv6_vpn_sidv.size() > primary_nh_count) srv6_vpn_sidv.resize(primary_nh_count);
+                    }
 
                     /*
                     * For backward compatibility, adjust ip string from old format to
@@ -1076,7 +1199,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                  */
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                    m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
+                    m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index, ctx.prot_nhg_key) ||
                     gRouteBulker.bulk_entry_pending_removal_or_set(route_entry) ||
                     ctx.using_temp_nhg)
                 {
@@ -1195,7 +1318,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 }
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                          m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                         m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
+                         m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index, ctx.prot_nhg_key) ||
                          gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                          ctx.using_temp_nhg)
                 {
@@ -2067,6 +2190,64 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             return false;
         }
     }
+    /*
+     * Two-level protection NHG. The two inner ECMP groups are private and
+     * owned by the ProtNhg (created in ProtNhg::sync), NOT by RouteOrch, so
+     * they are never shared with plain-ECMP routes. RouteOrch only resolves
+     * the underlay next hops so the ProtNhg can bind its members at sync, then
+     * asks NhgOrch to create (or reuse) the outer PROTECTION group.
+     */
+    else if (!ctx.prot_nhg_key.empty())
+    {
+        bool ready = true;
+        for (const NextHopGroupKey *side : { &ctx.primary_nhg_key, &ctx.standby_nhg_key })
+        {
+            for (const auto &nh : side->getNextHops())
+            {
+                if (!m_neighOrch->hasNextHop(nh))
+                {
+                    m_neighOrch->resolveNeighbor(nh);
+                    ready = false;
+                }
+            }
+        }
+        if (!ready)
+        {
+            return false;
+        }
+
+        if (!gNhgOrch->hasProtNhg(ctx.prot_nhg_key))
+        {
+            if (!gNhgOrch->createProtNhg(ctx.prot_nhg_key, ctx.primary_nhg_key,
+                                          ctx.standby_nhg_key))
+            {
+                SWSS_LOG_ERROR("Failed to create protection NHG %s for %s",
+                              ctx.prot_nhg_key.c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
+
+            /*
+             * Nobody watches these groups but NeighOrch, so elect its next hop
+             * liveness as the observation source: a leg with no live next hop
+             * is switched away from, and back to when one recovers. A failure
+             * here is a SAI write failure on the initial evaluation; the group
+             * exists and the next liveness event retries it.
+             */
+            if (!gNhgOrch->setProtNhgObservationSource(
+                    ctx.prot_nhg_key, ProtNhgObservationSource::NEIGH_LIVENESS))
+            {
+                SWSS_LOG_WARN("Protection NHG %s: initial switchover evaluation failed",
+                              ctx.prot_nhg_key.c_str());
+            }
+        }
+
+        next_hop_id = gNhgOrch->getProtNhgId(ctx.prot_nhg_key);
+        if (next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Protection NHG %s missing SAI OID", ctx.prot_nhg_key.c_str());
+            return false;
+        }
+    }
     /* NhgOrch owns the NHG */
     else if (!ctx.nhg_index.empty())
     {
@@ -2457,6 +2638,19 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             return false;
         }
     }
+    /* NhgOrch owns the two-level protection NHG (outer PNHG). Skip the
+     * hasNextHopGroup() check that follows, which only knows about the
+     * RouteOrch-owned ECMP groups in m_syncdNextHopGroups (the two inner
+     * groups are checked/created in addRoute()). */
+    else if (!ctx.prot_nhg_key.empty())
+    {
+        if (!gNhgOrch->hasProtNhg(ctx.prot_nhg_key))
+        {
+            SWSS_LOG_INFO("Protection NHG %s not present yet for %s, will retry",
+                          ctx.prot_nhg_key.c_str(), ipPrefix.to_string().c_str());
+            return false;
+        }
+    }
     /* RouteOrch owns the NHG */
     else if (nextHops.getSize() == 0)
     {
@@ -2532,17 +2726,36 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
         else
         {
-            /* Route already exists */
-            auto nh_entry = m_syncdNextHopGroups.find(it_route->second.nhg_key);
-            if (nh_entry != m_syncdNextHopGroups.end())
+            /* Route already exists. Release by owner, mirroring
+             * removeRoutePost(): nhg_key is not a key into
+             * m_syncdNextHopGroups for protection or NhgOrch-owned routes. */
+            if (!it_route->second.prot_nhg_key.empty())
             {
-                /* Case where route was pointing to non-fine grained nhs in the past,
-                 * and transitioned to Fine Grained ECMP */
-                decreaseNextHopRefCount(it_route->second.nhg_key);
-                if (it_route->second.nhg_key.getSize() > 1
-                    && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+                const string stale_prot_key = it_route->second.prot_nhg_key;
+                gNhgOrch->decProtNhgRefCount(stale_prot_key);
+                if (gNhgOrch->getProtNhgRefCount(stale_prot_key) == 0)
                 {
-                    m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                    gNhgOrch->removeProtNhg(stale_prot_key);
+                }
+            }
+            else if (!it_route->second.nhg_index.empty())
+            {
+                decNhgRefCount(it_route->second.nhg_index,
+                               it_route->second.context_index);
+            }
+            else
+            {
+                auto nh_entry = m_syncdNextHopGroups.find(it_route->second.nhg_key);
+                if (nh_entry != m_syncdNextHopGroups.end())
+                {
+                    /* Case where route was pointing to non-fine grained nhs in the past,
+                     * and transitioned to Fine Grained ECMP */
+                    decreaseNextHopRefCount(it_route->second.nhg_key);
+                    if (it_route->second.nhg_key.getSize() > 1
+                        && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+                    {
+                        m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                    }
                 }
             }
             SWSS_LOG_INFO("FG Post set route %s with next hop(s) %s",
@@ -2599,7 +2812,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
 
             /* Check that the next hop group is not owned by NhgOrch. */
-            if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
+            if (ctx.nhg_index.empty() && ctx.prot_nhg_key.empty() && nextHops.getSize() > 1)
             {
                 /* Clean up the newly created next hop group entry */
                 removeNextHopGroup(nextHops);
@@ -2607,6 +2820,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
+                /* Clean up the just-created protection NHG that no route claimed. */
+                if (!ctx.prot_nhg_key.empty() &&
+                    gNhgOrch->getProtNhgRefCount(ctx.prot_nhg_key) == 0)
+                {
+                    gNhgOrch->removeProtNhg(ctx.prot_nhg_key);
+                }
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
@@ -2621,7 +2840,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
 
         /* Increase the ref_count for the next hop group. */
-        if (ctx.nhg_index.empty())
+        if (!ctx.prot_nhg_key.empty())
+        {
+            gNhgOrch->incProtNhgRefCount(ctx.prot_nhg_key);
+        }
+        else if (ctx.nhg_index.empty())
         {
             increaseNextHopRefCount(nextHops);
         }
@@ -2661,7 +2884,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 // Routeorch internal cache has an entry, but it has already been removed in sai.
                 // This can happen in dualtor when a tunnel route is removed that matches a learned route
                 // remove the entry from the cache and retry route creation
+                /* Capture before the erase: the entry owns a protection NHG
+                 * reference that the retry would otherwise increment again. */
+                const string stale_prot_key = it_route->second.prot_nhg_key;
                 m_syncdRoutes.at(vrf_id).erase(ipPrefix);
+                if (!stale_prot_key.empty())
+                {
+                    gNhgOrch->decProtNhgRefCount(stale_prot_key);
+                    if (gNhgOrch->getProtNhgRefCount(stale_prot_key) == 0)
+                    {
+                        gNhgOrch->removeProtNhg(stale_prot_key);
+                    }
+                }
                 return false;
             }
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
@@ -2669,14 +2903,43 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
+                /*
+                 * Symmetric to the create-failure cleanup above: if this SET
+                 * just created a protection NHG that no route ended up
+                 * referencing (refcount 0), release it so a SAI SET failure
+                 * does not orphan it in NhgOrch's map. The refcount guard
+                 * leaves an already-referenced (reused) PNHG untouched.
+                 */
+                if (!ctx.prot_nhg_key.empty() &&
+                    gNhgOrch->getProtNhgRefCount(ctx.prot_nhg_key) == 0)
+                {
+                    gNhgOrch->removeProtNhg(ctx.prot_nhg_key);
+                }
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
+
+        const string prev_prot_key = it_route->second.prot_nhg_key;
 
         if (m_fgNhgOrch->syncdContainsFgNhg(vrf_id, ipPrefix))
         {
             /* Remove FG nhg since prefix now points to standard nhg/nhs */
             m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);
+        }
+        /* Previous route used a protection NHG. */
+        else if (!it_route->second.prot_nhg_key.empty())
+        {
+            /* Same key re-programmed: keep the existing reference. A protection
+             * NHG frees itself at zero, unlike a plain NHG, so releasing before
+             * the re-claim below would destroy the group we are about to reuse. */
+            if (prev_prot_key != ctx.prot_nhg_key)
+            {
+                gNhgOrch->decProtNhgRefCount(prev_prot_key);
+                if (gNhgOrch->getProtNhgRefCount(prev_prot_key) == 0)
+                {
+                    gNhgOrch->removeProtNhg(prev_prot_key);
+                }
+            }
         }
         /* Decrease the ref count for the previous next hop group. */
         else if (it_route->second.nhg_index.empty())
@@ -2746,12 +3009,16 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             }
         }
 
-        if (ctx.nhg_index.empty())
+        if (!ctx.prot_nhg_key.empty() && ctx.prot_nhg_key != prev_prot_key)
+        {
+            gNhgOrch->incProtNhgRefCount(ctx.prot_nhg_key);
+        }
+        else if (ctx.prot_nhg_key.empty() && ctx.nhg_index.empty())
         {
             /* Increase the ref_count for the next hop (group) entry */
             increaseNextHopRefCount(nextHops);
         }
-        else
+        else if (ctx.prot_nhg_key.empty())
         {
             incNhgRefCount(ctx.nhg_index, ctx.context_index);
         }
@@ -2792,7 +3059,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
     }
 
-    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index, ctx.context_index);
+    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index, ctx.context_index, ctx.prot_nhg_key);
 
     /* If this was a temp route, record the original desired NHG key
      * so the guard in addRoute can detect NHG membership changes. */
@@ -2984,6 +3251,16 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     {
         /* Delete Fine Grained nhg if the revmoved route pointed to it */
         m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);
+    }
+    /* Route was using a protection NHG. */
+    else if (!it_route->second.prot_nhg_key.empty())
+    {
+        const string old_prot_key = it_route->second.prot_nhg_key;
+        gNhgOrch->decProtNhgRefCount(old_prot_key);
+        if (gNhgOrch->getProtNhgRefCount(old_prot_key) == 0)
+        {
+            gNhgOrch->removeProtNhg(old_prot_key);
+        }
     }
     /* Check if the next hop group is not owned by NhgOrch. */
     else if (!it_route->second.nhg_index.empty())
