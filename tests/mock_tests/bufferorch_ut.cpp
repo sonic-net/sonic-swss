@@ -911,6 +911,156 @@ namespace bufferorch_test
         _unhook_sai_apis();
     }
 
+    TEST_F(BufferOrchTest, BufferOrchTestMalformedNumericFieldsAreDropped)
+    {
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        auto &poolMap = *BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
+        auto &profileMap = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+
+        // m_toSync is ordered by key, so the malformed pools are processed
+        // ahead of the valid one. Every entry must be consumed: the bad ones
+        // are rejected and dropped, the good one is created. Previously the
+        // first bad entry threw out of doTask() and left all of them pending.
+        entries.push_back({"bad_pool_alpha", "SET",
+                           {
+                               {"size", "abc"},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        entries.push_back({"bad_pool_trailing", "SET",
+                           {
+                               {"size", "1024000abc"},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        entries.push_back({"bad_pool_xoff", "SET",
+                           {
+                               {"size", "1024000"},
+                               {"xoff", "10240x"},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        entries.push_back({"bad_pool_empty", "SET",
+                           {
+                               {"size", ""},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        entries.push_back({"bad_pool_overflow", "SET",
+                           {
+                               {"size", "99999999999999999999"},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        entries.push_back({"good_pool", "SET",
+                           {
+                               {"size", "1024000"},
+                               {"mode", "dynamic"},
+                               {"type", "ingress"}
+                           }});
+        auto poolConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
+        poolConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(poolMap.count("bad_pool_alpha"), 0);
+        ASSERT_EQ(poolMap.count("bad_pool_trailing"), 0);
+        ASSERT_EQ(poolMap.count("bad_pool_xoff"), 0);
+        ASSERT_EQ(poolMap.count("bad_pool_empty"), 0);
+        ASSERT_EQ(poolMap.count("bad_pool_overflow"), 0);
+        ASSERT_EQ(poolMap.count("good_pool"), 1);
+        auto goodPoolOid = poolMap["good_pool"].m_saiObjectId;
+        ASSERT_NE(goodPoolOid, SAI_NULL_OBJECT_ID);
+
+        // A malformed update of an existing object is dropped too, and the
+        // object it targets is left as it was.
+        entries.push_back({"good_pool", "SET",
+                           {
+                               {"size", "abc"}
+                           }});
+        poolConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(poolMap.count("good_pool"), 1);
+        ASSERT_EQ(poolMap["good_pool"].m_saiObjectId, goodPoolOid);
+
+        // Same for profiles: every converted field is covered, and the value
+        // classes include non-numeric, trailing garbage, float and
+        // out-of-range (dynamic_th is an int8).
+        entries.push_back({"bad_profile_dynamic_th", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"size", "0"},
+                               {"dynamic_th", "abc"}
+                           }});
+        entries.push_back({"bad_profile_dynamic_th_range", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"size", "0"},
+                               {"dynamic_th", "300"}
+                           }});
+        entries.push_back({"bad_profile_xon", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"dynamic_th", "0"},
+                               {"size", "39936"},
+                               {"xon", "19456x"},
+                               {"xoff", "20480"}
+                           }});
+        entries.push_back({"bad_profile_xoff", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"dynamic_th", "0"},
+                               {"size", "39936"},
+                               {"xon", "19456"},
+                               {"xoff", "20480.5"}
+                           }});
+        entries.push_back({"bad_profile_xon_offset", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"dynamic_th", "0"},
+                               {"size", "39936"},
+                               {"xon", "19456"},
+                               {"xon_offset", "abc"},
+                               {"xoff", "20480"}
+                           }});
+        entries.push_back({"bad_profile_static_th", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"size", "0"},
+                               {"static_th", "1000x"}
+                           }});
+        entries.push_back({"good_profile", "SET",
+                           {
+                               {"pool", "ingress_lossless_pool"},
+                               {"dynamic_th", "0"},
+                               {"size", "39936"},
+                               {"xon", "19456"},
+                               {"xoff", "20480"}
+                           }});
+        auto profileConsumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        profileConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profileMap.count("bad_profile_dynamic_th"), 0);
+        ASSERT_EQ(profileMap.count("bad_profile_dynamic_th_range"), 0);
+        ASSERT_EQ(profileMap.count("bad_profile_xon"), 0);
+        ASSERT_EQ(profileMap.count("bad_profile_xoff"), 0);
+        ASSERT_EQ(profileMap.count("bad_profile_xon_offset"), 0);
+        ASSERT_EQ(profileMap.count("bad_profile_static_th"), 0);
+        ASSERT_EQ(profileMap.count("good_profile"), 1);
+        ASSERT_NE(profileMap["good_profile"].m_saiObjectId, SAI_NULL_OBJECT_ID);
+    }
+
     TEST_F(BufferOrchTest, BufferOrchTestCreateOnlyConfigDbBuffersDynamicUpdate)
     {
         // Get FlexCounterOrch from directory
