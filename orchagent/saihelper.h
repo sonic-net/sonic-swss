@@ -48,6 +48,9 @@ void setFlexCounterGroupParameter(const std::string &group,
 void setFlexCounterGroupPollInterval(const std::string &group,
                                      const std::string &poll_interval,
                                      bool is_gearbox=false);
+void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
+                                            const std::string &secondary_poll_factor,
+                                            bool is_gearbox=false);
 void setFlexCounterGroupOperation(const std::string &group,
                                   const std::string &operation,
                                   bool is_gearbox=false);
