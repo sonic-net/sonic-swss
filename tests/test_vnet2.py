@@ -550,6 +550,96 @@ class TestVnet2Orch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
 
+    def test_vnet_orch_adopted_route_survives_vnet_delete(self, dvs, testlog):
+        """A prefix RouteOrch already programmed is borrowed, not owned.
+
+        scope=default puts the VNET in the same virtual router RouteOrch uses.
+        The VNET route must converge onto that single SAI entry, and deleting
+        the VNET route must leave the entry for RouteOrch to remove.
+        """
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = "tunnel_adopt"
+        vnet_name = "VnetAdopt"
+        underlay = "Ethernet0"
+        vnet_if = "Ethernet20"
+        vnet_ip = "30.30.30.1/24"
+        prefix = "107.100.1.1/32"
+
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+
+        self.create_l3_intf(underlay, "")
+        self.add_ip_address(underlay, "20.20.20.1/24")
+        self.set_admin_status(underlay, "down")
+        time.sleep(1)
+        self.set_admin_status(underlay, "up")
+        dvs.servers[0].runcmd("ip address add 20.20.20.5/24 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 20.20.20.1")
+
+        create_vxlan_tunnel(dvs, tunnel_name, "32.32.32.32")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, "5033", "", scope="default")
+        vnet_obj.check_default_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, "5033")
+
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route %s 20.20.20.5\"" % prefix)
+        owned = wait_asic_routes(dvs, prefix, 1)
+        vr, original_nh = owned[0]
+
+        # The RIF is created in the default VR, which is the VR of the route
+        # RouteOrch just installed. Pin the mapper to that VR: earlier cases in
+        # this module may have left other virtual routers behind, and
+        # check_default_vnet_entry picks an arbitrary one.
+        vnet_obj.vr_map[vnet_name]["ing"] = vr
+        vnet_obj.vr_map[vnet_name]["egr"] = vr
+        rifs_before = set(vnet_obj.rifs)
+        create_phy_interface(dvs, vnet_if, vnet_name, vnet_ip)
+        vnet_obj.check_router_interface(dvs, vnet_if, vnet_name)
+        self.set_admin_status(vnet_if, "up")
+        created = set(vnet_obj.rifs) - rifs_before
+        assert len(created) == 1, "expected one new RIF for %s" % vnet_if
+        rif = created.pop()
+        assert original_nh != rif
+
+        marker = dvs.add_log_marker()
+        create_vnet_local_routes(dvs, prefix, vnet_name, vnet_if)
+
+        # Count is already 1, so wait until the next hop moves to the RIF.
+        ok, adopted = wait_for_result(lambda: (
+            asic_routes_for(dvs, prefix) == [(vr, rif)], asic_routes_for(dvs, prefix)))
+        assert ok, (
+            "VNET did not adopt the existing %s route onto %s; saw %s"
+            % (prefix, vnet_if, adopted))
+        assert syslog_match_count(dvs, marker, "SAI failed to create route") == 0, (
+            "adopting an existing route failed the SAI create")
+
+        delete_vnet_local_routes(dvs, prefix, vnet_name)
+        # The DEL line is logged at the start of the handler. Wait for it, then
+        # for the handler to finish, and only then read the ASIC.
+        ok, _ = wait_for_result(lambda: (
+            syslog_match_count(dvs, marker, "op .DEL. for ip %s" % prefix) >= 1, None))
+        assert ok, "VNET delete for %s was not processed" % prefix
+        time.sleep(1)
+        survived = asic_routes_for(dvs, prefix)
+        assert survived == [(vr, rif)], (
+            "deleting the VNET route removed or repointed %s; "
+            "RouteOrch still owns that SAI entry, saw %s" % (prefix, survived))
+        assert syslog_match_count(dvs, marker, "SAI Failed to remove route") == 0
+        assert orchagent_is_running(dvs)
+
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s\"" % prefix)
+        wait_asic_routes(dvs, prefix, 0)
+
+        self.set_admin_status(vnet_if, "down")
+        delete_phy_interface(dvs, vnet_if, vnet_ip)
+        vnet_obj.check_del_router_interface(dvs, vnet_if)
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        self.remove_ip_address(underlay, "20.20.20.1/24")
+        self.cdb.delete_entry("INTERFACE", underlay)
+        dvs.servers[0].runcmd("ip route del default via 20.20.20.1 || true")
+        dvs.servers[0].runcmd("ip address flush dev eth0 || true")
+
+
 def syslog_match_count(dvs, marker, pattern):
     """Number of lines matching pattern in the syslog written since marker."""
     (_, out) = dvs.runcmd(
@@ -563,6 +653,32 @@ def syslog_match_count(dvs, marker, pattern):
 def orchagent_is_running(dvs):
     (_, out) = dvs.runcmd(["sh", "-c", "supervisorctl status orchagent || true"])
     return "RUNNING" in out
+
+
+
+def asic_routes_for(dvs, prefix):
+    """(virtual router, next hop) of every ASIC route for prefix."""
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    found = []
+    for key in tbl.getKeys():
+        try:
+            parsed = json.loads(key)
+        except ValueError:
+            continue
+        if parsed.get("dest") != prefix:
+            continue
+        status, fvs = tbl.get(key)
+        nexthop = dict(fvs).get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID") if status else None
+        found.append((parsed.get("vr"), nexthop))
+    return sorted(found)
+
+
+def wait_asic_routes(dvs, prefix, count):
+    ok, routes = wait_for_result(
+        lambda: (len(asic_routes_for(dvs, prefix)) == count, asic_routes_for(dvs, prefix)))
+    assert ok, "expected %d ASIC route(s) for %s, last saw %s" % (count, prefix, routes)
+    return routes
 
 
 def count_asic_routes(dvs, prefix):
