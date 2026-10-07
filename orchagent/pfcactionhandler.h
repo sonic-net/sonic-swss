@@ -51,13 +51,7 @@ class PfcWdActionHandler
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
         void initCounters(void);
         void commitCounters(bool periodic = false);
-
-        virtual bool getHwCounters(PfcWdHwStats& counters)
-        {
-            memset(&counters, 0, sizeof(PfcWdHwStats));
-
-            return true;
-        };
+        bool getHwCounters(PfcWdHwStats& counters);
 
     private:
         struct PfcWdQueueStats
@@ -93,7 +87,6 @@ class PfcWdLossyHandler: public PfcWdActionHandler
         PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdLossyHandler(void);
-        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 class PfcWdAclHandler: public PfcWdLossyHandler
@@ -125,7 +118,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         void removeIngressBinding(sai_object_id_t port);
 };
 
-class PfcWdDlrHandler: public PfcWdLossyHandler
+class PfcWdDlrHandler: public PfcWdActionHandler
 {
     public:
         PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
@@ -176,16 +169,6 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
         };
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
-};
-
-// PFC queue that implements drop action by draining queue via SAI
-// attribute SAI_QUEUE_ATTR_PFC_DLR_INIT.
-class PfcWdSaiDlrInitHandler: public PfcWdZeroBufferHandler
-{
-    public:
-        PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
-                uint8_t queueId, shared_ptr<Table> countersTable);
-        virtual ~PfcWdSaiDlrInitHandler(void);
 };
 
 #endif
