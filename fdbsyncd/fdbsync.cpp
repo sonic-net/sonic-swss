@@ -129,9 +129,11 @@ FdbSync::~FdbSync()
 bool FdbSync::checkFdbProtoSupport()
 {
     /* The bridge command must take a protocol and know the name "hw" (some iproute2
-     * versions advertise the field but reject the name). The name is checked with a
-     * read-only route query: the kernel refuses an FDB add on lo, and an add on a real
-     * Ethernet device would change its address list. */
+     * versions advertise the field but reject the name). bridge has no read-only command
+     * that takes a protocol, so the name is checked with "ip route show": ip and bridge
+     * resolve protocol names through the same iproute2 name table. An FDB add is not
+     * usable: the kernel refuses one on lo, and one on an Ethernet device changes its
+     * address list. */
     std::string res;
     int ret = swss::exec("bridge fdb help 2>&1 | grep -q proto", res);
     if (ret != 0)
@@ -140,10 +142,13 @@ bool FdbSync::checkFdbProtoSupport()
         return false;
     }
 
-    ret = swss::exec("ip route show table local proto hw >/dev/null 2>&1", res);
+    const std::string nameCheck = "ip route show table local proto hw";
+    ret = swss::exec(nameCheck + " 2>&1 >/dev/null", res);
     if (ret != 0)
     {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected: protocol name hw is unknown");
+        res.erase(res.find_last_not_of(" \n") + 1);
+        SWSS_LOG_NOTICE("bridge fdb proto support not detected: '%s' failed (rc %d): %s",
+                        nameCheck.c_str(), ret, res.c_str());
         return false;
     }
 
