@@ -3,3 +3,7 @@
 !coverage.info
 !coverage.xml
 !build.info
+# Publish the declarative build environment beside the existing top-level
+# artifacts so downstream consumers can walk the dependency cascade.
+!build-env
+!build-env/**

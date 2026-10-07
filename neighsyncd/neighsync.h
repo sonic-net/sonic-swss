@@ -47,8 +47,9 @@ public:
     void processCfgEvpnNvo();
 
 private:
-    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable, m_routeCheckTable;
+    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable, m_routeCheckTable, m_kernelFailedNeighCheckTable;
     ProducerStateTable m_neighTable;
+    ProducerStateTable m_kernelFailedNeighTable;
     ProducerStateTable m_routeTable;
     SubscriberStateTable m_cfgEvpnNvoTable;
     struct nl_cache    *m_link_cache;

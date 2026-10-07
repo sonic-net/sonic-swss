@@ -1,6 +1,5 @@
 /// Utility helpers shared across countersyncd modules.
-
-use std::collections::HashMap;
+use std::fmt::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -14,21 +13,18 @@ use once_cell::sync::Lazy;
 /// separated by a single space.
 pub fn format_hex_lines(buffer: &[u8]) -> String {
     const BYTES_PER_LINE: usize = 4;
-    if buffer.is_empty() {
-        return String::new();
+    let mut output = String::with_capacity(buffer.len().saturating_mul(3));
+    for (index, byte) in buffer.iter().enumerate() {
+        if index > 0 {
+            output.push(if index % BYTES_PER_LINE == 0 {
+                '\n'
+            } else {
+                ' '
+            });
+        }
+        write!(output, "{byte:02x}").expect("writing to String cannot fail");
     }
-
-    let mut lines = Vec::new();
-    for chunk in buffer.chunks(BYTES_PER_LINE) {
-        let line = chunk
-            .iter()
-            .map(|byte| format!("{:02x}", byte))
-            .collect::<Vec<String>>()
-            .join(" ");
-        lines.push(line);
-    }
-
-    lines.join("\n")
+    output
 }
 
 /// Configurable log interval for communication stats (seconds).
@@ -54,6 +50,17 @@ pub enum ChannelLabel {
 }
 
 impl ChannelLabel {
+    fn stats(self) -> &'static Mutex<CommStats> {
+        match self {
+            ChannelLabel::ControlNetlinkToDataNetlink => &CONTROL_NETLINK_TO_DATA_NETLINK_STATS,
+            ChannelLabel::DataNetlinkToIpfixRecords => &DATA_NETLINK_TO_IPFIX_RECORDS_STATS,
+            ChannelLabel::SwssToIpfixTemplates => &SWSS_TO_IPFIX_TEMPLATES_STATS,
+            ChannelLabel::IpfixToStatsReporter => &IPFIX_TO_STATS_REPORTER_STATS,
+            ChannelLabel::IpfixToCounterDb => &IPFIX_TO_COUNTER_DB_STATS,
+            ChannelLabel::IpfixToOtel => &IPFIX_TO_OTEL_STATS,
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             ChannelLabel::ControlNetlinkToDataNetlink => "control_netlink.data_netlink_cmd",
@@ -112,17 +119,21 @@ impl Default for CommStats {
     }
 }
 
-static COMM_STATS: Lazy<Mutex<HashMap<ChannelLabel, CommStats>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static CONTROL_NETLINK_TO_DATA_NETLINK_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static DATA_NETLINK_TO_IPFIX_RECORDS_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static SWSS_TO_IPFIX_TEMPLATES_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_STATS_REPORTER_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_COUNTER_DB_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
+static IPFIX_TO_OTEL_STATS: Lazy<Mutex<CommStats>> = Lazy::new(|| Mutex::new(CommStats::default()));
 
 /// Records a communication channel length sample and logs periodically.
 pub fn record_comm_stats(label: ChannelLabel, channel_len: usize) {
-    let mut stats_map = COMM_STATS
-        .lock()
-        .expect("COMM_STATS mutex poisoned");
-
-    let stats = stats_map.entry(label).or_insert_with(CommStats::default);
-
+    let mut stats = label.stats().lock().expect("comm stats mutex poisoned");
     stats.count = stats.count.saturating_add(1);
     stats.sum = stats.sum.saturating_add(channel_len as u64);
     stats.sum_sq = stats
@@ -135,60 +146,65 @@ pub fn record_comm_stats(label: ChannelLabel, channel_len: usize) {
     if stats.count == 1 || channel_len < stats.min {
         stats.min = channel_len;
     }
-    if channel_len > stats.max {
-        stats.max = channel_len;
-    }
+    stats.max = stats.max.max(channel_len);
 
     let now = Instant::now();
     let interval = Duration::from_secs(COMM_LOG_INTERVAL_SECS.load(Ordering::Relaxed));
-    if now.duration_since(stats.last_log) >= interval {
-        let avg = stats.sum as f64 / stats.count as f64;
-        let rms = (stats.sum_sq as f64 / stats.count as f64).sqrt();
-        if stats.capacity > 0 {
-            let avg_util = avg / stats.capacity as f64;
-            let peak_util = stats.max as f64 / stats.capacity as f64;
-            info!(
-                "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}, capacity={}, avg_util={:.2}, peak_util={:.2}",
-                label.as_str(),
-                stats.count,
-                avg,
-                stats.max,
-                stats.min,
-                stats.last,
-                rms,
-                stats.nonzero_count,
-                stats.capacity,
-                avg_util,
-                peak_util
-            );
-        } else {
-            info!(
-                "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}",
-                label.as_str(),
-                stats.count,
-                avg,
-                stats.max,
-                stats.min,
-                stats.last,
-                rms,
-                stats.nonzero_count
-            );
-        }
-        let capacity = stats.capacity;
-        *stats = CommStats {
+    if now.duration_since(stats.last_log) < interval {
+        return;
+    }
+
+    let capacity = stats.capacity;
+    let snapshot = std::mem::replace(
+        &mut *stats,
+        CommStats {
             capacity,
             last_log: now,
             ..CommStats::default()
-        };
+        },
+    );
+    drop(stats);
+
+    let avg = snapshot.sum as f64 / snapshot.count as f64;
+    let rms = (snapshot.sum_sq as f64 / snapshot.count as f64).sqrt();
+    if snapshot.capacity > 0 {
+        let avg_util = avg / snapshot.capacity as f64;
+        let peak_util = snapshot.max as f64 / snapshot.capacity as f64;
+        info!(
+            "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}, capacity={}, avg_util={:.2}, peak_util={:.2}",
+            label.as_str(),
+            snapshot.count,
+            avg,
+            snapshot.max,
+            snapshot.min,
+            snapshot.last,
+            rms,
+            snapshot.nonzero_count,
+            snapshot.capacity,
+            avg_util,
+            peak_util
+        );
+    } else {
+        info!(
+            "Comm stats [{}]: count={}, avg_len={:.2}, peak_len={}, min_len={}, last_len={}, rms_len={:.2}, nonzero_count={}",
+            label.as_str(),
+            snapshot.count,
+            avg,
+            snapshot.max,
+            snapshot.min,
+            snapshot.last,
+            rms,
+            snapshot.nonzero_count
+        );
     }
 }
 
 /// Sets channel capacity for utilization analysis (optional).
 /// Call this once during initialization if capacity is known.
 pub fn set_comm_capacity(label: ChannelLabel, capacity: usize) {
-    let mut stats_map = COMM_STATS
+    label
+        .stats()
         .lock()
-        .expect("COMM_STATS mutex poisoned");
-    let stats = stats_map.entry(label).or_insert_with(CommStats::default);
-    stats.capacity = capacity;
+        .expect("comm stats mutex poisoned")
+        .capacity = capacity;
 }

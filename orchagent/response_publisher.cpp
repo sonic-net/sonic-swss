@@ -3,7 +3,11 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
+#include "logger.h"
+#include "timestamp.h"
+#include "warm_restart.h"
 
 namespace
 {
@@ -29,7 +33,7 @@ std::string PrependedComponent(const ReturnCode &status)
 }
 
 void RecordDBWrite(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &attrs,
-                   const std::string &op)
+                   const std::string &op, const std::string *record_ts = nullptr)
 {
     if (!swss::Recorder::Instance().respub.isRecord())
     {
@@ -42,11 +46,19 @@ void RecordDBWrite(const std::string &table, const std::string &key, const std::
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    swss::Recorder::Instance().respub.record(s);
+    if (record_ts != nullptr && !record_ts->empty())
+    {
+        swss::Recorder::Instance().respub.record(*record_ts, s);
+    }
+    else
+    {
+        swss::Recorder::Instance().respub.record(s);
+    }
 }
 
 void RecordResponse(const std::string &response_channel, const std::string &key,
-                    const std::vector<swss::FieldValueTuple> &attrs, const std::string &status)
+                    const std::vector<swss::FieldValueTuple> &attrs, const std::string &status,
+                    const std::string *record_ts = nullptr)
 {
     if (!swss::Recorder::Instance().respub.isRecord())
     {
@@ -59,7 +71,14 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    swss::Recorder::Instance().respub.record(s);
+    if (record_ts != nullptr && !record_ts->empty())
+    {
+        swss::Recorder::Instance().respub.record(*record_ts, s);
+    }
+    else
+    {
+        swss::Recorder::Instance().respub.record(s);
+    }
 }
 
 } // namespace
@@ -75,7 +94,9 @@ ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
 {
     if (db_write_thread)
     {
-        m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::dbUpdateThread, this));
+        // With a db update thread, the worker thread owns notification publish/flush
+        // (m_ntf_pipe) and DB writes, to avoid cross-thread RedisPipeline access.
+        m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::stateUpdateThread, this));
     }
 }
 
@@ -83,6 +104,12 @@ ResponsePublisher::~ResponsePublisher()
 {
     if (m_update_thread != nullptr)
     {
+        if (!m_async_publish_pending.empty())
+        {
+            SWSS_LOG_WARN("~ResponsePublisher: dropping %zu pending async batch entries",
+                          m_async_publish_pending.size());
+            m_async_publish_pending.clear();
+        }
         {
             std::lock_guard<std::mutex> lock(m_lock);
             m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
@@ -97,13 +124,35 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
+    publishWrite(table, key, intent_attrs, status, state_attrs, replace, /*record_ts=*/nullptr,
+                 /*sync_publish=*/false);
+}
+
+void ResponsePublisher::publishWrite(const std::string &table, const std::string &key,
+                                     const std::vector<swss::FieldValueTuple> &intent_attrs,
+                                     const ReturnCode &status,
+                                     const std::vector<swss::FieldValueTuple> &state_attrs,
+                                     bool replace, const std::string *record_ts, bool sync_publish)
+{
+    if (m_set_warmboot_state_fail && !status.ok()) {
+        if (!m_app_name.empty()) {
+            SWSS_LOG_ERROR("Warmboot reconciliation failed for %s:%s. Status: %s. Setting warmboot state to WSDISABLED.",
+                           table.c_str(), key.c_str(), status.message().c_str());
+            swss::WarmStart::setWarmStartState(m_app_name, swss::WarmStart::WSDISABLED);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Warmboot failure detected but m_app_name is empty. Cannot update warmboot state.");
+        }
+    }
+
     auto intent_attrs_copy = intent_attrs;
     // Add error message as the first field-value-pair.
     swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
     intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
     std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
 
-    if (m_enable_db_write_and_notify) {
+    if (m_enable_notify) {
       if (m_zmqServer != nullptr) {
         auto intent_attrs_zmq_copy = intent_attrs;
         // Add status code and error message as the first field-value-pair.
@@ -111,8 +160,8 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
                                   PrependedComponent(status) + status.message());
         intent_attrs_zmq_copy.insert(intent_attrs_zmq_copy.begin(), fvs);
         // Queue the response.
-        responses[table].push_back(
-            swss::KeyOpFieldsValuesTuple{key, SET_COMMAND, intent_attrs_zmq_copy});
+        responses[table].push_back(swss::KeyOpFieldsValuesTuple{
+	    key, SET_COMMAND, intent_attrs_zmq_copy});
       } else {
         // Sends the response to the notification channel.
         swss::NotificationProducer notificationProducer{
@@ -121,15 +170,19 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
       }
     }
 
-    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
+    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr(), record_ts);
 
-    // Write to the DB only if: m_enable_db_write_and_notify is true and:
+    // Write to the DB only if: m_enable_db_write is true and:
     // 1) A write operation is being performed and state attributes are specified.
     // 2) OR a successful delete operation.
-    if (m_enable_db_write_and_notify &&
-         ((intent_attrs.size() && state_attrs.size()) ||
-         (status.ok() && !intent_attrs.size()))) {
-            writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
+    if (m_enable_db_write && ((intent_attrs.size() && state_attrs.size()) || (status.ok() && !intent_attrs.size()))) {
+        const auto op = intent_attrs.size() ? SET_COMMAND : DEL_COMMAND;
+        if (sync_publish) {
+            writeToDBInternal(table, key, state_attrs, op, replace);
+            RecordDBWrite(table, key, state_attrs, op, record_ts);
+        } else {
+            writeToDB(table, key, state_attrs, op, replace);
+        }
     }
 }
 
@@ -147,6 +200,67 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
         state_attrs = intent_attrs;
     }
     publish(table, key, intent_attrs, status, state_attrs, replace);
+}
+
+void ResponsePublisher::publishAsyncBatch()
+{
+    if (m_update_thread == nullptr)
+    {
+        return;
+    }
+    std::vector<asyncPublishItem> batch = std::move(m_async_publish_pending);
+    if (batch.empty())
+    {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+        entry e;
+        e.fullPublishBatch = true;
+        e.full_publish_batch = std::move(batch);
+        m_queue.push(std::move(e));
+    }
+    m_signal.notify_one();
+}
+
+void ResponsePublisher::publishAsync(const std::string &table, const std::string &key,
+                                     const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
+                                     bool replace)
+{
+    if (m_update_thread == nullptr)
+    {
+        publish(table, key, intent_attrs, status, replace);
+        return;
+    }
+    asyncPublishItem item;
+    item.table = table;
+    item.key = key;
+    item.intent_attrs = intent_attrs;
+    item.status = status;
+    item.replace = replace;
+    item.record_ts = swss::getTimestamp();
+    m_async_publish_pending.push_back(std::move(item));
+}
+
+void ResponsePublisher::publishFullBatchFromThread(std::vector<asyncPublishItem> &&items)
+{
+    if (items.empty())
+    {
+        return;
+    }
+
+    // Per item, use the same core publish logic as synchronous publish().
+    for (const auto &it : items)
+    {
+        std::vector<swss::FieldValueTuple> state_attrs;
+        if (it.status.ok())
+        {
+            state_attrs = it.intent_attrs;
+        }
+        const std::string *ts_ptr = it.record_ts.empty() ? nullptr : &it.record_ts;
+        publishWrite(it.table, it.key, it.intent_attrs, it.status, state_attrs, it.replace, ts_ptr,
+                     /*sync_publish=*/true);
+    }
 }
 
 void ResponsePublisher::writeToDB(const std::string &table, const std::string &key,
@@ -220,28 +334,37 @@ void ResponsePublisher::writeToDBInternal(const std::string &table, const std::s
     }
 }
 
-void ResponsePublisher::flush() {
-  if (m_zmqServer != nullptr) {
-    for (const auto& response : responses) {
-      m_zmqServer->sendMsg("APPL_DB", response.first, response.second);
+void ResponsePublisher::flush()
+{
+    if (m_update_thread != nullptr)
+    {
+        // The worker thread owns m_ntf_pipe; flushing it here would race with the
+        // worker and can drop state/notification Redis ops. Enqueue a flush marker
+        // so the worker flushes m_ntf_pipe and m_db_pipe in its own context.
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
+        return;
     }
-    responses.clear();
-  } else {
-    m_ntf_pipe->flush();
-  }
-  if (m_update_thread != nullptr)
-  {
-      {
-          std::lock_guard<std::mutex> lock(m_lock);
-          m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
-                          /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
-      }
-      m_signal.notify_one();
-  }
-  else
-  {
-      m_db_pipe->flush();
-  }
+
+    // No worker: synchronous ZMQ send on caller thread, or Redis pipelines here.
+    if (m_zmqServer != nullptr)
+    {
+        for (const auto &response : responses)
+        {
+            m_zmqServer->sendMsg("APPL_DB", response.first, response.second);
+        }
+        responses.clear();
+        m_db_pipe->flush();
+    }
+    else
+    {
+        m_ntf_pipe->flush();
+        m_db_pipe->flush();
+    }
 }
 
 void ResponsePublisher::setBuffered(bool buffered)
@@ -249,7 +372,8 @@ void ResponsePublisher::setBuffered(bool buffered)
     m_buffered = buffered;
 }
 
-void ResponsePublisher::dbUpdateThread()
+// Runs on m_update_thread (response publisher state update thread).
+void ResponsePublisher::stateUpdateThread()
 {
     while (true)
     {
@@ -270,7 +394,20 @@ void ResponsePublisher::dbUpdateThread()
         }
         if (e.flush)
         {
+            if (m_zmqServer != nullptr)
+            {
+                for (const auto &response : responses)
+                {
+                    m_zmqServer->sendMsg("APPL_DB", response.first, response.second);
+                }
+                responses.clear();
+            }
+            m_ntf_pipe->flush();
             m_db_pipe->flush();
+        }
+        else if (e.fullPublishBatch)
+        {
+            publishFullBatchFromThread(std::move(e.full_publish_batch));
         }
         else
         {
@@ -279,8 +416,17 @@ void ResponsePublisher::dbUpdateThread()
     }
 }
 
-void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify)
-{
-    m_enable_db_write_and_notify = enable_db_write_and_notify;
+void ResponsePublisher::setWarmbootStateOnFailure(const std::string& app_name,
+                                                  bool set_on_fail) {
+  m_app_name = app_name;
+  m_set_warmboot_state_fail = set_on_fail;
+}
+
+void ResponsePublisher::setEnableDbWrite(bool enable) {
+  m_enable_db_write = enable;
+}
+
+void ResponsePublisher::setEnableNotify(bool enable) {
+  m_enable_notify = enable;
 }
 

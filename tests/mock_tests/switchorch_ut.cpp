@@ -328,6 +328,14 @@ namespace switchorch_test
         ASSERT_TRUE(ingress_exists);
         bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(egress_exists);
+
+        // Test that sampled mirror capabilities are queried and stored
+        bool ingress_sample_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_sample_exists);
+        bool egress_sample_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_sample_exists);
+        bool truncation_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, value);
+        ASSERT_TRUE(truncation_exists);
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)
@@ -354,6 +362,14 @@ namespace switchorch_test
         ASSERT_TRUE(ingress_exists);
         bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(egress_exists);
+
+        // Test that sampled mirror capabilities are queried and stored
+        bool ingress_sample_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_sample_exists);
+        bool egress_sample_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_sample_exists);
+        bool truncation_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, value);
+        ASSERT_TRUE(truncation_exists);
 
         // case: unsupported severity. To satisfy coverage.
         vector<string> ts;

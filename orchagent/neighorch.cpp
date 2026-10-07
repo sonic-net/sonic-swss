@@ -9,6 +9,8 @@
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
 
+#include <boost/algorithm/string.hpp>
+
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
@@ -24,8 +26,10 @@ extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
+extern NeighOrch *gNeighOrch;
+extern string gMyAsicName;
 
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 
 const int neighorch_pri = 30;
 
@@ -48,7 +52,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         gBfdOrch->attach(this);
     }
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
@@ -64,9 +68,15 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
 
 NeighOrch::~NeighOrch()
 {
+    gNeighOrch = nullptr;
+}
+
+void NeighOrch::detachObservers()
+{
     if (m_fdbOrch)
     {
         m_fdbOrch->detach(this);
+        m_fdbOrch = nullptr;
     }
 }
 
@@ -139,6 +149,28 @@ void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
     key = alias + ":" + entry.ip_address.to_string();
     m_appNeighResolveProducer.del(key);
     return;
+}
+
+/*
+ * Called when the kernel reports the neighbor again (SET with a MAC) or it is
+ * removed: either way the refresh requested by processFDBResolve() is done.
+ */
+void NeighOrch::clearNeighborRefresh(const NeighborEntry &entry)
+{
+    if (m_neighborToRefresh.erase(entry) == 0)
+    {
+        return;
+    }
+
+    // A next hop resolve shares the key; addNextHop() clears it.
+    if (m_neighborToResolve.find(entry) != m_neighborToResolve.end())
+    {
+        return;
+    }
+
+    clearResolvedNeighborEntry(entry);
+    SWSS_LOG_INFO("Refreshed neighbor %s on %s",
+                  entry.ip_address.to_string().c_str(), entry.alias.c_str());
 }
 
 /**
@@ -247,6 +279,7 @@ void NeighOrch::processFDBResolve(const FdbEntry &entry)
             neighborEntry.second.mac == entry.mac)
         {
             resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
+            m_neighborToRefresh.insert(neighborEntry.first);
         }
     }
     return;
@@ -1130,6 +1163,7 @@ void NeighOrch::doTask(Consumer &consumer)
                 }
                 else if (addNeighbor(ctx))
                 {
+                    clearNeighborRefresh(neighbor_entry);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -1141,6 +1175,7 @@ void NeighOrch::doTask(Consumer &consumer)
             else
             {
                 /* Duplicate entry */
+                clearNeighborRefresh(neighbor_entry);
                 it = consumer.m_toSync.erase(it);
             }
 
@@ -1305,9 +1340,15 @@ bool NeighOrch::removePrefixRouteForNeighbor(const IpAddress& ip_address, sai_ob
     subnet(route_entry.destination, route_entry.destination);
 
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+    if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_NOTICE("Mux neigh route for %s already removed.", ip_address.to_string().c_str());
+        return true;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to delete mux neigh route for %s.", ip_address.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to delete mux neigh route for %s, rv:%d",
+                       ip_address.to_string().c_str(), status);
         return false;
     }
 
@@ -1447,6 +1488,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     bool hw_config = isHwConfigured(neighborEntry);
+    bool was_prefix_route = isPrefixNeighbor(neighborEntry);
     /*
      * Prefix-route mode programs neighbors with NO_HOST_ROUTE and controls
      * active/standby forwarding through the explicit host prefix route.  Keep
@@ -1596,6 +1638,72 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
+
+        /*
+         * NO_HOST_ROUTE and the explicit prefix route are a single state: the
+         * suppressed host route must always be replaced by a real route object.
+         * An already programmed neighbor that becomes a prefix-route neighbor
+         * has to get its prefix route created here as well, otherwise the
+         * neighbor is recorded as a prefix neighbor while no route exists in
+         * hardware and every later mux state transition fails on it.
+         */
+        if (prefix_route && !was_prefix_route)
+        {
+            auto nhKey = NextHopKey(ip_address, alias);
+            auto nh_it = m_syncdNextHops.find(nhKey);
+
+            if (nh_it == m_syncdNextHops.end())
+            {
+                SWSS_LOG_ERROR("Next hop for neighbor %s on %s does not exist",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+            else if(!addPrefixRouteForNeighbor(ip_address, alias, nh_it->second.next_hop_id, is_nbr_active))
+            {
+                SWSS_LOG_ERROR("Failed to add prefix route for neighbor %s on %s",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+        }
+        else if (!prefix_route && was_prefix_route)
+        {
+            sai_object_id_t port_vrf_id = gVirtualRouterId;
+            Port port;
+
+            if (m_portsOrch->getPort(alias, port))
+            {
+                port_vrf_id = port.m_vr_id;
+            }
+
+            /* Remove the prefix route before unsuppressing the host route, so the
+             * prefix never owns both and a failed delete leaves hardware matching
+             * the prefix_route still recorded in the cache. */
+            if (!removePrefixRouteForNeighbor(ip_address, port_vrf_id))
+            {
+                SWSS_LOG_ERROR("Failed to remove prefix route for neighbor %s on %s",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+
+            /* neighbor_attrs only ever carries NO_HOST_ROUTE=1, so the set loop above
+             * cannot undo the suppression and the address would be left unreachable. */
+            if (!no_host_route)
+            {
+                neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+                neighbor_attr.value.booldata = 0;
+                status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to clear NO_HOST_ROUTE for neighbor %s on %s, rv:%d",
+                                   ip_address.to_string().c_str(), alias.c_str(), status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+            }
+        }
     }
 
     m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
@@ -1603,7 +1711,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Sync the neighbor to add to the CHASSIS_APP_DB
         voqSyncAddNeigh(alias, ip_address, macAddress, neighbor_entry);
@@ -1662,6 +1770,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
                       m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
         return false;
+    }
+
+    if (isHwConfigured(neighborEntry) && !disable)
+    {
+        NeighborUpdate update = { neighborEntry, MacAddress(), false };
+        notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
     }
 
     if (isHwConfigured(neighborEntry))
@@ -1772,11 +1886,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     }
 
     m_syncdNeighbors.erase(neighborEntry);
+    clearNeighborRefresh(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
@@ -2222,6 +2337,154 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     return true;
 }
 
+TunnelNhOpStatus NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t tunnel_id,
+                                                    sai_object_id_t& next_hop_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (!nh.isTunnelNextHop())
+    {
+        SWSS_LOG_ERROR("NextHopKey is not a tunnel NH: %s", nh.to_string().c_str());
+        return TunnelNhOpStatus::SAI_FAILED;
+    }
+
+    /* Already registered: reuse it, no SAI call needed. */
+    auto it = m_syncdNextHops.find(nh);
+    if (it != m_syncdNextHops.end())
+    {
+        next_hop_id = it->second.next_hop_id;
+        uint32_t reg_refs = ++m_ipinipTunnelNextHopRegRefs[nh];
+        SWSS_LOG_INFO("IPinIP tunnel NH reused: %s (registrants=%u)",
+                      nh.to_string().c_str(), reg_refs);
+        return TunnelNhOpStatus::REUSED;
+    }
+
+    /* First registrant: create the SAI object. */
+    vector<sai_attribute_t> next_hop_attrs;
+    sai_attribute_t next_hop_attr;
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+    copy(next_hop_attr.value.ipaddr, nh.ip_address);
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_id;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_next_hop_api->create_next_hop(&nh_id, gSwitchId,
+                                                             (uint32_t)next_hop_attrs.size(),
+                                                             next_hop_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create IPinIP tunnel NH %s, rv:%d", nh.to_string().c_str(), status);
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        return TunnelNhOpStatus::SAI_FAILED;
+    }
+
+    if (nh.ip_address.isV4())
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+    }
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = nh_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nh] = next_hop_entry;
+    m_ipinipTunnelNextHopRegRefs[nh] = 1;
+
+    next_hop_id = nh_id;
+    SWSS_LOG_NOTICE("Created IPinIP tunnel NH %s (OID 0x%" PRIx64 ")", nh.to_string().c_str(), nh_id);
+    return TunnelNhOpStatus::CREATED;
+}
+
+TunnelNhOpStatus NeighOrch::removeIpinipTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_syncdNextHops.find(nh);
+    if (it == m_syncdNextHops.end())
+    {
+        SWSS_LOG_NOTICE("IPinIP tunnel NH not found, treating as already removed: %s",
+                        nh.to_string().c_str());
+        return TunnelNhOpStatus::REMOVED;
+    }
+
+    if (it->second.ref_count > 0)
+    {
+        SWSS_LOG_INFO("IPinIP tunnel NH %s still referenced (ref_count=%d), deferring removal",
+                      nh.to_string().c_str(), it->second.ref_count);
+        return TunnelNhOpStatus::STILL_REFERENCED;
+    }
+
+    /* Other registrants remain: keep the SAI object. */
+    auto reg_it = m_ipinipTunnelNextHopRegRefs.find(nh);
+    if (reg_it != m_ipinipTunnelNextHopRegRefs.end() && reg_it->second > 1)
+    {
+        uint32_t reg_refs = --reg_it->second;
+        SWSS_LOG_INFO("IPinIP tunnel NH %s still has %u registrant(s), deferring SAI removal",
+                      nh.to_string().c_str(), reg_refs);
+        return TunnelNhOpStatus::OTHER_REGISTRANTS_REMAIN;
+    }
+
+    /* Last registrant: delete the SAI object. */
+    sai_status_t status = sai_next_hop_api->remove_next_hop(it->second.next_hop_id);
+    bool item_not_found = false;
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            /* SAI object is already gone; tolerate and treat as removed,
+             * same as the pre-registration muxorch/tunneldecaporch logic. */
+            SWSS_LOG_NOTICE("IPinIP tunnel NH %s already removed (rv:%d)",
+                            nh.to_string().c_str(), status);
+            item_not_found = true;
+        }
+        else if (status == SAI_STATUS_OBJECT_IN_USE)
+        {
+            /* Not a hard failure; leave bookkeeping intact and defer. */
+            SWSS_LOG_NOTICE("IPinIP tunnel NH %s remove returned rv:%d, deferring",
+                            nh.to_string().c_str(), status);
+            return TunnelNhOpStatus::SAI_FAILED;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove IPinIP tunnel NH %s, rv:%d", nh.to_string().c_str(), status);
+            handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+            return TunnelNhOpStatus::SAI_FAILED;
+        }
+    }
+
+    /* Only decrement the CRM counter when we actually deleted the SAI
+     * object; skip it when SAI reported it was already gone (ITEM_NOT_FOUND). */
+    if (!item_not_found)
+    {
+        if (nh.ip_address.isV4())
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
+    m_ipinipTunnelNextHopRegRefs.erase(nh);
+    m_syncdNextHops.erase(it);
+
+    SWSS_LOG_NOTICE("Removed IPinIP tunnel NH %s", nh.to_string().c_str());
+    return TunnelNhOpStatus::REMOVED;
+}
+
 void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -2261,11 +2524,26 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        size_t pos = alias.find('|');
-        std::string port_hostname = (pos != std::string::npos) ? alias.substr(0, pos) : alias;
-        if(gIntfsOrch->isLocalSystemPortIntf(alias))
+        // VoQ aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
+        const auto alias_tokens = tokenize(alias, '|');
+        std::string port_hostname = alias_tokens.empty() ? alias : alias_tokens[0];
+        bool is_local_by_host_asic = false;
+        if (isVoqChassisDbInUse() && gMyHostName == port_hostname)
         {
-            //Synced local neighbor. Skip
+            std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+            std::string lower_port_asic = port_asic;
+            std::string lower_my_asic = gMyAsicName;
+            boost::algorithm::to_lower(lower_port_asic);
+            boost::algorithm::to_lower(lower_my_asic);
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: alias=%s hostname=%s asic=%s local_asic=%s",
+                           alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+            is_local_by_host_asic = (lower_port_asic == lower_my_asic);
+        }
+        bool is_local_intf = gIntfsOrch->isLocalSystemPortIntf(alias);
+        if(is_local_intf || is_local_by_host_asic)
+        {
+            SWSS_LOG_DEBUG("doVoqSystemNeighTask: skipping local neighbor %s (isLocalIntf=%d isLocalByHostAsic=%d)",
+                           alias.c_str(), is_local_intf, is_local_by_host_asic);
             it = consumer.m_toSync.erase(it);
             continue;
         }

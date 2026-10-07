@@ -889,6 +889,11 @@ class VnetVxlanVrfTunnel(object):
         self.vnet_vr_ids.update(new_vr_ids)
         self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0], 'peer':peer_list }
 
+        # IP2Me link-local routes (fe80::/10) are added to every new VR
+        # by VNETOrch (to support unnumbered BGP in the VNET VRF). Absorb them into the baseline
+        # so subsequent route-count assertions remain accurate.
+        self.routes = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
+
     def check_default_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         #Check virtual router objects

@@ -2,13 +2,701 @@
 #include "sfloworch.h"
 #include "tokenize.h"
 
+#include <fstream>
+#include "nlohmann/json.hpp"
+
 using namespace std;
 using namespace swss;
 
+extern sai_hostif_api_t*       sai_hostif_api;
+extern sai_policer_api_t*      sai_policer_api;
 extern sai_samplepacket_api_t* sai_samplepacket_api;
+extern sai_switch_api_t*       sai_switch_api;
+extern sai_tam_api_t*          sai_tam_api;
 extern sai_port_api_t*         sai_port_api;
 extern sai_object_id_t         gSwitchId;
 extern PortsOrch*              gPortsOrch;
+
+// Default CPU queue for sFlow drop monitor.
+// Can be overridden by /usr/share/sonic/templates/sflow_mod.json
+#define SFLOW_DROP_MONITOR_CPU_QUEUE 47
+
+bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
+{
+    // Check drop monitor limit rate
+    if (isEnabled())
+    {
+        // Reapply policer when the last successful rate is unchanged.
+        return updatePolicerRate(limit_rate);
+    }
+
+    if (!initializeDropMonitor(limit_rate))
+    {
+        SWSS_LOG_ERROR("Failed to initialize drop monitor.");
+        cleanupDropMonitor();
+        return false;
+    }
+
+    // Bind the TAM object to switch
+    {
+        sai_status_t    status;
+        sai_attribute_t attr;
+        sai_object_id_t tam = m_tam;
+
+        attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
+        attr.value.objlist.count = 1;
+        attr.value.objlist.list = &tam;
+
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to enable drop monitor when binding the TAM object to switch, rv:%d", status);
+            cleanupDropMonitor();
+            return false;
+        }
+    }
+
+    m_limitRate = limit_rate;
+    m_enable = true;
+    return true;
+}
+
+bool SflowDropMonitor::disableDropMonitor()
+{
+    sai_attribute_t attr;
+    sai_status_t    status;
+    sai_object_id_t null_oid = SAI_NULL_OBJECT_ID;
+
+    if (!isEnabled())
+    {
+        return true;
+    }
+
+    attr.id = SAI_SWITCH_ATTR_TAM_OBJECT_ID;
+    attr.value.objlist.count = 0;
+    attr.value.objlist.list = &null_oid;
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to disable drop monitor when unbinding the TAM object from switch, rv:%d", status);
+        return false;
+    }
+
+    cleanupDropMonitor();
+
+    m_limitRate = 0;
+    m_enable = false;
+    return true;
+}
+
+uint32_t SflowDropMonitor::getDropMonitorCpuQueue(const std::string& path)
+{
+    std::ifstream ifs(path);
+    if (!ifs.is_open())
+    {
+        SWSS_LOG_NOTICE("sFlow MOD config file not found: %s, using default queue %d",
+                        path.c_str(), SFLOW_DROP_MONITOR_CPU_QUEUE);
+        return SFLOW_DROP_MONITOR_CPU_QUEUE;
+    }
+
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(ifs);
+        uint32_t queue = j.at("drop_monitor_queue").get<uint32_t>();
+        return queue;
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to parse sFlow MOD config %s: %s, using default queue %d",
+                      path.c_str(), e.what(), SFLOW_DROP_MONITOR_CPU_QUEUE);
+        return SFLOW_DROP_MONITOR_CPU_QUEUE;
+    }
+}
+
+bool SflowDropMonitor::createTamReport()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam_report = SAI_NULL_OBJECT_ID;
+
+    if (m_tamReport != SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    attr.id = SAI_TAM_REPORT_ATTR_TYPE;
+    attr.value.s32 = SAI_TAM_REPORT_TYPE_GENETLINK;
+    attributes.push_back(attr);
+
+    status = sai_tam_api->create_tam_report(&tam_report, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM report, rv:%d", status);
+        return false;
+    }
+
+    m_tamReport = tam_report;
+    return true;
+}
+
+bool SflowDropMonitor::removeTamReport()
+{
+    sai_status_t status;
+
+    if (m_tamReport == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam_report(m_tamReport);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM report, rv:%d", status);
+        return false;
+    }
+
+    m_tamReport = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createTamEventAction()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam_event_action = SAI_NULL_OBJECT_ID;
+
+    if (m_tamEventAction != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM event action has already been created.");
+        return false;
+    }
+
+    if (m_tamReport == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM report must be created before the TAM event action.");
+        return false;
+    }
+
+    attr.id = SAI_TAM_EVENT_ACTION_ATTR_REPORT_TYPE;
+    attr.value.oid = m_tamReport;
+    attributes.push_back(attr);
+    status = sai_tam_api->create_tam_event_action(&tam_event_action, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM event action, rv:%d", status);
+        return false;
+    }
+
+    m_tamEventAction = tam_event_action;
+    return true;
+}
+
+bool SflowDropMonitor::removeTamEventAction()
+{
+    sai_status_t status;
+
+    if (m_tamEventAction == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam_event_action(m_tamEventAction);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM event action, rv:%d", status);
+        return false;
+    }
+
+    m_tamEventAction = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createTamTransport()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam_transport = SAI_NULL_OBJECT_ID;
+
+    if (m_tamTransport != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM transport has already been created.");
+        return false;
+    }
+
+    attr.id = SAI_TAM_TRANSPORT_ATTR_TRANSPORT_TYPE;
+    attr.value.s32 = SAI_TAM_TRANSPORT_TYPE_NONE;
+    attributes.push_back(attr);
+
+    status = sai_tam_api->create_tam_transport(&tam_transport, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM transport, rv:%d", status);
+        return false;
+    }
+
+    m_tamTransport = tam_transport;
+    return true;
+}
+
+bool SflowDropMonitor::removeTamTransport()
+{
+    sai_status_t status;
+
+    if (m_tamTransport == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam_transport(m_tamTransport);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM transport, rv:%d", status);
+        return false;
+    }
+
+    m_tamTransport = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createTamEvent()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam_event = SAI_NULL_OBJECT_ID;
+    sai_object_id_t         tam_collector = m_tamCollector;
+    sai_object_id_t         tam_event_action = m_tamEventAction;
+
+    if (m_tamEvent != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM event has already been created.");
+        return false;
+    }
+
+    if (tam_collector == SAI_NULL_OBJECT_ID || tam_event_action == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM collector and TAM event action must be created before the TAM event.");
+        return false;
+    }
+
+    attr.id = SAI_TAM_EVENT_ATTR_TYPE;
+    attr.value.s32 = SAI_TAM_EVENT_TYPE_PACKET_DROP;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_EVENT_ATTR_COLLECTOR_LIST;
+    attr.value.objlist.count = 1;
+    attr.value.objlist.list = &tam_collector;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_EVENT_ATTR_ACTION_LIST;
+    attr.value.objlist.count = 1;
+    attr.value.objlist.list = &tam_event_action;
+    attributes.push_back(attr);
+
+    status = sai_tam_api->create_tam_event(&tam_event, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM event, rv:%d", status);
+        return false;
+    }
+
+    m_tamEvent = tam_event;
+    return true;
+}
+
+bool SflowDropMonitor::removeTamEvent()
+{
+    sai_status_t status;
+
+    if (m_tamEvent == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam_event(m_tamEvent);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM event, rv:%d", status);
+        return false;
+    }
+
+    m_tamEvent = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createTamCollector()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam_collector = SAI_NULL_OBJECT_ID;
+    sai_object_id_t         tam_transport = m_tamTransport;
+    sai_object_id_t         hostif_user_defined_trap = m_hostifUserDefinedTrap;
+
+    if (m_tamCollector != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM collector has already been created.");
+        return false;
+    }
+
+    if (tam_transport == SAI_NULL_OBJECT_ID || hostif_user_defined_trap == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM transport and HOSTIF user defined trap must be created before the TAM collector.");
+        return false;
+    }
+
+    // The SAI_TAM_COLLECTOR_ATTR_LOCALHOST is set as true, however, the
+    // SAI_TAM_COLLECTOR_ATTR_SRC_IP and SAI_TAM_COLLECTOR_ATTR_DST_IP
+    // values are still required on creation by SAI definition.
+    attr.id = SAI_TAM_COLLECTOR_ATTR_SRC_IP;
+    attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    attr.value.ipaddr.addr.ip4 = 0x7f000001; // 127.0.0.1
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_COLLECTOR_ATTR_DST_IP;
+    attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    attr.value.ipaddr.addr.ip4 = 0x7f000001; // 127.0.0.1
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_COLLECTOR_ATTR_DSCP_VALUE;
+    attr.value.u8 = 0;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_COLLECTOR_ATTR_TRANSPORT;
+    attr.value.oid = tam_transport;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_COLLECTOR_ATTR_LOCALHOST;
+    attr.value.booldata = true;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP;
+    attr.value.oid = hostif_user_defined_trap;
+    attributes.push_back(attr);
+
+    status = sai_tam_api->create_tam_collector(&tam_collector, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM collector, rv:%d", status);
+        return false;
+    }
+
+    m_tamCollector = tam_collector;
+    return true;
+}
+
+bool SflowDropMonitor::removeTamCollector()
+{
+    sai_status_t status;
+
+    if (m_tamCollector == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam_collector(m_tamCollector);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM collector, rv:%d", status);
+        return false;
+    }
+
+    m_tamCollector = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createTam()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         tam = SAI_NULL_OBJECT_ID;
+    sai_object_id_t         tam_event = m_tamEvent;
+    int32_t                 bind_point = SAI_TAM_BIND_POINT_TYPE_SWITCH;
+
+    if (m_tam != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM has already been created.");
+        return false;
+    }
+
+    if (tam_event == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The TAM event must be created before the TAM.");
+        return false;
+    }
+
+    attr.id = SAI_TAM_ATTR_EVENT_OBJECTS_LIST;
+    attr.value.objlist.count = 1;
+    attr.value.objlist.list = &tam_event;
+    attributes.push_back(attr);
+    attr.id = SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST;
+    attr.value.s32list.count = 1;
+    attr.value.s32list.list = &bind_point;
+    attributes.push_back(attr);
+
+    status = sai_tam_api->create_tam(&tam, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM, rv:%d", status);
+        return false;
+    }
+
+    m_tam = tam;
+    return true;
+}
+
+bool SflowDropMonitor::removeTam()
+{
+    sai_status_t status;
+
+    if (m_tam == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_tam_api->remove_tam(m_tam);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove TAM, rv:%d", status);
+        return false;
+    }
+
+    m_tam = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createPolicer(int32_t limit_rate)
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         policer = SAI_NULL_OBJECT_ID;
+
+    if (m_policer != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The policer for sFlow drop monitor has already been created.");
+        return false;
+    }
+
+    attr.id = SAI_POLICER_ATTR_METER_TYPE;
+    attr.value.s32 = SAI_METER_TYPE_PACKETS;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_MODE;
+    attr.value.s32 = SAI_POLICER_MODE_SR_TCM;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_CIR;
+    attr.value.u64 = (sai_uint64_t)limit_rate;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_CBS;
+    attr.value.u64 = (sai_uint64_t)limit_rate;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    attributes.push_back(attr);
+    attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    attributes.push_back(attr);
+
+    status = sai_policer_api->create_policer(&policer, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create policer, rv:%d", status);
+        return false;
+    }
+
+    m_policer = policer;
+    return true;
+}
+
+bool SflowDropMonitor::updatePolicerRate(int32_t limit_rate)
+{
+    if (m_policer == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Cannot update drop monitor rate: policer is missing.");
+        return false;
+    }
+
+    sai_attribute_t attrs[2] = {};
+    // Preserve the existing mapping of drop_monitor_limit to CBS and CIR.
+    attrs[0].id = SAI_POLICER_ATTR_CBS;
+    attrs[0].value.u64 = static_cast<sai_uint64_t>(limit_rate);
+    attrs[1].id = SAI_POLICER_ATTR_CIR;
+    attrs[1].value.u64 = static_cast<sai_uint64_t>(limit_rate);
+
+    for (const auto &attr : attrs)
+    {
+        const auto status = sai_policer_api->set_policer_attribute(m_policer, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            // Earlier attributes may already be applied; do not roll back or retry.
+            SWSS_LOG_ERROR("Failed to update drop monitor policer attribute %u to %d, rv:%d",
+                           static_cast<unsigned int>(attr.id), limit_rate, status);
+            return false;
+        }
+    }
+
+    m_limitRate = limit_rate;
+    return true;
+}
+
+bool SflowDropMonitor::removePolicer()
+{
+    sai_status_t status;
+
+    if (m_policer == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_policer_api->remove_policer(m_policer);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove policer, rv:%d", status);
+        return false;
+    }
+
+    m_policer = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createHostifTrapGroup()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         hostif_trap_group = SAI_NULL_OBJECT_ID;
+
+    if (m_hostifTrapGroup != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The HOSTIF trap group has already been created.");
+        return false;
+    }
+
+    attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE;
+    attr.value.u32 = getDropMonitorCpuQueue();
+    attributes.push_back(attr);
+    if (m_policer != SAI_NULL_OBJECT_ID)
+    {
+        attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_POLICER;
+        attr.value.oid = m_policer;
+        attributes.push_back(attr);
+    }
+    status = sai_hostif_api->create_hostif_trap_group(&hostif_trap_group, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create HOSTIF trap group, rv:%d", status);
+        return false;
+    }
+
+    m_hostifTrapGroup = hostif_trap_group;
+    return true;
+}
+
+bool SflowDropMonitor::removeHostifTrapGroup()
+{
+    sai_status_t status;
+
+    if (m_hostifTrapGroup == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The HOSTIF trap group does not exist or has already been removed.");
+        return true;
+    }
+
+    status = sai_hostif_api->remove_hostif_trap_group(m_hostifTrapGroup);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove HOSTIF trap group, rv:%d", status);
+        return false;
+    }
+
+    m_hostifTrapGroup = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::createHostifUserDefinedTrap()
+{
+    sai_status_t            status;
+    sai_attribute_t         attr;
+    vector<sai_attribute_t> attributes;
+    sai_object_id_t         hostif_user_defined_trap = SAI_NULL_OBJECT_ID;
+    sai_object_id_t         hostif_trap_group = m_hostifTrapGroup;
+
+    if (m_hostifUserDefinedTrap != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The HOSTIF user defined trap has already been created.");
+        return false;
+    }
+
+    if (hostif_trap_group == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("The HOSTIF trap group must be created before the HOSTIF user defined trap.");
+        return false;
+    }
+
+    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+    attr.value.oid = hostif_trap_group;
+    attributes.push_back(attr);
+    attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
+    attributes.push_back(attr);
+
+    status = sai_hostif_api->create_hostif_user_defined_trap(&hostif_user_defined_trap, gSwitchId, (uint32_t)attributes.size(), attributes.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create HOSTIF user defined trap, rv:%d", status);
+        return false;
+    }
+
+    m_hostifUserDefinedTrap = hostif_user_defined_trap;
+    return true;
+}
+
+bool SflowDropMonitor::removeHostifUserDefinedTrap()
+{
+    sai_status_t status;
+
+    if (m_hostifUserDefinedTrap == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    status = sai_hostif_api->remove_hostif_user_defined_trap(m_hostifUserDefinedTrap);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove HOSTIF user defined trap, rv:%d", status);
+        return false;
+    }
+
+    m_hostifUserDefinedTrap = SAI_NULL_OBJECT_ID;
+    return true;
+}
+
+bool SflowDropMonitor::initializeDropMonitor(int32_t limit_rate)
+{
+    return (createTamReport() &&
+            createTamEventAction() &&
+            createTamTransport() &&
+            createPolicer(limit_rate) &&
+            createHostifTrapGroup() &&
+            createHostifUserDefinedTrap() &&
+            createTamCollector() &&
+            createTamEvent() &&
+            createTam());
+}
+
+void SflowDropMonitor::cleanupDropMonitor()
+{
+    // Remove all created SAI objects
+    removeTam();
+    removeTamEvent();
+    removeTamCollector();
+    removeHostifUserDefinedTrap();
+    removeHostifTrapGroup();
+    removePolicer();
+    removeTamTransport();
+    removeTamEventAction();
+    removeTamReport();
+}
 
 SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
     Orch(db, tableNames)
@@ -107,6 +795,36 @@ bool SflowOrch::sflowUpdateRate(sai_object_id_t port_id, uint32_t rate)
     return true;
 }
 
+bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
+{
+    for (auto& it : m_sflowRateSampleMap)
+    {
+        if (it.second.m_sample_id == oid)
+            return true;
+    }
+    return false;
+}
+
+// Check-before-set: refuse to bind sFlow if this port's samplepacket attr is
+// already owned by another (non-sFlow) feature
+bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_attr_t attr_id,
+                                           sai_object_id_t sample_id, const char* dir_name)
+{
+    sai_attribute_t check_attr;
+    check_attr.id = attr_id;
+    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+        && check_attr.value.oid != SAI_NULL_OBJECT_ID
+        && check_attr.value.oid != sample_id
+        && !isSflowSamplePacket(check_attr.value.oid))
+    {
+        SWSS_LOG_ERROR("Port %" PRIx64 " %s_SAMPLEPACKET_ENABLE already bound to "
+                       "OID 0x%" PRIx64 ", cannot bind sFlow",
+                       port_id, dir_name, check_attr.value.oid);
+        return false;
+    }
+    return true;
+}
+
 bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id, string direction)
 {
     sai_attribute_t attr;
@@ -115,7 +833,22 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
     SWSS_LOG_DEBUG("sflowAddPort  %" PRIx64 " portOid %" PRIx64 " dir %s",
                            sample_id, port_id, direction.c_str());
 
-    if (direction == "both" || direction == "rx")
+    bool need_ingress = (direction == "both" || direction == "rx");
+    bool need_egress  = (direction == "both" || direction == "tx");
+
+    // If the port's samplepacket is already owned by another (non-sFlow) feature, refuse to bind.
+    if (need_ingress &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE, sample_id, "INGRESS"))
+    {
+        return false;
+    }
+    if (need_egress &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE, sample_id, "EGRESS"))
+    {
+        return false;
+    }
+
+    if (need_ingress)
     {
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
@@ -132,7 +865,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         }
     }
 
-    if (direction == "both" || direction == "tx")
+    if (need_egress)
     {
         attr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
@@ -224,6 +957,18 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
         egr_sample_oid = port_info->second.m_sample_id;
     }
 
+    // Check-before-set: on a direction change
+    if (ing_sample_oid != SAI_NULL_OBJECT_ID &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE, ing_sample_oid, "INGRESS"))
+    {
+        return false;
+    }
+    if (egr_sample_oid != SAI_NULL_OBJECT_ID &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE, egr_sample_oid, "EGRESS"))
+    {
+        return false;
+    }
+
     attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
     attr.value.oid = ing_sample_oid;
     sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -291,8 +1036,63 @@ void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint
     }
 }
 
+void SflowOrch::sflowExtractGlobalInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir, int32_t &drop_monitor_limit)
+{
+    for (auto i : fvs)
+    {
+        if (fvField(i) == "admin_state")
+        {
+            if (fvValue(i) == "up")
+            {
+                admin = true;
+            }
+            else if (fvValue(i) == "down")
+            {
+                admin = false;
+            }
+        }
+        else if (fvField(i) == "sample_rate")
+        {
+            if (fvValue(i) != "error")
+            {
+                rate = (uint32_t)stoul(fvValue(i));
+            }
+            else
+            {
+                rate = 0;
+            }
+        }
+        else if (fvField(i) == "sample_direction")
+        {
+            if (fvValue(i) != "error")
+            {
+                dir = fvValue(i);
+            }
+        }
+        else if (fvField(i) == "drop_monitor_limit")
+        {
+            try
+            {
+                drop_monitor_limit = stoi(fvValue(i));
+            }
+            catch (...)
+            {
+                stringstream err_msg;
+                err_msg << "Incorrect drop_monitor_limit:" << fvValue(i) << ".";
+                SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+
+                drop_monitor_limit = 0;
+                continue;
+            }
+        }
+    }
+}
+
 void SflowOrch::sflowStatusSet(Consumer &consumer)
 {
+    bool sflow_status = false;
+    int32_t sflow_drop_monitor_limit = 0;
+
     auto it = consumer.m_toSync.begin();
 
     while (it != consumer.m_toSync.end())
@@ -304,13 +1104,36 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            sflowExtractInfo(kfvFieldsValues(tuple), m_sflowStatus, rate, dir);
+            sflowExtractGlobalInfo(kfvFieldsValues(tuple), sflow_status, rate, dir, sflow_drop_monitor_limit);
         }
         else if (op == DEL_COMMAND)
         {
-            m_sflowStatus = false;
+            sflow_status = false;
+            sflow_drop_monitor_limit = 0;
         }
         it = consumer.m_toSync.erase(it);
+    }
+
+    // Enable, disable or change drop monitor limit when configuration changes
+    if (m_sflowStatus != sflow_status ||
+        m_sflowDropMonitor.getLimitRate() != sflow_drop_monitor_limit)
+    {
+        bool is_succ = true;
+
+        // Drop monitor only enabled when sFlow is enabled
+        if (sflow_status && sflow_drop_monitor_limit > 0)
+        {
+            is_succ = m_sflowDropMonitor.enableDropMonitor(sflow_drop_monitor_limit);
+        }
+        else
+        {
+            is_succ = m_sflowDropMonitor.disableDropMonitor();
+        }
+
+        if (is_succ)
+        {
+            m_sflowStatus = sflow_status;
+        }
     }
 }
 
@@ -399,7 +1222,7 @@ void SflowOrch::doTask(Consumer &consumer)
 
             SWSS_LOG_DEBUG(" Existing Cfg portOid %" PRIx64 " admin %d rate %d dir %s", 
                             port.m_port_id, (unsigned int)admin_state, rate, 
-                            sflowInfo->second.m_sample_dir.c_str());
+                            (sflowInfo != m_sflowPortInfoMap.end()) ? sflowInfo->second.m_sample_dir.c_str() : "n/a");
 
             sflowExtractInfo(kfvFieldsValues(tuple), admin_state, rate, dir);
 

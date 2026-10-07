@@ -1268,6 +1268,10 @@ class TestMuxTunnelBase():
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE":
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_ECN_MODE":
+                assert value == "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD"
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_ECN_MODE":
+                assert value == "SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD"
             else:
                 assert False, "Field %s is not tested" % field
 
@@ -2219,6 +2223,36 @@ class TestMuxTunnel(TestMuxTunnelBase):
                 self.NEIGH3_IPV6 + self.IPV6_MASK
             ]
         )
+
+
+class TestMuxShutdownWithStandby(TestMuxTunnelBase):
+    """Validate orchagent shuts down cleanly when mux ports are in standby."""
+
+    def test_orchagent_clean_shutdown_with_standby_mux(
+        self, dvs, dvs_route, setup_vlan, setup_mux_cable,
+        setup_tunnel, setup_peer_switch, testlog
+    ):
+        """
+        Validate that orchagent exits cleanly when a mux port is in standby.
+
+        Sets a mux port to standby state so that MuxAclHandler ACL rules are
+        active, then stops orchagent via supervisorctl (SIGTERM) and verifies
+        it exits without crashing.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        time.sleep(1)
+
+        dvs.stop_swss()
+
+        exitcode, output = dvs.runcmd("supervisorctl status orchagent")
+        assert "STOPPED" in output, \
+            "orchagent did not stop cleanly: {}".format(output)
+        assert "FATAL" not in output, \
+            "orchagent crashed on shutdown: {}".format(output)
+
+        dvs.start_swss()
 
 
 # Add Dummy always-pass test at end as workaroud
