@@ -38,6 +38,7 @@
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE  "PORT_INGRESS_SAMPLE_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE   "PORT_EGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SFLOW_CAPABLE         "MIRROR_SESSION_SFLOW_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE     "SAMPLEPACKET_TRUNCATION_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
@@ -100,6 +101,7 @@ public:
     bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
     bool isPortEgressSampleMirrorSupported() const { return m_portEgressSampleMirrorSupported; }
     bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
+    bool isMirrorSessionSflowCapable() const { return m_mirrorSessionSflowSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -202,6 +204,7 @@ private:
     bool m_portIngressSampleMirrorSupported = false;
     bool m_portEgressSampleMirrorSupported = false;
     bool m_samplepacketTruncationSupported = false;
+    bool m_mirrorSessionSflowSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
