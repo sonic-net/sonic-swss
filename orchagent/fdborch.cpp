@@ -407,6 +407,32 @@ void FdbOrch::update(sai_fdb_event_t        type,
             */
             SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
+        } else if (type == SAI_FDB_EVENT_AGED) {
+            /* The SAI may also report each entry flushed before the bridge port
+               removal as aged, and that event can arrive after the bridge port is
+               gone. Clear a learned entry that still waits for that flush, as the
+               flush event would; there is nothing to do if it is already gone.
+            */
+            auto existing_entry = m_entries.find(update.entry);
+            if (existing_entry == m_entries.end())
+            {
+                SWSS_LOG_INFO("Age event: mac %s in bv_id 0x%" PRIx64 " already removed, bridge port ID 0x%" PRIx64 " is gone.",
+                              update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id);
+                return;
+            }
+            if (existing_entry->second.bridge_port_id == bridge_port_id &&
+                existing_entry->second.is_flush_pending &&
+                existing_entry->second.origin == FDB_ORIGIN_LEARN &&
+                existing_entry->second.type == "dynamic")
+            {
+                SWSS_LOG_NOTICE("Age event: clearing flushed mac %s in bv_id 0x%" PRIx64 " of removed bridge port ID 0x%" PRIx64 ".",
+                                update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id);
+                clearFdbEntry(existing_entry->first, existing_entry->second);
+                return;
+            }
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 " for age event of mac %s, stored on bridge port ID 0x%" PRIx64 ".",
+                        bridge_port_id, update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+            return;
         } else {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
