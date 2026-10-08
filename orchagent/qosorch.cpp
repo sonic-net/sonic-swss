@@ -1,4 +1,5 @@
 #include "tokenize.h"
+#include "converter.h"
 #include "qosorch.h"
 #include "logger.h"
 #include "crmorch.h"
@@ -2122,7 +2123,34 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
 
     sai_uint8_t pfc_enable = 0;
     sai_uint8_t pfcwd_sw_enable = 0;
+    // Parse every PFC field before changing QoS references. A malformed value
+    // can throw, and the task is dropped by doTask() on that path.
+    for (const auto &field_value : kfvFieldsValues(tuple))
+    {
+        if (fvField(field_value) != pfc_enable_name && fvField(field_value) != pfcwd_sw_enable_name)
+        {
+            continue;
+        }
+
+        sai_uint8_t bitmask = 0;
+        for (const auto &queue_index : tokenize(fvValue(field_value), list_item_delimiter))
+        {
+            auto queue = to_uint<sai_uint8_t>(queue_index, 0, 7);
+            bitmask |= static_cast<sai_uint8_t>(1u << queue);
+        }
+
+        if (fvField(field_value) == pfc_enable_name)
+        {
+            pfc_enable = bitmask;
+        }
+        else
+        {
+            pfcwd_sw_enable = bitmask;
+        }
+    }
+
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
+    vector<pair<string, string>> pending_references;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
         /* Check all map instances are created before applying to ports */
@@ -2140,29 +2168,13 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             }
 
             update_list[qos_to_attr_map[map_type_name]] = make_pair(map_name, id);
-            setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, map_type_name, object_name);
+            pending_references.emplace_back(map_type_name, object_name);
         }
+    }
 
-        else if (fvField(*it) == pfc_enable_name || fvField(*it) == pfcwd_sw_enable_name)
-        {
-            sai_uint8_t bitmask = 0;
-            vector<string> queue_indexes;
-            queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
-            for(string q_ind : queue_indexes)
-            {
-                sai_uint8_t q_val = (uint8_t)stoi(q_ind);
-                bitmask |= (uint8_t)(1 << q_val);
-            }
-
-            if (fvField(*it) == pfc_enable_name)
-            {
-                pfc_enable = bitmask;
-            }
-            else
-            {
-                pfcwd_sw_enable = bitmask;
-            }
-        }
+    for (const auto &reference : pending_references)
+    {
+        setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, reference.first, reference.second);
     }
 
     /* Remove any map that was configured but isn't there any longer. */
