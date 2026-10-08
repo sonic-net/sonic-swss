@@ -2574,7 +2574,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     // or record a RouteOrch route that was never created.
                     if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
                     {
-                        removeNextHopGroup(nextHops);
+                        m_bulkNhgReducedRefCnt.emplace(nextHops, 0);
                     }
                     return false;
                 }
@@ -2587,10 +2587,10 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 sai_status_t remove_status = sai_route_api->remove_route_entry(&route_entry);
                 if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
                 {
-                    /* A failed create has not acquired a reference to this
-                     * RouteOrch-owned group. Do not leave an unused group
-                     * behind if the queued route is withdrawn. */
-                    removeNextHopGroup(nextHops);
+                    /* Defer cleanup until every route in this bulk has
+                     * updated the group's reference count. Another route in
+                     * the same bulk may have successfully used this group. */
+                    m_bulkNhgReducedRefCnt.emplace(nextHops, 0);
                 }
 
                 if (remove_status != SAI_STATUS_SUCCESS)

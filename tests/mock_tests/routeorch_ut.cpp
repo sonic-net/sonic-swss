@@ -1068,6 +1068,39 @@ namespace routeorch_test
         EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(0));
     }
 
+    TEST_F(RouteOrchTest, RouteOrchCreateEcmpFailureKeepsGroupUsedByBulkPeer)
+    {
+        const std::string stale_key = "2.2.2.0/24";
+        const std::string created_key = "3.3.3.0/24";
+        const IpPrefix stale_prefix(stale_key);
+        const IpPrefix created_prefix(created_key);
+        const NextHopGroupKey nhg("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({stale_key, "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                               {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        entries.push_back({created_key, "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                                 {"nexthop", "10.0.0.2,10.0.0.3"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> create_status{SAI_STATUS_ITEM_ALREADY_EXISTS, SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
+                            Return(SAI_STATUS_FAILURE)));
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.count(stale_key), static_cast<size_t>(1));
+        EXPECT_EQ(consumer->m_toSync.count(created_key), static_cast<size_t>(0));
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(stale_prefix), static_cast<size_t>(0));
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(created_prefix), static_cast<size_t>(1));
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(1));
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.at(nhg).ref_count, static_cast<uint32_t>(1));
+    }
+
     TEST_F(RouteOrchTest, RouteOrchCreateSingleNextHopAlreadyExistsRetriesWithoutPhantomState)
     {
         const std::string key = "2.2.2.0/24";
