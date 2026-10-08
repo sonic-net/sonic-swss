@@ -455,6 +455,7 @@ bool VNetOrch::addOperation(const Request& request)
     string tunnel;
     string scope;
     swss::MacAddress overlay_dmac;
+    set<string> decap_tunnel_list = {};
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -490,6 +491,10 @@ bool VNetOrch::addOperation(const Request& request)
         {
             overlay_dmac = request.getAttrMacAddress("overlay_dmac");
         }
+        else if (name == "decap_tunnel_list")
+        {
+            decap_tunnel_list = request.getAttrSet("decap_tunnel_list");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -516,7 +521,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac, decap_tunnel_list };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
@@ -527,6 +532,23 @@ bool VNetOrch::addOperation(const Request& request)
                     SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                     vnet_name.c_str(), tunnel.c_str());
                     return false;
+                }
+
+                for (const auto& decap_tunnel : decap_tunnel_list)
+                {
+                    if (!vxlan_orch->isTunnelExists(decap_tunnel))
+                    {
+                        SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", decap_tunnel.c_str());
+                        return false;
+                    }
+
+                    if (!vxlan_orch->createVxlanTunnelMap(decap_tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                          vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
+                    {
+                        SWSS_LOG_ERROR("VNET '%s', decap tunnel '%s', map create failed",
+                                        vnet_name.c_str(), decap_tunnel.c_str());
+                        return false;
+                    }
                 }
 
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
@@ -601,6 +623,15 @@ bool VNetOrch::delOperation(const Request& request)
             {
                 SWSS_LOG_ERROR("VNET '%s' map delete failed", vnet_name.c_str());
                 return false;
+            }
+
+            for (const auto& decap_tunnel : vrf_obj->getDecapTunnelList())
+            {
+                if (!vxlan_orch->removeVxlanTunnelMap(decap_tunnel, vrf_obj->getVni()))
+                {
+                    SWSS_LOG_ERROR("VNET '%s' decap map delete failed", vnet_name.c_str());
+                    return false;
+                }
             }
         }
     }
