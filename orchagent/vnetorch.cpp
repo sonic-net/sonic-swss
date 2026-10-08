@@ -302,13 +302,14 @@ size_t VNetVrfObject::getRouteCount() const
 
 bool VNetVrfObject::getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh)
 {
-    if (!hasRoute(ipPrefix))
+    const auto route = routes_.find(ipPrefix);
+    if (route == routes_.end())
     {
         SWSS_LOG_INFO("VNET route '%s' does'nt exist", ipPrefix.to_string().c_str());
         return false;
     }
 
-    nh = routes_.at(ipPrefix);
+    nh = route->second;
     return true;
 }
 
