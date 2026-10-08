@@ -413,14 +413,20 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
     }
 
     std::string res;
-    int ret = swss::exec(cmds, res);
-    if (ret != 0)
+    // stderr too, in the C locale: it tells an entry that is already gone apart from a real failure
+    int ret = swss::exec("LC_ALL=C" + cmds + " 2>&1", res);
+    if (ret == 0)
     {
-        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+    }
+    else if (res.find("RTNETLINK answers: No such file or directory") != std::string::npos)
+    {
+        // zebra may already have removed the VXLAN entry of a remote MAC that moved to a local port
+        SWSS_LOG_INFO("Already removed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
     else
     {
-        SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
 }
 
