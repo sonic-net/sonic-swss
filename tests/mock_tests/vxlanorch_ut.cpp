@@ -36,6 +36,7 @@ namespace vxlanorch_test
     using ::testing::SetArgPointee;
     using ::testing::Throw;
     using ::testing::StrictMock;
+    using ::testing::Invoke;
 
     constexpr sai_object_id_t vxlan_tunnel_oid = 0x1232;
     constexpr sai_object_id_t vxlan_tunnel_map_oid = 0x1240;
@@ -320,16 +321,115 @@ namespace vxlanorch_test
                         SetArgPointee<0>(SAI_NULL_OBJECT_ID),
                         Return(SAI_STATUS_FAILURE)
                         ));
+        // None of the maps was created, so none is removed
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0);
 
         EXPECT_NO_THROW({
                 bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
                 EXPECT_FALSE(result);
                 });
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    /*
+     * A switch that supports only some tunnel map types (here: no VLAN maps)
+     * still gets a tunnel with the maps it supports. An entry for a missing
+     * map is refused without a SAI call, maps that were never created are not
+     * removed, and orchagent is not marked unhealthy.
+     */
+    TEST_F(VxlanOrchTest, TunnelMapTypeNotSupported)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+        setSaiFailureStatus(false);
+
+        auto src_ip = IpAddress("10.1.0.1");
+        auto dst_ip = IpAddress("20.1.0.1");
+        VxlanTunnel* tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(Invoke([](sai_object_id_t *tunnel_map_id, sai_object_id_t,
+                                      uint32_t attr_count, const sai_attribute_t *attr_list) {
+                for (uint32_t i = 0; i < attr_count; i++)
+                {
+                    if (attr_list[i].id == SAI_TUNNEL_MAP_ATTR_TYPE &&
+                        (attr_list[i].value.s32 == SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID ||
+                         attr_list[i].value.s32 == SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI))
+                    {
+                        *tunnel_map_id = SAI_NULL_OBJECT_ID;
+                        return SAI_STATUS_NOT_SUPPORTED;
+                    }
+                }
+                *tunnel_map_id = vxlan_tunnel_map_oid;
+                return SAI_STATUS_SUCCESS;
+            }));
+        uint32_t decap_map_count = 0;
+        uint32_t encap_map_count = 0;
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(Invoke([&](sai_object_id_t *tunnel_id, sai_object_id_t,
+                                 uint32_t attr_count, const sai_attribute_t *attr_list) {
+                for (uint32_t i = 0; i < attr_count; i++)
+                {
+                    if (attr_list[i].id == SAI_TUNNEL_ATTR_DECAP_MAPPERS)
+                    {
+                        decap_map_count = attr_list[i].value.objlist.count;
+                    }
+                    else if (attr_list[i].id == SAI_TUNNEL_ATTR_ENCAP_MAPPERS)
+                    {
+                        encap_map_count = attr_list[i].value.objlist.count;
+                    }
+                }
+                *tunnel_id = vxlan_tunnel_oid;
+                return SAI_STATUS_SUCCESS;
+            }));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+            .WillOnce(DoAll(
+                        SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        // Only the two VRF map entries reach the SAI
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map_entry(_, _, _, _))
+            .Times(2)
+            .WillRepeatedly(DoAll(
+                        SetArgPointee<0>(vxlan_tunnel_map_entry_oid),
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map_entry(_))
+            .Times(2)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(_))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        // Only the two VRF maps exist to be removed
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(vxlan_tunnel_map_oid))
+            .Times(2)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(SAI_NULL_OBJECT_ID))
+            .Times(0);
+
+        EXPECT_NO_THROW({
+                EXPECT_TRUE(vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64));
+                EXPECT_TRUE(tunnel->isActive());
+                EXPECT_EQ(decap_map_count, 1u);
+                EXPECT_EQ(encap_map_count, 1u);
+                EXPECT_EQ(tunnel->getDecapMapId(TUNNEL_MAP_T_VLAN), SAI_NULL_OBJECT_ID);
+                EXPECT_EQ(tunnel->getEncapMapId(TUNNEL_MAP_T_VLAN), SAI_NULL_OBJECT_ID);
+
+                EXPECT_EQ(tunnel->addDecapMapperEntry(0x1003, 2000, TUNNEL_MAP_T_VLAN), SAI_NULL_OBJECT_ID);
+                EXPECT_EQ(tunnel->addEncapMapperEntry(0x1003, 2000, TUNNEL_MAP_T_VLAN), SAI_NULL_OBJECT_ID);
+
+                EXPECT_TRUE(vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000));
+                });
+
+        std::string error;
+        EXPECT_FALSE(getSaiFailureStatus(error)) << error;
+
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
