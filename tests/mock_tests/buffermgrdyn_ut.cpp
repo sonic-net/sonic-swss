@@ -2905,4 +2905,157 @@ namespace buffermgrdyn_test
                "after all profiles satisfy xoff_th <= reserved_size";
     }
 
+    /*
+     * Verify that ratio-driven SHP disable is aborted, and pool xoff=0 is never
+     * published, when one of the dynamic profiles being refreshed fails
+     * doUpdateBufferProfileForSize() (isHeadroomResourceValid() violation).
+     *
+     * Without this guard, the failed profile is silently skipped: it is never
+     * written to APPL_DB, so it is never added to m_shpProfilesToCheck, and the
+     * barrier is satisfied by the profiles that DID succeed while the failed
+     * profile is still in SHP-form in SAI - reproducing the SAI_STATUS_FAILURE
+     * this feature exists to prevent.
+     */
+    TEST_F(BufferMgrDynTest, TestSHPDisableByRatioAbortsOnProfileUpdateFailure)
+    {
+        // --- setup ---
+        InitDefaultLosslessParameter("2");   // SHP enabled by ratio=2
+        InitMmuSize();
+        StartBufferManager();
+        m_dynamicBuffer->m_bufferpoolSha = "mock_buffer_pool";
+        m_dynamicBuffer->m_headroomSha   = "mock_headroom";
+        m_dynamicBuffer->m_saiSyncPollIntervalSec = 0;
+
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+        InitBufferPool();
+
+        // profileFail references a PG, so doUpdateBufferProfileForSize() will
+        // call isHeadroomResourceValid() for it, which is mocked to fail below.
+        buffer_profile_t profileFail;
+        profileFail.name              = "pg_lossless_200000_5m_profile";
+        profileFail.size              = "43008";
+        profileFail.xon               = "43008";
+        profileFail.xoff              = "50176";
+        profileFail.xon_offset        = "1024";
+        profileFail.static_configured = false;
+        profileFail.lossless          = true;
+        profileFail.pool_name         = INGRESS_LOSSLESS_PG_POOL_NAME;
+        profileFail.speed             = "200000";
+        profileFail.cable_length      = "5m";
+        profileFail.port_mtu          = "9100";
+        profileFail.gearbox_model     = "";
+        profileFail.threshold_mode    = buffer_dynamic_th_field_name;
+        profileFail.threshold         = "0";
+        profileFail.port_pgs          = {"Ethernet0:3-4"};
+        m_dynamicBuffer->m_bufferProfileLookup[profileFail.name] = profileFail;
+
+        // profileOk has no PG referencing it, so its update trivially succeeds
+        // regardless of the mocked isHeadroomResourceValid() reply, letting the
+        // test tell "one profile fails" apart from "every profile fails". Its
+        // name sorts first so its published update precedes the failed update.
+        buffer_profile_t profileOk;
+        profileOk.name              = "pg_lossless_100000_5m_profile";
+        profileOk.size              = "43008";
+        profileOk.xon               = "43008";
+        profileOk.xoff              = "50176";
+        profileOk.xon_offset        = "1024";
+        profileOk.static_configured = false;
+        profileOk.lossless          = true;
+        profileOk.pool_name         = INGRESS_LOSSLESS_PG_POOL_NAME;
+        profileOk.speed             = "100000";
+        profileOk.cable_length      = "5m";
+        profileOk.port_mtu          = "9100";
+        profileOk.gearbox_model     = "";
+        profileOk.threshold_mode    = buffer_dynamic_th_field_name;
+        profileOk.threshold         = "0";
+        m_dynamicBuffer->m_bufferProfileLookup[profileOk.name] = profileOk;
+
+        // Seed the installed SHP-form profiles, including the SAI acknowledgement
+        // for the profile whose new values will be rejected.
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        m_dynamicBuffer->updateBufferProfileToDb(profileFail.name, profileFail);
+        m_dynamicBuffer->updateBufferProfileToDb(profileOk.name, profileOk);
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        vector<FieldValueTuple> failedProfileBefore;
+        ASSERT_TRUE(appBufferProfileTable.get(profileFail.name, failedProfileBefore));
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profileFail.name, failedProfileBefore);
+        ASSERT_TRUE(m_dynamicBuffer->isLosslessProfileSyncedInSai(profileFail.name));
+
+        // SHP is active; pool has non-zero xoff
+        m_dynamicBuffer->m_overSubscribeRatio = "2";
+        m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
+        m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].total_size = "1024000";
+        m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff = "655360";
+        appBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
+                               {{buffer_pool_xoff_field_name, "655360"}});
+
+        m_dynamicBuffer->m_shpProfilesToCheck.clear();
+
+        // trigger ratio-driven SHP disable (delete over_subscribe_ratio)
+        vector<FieldValueTuple> fvDisable = {{"default_dynamic_th", "0"}};
+        KeyOpFieldsValuesTuple tupleDisable = {"AZURE", "SET", fvDisable};
+
+        // The shared mock first mutates all four fields during calculation, then
+        // rejects profileFail during validation. profileOk has no PG to validate.
+        const vector<FieldValueTuple> expandedHeadroom = {
+            {"xon", "45056"}, {"xoff", "52224"},
+            {"size", "97280"}, {"xon_offset", "2048"}
+        };
+        vector<string> scriptReply = {"result:false"};
+        for (const auto &field : expandedHeadroom)
+        {
+            scriptReply.push_back(fvField(field) + ":" + fvValue(field));
+        }
+        SetRedisScriptReply(scriptReply);
+        auto status = m_dynamicBuffer->handleDefaultLossLessBufferParam(tupleDisable);
+        ClearMockRedisReply();
+
+        EXPECT_EQ(status, task_process_status::task_failed)
+            << "the SHP disable must be reported as failed, not silently succeed or "
+               "retry forever, when a profile fails to update";
+
+        const auto &failedProfile = m_dynamicBuffer->m_bufferProfileLookup.at(profileFail.name);
+        EXPECT_EQ(failedProfile.xon, profileFail.xon);
+        EXPECT_EQ(failedProfile.xoff, profileFail.xoff);
+        EXPECT_EQ(failedProfile.size, profileFail.size);
+        EXPECT_EQ(failedProfile.xon_offset, profileFail.xon_offset);
+        EXPECT_TRUE(m_dynamicBuffer->isLosslessProfileSyncedInSai(profileFail.name));
+
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        vector<FieldValueTuple> failedProfileAfter;
+        ASSERT_TRUE(appBufferProfileTable.get(profileFail.name, failedProfileAfter));
+        EXPECT_EQ(failedProfileAfter.size(), failedProfileBefore.size());
+        for (const auto &field : failedProfileBefore)
+        {
+            EXPECT_EQ(getField(failedProfileAfter, fvField(field)), fvValue(field));
+        }
+
+        // Do not undo an earlier profile update that was successfully published.
+        const auto &successfulProfile = m_dynamicBuffer->m_bufferProfileLookup.at(profileOk.name);
+        EXPECT_EQ(successfulProfile.xon, getField(expandedHeadroom, "xon"));
+        EXPECT_EQ(successfulProfile.xoff, getField(expandedHeadroom, "xoff"));
+        EXPECT_EQ(successfulProfile.size, getField(expandedHeadroom, "size"));
+        EXPECT_EQ(successfulProfile.xon_offset, getField(expandedHeadroom, "xon_offset"));
+        vector<FieldValueTuple> successfulProfileAfter;
+        ASSERT_TRUE(appBufferProfileTable.get(profileOk.name, successfulProfileAfter));
+        for (const auto &field : expandedHeadroom)
+        {
+            EXPECT_EQ(getField(successfulProfileAfter, fvField(field)), fvValue(field));
+        }
+        EXPECT_TRUE(m_dynamicBuffer->m_overSubscribeRatio.empty());
+
+        vector<FieldValueTuple> poolFv;
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, poolFv));
+        EXPECT_EQ(getField(poolFv, buffer_pool_xoff_field_name), "655360")
+            << "pool xoff=0 must NOT be published while a profile failed to reach "
+               "non-SHP form: profileFail is still SHP-form in SAI, so publishing "
+               "xoff=0 would be rejected by SAI just like the original bug";
+
+        EXPECT_FALSE(m_dynamicBuffer->m_shpDisablePendingByRatio)
+            << "a profile update failure is a persistent config problem, not a "
+               "transient SAI-sync delay, so it must not be silently retried forever";
+    }
+
 }
