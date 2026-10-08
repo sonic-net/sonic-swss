@@ -9,6 +9,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
@@ -109,6 +110,7 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    Table m_stateVlanMemberTable;
 
     struct m_local_fdb_info
     {

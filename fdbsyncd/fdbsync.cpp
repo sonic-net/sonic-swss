@@ -107,7 +107,8 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -429,7 +430,9 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
  * extern_learn and static ones, and the kernel refuses a per-MAC delete in a VLAN the
  * port is no longer in. Flush the port's entries of that type in the VLAN instead, once
  * per (port, VLAN, type) until a MAC is added there again. Returns false when the port
- * is still in the VLAN.
+ * is still a member of the VLAN. Membership comes from STATE_DB, not the kernel VID
+ * list: spanning tree removes the VID from a blocked port that is still a member, and
+ * its other entries there are needed again once the port forwards.
  */
 bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type)
 {
@@ -440,18 +443,18 @@ bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string 
         return true;
     }
 
+    std::vector<FieldValueTuple> member;
+    if (m_stateVlanMemberTable.get("Vlan" + vlan + "|" + port_name, member))
+    {
+        return false;
+    }
+
     std::string res;
     if (swss::exec("test -d /sys/class/net/" + port_name + "/brport", res) != 0)
     {
         /* The kernel removed all of the port's entries when it left the bridge */
         SWSS_LOG_INFO("%s is no longer a bridge port, nothing to delete", port_name.c_str());
         return true;
-    }
-
-    const std::string show = "bridge vlan show dev " + port_name + " vid " + vlan;
-    if ((swss::exec(show, res) != 0) || (res.find(port_name) != std::string::npos))
-    {
-        return false;
     }
 
     const std::string cmds = "bridge fdb flush dev " + port_name + " master vlan " + vlan
