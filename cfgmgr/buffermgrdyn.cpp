@@ -1657,6 +1657,7 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
 
         m_shpProfilesToCheck.clear();
         vector<string> profilesToCheck;
+        bool profile_update_failed = false;
         for (auto it = m_bufferProfileLookup.begin(); it != m_bufferProfileLookup.end(); ++it)
         {
             auto &name = it->first;
@@ -1669,12 +1670,26 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
             SWSS_LOG_INFO("Updating profile %s with speed %s cable length %s mtu %s gearbox model %s",
                           name.c_str(),
                           profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
+            // Keep the published values in case the recalculated headroom is rejected.
+            const auto oldXon = profile.xon;
+            const auto oldXoff = profile.xoff;
+            const auto oldSize = profile.size;
+            const auto oldXonOffset = profile.xon_offset;
             // recalculate the headroom size
             calculateHeadroomSize(profile);
             m_bufferProfileApplDbWritten = false;
             if (task_process_status::task_success != doUpdateBufferProfileForSize(profile, false))
             {
+                profile.xon = oldXon;
+                profile.xoff = oldXoff;
+                profile.size = oldSize;
+                profile.xon_offset = oldXonOffset;
                 SWSS_LOG_ERROR("Failed to update buffer profile %s when toggle shared headroom pool. See previous message for detail. Please adjust the configuration manually", name.c_str());
+                // The profile was not written to APPL_DB, so it will not be tracked in
+                // m_shpProfilesToCheck below. It is still in SHP form in SAI, so publishing
+                // pool xoff=0 once the tracked profiles sync would be rejected by SAI. Remember
+                // the failure so it can abort the ratio-driven SHP disable further down.
+                profile_update_failed = true;
             }
             // Record profiles that need SAI sync check
             // Only check when profile is actually written to APPL_DB
@@ -1694,6 +1709,12 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
         // Save profiles that need SAI sync check to member variable
         // The caller is responsible for checking SAI sync status
         m_shpProfilesToCheck = profilesToCheck;
+
+        if (profile_update_failed && enable_state_updated_by_ratio && !shp_enabled_by_ratio)
+        {
+            SWSS_LOG_ERROR("SHP disable aborted: at least one buffer profile failed to be refreshed, pool xoff=0 not published");
+            return task_process_status::task_failed;
+        }
     }
 
     if (shp_enabled_by_size)
