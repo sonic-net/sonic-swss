@@ -148,6 +148,7 @@ private:
     SubscriberStateTable m_stateFdbSyncTable;
     Table m_stateFdbSyncTableRead;
     Table m_cfgFdbSyncTableRead;
+    Table m_stateVlanMemberTable;
 
     struct m_local_fdb_info
     {
