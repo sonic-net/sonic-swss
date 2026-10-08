@@ -2393,10 +2393,10 @@ TEST_F(FdbSyncdEvpnMhTest, TestMixedNhgAndVtepMacs)
 /*
  * Local MAC delete after the port has left the VLAN: the kernel keeps the port's
  * extern_learn and static entries in that VLAN and rejects a per-MAC delete there.
- * The kernel is scripted: per-MAC deletes fail, the port is a bridge port while
- * s_bridgePort is set, and "bridge vlan show" lists it only while s_portInVlan is set.
+ * The kernel is scripted: the port carries no VID 2100 (it left the VLAN, or spanning
+ * tree blocks it there), so per-MAC deletes fail, and it is a bridge port while
+ * s_bridgePort is set. VLAN membership is the STATE_DB VLAN_MEMBER_TABLE row.
  */
-static bool s_portInVlan = false;
 static bool s_bridgePort = true;
 
 static int leftVlanKernel(const std::string &cmd, std::string &out)
@@ -2414,10 +2414,6 @@ static int leftVlanKernel(const std::string &cmd, std::string &out)
     if (cmd.find("bridge vlan show") != std::string::npos)
     {
         out = "port              vlan-id  \n";
-        if (s_portInVlan)
-        {
-            out += "Ethernet160       2100 PVID Egress Untagged\n";
-        }
     }
     return 0;
 }
@@ -2428,7 +2424,6 @@ public:
     void SetUp() override
     {
         FdbSyncdEvpnMhTest::SetUp();
-        s_portInVlan = false;
         s_bridgePort = true;
     }
 
@@ -2436,6 +2431,19 @@ public:
     {
         FdbSyncdEvpnMhTest::TearDown();
         callback = nullptr;
+    }
+
+    void setMember(bool member)
+    {
+        Table stateVlanMember(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME);
+        if (member)
+        {
+            stateVlanMember.set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+        }
+        else
+        {
+            stateVlanMember.del("Vlan2100|Ethernet160");
+        }
     }
 
     void addMac(const std::string &mac, short type)
@@ -2464,6 +2472,18 @@ public:
         m_mockFdbSync.updateLocalMac(&info);
         callback = captureCommand;
     }
+
+    bool flushed()
+    {
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("bridge fdb flush") != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 TEST_F(FdbSyncdLeftVlanTest, DynamicMacFlushedWhenPortLeftVlan)
@@ -2471,12 +2491,11 @@ TEST_F(FdbSyncdLeftVlanTest, DynamicMacFlushedWhenPortLeftVlan)
     addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
 
-    ASSERT_EQ(mockCallArgs.size(), 4u);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
     EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51 dev Ethernet160 master dynamic extern_learn vlan 2100"),
               std::string::npos);
     EXPECT_EQ(mockCallArgs[1], "test -d /sys/class/net/Ethernet160/brport");
-    EXPECT_EQ(mockCallArgs[2], "bridge vlan show dev Ethernet160 vid 2100");
-    EXPECT_EQ(mockCallArgs[3], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
     EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan2100:02:4c:45:00:00:51"), 0u);
 }
 
@@ -2485,10 +2504,10 @@ TEST_F(FdbSyncdLeftVlanTest, StaticMacFlushedWhenPortLeftVlan)
     addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
 
-    ASSERT_EQ(mockCallArgs.size(), 4u);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
     EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51 dev Ethernet160 master static vlan 2100"),
               std::string::npos);
-    EXPECT_EQ(mockCallArgs[3], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
 }
 
 TEST_F(FdbSyncdLeftVlanTest, FlushOncePerPortAndVlan)
@@ -2496,7 +2515,7 @@ TEST_F(FdbSyncdLeftVlanTest, FlushOncePerPortAndVlan)
     addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
     addMac("02:4c:45:00:00:52", FDB_TYPE_DYNAMIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
-    ASSERT_EQ(mockCallArgs.size(), 4u);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
 
     // The flush removed the second MAC too
     deleteMac("02:4c:45:00:00:52", FDB_TYPE_DYNAMIC);
@@ -2508,13 +2527,13 @@ TEST_F(FdbSyncdLeftVlanTest, MacAddedAgainFlushesAgain)
 {
     addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
-    ASSERT_EQ(mockCallArgs.size(), 4u);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
 
     // The port rejoined and learned again, then left again
     addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
-    ASSERT_EQ(mockCallArgs.size(), 4u);
-    EXPECT_EQ(mockCallArgs[3], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
 }
 
 TEST_F(FdbSyncdLeftVlanTest, NoFlushWhenPortLeftBridge)
@@ -2528,15 +2547,45 @@ TEST_F(FdbSyncdLeftVlanTest, NoFlushWhenPortLeftBridge)
     EXPECT_EQ(mockCallArgs[1], "test -d /sys/class/net/Ethernet160/brport");
 }
 
-TEST_F(FdbSyncdLeftVlanTest, NoFlushWhilePortInVlan)
+TEST_F(FdbSyncdLeftVlanTest, NoFlushWhileStpBlocksMember)
 {
-    // A failed delete while the port is still in the VLAN must not touch its other MACs
-    s_portInVlan = true;
+    // Spanning tree removed the VID from the port, but it is still a member of the VLAN
+    setMember(true);
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51"), std::string::npos);
+}
+
+TEST_F(FdbSyncdLeftVlanTest, StaticMacOnStpBlockedMemberKeepsOtherStatics)
+{
+    setMember(true);
+    addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+
+    // Deleting one static MAC while spanning tree blocks the port must leave the other one
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_FALSE(flushed());
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan2100:02:4c:45:00:00:52"), 1u);
+
+    // Once the member is removed, the next failed delete flushes
+    setMember(false);
+    deleteMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, FlushedWhileMemberOfAnotherVlan)
+{
+    // The port left VLAN 2100 but is still a member of VLAN 2200
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2200|Ethernet160", { FieldValueTuple("state", "ok") });
     addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
 
     ASSERT_EQ(mockCallArgs.size(), 3u);
-    EXPECT_EQ(mockCallArgs[2], "bridge vlan show dev Ethernet160 vid 2100");
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
 }
 
 TEST_F(FdbSyncdLeftVlanTest, NoFlushAfterSuccessfulDelete)
