@@ -200,6 +200,8 @@ namespace swss
         ++gProducerDelCounts[getTableName()];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);
+        // The real del() also drops the staged entry ("_" + table); model that.
+        gDB[m_pipe->getDbId()]["_" + getTableName()].erase(key);
     }
 
     void ProducerStateTable::set(const std::vector<KeyOpFieldsValuesTuple>& values)
