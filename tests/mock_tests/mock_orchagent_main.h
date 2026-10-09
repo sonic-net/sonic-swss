@@ -122,6 +122,7 @@ extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_dash_ha_api_t* sai_dash_ha_api;
 extern sai_dash_flow_api_t* sai_dash_flow_api;
 extern sai_stp_api_t* sai_stp_api;
+extern sai_l2mc_group_api_t* sai_l2mc_group_api;
 extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_dash_vnet_api_t* sai_dash_vnet_api;
