@@ -843,12 +843,10 @@ bool OrchDaemon::init()
             }
         }
 
-        // Complete hardware recovery needs deadlock detection and recovery in
-        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
-        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT, and a platform
-        // that reports DLDR may report DLR init too, so DLDR is checked first:
-        // starting a software handler there would duplicate the hardware.
-        if (pfcDldrEnable)
+        // Both DLDR and DLR_INIT select hardware; DLR_INIT alone selects hybrid.
+        const PfcWdRecoveryMode pfcWdMode = selectPfcWdRecoveryMode(pfcDldrEnable, pfcDlrInit);
+
+        if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
             m_orchList.push_back(new PfcWdHwOrch(
@@ -858,7 +856,7 @@ bool OrchDaemon::init()
                         queueStatIds,
                         queueAttrIds));
         }
-        else if(pfcDlrInit)
+        else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(

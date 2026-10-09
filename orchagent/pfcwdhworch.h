@@ -15,6 +15,17 @@ extern "C" {
 #define PFC_WD_HW_RESTORATION_TIME_MIN     "RESTORATION_TIME_MIN"
 #define PFC_WD_HW_RESTORATION_TIME_MAX     "RESTORATION_TIME_MAX"
 
+enum class PfcWdRecoveryMode
+{
+    Software,   // software detection and action
+    HybridDlr,  // software detection, hardware-assisted recovery
+    Hardware,   // hardware detection and recovery
+};
+
+// Both DLDR and DLR_INIT select hardware; DLR_INIT alone selects hybrid.
+// SAI advertises DLDR on its own from 15.2.1.28.
+PfcWdRecoveryMode selectPfcWdRecoveryMode(bool dldrCapable, bool dlrInitCapable);
+
 class PfcWdHwOrch: public PfcWdBaseOrch
 {
 public:
