@@ -11,8 +11,8 @@
 #include "switchorch.h"
 #undef private
 
-#include "portsorch.h"
 #define private public
+#include "portsorch.h"
 #include "mirrororch.h"
 #undef private
 #include "mock_orch_test.h"
@@ -21,6 +21,7 @@
 #include <cstring>
 
 extern sai_mirror_api_t *sai_mirror_api;
+extern string gMySwitchType;
 
 namespace mirrororch_test
 {
@@ -1148,4 +1149,342 @@ namespace mirrororch_test
         sai_samplepacket_api->remove_samplepacket(created);
     }
 
+    // ---------------------------------------------------------------------
+    // MIRROR_SESSION type SFLOW
+    // ---------------------------------------------------------------------
+
+    // Baseline config for an SFLOW row. Tests copy it and mutate one field.
+    static std::vector<swss::FieldValueTuple> makeSflowConfig()
+    {
+        std::vector<swss::FieldValueTuple> data;
+        data.emplace_back("type", "SFLOW");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("src_port", "Ethernet0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "1000");
+        data.emplace_back("truncate_size", "128");
+        return data;
+    }
+
+    static void setSflowCapable(bool capable)
+    {
+        gSwitchOrch->m_mirrorSessionSflowSupported = capable;
+        gSwitchOrch->m_portIngressMirrorSupported = true;
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = true;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
+    }
+
+    // Replace one field in an SFLOW config, or drop it when value is null.
+    static void overrideField(std::vector<swss::FieldValueTuple>& data,
+                              const std::string& field,
+                              const char* value)
+    {
+        for (auto it = data.begin(); it != data.end(); ++it)
+        {
+            if (fvField(*it) == field)
+            {
+                if (value == nullptr)
+                {
+                    data.erase(it);
+                }
+                else
+                {
+                    *it = swss::FieldValueTuple(field, value);
+                }
+                return;
+            }
+        }
+        if (value != nullptr)
+        {
+            data.emplace_back(field, value);
+        }
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowRejectedWhenTypeNotReportedBySai)
+    {
+        // The SFLOW type probe is the platform gate.
+        setSflowCapable(false);
+
+        auto status = gMirrorOrch->createEntry("sflow_nocap", makeSflowConfig());
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("sflow_nocap"), (size_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowCreateEntry)
+    {
+        setSflowCapable(true);
+
+        auto status = gMirrorOrch->createEntry("sflow_ok", makeSflowConfig());
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        ASSERT_TRUE(gMirrorOrch->sessionExists("sflow_ok"));
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_ok")->second;
+        ASSERT_EQ(session.type, MIRROR_SESSION_SFLOW);
+        ASSERT_EQ(session.sample_rate, (uint32_t)1000);
+        ASSERT_EQ(session.truncate_size, (uint32_t)128);
+        ASSERT_EQ(session.udpDstPort, (uint16_t)6343);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowMissingSampleRateRejected)
+    {
+        // Absent, the SAI sample-rate divisor stays 0 and the encap is programmed
+        // with a zero rate without complaint, so orchagent has to reject it.
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "sample_rate", nullptr);
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_no_rate", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("sflow_no_rate"), (size_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowZeroTruncateSizeAccepted)
+    {
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "truncate_size", "0");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_no_trunc", data),
+                  task_process_status::task_success);
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_no_trunc")->second;
+        ASSERT_EQ(session.truncate_size, (uint32_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowGreTypeRejected)
+    {
+        // gre_type is an ERSPAN-only attribute.
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "gre_type", "0x88be");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_gre", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("sflow_gre"), (size_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowMismatchedIpFamiliesRejected)
+    {
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "dst_ip", "2001:db8::2");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_mixed_af", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("sflow_mixed_af"), (size_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowIpv6CollectorAccepted)
+    {
+        // orchagent does not restrict the collector family; the platform decides.
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "src_ip", "2001:db8::1");
+        overrideField(data, "dst_ip", "2001:db8::2");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_v6", data),
+                  task_process_status::task_success);
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_v6")->second;
+        ASSERT_FALSE(session.dstIp.isV4());
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowUdpDstPortConfigurable)
+    {
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "udp_dst_port", "9999");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_udp", data),
+                  task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.find("sflow_udp")->second.udpDstPort, (uint16_t)9999);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowUdpSrcPortRejected)
+    {
+        // Orchagent owns the sFlow UDP source port, so CONFIG_DB may not set it.
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "udp_src_port", "1111");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_udp", data),
+                  task_process_status::task_invalid_entry);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("sflow_udp"), (size_t)0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowTruncateSizePassedThrough)
+    {
+        // Orchagent does not restrict the size; SAI rejects what it cannot program.
+        // The samplepacket truncation gate does not apply to SFLOW.
+        setSflowCapable(true);
+        gSwitchOrch->m_samplepacketTruncationSupported = false;
+
+        auto data = makeSflowConfig();
+        overrideField(data, "truncate_size", "256");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_trunc", data),
+                  task_process_status::task_success);
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_trunc")->second;
+        ASSERT_EQ(session.truncate_size, (uint32_t)256);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowEgressDirectionAccepted)
+    {
+        // Direction support is left to the sample-mirror capabilities and SAI.
+        setSflowCapable(true);
+
+        auto data = makeSflowConfig();
+        overrideField(data, "direction", "BOTH");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_both", data),
+                  task_process_status::task_success);
+    }
+
+    static bool samplePacketTruncateEnabled(sai_object_id_t samplepacket_id)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
+        return sai_samplepacket_api->get_samplepacket_attribute(samplepacket_id, 1, &attr) == SAI_STATUS_SUCCESS
+               && attr.value.booldata;
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowSamplePacketOmitsTruncate)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+
+        MirrorEntry entry("");
+        entry.type = MIRROR_SESSION_SFLOW;
+        entry.sample_rate = 1000;
+        entry.truncate_size = 128;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("sflow_sp", entry));
+        ASSERT_FALSE(samplePacketTruncateEnabled(entry.samplepacketId));
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+
+        MirrorEntry erspan("");
+        erspan.type = MIRROR_SESSION_ERSPAN;
+        erspan.sample_rate = 1000;
+        erspan.truncate_size = 128;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("erspan_sp", erspan));
+        ASSERT_TRUE(samplePacketTruncateEnabled(erspan.samplepacketId));
+        sai_samplepacket_api->remove_samplepacket(erspan.samplepacketId);
+    }
+
+    // SAI VS rejects SFLOW mirror sessions, so capture the create attrs instead.
+    static std::vector<sai_attribute_t> g_captured_mirror_attrs;
+    static sai_status_t captureCreateMirrorSession(sai_object_id_t *oid, sai_object_id_t,
+                                                   uint32_t count, const sai_attribute_t *attrs)
+    {
+        g_captured_mirror_attrs.assign(attrs, attrs + count);
+        *oid = 0x1234;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t rejectPolicerCreateMirrorSession(sai_object_id_t *oid, sai_object_id_t sw,
+                                                         uint32_t count, const sai_attribute_t *attrs)
+    {
+        for (uint32_t i = 0; i < count; i++)
+        {
+            if (attrs[i].id == SAI_MIRROR_SESSION_ATTR_POLICER)
+            {
+                return SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
+            }
+        }
+        return captureCreateMirrorSession(oid, sw, count, attrs);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowPolicerRejectedBySai)
+    {
+        setSflowCapable(true);
+
+        Table policer_table(m_config_db.get(), CFG_POLICER_TABLE_NAME);
+        policer_table.set("policer0", { { "meter_type", "packets" }, { "mode", "sr_tcm" },
+                                        { "cir", "100" }, { "cbs", "100" } });
+        gPolicerOrch->addExistingData(&policer_table);
+        static_cast<Orch *>(gPolicerOrch)->doTask();
+        ASSERT_TRUE(gPolicerOrch->policerExists("policer0"));
+
+        auto data = makeSflowConfig();
+        overrideField(data, "policer", "policer0");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_policer", data),
+                  task_process_status::task_success);
+        ASSERT_EQ(gPolicerOrch->m_policerRefCounts["policer0"], 1);
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_policer")->second;
+
+        auto savedCreate = sai_mirror_api->create_mirror_session;
+        sai_mirror_api->create_mirror_session = rejectPolicerCreateMirrorSession;
+        bool activated = gMirrorOrch->activateSession("sflow_policer", session);
+        sai_mirror_api->create_mirror_session = savedCreate;
+
+        ASSERT_FALSE(activated);
+        ASSERT_FALSE(session.status);
+
+        ASSERT_EQ(gMirrorOrch->deleteEntry("sflow_policer"), task_process_status::task_success);
+        ASSERT_EQ(gPolicerOrch->m_policerRefCounts["policer0"], 0);
+    }
+
+    TEST_F(MirrorOrchPortTest, SflowVoqUsesRecircPortAndRouterMac)
+    {
+        // On a VOQ switch the SFLOW session egresses through the recirc port
+        // with the router MAC as dst MAC, as ERSPAN does.
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        setSflowCapable(true);
+
+        Port recirc, src;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", recirc));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", src));
+
+        ASSERT_EQ(gMirrorOrch->createEntry("sflow_voq", makeSflowConfig()),
+                  task_process_status::task_success);
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sflow_voq")->second;
+        session.neighborInfo.portId = src.m_port_id;
+        session.neighborInfo.mac = MacAddress("00:11:22:33:44:55");
+        session.neighborInfo.port.m_type = Port::PHY;
+
+        auto savedCreate = sai_mirror_api->create_mirror_session;
+        auto savedSwitchType = gMySwitchType;
+        sai_mirror_api->create_mirror_session = captureCreateMirrorSession;
+        gPortsOrch->m_recircPortRole["Ethernet8"] = Port::Role::Rec;
+        gMySwitchType = "voq";
+        g_captured_mirror_attrs.clear();
+
+        bool activated = gMirrorOrch->activateSession("sflow_voq", session);
+
+        gMySwitchType = savedSwitchType;
+        gPortsOrch->m_recircPortRole.erase("Ethernet8");
+        sai_mirror_api->create_mirror_session = savedCreate;
+        if (session.samplepacketId != SAI_NULL_OBJECT_ID)
+        {
+            sai_samplepacket_api->remove_samplepacket(session.samplepacketId);
+        }
+        gMirrorOrch->m_syncdMirrors.erase("sflow_voq");
+        ASSERT_TRUE(activated);
+
+        bool sawMonitorPort = false, sawDstMac = false;
+        for (const auto& attr : g_captured_mirror_attrs)
+        {
+            if (attr.id == SAI_MIRROR_SESSION_ATTR_MONITOR_PORT)
+            {
+                sawMonitorPort = true;
+                ASSERT_EQ(attr.value.oid, recirc.m_port_id);
+            }
+            else if (attr.id == SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS)
+            {
+                sawDstMac = true;
+                ASSERT_EQ(MacAddress(attr.value.mac), gMacAddress);
+            }
+        }
+        ASSERT_TRUE(sawMonitorPort);
+        ASSERT_TRUE(sawDstMac);
+    }
 }
