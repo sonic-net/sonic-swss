@@ -20,9 +20,12 @@
 
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "schema.h"
+#include "saihelper.h"
 #include <gtest/gtest.h>
 
 extern sai_tam_api_t *sai_tam_api;
+extern sai_switch_api_t *sai_switch_api;
 
 namespace hftelprofile_ut
 {
@@ -518,6 +521,339 @@ namespace hftelprofile_ut
         });
         ASSERT_NE(itr, counter_attrs.end());
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
+    }
+
+    struct SaiCreateFailureTest : public ::testing::Test
+    {
+        static constexpr sai_object_id_t telemetry_id = 0x400;
+        static constexpr sai_object_id_t report_id = 0x500;
+        static constexpr sai_object_id_t tel_type_id = 0x600;
+        static constexpr sai_object_id_t port_id = 0x1000000000001ULL;
+        static sai_status_t telemetry_status;
+        static sai_status_t report_status;
+        static sai_status_t tel_type_status;
+        static sai_status_t counter_status;
+        static bool write_failed_id;
+        static bool leave_null_id;
+        static vector<string> calls;
+        static vector<sai_object_id_t> removed;
+
+        sai_tam_api_t api{};
+        sai_tam_api_t *original_api = nullptr;
+        sai_switch_api_t switch_api{};
+        sai_switch_api_t *original_switch_api = nullptr;
+        CounterNameCache cache;
+
+        static sai_status_t create(sai_object_id_t *id, sai_object_id_t value,
+                                   sai_status_t status, const char *operation)
+        {
+            EXPECT_EQ(*id, SAI_NULL_OBJECT_ID);
+            calls.emplace_back(operation);
+            if (!leave_null_id && (status == SAI_STATUS_SUCCESS || write_failed_id))
+            {
+                *id = value;
+            }
+            return status;
+        }
+
+        static sai_status_t createTelemetry(sai_object_id_t *id, sai_object_id_t,
+                                           uint32_t, const sai_attribute_t *)
+        {
+            return create(id, telemetry_id, telemetry_status, "telemetry");
+        }
+        static sai_status_t createReport(sai_object_id_t *id, sai_object_id_t,
+                                        uint32_t, const sai_attribute_t *)
+        {
+            return create(id, report_id, report_status, "report");
+        }
+        static sai_status_t createTelType(sai_object_id_t *id, sai_object_id_t,
+                                         uint32_t count, const sai_attribute_t *attrs)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                if (attrs[i].id == SAI_TAM_TEL_TYPE_ATTR_REPORT_ID)
+                {
+                    EXPECT_EQ(attrs[i].value.oid, report_id);
+                }
+            }
+            return create(id, tel_type_id, tel_type_status, "tel_type");
+        }
+        static sai_status_t createCounter(sai_object_id_t *id, sai_object_id_t,
+                                         uint32_t count, const sai_attribute_t *attrs)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                if (attrs[i].id == SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE)
+                {
+                    EXPECT_EQ(attrs[i].value.oid, tel_type_id);
+                }
+            }
+            return create(id, 0x700 + calls.size(), counter_status, "counter");
+        }
+        static sai_status_t remove(sai_object_id_t id)
+        {
+            EXPECT_NE(id, SAI_NULL_OBJECT_ID);
+            removed.push_back(id);
+            return SAI_STATUS_SUCCESS;
+        }
+        static sai_status_t getList(sai_object_id_t, uint32_t, sai_attribute_t *attrs)
+        {
+            attrs->value.objlist.count = 0;
+            return SAI_STATUS_SUCCESS;
+        }
+        static sai_status_t setAttr(sai_object_id_t, const sai_attribute_t *)
+        {
+            calls.emplace_back("set");
+            return SAI_STATUS_SUCCESS;
+        }
+        static sai_status_t failureDump(sai_object_id_t, const sai_attribute_t *)
+        {
+            calls.emplace_back("dump");
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            original_api = sai_tam_api;
+            original_switch_api = sai_switch_api;
+            api.create_tam_telemetry = createTelemetry;
+            api.create_tam_report = createReport;
+            api.create_tam_tel_type = createTelType;
+            api.create_tam_counter_subscription = createCounter;
+            api.remove_tam_telemetry = remove;
+            api.remove_tam_report = remove;
+            api.remove_tam_tel_type = remove;
+            api.remove_tam_counter_subscription = remove;
+            api.get_tam_attribute = getList;
+            api.get_tam_telemetry_attribute = getList;
+            api.set_tam_attribute = setAttr;
+            api.set_tam_telemetry_attribute = setAttr;
+            api.set_tam_tel_type_attribute = setAttr;
+            switch_api.set_switch_attribute = failureDump;
+            sai_tam_api = &api;
+            sai_switch_api = &switch_api;
+            telemetry_status = report_status = tel_type_status = counter_status = SAI_STATUS_SUCCESS;
+            write_failed_id = false;
+            leave_null_id = false;
+            calls.clear();
+            removed.clear();
+        }
+        void TearDown() override
+        {
+            sai_tam_api = original_api;
+            sai_switch_api = original_switch_api;
+            setSaiFailureStatus(false);
+        }
+        void addGroup(HFTelProfile &profile)
+        {
+            HFTelGroup group("port");
+            group.updateObjects({"Ethernet0"});
+            group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS, SAI_PORT_STAT_IF_OUT_OCTETS});
+            profile.m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
+            profile.m_name_sai_map[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = port_id;
+        }
+
+        struct OrchStub
+        {
+            alignas(HFTelOrch) unsigned char buf[sizeof(HFTelOrch)];
+            HFTelOrch *p = nullptr;
+
+            void init(const shared_ptr<HFTelProfile> &profile)
+            {
+                p = reinterpret_cast<HFTelOrch *>(static_cast<void *>(buf));
+                new (&p->m_name_profile_mapping) decay_t<decltype(p->m_name_profile_mapping)>();
+                new (&p->m_type_profile_mapping) decay_t<decltype(p->m_type_profile_mapping)>();
+                new (&p->m_counter_name_cache) decay_t<decltype(p->m_counter_name_cache)>();
+                p->m_name_profile_mapping[profile->getProfileName()] = profile;
+                p->m_type_profile_mapping[SAI_OBJECT_TYPE_PORT].insert(profile);
+            }
+            ~OrchStub()
+            {
+                if (!p) return;
+                p->m_name_profile_mapping.~unordered_map();
+                p->m_type_profile_mapping.~unordered_map();
+                p->m_counter_name_cache.~unordered_map();
+            }
+        };
+    };
+
+    constexpr sai_object_id_t SaiCreateFailureTest::telemetry_id;
+    constexpr sai_object_id_t SaiCreateFailureTest::report_id;
+    constexpr sai_object_id_t SaiCreateFailureTest::tel_type_id;
+    constexpr sai_object_id_t SaiCreateFailureTest::port_id;
+    sai_status_t SaiCreateFailureTest::telemetry_status;
+    sai_status_t SaiCreateFailureTest::report_status;
+    sai_status_t SaiCreateFailureTest::tel_type_status;
+    sai_status_t SaiCreateFailureTest::counter_status;
+    bool SaiCreateFailureTest::write_failed_id;
+    bool SaiCreateFailureTest::leave_null_id;
+    vector<string> SaiCreateFailureTest::calls;
+    vector<sai_object_id_t> SaiCreateFailureTest::removed;
+
+    TEST_F(SaiCreateFailureTest, ReportFailureStopsDependentProgrammingAndCleanup)
+    {
+        HFTelProfile profile("one_us", 0x100, 0x200, cache);
+        addGroup(profile);
+        calls.clear();
+        report_status = SAI_STATUS_INVALID_PARAMETER;
+        EXPECT_THROW(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT), HFTelSaiCreateError);
+        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
+        EXPECT_TRUE(profile.m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(profile.m_sai_tam_tel_type_objs.empty());
+        EXPECT_FALSE(profile.isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        profile.setStreamState(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        profile.setStreamState(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        profile.clearGroup("port");
+        EXPECT_TRUE(removed.empty());
+        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
+    }
+
+    TEST_F(SaiCreateFailureTest, HandledCreateErrorCannotCacheWrittenOutputId)
+    {
+        HFTelProfile profile("test", 0x100, 0x200, cache);
+        report_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+        write_failed_id = true;
+        EXPECT_THROW(profile.getTAMReportObjID(SAI_OBJECT_TYPE_PORT), HFTelSaiCreateError);
+        EXPECT_TRUE(profile.m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(removed.empty());
+    }
+
+    TEST_F(SaiCreateFailureTest, TelTypeFailureRetainsOnlySuccessfulReport)
+    {
+        HFTelProfile profile("test", 0x100, 0x200, cache);
+        addGroup(profile);
+        calls.clear();
+        tel_type_status = SAI_STATUS_INVALID_PARAMETER;
+        EXPECT_THROW(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT), HFTelSaiCreateError);
+        EXPECT_EQ(calls, vector<string>({"report", "tel_type", "dump"}));
+        EXPECT_EQ(profile.m_sai_tam_report_objs.size(), 1u);
+        EXPECT_TRUE(profile.m_sai_tam_tel_type_objs.empty());
+        EXPECT_TRUE(profile.m_sai_tam_tel_type_states.empty());
+        profile.clearGroup("port");
+        EXPECT_EQ(removed, vector<sai_object_id_t>({report_id}));
+    }
+
+    TEST_F(SaiCreateFailureTest, SuccessWithNullOutputIdCannotBeCached)
+    {
+        HFTelProfile profile("test", 0x100, 0x200, cache);
+        leave_null_id = true;
+        EXPECT_THROW(profile.getTAMReportObjID(SAI_OBJECT_TYPE_PORT), HFTelSaiCreateError);
+        EXPECT_TRUE(profile.m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(removed.empty());
+    }
+
+    TEST_F(SaiCreateFailureTest, PartialCounterFailureIsNotReadyAndCanRetry)
+    {
+        HFTelProfile profile("test", 0x100, 0x200, cache);
+        addGroup(profile);
+        profile.deployCounterSubscription(SAI_OBJECT_TYPE_PORT, port_id, SAI_PORT_STAT_IF_IN_OCTETS, 0);
+        calls.clear();
+        counter_status = SAI_STATUS_NO_MEMORY;
+        try
+        {
+            profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT);
+            FAIL() << "Expected counter creation failure";
+        }
+        catch (const HFTelSaiCreateError &e)
+        {
+            EXPECT_EQ(e.getStatus(), SAI_STATUS_NO_MEMORY);
+        }
+        EXPECT_EQ(calls, vector<string>({"counter"}));
+        EXPECT_FALSE(profile.isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        EXPECT_EQ(profile.m_sai_tam_counter_subscription_objs.at(SAI_OBJECT_TYPE_PORT).at(port_id).size(), 1u);
+        counter_status = SAI_STATUS_SUCCESS;
+        EXPECT_TRUE(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT));
+        EXPECT_TRUE(profile.isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        EXPECT_EQ(calls, vector<string>({"counter", "counter", "set"}));
+    }
+
+    TEST_F(SaiCreateFailureTest, TelemetryFailureDoesNotAttachOrRemoveOutputId)
+    {
+        telemetry_status = SAI_STATUS_NO_MEMORY;
+        EXPECT_THROW(HFTelProfile("test", 0x100, 0x200, cache), HFTelSaiCreateError);
+        EXPECT_EQ(calls, vector<string>({"telemetry"}));
+        EXPECT_TRUE(removed.empty());
+    }
+
+    TEST_F(SaiCreateFailureTest, ResourceFailureKeepsTaskPendingAndRetries)
+    {
+        auto profile = make_shared<HFTelProfile>("test", 0x100, 0x200, cache);
+        addGroup(*profile);
+        OrchStub orch;
+        orch.init(profile);
+        swss::DBConnector db("CONFIG_DB", 0);
+        Consumer consumer(new swss::ConsumerStateTable(&db, CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME),
+                          orch.p, CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME);
+        consumer.m_toSync.emplace("test|port", swss::KeyOpFieldsValuesTuple("test|port", SET_COMMAND, {}));
+        report_status = SAI_STATUS_NO_MEMORY;
+        calls.clear();
+        EXPECT_NO_THROW(orch.p->HFTelOrch::doTask(consumer));
+        EXPECT_EQ(consumer.m_toSync.size(), 1u);
+        EXPECT_EQ(calls, vector<string>({"report"}));
+        report_status = SAI_STATUS_SUCCESS;
+        EXPECT_NO_THROW(orch.p->HFTelOrch::doTask(consumer));
+        EXPECT_TRUE(consumer.m_toSync.empty());
+        EXPECT_TRUE(profile->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+    }
+
+    TEST_F(SaiCreateFailureTest, PermanentFailureConsumesTaskWithoutDependentCalls)
+    {
+        auto profile = make_shared<HFTelProfile>("test", 0x100, 0x200, cache);
+        addGroup(*profile);
+        OrchStub orch;
+        orch.init(profile);
+        swss::DBConnector db("CONFIG_DB", 0);
+        Consumer consumer(new swss::ConsumerStateTable(&db, CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME),
+                          orch.p, CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME);
+        consumer.m_toSync.emplace("test|port", swss::KeyOpFieldsValuesTuple("test|port", SET_COMMAND, {}));
+        report_status = SAI_STATUS_INVALID_PARAMETER;
+        calls.clear();
+        EXPECT_NO_THROW(orch.p->HFTelOrch::doTask(consumer));
+        EXPECT_TRUE(consumer.m_toSync.empty());
+        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
+        EXPECT_FALSE(profile->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+    }
+
+    TEST_F(SaiCreateFailureTest, MissingObjectKeepsGroupTaskPending)
+    {
+        auto profile = make_shared<HFTelProfile>("test", 0x100, 0x200, cache);
+        addGroup(*profile);
+        profile->m_name_sai_map.clear();
+        OrchStub orch;
+        orch.init(profile);
+        EXPECT_EQ(orch.p->groupTableSet("test", "port", {}), task_need_retry);
+    }
+
+    TEST_F(SaiCreateFailureTest, CounterNotificationContainsCreateFailure)
+    {
+        auto profile = make_shared<HFTelProfile>("test", 0x100, 0x200, cache);
+        addGroup(*profile);
+        profile->m_name_sai_map.clear();
+        OrchStub orch;
+        orch.init(profile);
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = COUNTERS_PORT_NAME_MAP;
+        msg.m_operation = CounterNameMapUpdater::SET;
+        msg.m_counter_name = "Ethernet0";
+        msg.m_oid = port_id;
+        report_status = SAI_STATUS_INVALID_PARAMETER;
+        calls.clear();
+        EXPECT_NO_THROW(orch.p->locallyNotify(msg));
+        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
+        EXPECT_TRUE(profile->m_sai_tam_report_objs.empty());
+    }
+
+    TEST_F(SaiCreateFailureTest, DestructionRemovesDependentsBeforePrerequisites)
+    {
+        {
+            HFTelProfile profile("test", 0x100, 0x200, cache);
+            profile.deployCounterSubscription(SAI_OBJECT_TYPE_PORT, port_id, SAI_PORT_STAT_IF_IN_OCTETS, 0);
+        }
+        ASSERT_EQ(removed.size(), 4u);
+        EXPECT_GT(removed[0], 0x700ULL);
+        EXPECT_EQ(removed[1], tel_type_id);
+        EXPECT_EQ(removed[2], report_id);
+        EXPECT_EQ(removed[3], telemetry_id);
     }
 
     struct LocallyNotifyStartedProfileTest : public ::testing::Test

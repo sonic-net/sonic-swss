@@ -149,25 +149,32 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
             continue;
         }
 
-        if (msg.m_operation == CounterNameMapUpdater::SET)
+        try
         {
-            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+            if (msg.m_operation == CounterNameMapUpdater::SET)
             {
-                continue;
+                if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+                {
+                    continue;
+                }
             }
-        }
-        else if (msg.m_operation == CounterNameMapUpdater::DEL)
-        {
-            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+            else if (msg.m_operation == CounterNameMapUpdater::DEL)
             {
-                continue;
+                if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+                {
+                    continue;
+                }
             }
+            else
+            {
+                SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            }
+            profile->tryCommitConfig(counter_itr->second);
         }
-        else
+        catch (const HFTelSaiCreateError &e)
         {
-            SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            SWSS_LOG_ERROR("Failed to update HFT counter %s: %s", counter_name.c_str(), e.what());
         }
-        profile->tryCommitConfig(counter_itr->second);
     }
 }
 
@@ -375,6 +382,8 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         return task_process_status::task_need_retry;
     }
 
+    m_type_profile_mapping[type].insert(profile);
+
     auto arg_object_names = fvsGetValue(values, "object_names", true);
     if (arg_object_names && !arg_object_names->empty())
     {
@@ -401,9 +410,10 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
         return task_process_status::task_success;
     }
 
-    profile->tryCommitConfig(type);
-
-    m_type_profile_mapping[type].insert(profile);
+    if (!profile->tryCommitConfig(type))
+    {
+        return task_process_status::task_need_retry;
+    }
 
     SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is set (object_names: %s, object_counters: %s)",
                     group_name.c_str(),
@@ -628,6 +638,12 @@ void HFTelOrch::doTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
             }
+        }
+        catch (const HFTelSaiCreateError &e)
+        {
+            SWSS_LOG_ERROR("Failed to process HFT task %s: %s", key.c_str(), e.what());
+            status = isSaiStatusResourceFull(e.getStatus()) ? task_process_status::task_need_retry
+                                                          : task_process_status::task_failed;
         }
         catch (const std::exception &e)
         {
