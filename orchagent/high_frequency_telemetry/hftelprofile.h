@@ -13,11 +13,23 @@
 #include <set>
 #include <string>
 #include <memory>
+#include <stdexcept>
 
 #include "hftelgroup.h"
 
 
 using CounterNameCache = std::unordered_map<sai_object_type_t, std::unordered_map<std::string, sai_object_id_t>>;
+
+class HFTelSaiCreateError : public std::runtime_error
+{
+public:
+    HFTelSaiCreateError(const std::string &message, sai_status_t status)
+        : std::runtime_error(message), m_status(status) {}
+    sai_status_t getStatus() const { return m_status; }
+
+private:
+    sai_status_t m_status;
+};
 
 class HFTelProfile
 {
@@ -155,6 +167,7 @@ private:
     }
 
     // SAI calls
+    void checkSaiCreateStatus(sai_status_t status, sai_object_id_t object_id, const char *operation) const;
     sai_object_id_t getTAMReportObjID(sai_object_type_t object_type);
     sai_object_id_t getTAMTelTypeObjID(sai_object_type_t object_type);
     void initTelemetry();
