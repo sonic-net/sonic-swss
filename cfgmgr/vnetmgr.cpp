@@ -16,7 +16,6 @@
 #define VNET "vnet"
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
-#define VXLAN_ACCEPT_ALL_INNER_DMACS "vxlan_accept_all_inner_dmacs"
 #define RET_SUCCESS 0
 
 using namespace std;
@@ -396,23 +395,17 @@ bool VNetMgr::probeVxlanBridgePair(const VxlanKernelRouteInfo & info)
     return true;
 }
 
-bool VNetMgr::readSwitchState(bool & enabled, std::string & routerMac)
+bool VNetMgr::readSwitchState(std::string & routerMac)
 {
     std::vector<swss::FieldValueTuple> values;
     if (!m_appSwitchTable.get("switch", values))
     {
         return false;
     }
-    enabled = false;
     routerMac.clear();
     for (const auto & kv : values)
     {
-        if (fvField(kv) == VXLAN_ACCEPT_ALL_INNER_DMACS)
-        {
-            const std::string & v = fvValue(kv);
-            enabled = (v == "true" || v == "True" || v == "TRUE" || v == "1");
-        }
-        else if (fvField(kv) == "vxlan_router_mac")
+        if (fvField(kv) == "vxlan_router_mac")
         {
             routerMac = fvValue(kv);
         }
@@ -426,16 +419,11 @@ bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni)
     {
         return true;
     }
-    bool enabled = false;
     std::string routerMac;
-    if (!readSwitchState(enabled, routerMac))
+    if (!readSwitchState(routerMac))
     {
         SWSS_LOG_INFO("SWITCH_TABLE:switch not yet populated, deferring kernel route programming");
         return false;
-    }
-    if (!enabled)
-    {
-        return true;
     }
     if (routerMac.empty())
     {
