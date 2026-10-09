@@ -26,6 +26,7 @@ extern FdbOrch   *gFdbOrch;
 extern redisReply *mockReply;
 
 #define ETH0 "Ethernet0"
+#define ETH1 "Ethernet1"
 #define VLAN40 "Vlan40"
 #define VXLAN_REMOTE "Port_EVPN_1.1.1.1"
 #define NHG_REMOTE "Port_Nexthop_Group_536870913"
@@ -382,6 +383,24 @@ namespace fdborch_vxlan_ut
         m_portsOrch->m_portList[VLAN40].m_members.insert(ETH0);
     }
 
+    void setUpSecondPort(PortsOrch* m_portsOrch){
+        std::string alias = ETH1;
+        sai_object_id_t oid = 0x10000000004a7;
+
+        Port port(alias, Port::PHY);
+        port.m_index = 2;
+        port.m_port_id = oid;
+        port.m_hif_id = 0xd00000000056f;
+
+        m_portsOrch->m_portList[alias] = port;
+        m_portsOrch->saiOidToAlias[oid] = alias;
+
+        sai_object_id_t bridge_port_id = 0x3a000000002c36;
+        m_portsOrch->m_portList[alias].m_bridge_port_id = bridge_port_id;
+        m_portsOrch->saiOidToAlias[bridge_port_id] = alias;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(alias);
+    }
+
     void setUpVxlanPort(PortsOrch* m_portsOrch){
         /* Updates portsOrch internal cache for VXLAN */
         std::string alias = VXLAN_REMOTE;
@@ -432,6 +451,14 @@ namespace fdborch_vxlan_ut
         neigh_table.del(key);
     }
 
+    void setUpPortNhgTopology(PortsOrch *portsOrch)
+    {
+        setUpVlan(portsOrch);
+        setUpPort(portsOrch);
+        setUpVlanMember(portsOrch);
+        setUpNhgPort(portsOrch);
+        setUpNhg(portsOrch);
+    }
 
     void triggerUpdate(FdbOrch* m_fdborch,
                        sai_fdb_event_t type,
@@ -455,6 +482,7 @@ ACTION_P(SaveSAIAttrs, sai_attr_dest)
 namespace fdborch_vxlan_ut
 {
     using ::testing::Eq;
+    using ::testing::InSequence;
     using ::testing::SaveArg;
     using ::testing::SaveArgPointee;
 
