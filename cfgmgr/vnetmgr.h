@@ -63,7 +63,7 @@ private:
     bool createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
     bool deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
 
-    bool readSwitchState(bool & enabled, std::string & routerMac);
+    bool readSwitchState(std::string & routerMac);
     bool installDmacBypassIfNeeded(const std::string & vnetVni);
     void removeDmacBypass(const std::string & vnetVni);
 
