@@ -2491,6 +2491,9 @@ class TestWarmReboot(object):
         # This test aims to improve code coverage in fpmsyncd.
         warm_restart_set(dvs, "system", "true")
         warm_restart_set(dvs, "bgp", "true")
+        # fpmsyncd holds every APPL_DB update until it reconciles, which can
+        # be 120 seconds after it starts unless a timer is configured.
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", "5")
 
         # set restore count
         db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
@@ -2503,6 +2506,16 @@ class TestWarmReboot(object):
 
         # Start fpmsyncd
         dvs.start_fpmsyncd()
+
+        # Later tests share this switch: leave it with the restart finished
+        # and warm restart disabled again.
+        dvs.get_state_db().wait_for_field_match(
+            swsscommon.STATE_WARM_RESTART_TABLE_NAME,
+            "bgp",
+            {"state": "reconciled"},
+        )
+        warm_restart_set(dvs, "bgp", "false")
+        warm_restart_set(dvs, "system", "false")
 
 
 class TestSrv6MySidWarmRestart(object):
