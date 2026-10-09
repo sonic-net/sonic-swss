@@ -6720,6 +6720,27 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDlrInterval)
     resetPfcWdFailureFlags();
 }
 
+// The {DLDR, DLR_INIT} capability matrix decides which watchdog is started.
+TEST(PfcWdRecoveryModeSelection, BothCapabilitiesSelectHardware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(true, true), PfcWdRecoveryMode::Hardware);
+}
+
+TEST(PfcWdRecoveryModeSelection, DlrInitWithoutDldrSelectsHybrid)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(false, true), PfcWdRecoveryMode::HybridDlr);
+}
+
+TEST(PfcWdRecoveryModeSelection, DldrWithoutDlrInitStaysSoftware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(true, false), PfcWdRecoveryMode::Software);
+}
+
+TEST(PfcWdRecoveryModeSelection, NeitherCapabilitySelectsSoftware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(false, false), PfcWdRecoveryMode::Software);
+}
+
 TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
 {
     bringUpPorts();

@@ -48,6 +48,21 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     SWSS_LOG_NOTICE("Hardware-based PFC watchdog initialization complete");
 }
 
+PfcWdRecoveryMode selectPfcWdRecoveryMode(bool dldrCapable, bool dlrInitCapable)
+{
+    if (dldrCapable && dlrInitCapable)
+    {
+        return PfcWdRecoveryMode::Hardware;
+    }
+
+    if (dlrInitCapable)
+    {
+        return PfcWdRecoveryMode::HybridDlr;
+    }
+
+    return PfcWdRecoveryMode::Software;
+}
+
 PfcWdHwOrch::~PfcWdHwOrch(void)
 {
     SWSS_LOG_ENTER();
