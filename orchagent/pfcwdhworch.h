@@ -15,6 +15,21 @@ extern "C" {
 #define PFC_WD_HW_RESTORATION_TIME_MIN     "RESTORATION_TIME_MIN"
 #define PFC_WD_HW_RESTORATION_TIME_MAX     "RESTORATION_TIME_MAX"
 
+// Which PFC watchdog implementation a platform's SAI capabilities call for.
+enum class PfcWdRecoveryMode
+{
+    Software,   // software detection, software action (ACL / zero-buffer)
+    HybridDlr,  // software detection, hardware-assisted recovery via DLR_INIT
+    Hardware,   // detection and recovery both in hardware
+};
+
+// Complete hardware recovery requires both SAI_QUEUE_ATTR_ENABLE_PFC_DLDR and
+// SAI_QUEUE_ATTR_PFC_DLR_INIT. No single capability states "complete hardware
+// recovery" today, and some SAI implementations advertise DLDR for every
+// non-fabric switch, so DLDR alone is not evidence that hardware recovery was
+// intended. Withholding DLR_INIT is how a platform asks to stay in software.
+PfcWdRecoveryMode selectPfcWdRecoveryMode(bool dldrCapable, bool dlrInitCapable);
+
 class PfcWdHwOrch: public PfcWdBaseOrch
 {
 public:

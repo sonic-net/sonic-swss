@@ -6720,6 +6720,31 @@ TEST_F(PfcWdHwOrchTest, SAIFailureDlrInterval)
     resetPfcWdFailureFlags();
 }
 
+// The {DLDR, DLR_INIT} capability matrix decides which watchdog is started.
+// Complete hardware recovery requires both: DLDR alone is not evidence that a
+// platform wants hardware mode, because some SAI implementations advertise it
+// for every non-fabric switch. A platform asks to stay in software by not
+// advertising DLR_INIT.
+TEST(PfcWdRecoveryModeSelection, BothCapabilitiesSelectHardware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(true, true), PfcWdRecoveryMode::Hardware);
+}
+
+TEST(PfcWdRecoveryModeSelection, DlrInitWithoutDldrSelectsHybrid)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(false, true), PfcWdRecoveryMode::HybridDlr);
+}
+
+TEST(PfcWdRecoveryModeSelection, DldrWithoutDlrInitStaysSoftware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(true, false), PfcWdRecoveryMode::Software);
+}
+
+TEST(PfcWdRecoveryModeSelection, NeitherCapabilitySelectsSoftware)
+{
+    ASSERT_EQ(selectPfcWdRecoveryMode(false, false), PfcWdRecoveryMode::Software);
+}
+
 TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
 {
     bringUpPorts();
