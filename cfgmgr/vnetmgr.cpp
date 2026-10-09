@@ -193,7 +193,7 @@ void VNetMgr::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
             }
         }
-        if (op == DEL_COMMAND)
+        else if (op == DEL_COMMAND)
         {
             if (table_name == CFG_VNET_TABLE_NAME)
             {
