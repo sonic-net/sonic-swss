@@ -2418,6 +2418,22 @@ static int leftVlanKernel(const std::string &cmd, std::string &out)
     return 0;
 }
 
+/* Runs fn with swss ERROR logs sent to stdout and returns what it logged.
+   These tests log to syslog, so that is the output restored afterwards. */
+template <typename Fn>
+static std::string errorLogsOf(Fn fn)
+{
+    auto prio = swss::Logger::getMinPrio();
+    swss::Logger::swssOutputNotify("fdbsyncd", "STDOUT");
+    swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+    testing::internal::CaptureStdout();
+    fn();
+    std::string out = testing::internal::GetCapturedStdout();
+    swss::Logger::setMinPrio(prio);
+    swss::Logger::swssOutputNotify("fdbsyncd", "SYSLOG");
+    return out;
+}
+
 class FdbSyncdLeftVlanTest : public FdbSyncdEvpnMhTest
 {
 public:
@@ -2573,6 +2589,32 @@ TEST_F(FdbSyncdLeftVlanTest, StaticMacOnStpBlockedMemberKeepsOtherStatics)
     // Once the member is removed, the next failed delete flushes
     setMember(false);
     deleteMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, FailedDeleteAfterRejoinIsAnError)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:53", FDB_TYPE_STATIC);
+
+    // The port left the VLAN: the first failed delete flushes
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_TRUE(flushed());
+
+    // The port rejoined and no static MAC was added since: a failed delete is an error again
+    setMember(true);
+    auto errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:52", FDB_TYPE_STATIC); });
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb del 02:4c:45:00:00:52 dev Ethernet160 master static vlan 2100"),
+              std::string::npos);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+
+    // It left again: the next failed delete flushes again, without an error
+    setMember(false);
+    errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:53", FDB_TYPE_STATIC); });
+    EXPECT_EQ(errors, "");
     ASSERT_EQ(mockCallArgs.size(), 3u);
     EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
 }
