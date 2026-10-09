@@ -26,6 +26,57 @@ NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableNam
     SWSS_LOG_ENTER();
 }
 
+void NhgOrch::doTask()
+{
+    SWSS_LOG_ENTER();
+    Orch::doTask();
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+
+    // Process current SET/DEL work before replaying refused link-up callbacks.
+    auto pending = m_pendingValidations;
+    m_pendingValidations.clear();
+    for (const auto &nh : pending)
+    {
+        if (gIntfsOrch->isIntfBindingGuarded(nh.alias))
+        {
+            m_pendingValidations.insert(nh);
+            continue;
+        }
+        if (gNeighOrch->isNextHopFlagSet(nh, NHFLAGS_IFDOWN))
+        {
+            continue;
+        }
+        bool owned = false;
+        for (const auto &group : m_syncdNextHopGroups)
+        {
+            if (group.second.nhg->hasMember(nh))
+            {
+                owned = true;
+                break;
+            }
+        }
+        if (!owned)
+        {
+            continue;
+        }
+        if (!nh.isIntfNextHop() && !nh.isSrv6NextHop() &&
+            !(nh.isMplsNextHop() && gNeighOrch->isNeighborResolved(nh)) &&
+            !gNeighOrch->hasNextHop(nh))
+        {
+            gNeighOrch->resolveNeighbor(nh);
+            m_pendingValidations.insert(nh);
+            continue;
+        }
+        if (!validateNextHop(nh))
+        {
+            m_pendingValidations.insert(nh);
+        }
+    }
+}
+
 /*
  * Purpose:     Perform the operations requested by APPL_DB users.
  * Description: Iterate over the untreated operations list and resolve them.
@@ -380,6 +431,8 @@ void NhgOrch::doTask(Consumer& consumer)
                 /* Common update, when all the requirements are met. */
                 else
                 {
+                    // Withdraw obsolete members even when a new member is guarded.
+                    // getNhId() fences acquisitions during the update.
                     success = nhg_ptr->update(nhg_key);
 
                     /* Keep the msg in loop if any member path is not available yet */
@@ -453,13 +506,13 @@ void NhgOrch::doTask(Consumer& consumer)
  * Description: Iterate over all next hop groups and validate the next hop in
  *              those who contain it.
  * Params:      IN  nh_key - The next hop to validate.
- * Returns:     true, if the next hop was successfully validated in all
- *              containing groups;
- *              false, otherwise.
+ * Returns:     true, if validation completed or is retained for guard release;
+ *              false, on an unretained failure.
  */
 bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
+    m_pendingValidations.erase(nh_key);
 
     /*
      * Iterate through all groups and validate the next hop in those who
@@ -477,6 +530,12 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
              */
             if (!nhg->validateNextHop(nh_key))
             {
+                if (gIntfsOrch->isIntfBindingGuarded(nh_key.alias))
+                {
+                    m_pendingValidations.insert(nh_key);
+                    // Accepted retry work must not stop other neighbors' UP notifications.
+                    continue;
+                }
                 SWSS_LOG_ERROR("Failed to validate next hop %s in group %s",
                                 nh_key.to_string().c_str(),
                                 it.first.c_str());
@@ -500,6 +559,7 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
+    m_pendingValidations.erase(nh_key);
 
     /*
      * Iterate through all groups and invalidate the next hop from those who
@@ -535,6 +595,11 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 sai_object_id_t NextHopGroupMember::getNhId() const
 {
     SWSS_LOG_ENTER();
+
+    if (gIntfsOrch->isIntfBindingGuarded(m_key.alias))
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
 
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
 
@@ -896,6 +961,17 @@ bool NextHopGroup::remove()
     return NhgCommon::remove();
 }
 
+std::set<std::string> NextHopGroup::getRifAliases() const
+{
+    std::set<std::string> aliases;
+    // A failed removal can retain programmed members outside the desired key.
+    for (const auto &member : m_members)
+    {
+        aliases.insert(member.first.alias);
+    }
+    return aliases;
+}
+
 /*
  * Purpose:     Sync the given next hop group's members over the SAI API.
  * Description: Iterate over the given members and sync them.  If the member
@@ -1003,10 +1079,8 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    if (!isSynced() ||
-        (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1)))
+    if (!isSynced())
     {
-        bool was_synced = isSynced();
         bool was_temp = isTemp();
         *this = NextHopGroup(nhg_key, false);
 
@@ -1016,8 +1090,45 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
         */
         setRecursive(was_temp);
 
-        /* Sync the group only if it was synced before. */
-        return (was_synced ? sync() : true);
+        return sync();
+    }
+
+    if (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1))
+    {
+        bool guarded_replacement = false;
+        for (const auto& nh_key : nhg_key.getNextHops())
+        {
+            if (gIntfsOrch->isIntfBindingGuarded(nh_key.alias))
+            {
+                guarded_replacement = true;
+                break;
+            }
+        }
+
+        bool guarded_member = false;
+        for (const auto& member : m_members)
+        {
+            if (gIntfsOrch->isIntfBindingGuarded(member.first.alias))
+            {
+                guarded_member = true;
+                break;
+            }
+        }
+
+        /* Keep an unrelated healthy group until its guarded replacement is usable. */
+        if (guarded_replacement && !guarded_member)
+        {
+            return false;
+        }
+
+        /* A programmed guarded member must release its reference before retrying. */
+        if (guarded_member && !remove())
+        {
+            return false;
+        }
+
+        *this = NextHopGroup(nhg_key, false);
+        return sync();
     }
 
     /* Update the key. */

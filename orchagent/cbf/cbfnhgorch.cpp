@@ -18,6 +18,21 @@ extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 extern size_t gMaxBulkSize;
 
+std::set<std::string> CbfNhg::getRifAliases() const
+{
+    std::set<std::string> aliases;
+    for (const auto &member : m_members)
+    {
+        if (!gNhgOrch->hasNhg(member.first))
+        {
+            continue; // An unresolved member owns no RIF to fence.
+        }
+        const auto child = gNhgOrch->getNhg(member.first).getRifAliases();
+        aliases.insert(child.begin(), child.end());
+    }
+    return aliases;
+}
+
 CbfNhgOrch::CbfNhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();

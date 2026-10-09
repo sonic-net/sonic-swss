@@ -8,3 +8,5 @@ endif
 if HAVE_LIBTEAM
 SUBDIRS += teamsyncd tlm_teamd
 endif
+
+EXTRA_DIST = lib/intfguard.h
