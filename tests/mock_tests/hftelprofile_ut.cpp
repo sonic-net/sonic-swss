@@ -425,6 +425,7 @@ namespace hftelprofile_ut
 
         static vector<sai_attribute_t> report_attrs;
         static vector<sai_attribute_t> counter_attrs;
+        static sai_status_t create_status;
 
         static sai_status_t mock_create_tam_report(
             sai_object_id_t *report_id,
@@ -432,9 +433,10 @@ namespace hftelprofile_ut
             uint32_t attr_count,
             const sai_attribute_t *attr_list)
         {
+            EXPECT_EQ(*report_id, SAI_NULL_OBJECT_ID);
             report_attrs.assign(attr_list, attr_list + attr_count);
             *report_id = 0x500;
-            return SAI_STATUS_SUCCESS;
+            return create_status;
         }
 
         static sai_status_t mock_remove_tam_report(sai_object_id_t /*report_id*/)
@@ -448,9 +450,10 @@ namespace hftelprofile_ut
             uint32_t attr_count,
             const sai_attribute_t *attr_list)
         {
+            EXPECT_EQ(*counter_subscription_id, SAI_NULL_OBJECT_ID);
             counter_attrs.assign(attr_list, attr_list + attr_count);
             *counter_subscription_id = 0x600;
-            return SAI_STATUS_SUCCESS;
+            return create_status;
         }
 
         static sai_status_t mock_remove_tam_counter_subscription(
@@ -475,6 +478,7 @@ namespace hftelprofile_ut
             sai_tam_api = &ut_api;
             report_attrs.clear();
             counter_attrs.clear();
+            create_status = SAI_STATUS_SUCCESS;
         }
 
         void TearDown() override
@@ -485,6 +489,7 @@ namespace hftelprofile_ut
 
     vector<sai_attribute_t> SaiAttrTest::report_attrs;
     vector<sai_attribute_t> SaiAttrTest::counter_attrs;
+    sai_status_t SaiAttrTest::create_status;
 
     TEST_F(SaiAttrTest, GetTAMReportAddsIntervalUnit)
     {
@@ -518,6 +523,51 @@ namespace hftelprofile_ut
         });
         ASSERT_NE(itr, counter_attrs.end());
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
+    }
+
+    TEST_F(SaiAttrTest, ReportFailureStopsTelTypeCreation)
+    {
+        SaiAttrStub s;
+        s.init();
+        s.p->m_sai_tam_tel_type_objs.clear();
+        create_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+        ut_api.create_tam_tel_type = [](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t
+        {
+            ADD_FAILURE() << "Telemetry type must not be created after report failure";
+            return SAI_STATUS_ITEM_ALREADY_EXISTS;
+        };
+
+        EXPECT_THROW(s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_objs.empty());
+    }
+
+    TEST_F(SaiAttrTest, TelTypeFailureIsNotCached)
+    {
+        SaiAttrStub s;
+        s.init();
+        s.p->m_sai_tam_tel_type_objs.clear();
+        s.p->m_sai_tam_report_objs[SAI_OBJECT_TYPE_PORT] = make_shared<sai_object_id_t>(0x500);
+        ut_api.create_tam_tel_type = [](sai_object_id_t *id, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t
+        {
+            EXPECT_EQ(*id, SAI_NULL_OBJECT_ID);
+            *id = 0x700;
+            return SAI_STATUS_ITEM_ALREADY_EXISTS;
+        };
+
+        EXPECT_THROW(s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_objs.empty());
+    }
+
+    TEST_F(SaiAttrTest, CounterFailureIsNotCached)
+    {
+        SaiAttrStub s;
+        s.init();
+        create_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+
+        EXPECT_THROW(s.p->deployCounterSubscription(
+            SAI_OBJECT_TYPE_PORT, 0x1000000000001ULL, SAI_PORT_STAT_IF_IN_OCTETS, 7), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_counter_subscription_objs.at(SAI_OBJECT_TYPE_PORT).empty());
     }
 
     struct LocallyNotifyStartedProfileTest : public ::testing::Test
