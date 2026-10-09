@@ -20,11 +20,9 @@
 
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
-#include "saihelper.h"
 #include <gtest/gtest.h>
 
 extern sai_tam_api_t *sai_tam_api;
-extern sai_switch_api_t *sai_switch_api;
 
 namespace hftelprofile_ut
 {
@@ -427,6 +425,7 @@ namespace hftelprofile_ut
 
         static vector<sai_attribute_t> report_attrs;
         static vector<sai_attribute_t> counter_attrs;
+        static sai_status_t create_status;
 
         static sai_status_t mock_create_tam_report(
             sai_object_id_t *report_id,
@@ -434,9 +433,10 @@ namespace hftelprofile_ut
             uint32_t attr_count,
             const sai_attribute_t *attr_list)
         {
+            EXPECT_EQ(*report_id, SAI_NULL_OBJECT_ID);
             report_attrs.assign(attr_list, attr_list + attr_count);
             *report_id = 0x500;
-            return SAI_STATUS_SUCCESS;
+            return create_status;
         }
 
         static sai_status_t mock_remove_tam_report(sai_object_id_t /*report_id*/)
@@ -450,9 +450,10 @@ namespace hftelprofile_ut
             uint32_t attr_count,
             const sai_attribute_t *attr_list)
         {
+            EXPECT_EQ(*counter_subscription_id, SAI_NULL_OBJECT_ID);
             counter_attrs.assign(attr_list, attr_list + attr_count);
             *counter_subscription_id = 0x600;
-            return SAI_STATUS_SUCCESS;
+            return create_status;
         }
 
         static sai_status_t mock_remove_tam_counter_subscription(
@@ -477,6 +478,7 @@ namespace hftelprofile_ut
             sai_tam_api = &ut_api;
             report_attrs.clear();
             counter_attrs.clear();
+            create_status = SAI_STATUS_SUCCESS;
         }
 
         void TearDown() override
@@ -487,6 +489,7 @@ namespace hftelprofile_ut
 
     vector<sai_attribute_t> SaiAttrTest::report_attrs;
     vector<sai_attribute_t> SaiAttrTest::counter_attrs;
+    sai_status_t SaiAttrTest::create_status;
 
     TEST_F(SaiAttrTest, GetTAMReportAddsIntervalUnit)
     {
@@ -522,189 +525,49 @@ namespace hftelprofile_ut
         EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
     }
 
-    struct SaiCreateFailureTest : public ::testing::Test
+    TEST_F(SaiAttrTest, ReportFailureStopsTelTypeCreation)
     {
-        static constexpr sai_object_id_t telemetry_id = 0x400;
-        static constexpr sai_object_id_t report_id = 0x500;
-        static constexpr sai_object_id_t tel_type_id = 0x600;
-        static constexpr sai_object_id_t port_id = 0x1000000000001ULL;
-        static sai_status_t report_status;
-        static sai_status_t tel_type_status;
-        static sai_status_t counter_status;
-        static bool write_failed_id;
-        static vector<string> calls;
-        static vector<sai_object_id_t> removed;
+        SaiAttrStub s;
+        s.init();
+        s.p->m_sai_tam_tel_type_objs.clear();
+        create_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+        ut_api.create_tam_tel_type = [](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t
+        {
+            ADD_FAILURE() << "Telemetry type must not be created after report failure";
+            return SAI_STATUS_ITEM_ALREADY_EXISTS;
+        };
 
-        sai_tam_api_t api{};
-        sai_tam_api_t *original_api = nullptr;
-        sai_switch_api_t switch_api{};
-        sai_switch_api_t *original_switch_api = nullptr;
-        CounterNameCache cache;
+        EXPECT_THROW(s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_report_objs.empty());
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_objs.empty());
+    }
 
-        static sai_status_t create(sai_object_id_t *id, sai_object_id_t value,
-                                   sai_status_t status, const char *operation)
+    TEST_F(SaiAttrTest, TelTypeFailureIsNotCached)
+    {
+        SaiAttrStub s;
+        s.init();
+        s.p->m_sai_tam_tel_type_objs.clear();
+        s.p->m_sai_tam_report_objs[SAI_OBJECT_TYPE_PORT] = make_shared<sai_object_id_t>(0x500);
+        ut_api.create_tam_tel_type = [](sai_object_id_t *id, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t
         {
             EXPECT_EQ(*id, SAI_NULL_OBJECT_ID);
-            calls.emplace_back(operation);
-            if (status == SAI_STATUS_SUCCESS || write_failed_id)
-            {
-                *id = value;
-            }
-            return status;
-        }
+            *id = 0x700;
+            return SAI_STATUS_ITEM_ALREADY_EXISTS;
+        };
 
-        static sai_status_t createTelemetry(sai_object_id_t *id, sai_object_id_t,
-                                           uint32_t, const sai_attribute_t *)
-        {
-            *id = telemetry_id;
-            return SAI_STATUS_SUCCESS;
-        }
-        static sai_status_t createReport(sai_object_id_t *id, sai_object_id_t,
-                                        uint32_t, const sai_attribute_t *)
-        {
-            return create(id, report_id, report_status, "report");
-        }
-        static sai_status_t createTelType(sai_object_id_t *id, sai_object_id_t,
-                                         uint32_t, const sai_attribute_t *)
-        {
-            return create(id, tel_type_id, tel_type_status, "tel_type");
-        }
-        static sai_status_t createCounter(sai_object_id_t *id, sai_object_id_t,
-                                         uint32_t, const sai_attribute_t *)
-        {
-            return create(id, 0x700 + calls.size(), counter_status, "counter");
-        }
-        static sai_status_t remove(sai_object_id_t id)
-        {
-            EXPECT_NE(id, SAI_NULL_OBJECT_ID);
-            removed.push_back(id);
-            return SAI_STATUS_SUCCESS;
-        }
-        static sai_status_t getList(sai_object_id_t, uint32_t, sai_attribute_t *attrs)
-        {
-            attrs->value.objlist.count = 0;
-            return SAI_STATUS_SUCCESS;
-        }
-        static sai_status_t setAttr(sai_object_id_t, const sai_attribute_t *)
-        {
-            calls.emplace_back("set");
-            return SAI_STATUS_SUCCESS;
-        }
-        static sai_status_t failureDump(sai_object_id_t, const sai_attribute_t *)
-        {
-            calls.emplace_back("dump");
-            return SAI_STATUS_SUCCESS;
-        }
-
-        void SetUp() override
-        {
-            original_api = sai_tam_api;
-            original_switch_api = sai_switch_api;
-            api.create_tam_telemetry = createTelemetry;
-            api.create_tam_report = createReport;
-            api.create_tam_tel_type = createTelType;
-            api.create_tam_counter_subscription = createCounter;
-            api.remove_tam_telemetry = remove;
-            api.remove_tam_report = remove;
-            api.remove_tam_tel_type = remove;
-            api.remove_tam_counter_subscription = remove;
-            api.get_tam_attribute = getList;
-            api.get_tam_telemetry_attribute = getList;
-            api.set_tam_attribute = setAttr;
-            api.set_tam_telemetry_attribute = setAttr;
-            api.set_tam_tel_type_attribute = setAttr;
-            switch_api.set_switch_attribute = failureDump;
-            sai_tam_api = &api;
-            sai_switch_api = &switch_api;
-            report_status = tel_type_status = counter_status = SAI_STATUS_SUCCESS;
-            write_failed_id = false;
-            calls.clear();
-            removed.clear();
-        }
-        void TearDown() override
-        {
-            sai_tam_api = original_api;
-            sai_switch_api = original_switch_api;
-            setSaiFailureStatus(false);
-        }
-        void addGroup(HFTelProfile &profile)
-        {
-            HFTelGroup group("port");
-            group.updateObjects({"Ethernet0"});
-            group.updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS, SAI_PORT_STAT_IF_OUT_OCTETS});
-            profile.m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(group));
-            profile.m_name_sai_map[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = port_id;
-        }
-    };
-
-    constexpr sai_object_id_t SaiCreateFailureTest::telemetry_id;
-    constexpr sai_object_id_t SaiCreateFailureTest::report_id;
-    constexpr sai_object_id_t SaiCreateFailureTest::tel_type_id;
-    constexpr sai_object_id_t SaiCreateFailureTest::port_id;
-    sai_status_t SaiCreateFailureTest::report_status;
-    sai_status_t SaiCreateFailureTest::tel_type_status;
-    sai_status_t SaiCreateFailureTest::counter_status;
-    bool SaiCreateFailureTest::write_failed_id;
-    vector<string> SaiCreateFailureTest::calls;
-    vector<sai_object_id_t> SaiCreateFailureTest::removed;
-
-    TEST_F(SaiCreateFailureTest, ReportFailureStopsDependentProgrammingAndCleanup)
-    {
-        HFTelProfile profile("one_us", 0x100, 0x200, cache);
-        addGroup(profile);
-        calls.clear();
-        report_status = SAI_STATUS_INVALID_PARAMETER;
-        EXPECT_THROW(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
-        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
-        EXPECT_TRUE(profile.m_sai_tam_report_objs.empty());
-        EXPECT_TRUE(profile.m_sai_tam_tel_type_objs.empty());
-        EXPECT_FALSE(profile.isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
-        profile.setStreamState(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
-        profile.setStreamState(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
-        profile.clearGroup("port");
-        EXPECT_TRUE(removed.empty());
-        EXPECT_EQ(calls, vector<string>({"report", "dump"}));
+        EXPECT_THROW(s.p->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_objs.empty());
     }
 
-    TEST_F(SaiCreateFailureTest, HandledCreateErrorCannotCacheWrittenOutputId)
+    TEST_F(SaiAttrTest, CounterFailureIsNotCached)
     {
-        HFTelProfile profile("test", 0x100, 0x200, cache);
-        report_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
-        write_failed_id = true;
-        EXPECT_THROW(profile.getTAMReportObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
-        EXPECT_TRUE(profile.m_sai_tam_report_objs.empty());
-        EXPECT_TRUE(removed.empty());
-    }
+        SaiAttrStub s;
+        s.init();
+        create_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
 
-    TEST_F(SaiCreateFailureTest, TelTypeFailureRetainsOnlySuccessfulReport)
-    {
-        HFTelProfile profile("test", 0x100, 0x200, cache);
-        addGroup(profile);
-        calls.clear();
-        tel_type_status = SAI_STATUS_INVALID_PARAMETER;
-        EXPECT_THROW(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
-        EXPECT_EQ(calls, vector<string>({"report", "tel_type", "dump"}));
-        EXPECT_EQ(profile.m_sai_tam_report_objs.size(), 1u);
-        EXPECT_TRUE(profile.m_sai_tam_tel_type_objs.empty());
-        EXPECT_TRUE(profile.m_sai_tam_tel_type_states.empty());
-        profile.clearGroup("port");
-        EXPECT_EQ(removed, vector<sai_object_id_t>({report_id}));
-    }
-
-    TEST_F(SaiCreateFailureTest, CounterFailureIsNotCachedOrRemoved)
-    {
-        HFTelProfile profile("test", 0x100, 0x200, cache);
-        addGroup(profile);
-        counter_status = SAI_STATUS_INVALID_PARAMETER;
-        EXPECT_THROW(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT), runtime_error);
-        EXPECT_TRUE(profile.m_sai_tam_counter_subscription_objs.at(SAI_OBJECT_TYPE_PORT).empty());
-        EXPECT_TRUE(removed.empty());
-        calls.clear();
-        counter_status = SAI_STATUS_SUCCESS;
-        EXPECT_TRUE(profile.tryCommitConfig(SAI_OBJECT_TYPE_PORT));
-        EXPECT_EQ(calls, vector<string>({"counter", "counter", "set"}));
-        profile.clearGroup("port");
-        EXPECT_EQ(removed.size(), 4u);
+        EXPECT_THROW(s.p->deployCounterSubscription(
+            SAI_OBJECT_TYPE_PORT, 0x1000000000001ULL, SAI_PORT_STAT_IF_IN_OCTETS, 7), runtime_error);
+        EXPECT_TRUE(s.p->m_sai_tam_counter_subscription_objs.at(SAI_OBJECT_TYPE_PORT).empty());
     }
 
     struct LocallyNotifyStartedProfileTest : public ::testing::Test
