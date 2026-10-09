@@ -317,7 +317,7 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
      *
      * Only administratively configured MACs are sticky. STATE_DB carries local
      * entries only, so a static entry here is a provisioned MAC that is pinned
-     * to a port by configuration and must not move; RFC 7432 section 7.8 wants
+     * to a port by configuration and must not move; RFC 7432 section 15.2 wants
      * exactly that advertised with the sticky bit so remote PEs reject a move.
      * Hardware-learnt MACs stay mobile. */
     if (local.isStatic)
