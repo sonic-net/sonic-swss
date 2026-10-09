@@ -24,6 +24,14 @@ class DVSHash:
         self.config_db.update_entry(self.CDB_SWITCH_HASH, self.KEY_SWITCH_HASH_GLOBAL, qualifiers)
         time.sleep(1)
 
+    def delete_switch_hash_field(
+        self,
+        field: str
+    ) -> None:
+        """Remove a single field from the SWITCH_HASH|GLOBAL entry."""
+        self.config_db.delete_field(self.CDB_SWITCH_HASH, self.KEY_SWITCH_HASH_GLOBAL, field)
+        time.sleep(1)
+
     def get_hash_ids(
         self,
         expected: int = None
