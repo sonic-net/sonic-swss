@@ -2741,6 +2741,43 @@ namespace vnetorch_test
         EXPECT_EQ(e1.vr_value, vnetVr);
     }
 
+    TEST_F(VNetOrchTest, VnetDecapTunnelListProgramsExtraTunnelMapEntries)
+    {
+        EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router)
+            .Times(1)
+            .WillOnce(Invoke(m_vrMock.get(), &VirtualRouterSaiMock::handleCreate));
+
+        setVxlanTunnel("tunnel_v4", "10.1.0.32");
+        setVxlanTunnel("tunnel_decap", "10.1.0.33");
+
+        vector<FieldValueTuple> fvs = {{"vxlan_tunnel", "tunnel_v4"}, {"vni", "10001"},
+                                       {"peer_list", ""}, {"decap_tunnel_list", "tunnel_decap"}};
+        Table tbl(m_app_db.get(), APP_VNET_TABLE_NAME);
+        tbl.set("Vnet1", fvs);
+        m_vnetOrch->addExistingData(&tbl);
+        static_cast<Orch *>(m_vnetOrch)->doTask();
+
+        const sai_object_id_t vnetVr = m_vrMock->created_oid;
+        ASSERT_NE(vnetVr, SAI_NULL_OBJECT_ID);
+
+        ASSERT_EQ(m_tun.mapEntries.size(), 4U);
+
+        int vni_to_vr = 0;
+        for (const auto &e : m_tun.mapEntries)
+        {
+            if (e.map_type == SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID)
+            {
+                EXPECT_EQ(e.vni_key, 10001U);
+                EXPECT_EQ(e.vr_value, vnetVr);
+                vni_to_vr++;
+            }
+        }
+        EXPECT_EQ(vni_to_vr, 2);
+
+        delVnet("Vnet1");
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 4U);
+    }
+
     // Deleting the VNET tears down its per-VNET SAI objects -- the two tunnel-map
     // entries and the VNET virtual router. Deleting the VXLAN tunnel then removes
     // the shared tunnel, four maps, and term entry (the mock equivalent of

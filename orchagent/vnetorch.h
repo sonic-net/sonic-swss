@@ -55,6 +55,7 @@ const request_description_t vnet_request_description = {
         { "scope",              REQ_T_STRING },
         { "advertise_prefix",   REQ_T_BOOL},
         { "overlay_dmac",       REQ_T_MAC_ADDRESS},
+        { "decap_tunnel_list",  REQ_T_SET },
 
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
@@ -82,6 +83,7 @@ struct VNetInfo
     string scope;
     bool advertise_prefix;
     swss::MacAddress overlay_dmac;
+    set<string> decap_tunnels;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -118,7 +120,8 @@ public:
                vni_(vnetInfo.vni),
                scope_(vnetInfo.scope),
                advertise_prefix_(vnetInfo.advertise_prefix),
-               overlay_dmac_(vnetInfo.overlay_dmac)
+               overlay_dmac_(vnetInfo.overlay_dmac),
+               decap_tunnel_list_(vnetInfo.decap_tunnels)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -136,6 +139,11 @@ public:
     string getTunnelName() const
     {
         return tunnel_;
+    }
+
+    const set<string>& getDecapTunnelList() const
+    {
+        return decap_tunnel_list_;
     }
 
     uint32_t getVni() const
@@ -171,7 +179,8 @@ private:
     uint32_t vni_;
     string scope_;
     bool advertise_prefix_;
-    swss::MacAddress overlay_dmac_; 
+    swss::MacAddress overlay_dmac_;
+    set<string> decap_tunnel_list_ = {};
 };
 
 struct nextHop
@@ -537,6 +546,7 @@ private:
 
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
+    bool deferIfTunnelRouteExists(const std::string& vnet, const swss::IpPrefix& prefix);
 
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
