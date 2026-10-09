@@ -430,6 +430,15 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 clearFdbEntry(existing_entry->first, existing_entry->second);
                 return;
             }
+            Port stored_port;
+            if (existing_entry->second.bridge_port_id != bridge_port_id &&
+                m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, stored_port))
+            {
+                /* The entry is on another bridge port that still exists: the event is stale */
+                SWSS_LOG_INFO("Age event: stale event for mac %s in bv_id 0x%" PRIx64 " on removed bridge port ID 0x%" PRIx64 ", stored on bridge port ID 0x%" PRIx64 ".",
+                              update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
+                return;
+            }
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 " for age event of mac %s, stored on bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id, update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
             return;

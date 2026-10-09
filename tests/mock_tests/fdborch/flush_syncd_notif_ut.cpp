@@ -939,7 +939,7 @@ namespace fdb_syncd_flush_test
         EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
     }
 
-    /* An aged event on an unknown bridge port leaves an entry stored on another bridge port alone */
+    /* An aged event on an unknown bridge port is stale for an entry stored on another, existing bridge port */
     TEST_F(FdbOrchTest, AgeOnUnknownBridgePortKeepsEntryOnOtherPort)
     {
         auto mac_addr = learnOnEth0(m_portsOrch.get(), m_fdborch.get());
@@ -949,11 +949,63 @@ namespace fdb_syncd_flush_test
         auto errors = errorLogsOf([&]() {
             triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_AGED, mac_addr, unknown_bridge_port_oid, vlan_oid);
         });
-        EXPECT_NE(errors.find("Failed to get port by bridge port ID"), string::npos);
+        EXPECT_EQ(errors, "");
         ASSERT_EQ(m_fdborch->m_entries.size(), 1u);
         EXPECT_EQ(m_fdborch->m_entries.begin()->second.bridge_port_id, m_portsOrch->m_portList[ETH0].m_bridge_port_id);
         EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
         EXPECT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+    }
+
+    /* The MAC moved to Ethernet4 before Ethernet0 left the VLAN: an aged event for the old bridge port is stale */
+    TEST_F(FdbOrchTest, AgeOnRemovedBridgePortAfterMoveIsStale)
+    {
+        auto mac_addr = learnOnEth0(m_portsOrch.get(), m_fdborch.get());
+        auto vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        const string eth4 = "Ethernet4";
+        sai_object_id_t eth4_oid = 0x10000000004a6;
+        sai_object_id_t eth4_bridge_port_oid = 0x3a000000002c35;
+        Port port(eth4, Port::PHY);
+        port.m_index = 2;
+        port.m_port_id = eth4_oid;
+        port.m_bridge_port_id = eth4_bridge_port_oid;
+        m_portsOrch->m_portList[eth4] = port;
+        m_portsOrch->saiOidToAlias[eth4_oid] = eth4;
+        m_portsOrch->saiOidToAlias[eth4_bridge_port_oid] = eth4;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(eth4);
+
+        triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_MOVE, mac_addr, eth4_bridge_port_oid, vlan_oid);
+        ASSERT_EQ(m_fdborch->m_entries.size(), 1u);
+        ASSERT_EQ(m_fdborch->m_entries.begin()->second.bridge_port_id, eth4_bridge_port_oid);
+        auto bridge_port_oid = removeEth0BridgePort(m_portsOrch.get(), m_fdborch.get(), false);
+
+        auto errors = errorLogsOf([&]() {
+            triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_AGED, mac_addr, bridge_port_oid, vlan_oid);
+        });
+        EXPECT_EQ(errors, "");
+        ASSERT_EQ(m_fdborch->m_entries.size(), 1u);
+        EXPECT_EQ(m_fdborch->m_entries.begin()->second.bridge_port_id, eth4_bridge_port_oid);
+        EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        EXPECT_EQ(m_portsOrch->m_portList[eth4].m_fdb_count, 1);
+        string value;
+        EXPECT_TRUE(m_fdborch->m_fdbStateTable.hget("Vlan40:7c:fe:90:12:22:ec", "port", value));
+        EXPECT_EQ(value, eth4);
+    }
+
+    /* An aged event on an unknown bridge port is an error when the entry's own bridge port is gone too */
+    TEST_F(FdbOrchTest, AgeOnUnknownBridgePortWithEntryOnRemovedPortIsAnError)
+    {
+        auto mac_addr = learnOnEth0(m_portsOrch.get(), m_fdborch.get());
+        auto vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        removeEth0BridgePort(m_portsOrch.get(), m_fdborch.get(), true);
+        sai_object_id_t unknown_bridge_port_oid = 0x3a00000000dead;
+
+        auto errors = errorLogsOf([&]() {
+            triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_AGED, mac_addr, unknown_bridge_port_oid, vlan_oid);
+        });
+        EXPECT_NE(errors.find("Failed to get port by bridge port ID"), string::npos);
+        EXPECT_EQ(m_fdborch->m_entries.size(), 1u);
+        EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
     }
 
     /* A learn event on a removed bridge port is still an error and creates nothing */
