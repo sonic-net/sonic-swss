@@ -576,7 +576,7 @@ class TestVnet2Orch(object):
         dvs.servers[0].runcmd("ip address add 20.20.20.5/24 dev eth0")
         dvs.servers[0].runcmd("ip route add default via 20.20.20.1")
 
-        create_vxlan_tunnel(dvs, tunnel_name, "32.32.32.32")
+        create_vxlan_tunnel(dvs, tunnel_name, "33.33.33.33")
         create_vnet_entry(dvs, vnet_name, tunnel_name, "5033", "", scope="default")
         vnet_obj.check_default_vnet_entry(dvs, vnet_name)
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, "5033")
