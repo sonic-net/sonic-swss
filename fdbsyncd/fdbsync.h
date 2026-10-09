@@ -121,7 +121,7 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
-    /* "port|vlan|type" flushed after the port left the VLAN, until a MAC is added there again */
+    /* "port|vlan|type" flushed after the port left the VLAN, until a MAC is added there again or it rejoins */
     std::unordered_set<std::string> m_leftVlanFlushed;
 
     void macDelVxlanEntry(struct m_fdb_info *info);

@@ -429,24 +429,26 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
  * A port that leaves a VLAN loses the entries the kernel learned there, but keeps its
  * extern_learn and static ones, and the kernel refuses a per-MAC delete in a VLAN the
  * port is no longer in. Flush the port's entries of that type in the VLAN instead, once
- * per (port, VLAN, type) until a MAC is added there again. Returns false when the port
- * is still a member of the VLAN. Membership comes from STATE_DB, not the kernel VID
- * list: spanning tree removes the VID from a blocked port that is still a member, and
- * its other entries there are needed again once the port forwards.
+ * per (port, VLAN, type) until a MAC is added there again or the port rejoins the VLAN.
+ * Returns false when the port is a member of the VLAN. Membership comes from STATE_DB,
+ * not the kernel VID list: spanning tree removes the VID from a blocked port that is
+ * still a member, and its other entries there are needed again once the port forwards.
  */
 bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type)
 {
     const std::string key = port_name + "|" + vlan + "|" + std::to_string(fdb_type);
+    std::vector<FieldValueTuple> member;
+    if (m_stateVlanMemberTable.get("Vlan" + vlan + "|" + port_name, member))
+    {
+        /* A flush from an earlier leave says nothing about a port that is a member again */
+        m_leftVlanFlushed.erase(key);
+        return false;
+    }
+
     if (m_leftVlanFlushed.find(key) != m_leftVlanFlushed.end())
     {
         SWSS_LOG_INFO("%s has left VLAN %s, its kernel FDB entries there are flushed", port_name.c_str(), vlan.c_str());
         return true;
-    }
-
-    std::vector<FieldValueTuple> member;
-    if (m_stateVlanMemberTable.get("Vlan" + vlan + "|" + port_name, member))
-    {
-        return false;
     }
 
     std::string res;
