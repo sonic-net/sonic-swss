@@ -1,5 +1,31 @@
+// IMPORTANT: pull in libstdc++ headers BEFORE any `#define private public`
+// block below. <sstream>'s internal forward decl + definition of
+// basic_stringbuf::__xfer_bufptrs rely on the access keyword being parsed
+// verbatim; the access-mangling #define triggers an ODR redeclaration error
+// otherwise (g++ 12: "redeclared with different access"). Locking the STL
+// in first avoids a re-parse when copporch.h/flexcounterorch.h transitively
+// drag the STL in under the #define.
+#include <sstream>
+#include <iostream>
+#include <memory>
+#include <vector>
+#include <string>
+#include <unordered_set>
+#include <unordered_map>
+#include <utility>
+
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
+#undef private
+
+// Expose copporch.h / flexcounterorch.h internals BEFORE any other header
+// indirectly pulls them in (mock_orchagent_main.h does). The include guards
+// would otherwise pin them at "private private" for the rest of this TU.
+#define private public
+#define protected public
+#include "copporch.h"
+#include "flexcounterorch.h"
+#undef protected
 #undef private
 
 #include "json.h"
@@ -10,6 +36,7 @@
 #include "dashmeterorch.h"
 #include "mock_table.h"
 #include "notifier.h"
+#include "coppstats_sai_wrap.h"
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
@@ -18,8 +45,6 @@
 #define private public
 #include "warm_restart.h"
 #undef private
-
-#include <sstream>
 
 extern bool gTraditionalFlexCounter;
 
@@ -1250,5 +1275,130 @@ namespace flexcounter_test
                                           "SAI_PORT_STAT_IF_OUT_ERRORS"
                                          }
                                      }));
+    }
+
+    // COPP policer stats: sai_query_stats_capability is stubbed via --wrap (coppstats_sai_wrap.cpp).
+
+    namespace {
+        // The ctor probes and caches the capability, so the hook must be set first.
+        std::unique_ptr<CoppOrch> makeCoppOrchUnderHook(swss::DBConnector* db)
+        {
+            return std::unique_ptr<CoppOrch>(new CoppOrch(db, APP_COPP_TABLE_NAME));
+        }
+
+        void seedTrapGroupWithPolicer(CoppOrch& orch,
+                                      const std::string& tg_name,
+                                      sai_object_id_t tg_oid,
+                                      sai_object_id_t policer_oid)
+        {
+            orch.m_trap_group_map[tg_name] = tg_oid;
+            policer_object pol;
+            pol.policer_id = policer_oid;
+            orch.m_trap_group_policer_map[tg_oid] = pol;
+        }
+
+        // Registration waits for the policer's VID->RID mapping; seed it and fire the timer.
+        void flushPendingPolicerRegistrations(CoppOrch& orch, sai_object_id_t policer_oid)
+        {
+            swss::DBConnector asic_db("ASIC_DB", 0);
+            swss::Table vidToRid(&asic_db, "VIDTORID");
+            vidToRid.hset("", sai_serialize_object_id(policer_oid), "oid:0x0");
+            orch.doTask(*orch.m_FlexCounterUpdTimer);
+        }
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsStatusUpdate)
+    {
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsAll);
+
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
+
+        sai_object_id_t tg_oid     = 0x4000000000001;
+        sai_object_id_t policer_id = 0x5000000000001;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_full", tg_oid, policer_id);
+
+        ASSERT_TRUE(coppOrch->isPolicerStatsCapable());
+        EXPECT_EQ(coppOrch->getSupportedPolicerStatIds().size(), 8u);
+
+        // bindPolicerCounter gates on the user-intent flag; flip it directly.
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     policer_id, POLICER_COUNTER_ID_LIST));
+
+        coppOrch->clearPolicerCounterIdList();
+        ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      policer_id, POLICER_COUNTER_ID_LIST));
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsUnsupportedPlatform)
+    {
+        // vslib returns NOT_SUPPORTED for POLICER, so no hook is needed.
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookNone);
+
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
+
+        sai_object_id_t tg_oid     = 0x4000000000002;
+        sai_object_id_t policer_id = 0x5000000000002;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_unsupported", tg_oid, policer_id);
+
+        ASSERT_FALSE(coppOrch->isPolicerStatsCapable());
+        EXPECT_TRUE(coppOrch->getSupportedPolicerStatIds().empty());
+
+        // Clear any list left by earlier tests sharing this STATE_DB.
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        capTable.hdel("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED);
+        coppOrch->publishPolicerStatsCapability();
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "false");
+        EXPECT_FALSE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      policer_id, POLICER_COUNTER_ID_LIST));
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsPartialCapability)
+    {
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsPartial);
+
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
+
+        sai_object_id_t tg_oid     = 0x4000000000003;
+        sai_object_id_t policer_id = 0x5000000000003;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_partial", tg_oid, policer_id);
+
+        ASSERT_TRUE(coppOrch->isPolicerStatsCapable());
+        auto stat_ids = coppOrch->getSupportedPolicerStatIds();
+        EXPECT_EQ(stat_ids.size(), 2u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_PACKETS"), 1u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_ATTR_BYTES"), 1u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_GREEN_PACKETS"), 0u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_RED_BYTES"), 0u);
+
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "true");
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+        EXPECT_EQ(val, "SAI_POLICER_STAT_PACKETS,SAI_POLICER_STAT_ATTR_BYTES");
+
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
+        // checkFlexCounter asserts the entry exists, not the bound stat list.
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     policer_id, POLICER_COUNTER_ID_LIST));
+
+        coppOrch->clearPolicerCounterIdList();
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
     }
 }
