@@ -8,7 +8,11 @@ else
 DBGFLAGS = -g
 endif
 
-neighsyncd_SOURCES = neighsyncd.cpp neighsync.cpp $(top_srcdir)/warmrestart/warmRestartAssist.cpp
+neighsyncd_SOURCES = neighsyncd.cpp \
+                     neighsync.cpp \
+                     linklocalresyncstate.cpp \
+                     linklocalresyncstate.h \
+                     $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 
 neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
@@ -21,4 +25,3 @@ endif
 if ASAN_ENABLED
 neighsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
-
