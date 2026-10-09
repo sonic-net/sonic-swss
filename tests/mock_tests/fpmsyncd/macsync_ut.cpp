@@ -503,7 +503,7 @@ TEST_F(MacSyncTest, LocalDynamicMacIsNotSticky)
 
 /*
  * A provisioned MAC is pinned to a port by configuration, so it is advertised
- * sticky and remote PEs reject a move for it (RFC 7432 section 7.8). Only local
+ * sticky and remote PEs reject a move for it (RFC 7432 section 15.2). Only local
  * entries reach STATE_DB, so this can never catch an EVPN-learnt address.
  */
 TEST_F(MacSyncTest, LocalStaticMacIsSticky)
