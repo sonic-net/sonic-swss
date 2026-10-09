@@ -2,8 +2,12 @@
 #include <netinet/in.h>
 #include <net/if.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <linux/neighbour.h>
 #include <netlink/msg.h>
+#include <netlink/route/link.h>
+#include <netlink/route/neighbour.h>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -51,7 +55,8 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
-        m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME)
+        m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
+        m_cfgNeighTable(cfgDb, CFG_NEIGH_TABLE_NAME)
 {
     int err = 0;
 
@@ -508,6 +513,16 @@ void NbrMgr::doSetNeighTask(Consumer &consumer)
             continue;
         }
 
+        string staticKey = alias + config_db_key_delimiter + ip.to_string();
+        if (op == SET_COMMAND && mac)
+        {
+            m_staticNeigh[staticKey] = kfvKey(t);
+        }
+        else
+        {
+            m_staticNeigh.erase(staticKey);
+        }
+
         if (op == SET_COMMAND)
         {
             if (!isIntfStateOk(alias))
@@ -536,6 +551,128 @@ void NbrMgr::doSetNeighTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+    }
+}
+
+bool NbrMgr::isNetdevUp(const string &alias)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, alias.c_str(), IFNAMSIZ - 1);
+
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+    {
+        return false;
+    }
+
+    bool up = (ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) && (ifr.ifr_flags & IFF_UP);
+    close(fd);
+    return up;
+}
+
+/*
+ * The kernel flushes every neighbour of a netdev, PERMANENT ones included, when
+ * the netdev goes admin down (NETDEV_DOWN) or its MAC address is set
+ * (NETDEV_CHANGEADDR, also for an unchanged address). Nothing writes the CONFIG_DB
+ * NEIGH key again, so put a flushed static neighbour back: at once when the netdev
+ * is up, otherwise when it comes back up.
+ */
+void NbrMgr::onMsg(int nlmsg_type, struct nl_object *obj)
+{
+    if (nlmsg_type == RTM_DELNEIGH)
+    {
+        if (m_staticNeigh.empty())
+        {
+            return;
+        }
+
+        struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
+        int family = rtnl_neigh_get_family(neigh);
+        if (family != AF_INET && family != AF_INET6)
+        {
+            return;
+        }
+
+        struct nl_addr *dst = rtnl_neigh_get_dst(neigh);
+        char ifname[IF_NAMESIZE] = {0};
+        char ipstr[INET6_ADDRSTRLEN] = {0};
+        if (!dst || !if_indextoname(rtnl_neigh_get_ifindex(neigh), ifname) ||
+            !inet_ntop(family, nl_addr_get_binary_addr(dst), ipstr, sizeof(ipstr)))
+        {
+            return;
+        }
+
+        string alias(ifname);
+        auto it = m_staticNeigh.find(alias + config_db_key_delimiter + IpAddress(ipstr).to_string());
+        if (it == m_staticNeigh.end())
+        {
+            return;
+        }
+
+        if (isNetdevUp(alias))
+        {
+            SWSS_LOG_NOTICE("Static neighbor '%s' was removed from the kernel, re-installing", it->second.c_str());
+            reinstallStaticNeighbors({ it->second });
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Static neighbor '%s' was removed from the kernel, re-installing when %s is up",
+                            it->second.c_str(), alias.c_str());
+            m_flushedStatic[alias].insert(it->second);
+        }
+    }
+    else if (nlmsg_type == RTM_NEWLINK)
+    {
+        if (m_flushedStatic.empty())
+        {
+            return;
+        }
+
+        struct rtnl_link *link = (struct rtnl_link *)obj;
+        const char *name = rtnl_link_get_name(link);
+        if (!name || !(rtnl_link_get_flags(link) & IFF_UP))
+        {
+            return;
+        }
+
+        auto it = m_flushedStatic.find(name);
+        if (it == m_flushedStatic.end())
+        {
+            return;
+        }
+
+        vector<string> keys(it->second.begin(), it->second.end());
+        m_flushedStatic.erase(it);
+        SWSS_LOG_NOTICE("Interface %s is up, re-installing %zu static neighbor(s)", name, keys.size());
+        reinstallStaticNeighbors(keys);
+    }
+}
+
+void NbrMgr::reinstallStaticNeighbors(const vector<string> &cfgKeys)
+{
+    SWSS_LOG_ENTER();
+
+    auto *consumer = dynamic_cast<Consumer *>(getExecutor(CFG_NEIGH_TABLE_NAME));
+    if (!consumer)
+    {
+        return;
+    }
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    for (const auto &key : cfgKeys)
+    {
+        vector<FieldValueTuple> fvs;
+        if (m_cfgNeighTable.get(key, fvs))
+        {
+            entries.emplace_back(key, SET_COMMAND, fvs);
+        }
+    }
+
+    if (!entries.empty())
+    {
+        consumer->addToSync(entries);
+        doSetNeighTask(*consumer);
     }
 }
 
