@@ -9,6 +9,7 @@
 #include "mock_table.h"
 #include "mock_response_publisher.h"
 #include "mock_sai_api.h"
+#include "swssnet.h"
 #include "bulker.h"
 
 extern string gMySwitchType;
@@ -1085,10 +1086,18 @@ namespace routeorch_test
         ASSERT_NE(consumer, nullptr);
         consumer->addToSync(entries);
 
-        std::vector<sai_status_t> create_status{SAI_STATUS_ITEM_ALREADY_EXISTS, SAI_STATUS_SUCCESS};
         EXPECT_CALL(*mock_sai_route_api, create_route_entries)
-            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
-                            Return(SAI_STATUS_FAILURE)));
+            .WillOnce([&](uint32_t count, const sai_route_entry_t *routes, const uint32_t *,
+                          const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *statuses) {
+                EXPECT_EQ(count, static_cast<uint32_t>(2));
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    const auto prefix = swss::getIpPrefixFromSaiPrefix(routes[i].destination);
+                    EXPECT_TRUE(prefix == stale_prefix || prefix == created_prefix);
+                    statuses[i] = prefix == stale_prefix ? SAI_STATUS_ITEM_ALREADY_EXISTS : SAI_STATUS_SUCCESS;
+                }
+                return SAI_STATUS_FAILURE;
+            });
         EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
             .WillOnce(Return(SAI_STATUS_SUCCESS));
         static_cast<Orch *>(gRouteOrch)->doTask();
