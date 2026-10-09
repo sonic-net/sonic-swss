@@ -48,12 +48,6 @@ HFTelProfile::HFTelProfile(
 HFTelProfile::~HFTelProfile()
 {
     SWSS_LOG_ENTER();
-    // Release dependents before their prerequisites and before member destruction.
-    m_sai_tam_counter_subscription_objs.clear();
-    m_sai_tam_tel_type_states.clear();
-    m_sai_tam_tel_type_objs.clear();
-    m_sai_tam_report_objs.clear();
-    m_sai_tam_telemetry_obj.reset();
 }
 
 const string &HFTelProfile::getProfileName() const
@@ -779,31 +773,6 @@ bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
         return false;
     }
 
-    auto names = m_name_sai_map.find(object_type);
-    if (names == m_name_sai_map.end())
-    {
-        return false;
-    }
-    for (const auto &object : group->second.getObjects())
-    {
-        auto name = names->second.find(object.first);
-        if (name == names->second.end())
-        {
-            return false;
-        }
-        auto subscriptions = counters->second.find(name->second);
-        if (subscriptions == counters->second.end())
-        {
-            return false;
-        }
-        for (auto stat_id : group->second.getStatsIDs())
-        {
-            if (subscriptions->second.find(stat_id) == subscriptions->second.end())
-            {
-                return false;
-            }
-        }
-    }
     return true;
 }
 
@@ -819,25 +788,6 @@ bool HFTelProfile::areAllMonitoringObjectsReady() const
         }
     }
     return true;
-}
-
-void HFTelProfile::checkSaiCreateStatus(sai_status_t status, sai_object_id_t object_id, const char *operation) const
-{
-    if (status == SAI_STATUS_SUCCESS && object_id != SAI_NULL_OBJECT_ID)
-    {
-        return;
-    }
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        handleSaiCreateStatus(SAI_API_TAM, status);
-    }
-    else
-    {
-        status = SAI_STATUS_FAILURE;
-    }
-    // A handled error does not imply that SAI returned a usable object ID.
-    throw HFTelSaiCreateError("HFT profile " + m_profile_name + ": " + operation +
-                             " failed (" + sai_serialize_status(status) + ")", status);
 }
 
 sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
@@ -885,7 +835,12 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
         gSwitchId,
         static_cast<uint32_t>(attrs.size()),
         attrs.data());
-    checkSaiCreateStatus(status, sai_object, "create_tam_report");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        handleSaiCreateStatus(SAI_API_TAM, status);
+        SWSS_LOG_THROW("HFT profile %s: create_tam_report failed: %s",
+                       m_profile_name.c_str(), sai_serialize_status(status).c_str());
+    }
 
     m_sai_tam_report_objs[key] = move(
         sai_guard_t(
@@ -991,7 +946,12 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
         gSwitchId,
         static_cast<uint32_t>(attrs.size()),
         attrs.data());
-    checkSaiCreateStatus(status, sai_object, "create_tam_tel_type");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        handleSaiCreateStatus(SAI_API_TAM, status);
+        SWSS_LOG_THROW("HFT profile %s: create_tam_tel_type failed: %s",
+                       m_profile_name.c_str(), sai_serialize_status(status).c_str());
+    }
 
     m_sai_tam_tel_type_objs[key] = move(
         sai_guard_t(
@@ -1028,7 +988,7 @@ void HFTelProfile::initTelemetry()
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
+    sai_object_id_t sai_object;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
     sai_object_id_t sai_tam_collector_obj = m_sai_tam_collector_obj;
@@ -1039,11 +999,12 @@ void HFTelProfile::initTelemetry()
     attr.value.objlist.list = &sai_tam_collector_obj;
     attrs.push_back(attr);
 
-    auto status = sai_tam_api->create_tam_telemetry(
-        &sai_object,
-        gSwitchId, static_cast<uint32_t>(attrs.size()),
-        attrs.data());
-    checkSaiCreateStatus(status, sai_object, "create_tam_telemetry");
+    handleSaiCreateStatus(
+        SAI_API_TAM,
+        sai_tam_api->create_tam_telemetry(
+            &sai_object,
+            gSwitchId, static_cast<uint32_t>(attrs.size()),
+            attrs.data()));
 
     HFTELUTILS_ADD_SAI_OBJECT_LIST(
         m_sai_tam_obj,
@@ -1117,7 +1078,12 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
         gSwitchId,
         static_cast<uint32_t>(attrs.size()),
         attrs.data());
-    checkSaiCreateStatus(status, counter_id, "create_tam_counter_subscription");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        handleSaiCreateStatus(SAI_API_TAM, status);
+        SWSS_LOG_THROW("HFT profile %s: create_tam_counter_subscription failed: %s",
+                       m_profile_name.c_str(), sai_serialize_status(status).c_str());
+    }
 
     m_sai_tam_counter_subscription_objs[object_type][sai_obj][stat_id] = move(
         sai_guard_t(
