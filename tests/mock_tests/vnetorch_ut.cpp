@@ -507,12 +507,6 @@ namespace vnetorch_test
         TunnelCaptures m_tun;
 
         unique_ptr<VNetRouteOrch> m_vnetRouteOrch;
-        // Mirrors CONFIG_DB VNET_ROUTE / VNET_ROUTE_TUNNEL into the APP_DB tables
-        // VNetRouteOrch consumes, exactly as orchdaemon's VNetCfgRouteOrch does
-        // (orchdaemon.cpp:307). The route SET helpers drive routes through this
-        // real CONFIG->APP path, matching the VS test's create_vnet_routes /
-        // create_vnet_local_routes (which write CONFIG_DB VNET_ROUTE[_TUNNEL]).
-        unique_ptr<VNetCfgRouteOrch> m_vnetCfgRouteOrch;
         RouteCaptures m_rt;
 
         // Consumes STATE_DB VNET_MONITOR_TABLE (the table update_monitor_session_
@@ -690,17 +684,6 @@ namespace vnetorch_test
             // teardown after PreTearDown, so no stale pointer survives the test.
             gDirectory.set(m_vnetRouteOrch.get());
 
-            // The real CONFIG->APP translation for VNET routes
-            // (orchdaemon.cpp:307). The route SET helpers write CONFIG_DB
-            // VNET_ROUTE[_TUNNEL] and drive this orch, which mirrors each row to
-            // the APP_DB VNET_ROUTE[_TUNNEL]_TABLE that VNetRouteOrch consumes --
-            // so the mock exercises doVnetRouteTask/doVnetTunnelRouteTask exactly
-            // as the VS test's create_vnet_routes/create_vnet_local_routes did.
-            vector<string> cfg_vnet_route_tables = {
-                CFG_VNET_RT_TABLE_NAME, CFG_VNET_RT_TUNNEL_TABLE_NAME};
-            m_vnetCfgRouteOrch = make_unique<VNetCfgRouteOrch>(
-                m_config_db.get(), m_app_db.get(), cfg_vnet_route_tables);
-
             m_monitorOrch = make_unique<MonitorOrch>(
                 m_state_db.get(), STATE_VNET_MONITOR_TABLE_NAME);
 
@@ -737,7 +720,6 @@ namespace vnetorch_test
             m_bfdMonitorOrch.reset();
             m_monitorOrch.reset();
             m_vnetRouteOrch.reset();
-            m_vnetCfgRouteOrch.reset();
             delete gBfdOrch;
             gBfdOrch = nullptr;
             delete gTunneldecapOrch;
@@ -1141,28 +1123,21 @@ namespace vnetorch_test
             static_cast<Orch *>(m_VxlanTunnelOrch)->doTask(*consumer);
         }
 
-        // Program a VNET route the way the VS tests did: write CONFIG_DB
-        // VNET_ROUTE_TUNNEL / VNET_ROUTE (key "vnet|prefix") and drive
-        // VNetCfgRouteOrch, which mirrors it (doVnetTunnelRouteTask /
-        // doVnetRouteTask) to the APP_DB table VNetRouteOrch consumes; then drive
-        // VNetRouteOrch off that APP_DB row. This exercises the real CONFIG->APP
-        // translation instead of writing APP_DB directly.
-        void programVnetRouteViaCfg(const string &cfgTable, const string &appTable,
-                                    const string &vnet, const string &prefix,
-                                    const vector<FieldValueTuple> &fvs)
+        // CONFIG_DB -> APP_DB translation for VNET routes moved to vnetmgrd,
+        // so write APP_DB directly with the "vnet:prefix" key vnetmgrd produces.
+        void programVnetRoute(const string &appTable,
+                              const string &vnet, const string &prefix,
+                              const vector<FieldValueTuple> &fvs)
         {
-            Table cfg(m_config_db.get(), cfgTable);
-            cfg.set(vnet + "|" + prefix, fvs);
-            m_vnetCfgRouteOrch->addExistingData(&cfg);
-            static_cast<Orch *>(m_vnetCfgRouteOrch.get())->doTask();
             Table app(m_app_db.get(), appTable);
+            app.set(vnet + ":" + prefix, fvs);
             m_vnetRouteOrch->addExistingData(&app);
             static_cast<Orch *>(m_vnetRouteOrch.get())->doTask();
         }
 
         // The VS test writes CONFIG_DB VNET_ROUTE_TUNNEL and relies on
         // VNetCfgRouteOrch to mirror it to APP_DB VNET_ROUTE_TUNNEL_TABLE; the
-        // mock drives that same path via programVnetRouteViaCfg. endpoint is a
+        // mock drives that same path via programVnetRoute. endpoint is a
         // comma-separated list -> a single endpoint programs one tunnel next
         // hop; multiple endpoints program an ECMP next hop group.
         void setVnetRoute(const string &vnet, const string &prefix,
@@ -1176,8 +1151,7 @@ namespace vnetorch_test
             if (!metric.empty()) fvs.push_back({"metric", metric});
             if (consistent_hashing_buckets > 0)
                 fvs.push_back({"consistent_hashing_buckets", to_string(consistent_hashing_buckets)});
-            programVnetRouteViaCfg(CFG_VNET_RT_TUNNEL_TABLE_NAME,
-                                   APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
+            programVnetRoute(APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
         }
 
         void setVnetFgEcmpRoute(const string &vnet, const string &prefix,
@@ -1226,8 +1200,7 @@ namespace vnetorch_test
             vector<FieldValueTuple> fvs = {{"endpoint", endpoints},
                                            {"endpoint_monitor", monitors}};
             if (!profile.empty()) fvs.push_back({"profile", profile});
-            programVnetRouteViaCfg(CFG_VNET_RT_TUNNEL_TABLE_NAME,
-                                   APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
+            programVnetRoute(APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
             syncBfd();
             syncTunnelDecapTerm();
         }
@@ -1271,8 +1244,7 @@ namespace vnetorch_test
             if (rx_monitor_timer >= 0) fvs.push_back({"rx_monitor_timer", to_string(rx_monitor_timer)});
             if (tx_monitor_timer >= 0) fvs.push_back({"tx_monitor_timer", to_string(tx_monitor_timer)});
             if (!pinned_state.empty()) fvs.push_back({"pinned_state", pinned_state});
-            programVnetRouteViaCfg(CFG_VNET_RT_TUNNEL_TABLE_NAME,
-                                   APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
+            programVnetRoute(APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
             if (monitoring == "custom_bfd") syncBfd();
         }
 
@@ -2540,7 +2512,7 @@ namespace vnetorch_test
 
         // The VS test writes CONFIG_DB VNET_ROUTE (ifname + nexthop) and relies on
         // VNetCfgRouteOrch to mirror it to APP_DB VNET_ROUTE_TABLE; the mock drives
-        // that same CONFIG->APP path via programVnetRouteViaCfg. A non-empty
+        // that same path via programVnetRoute. A non-empty
         // nexthop list makes this a VNET local route: VNetRouteOrch::handleRoutes()
         // -> doRouteTask() builds an ip@ifname next-hop-group string and programs
         // it through gRouteOrch, resolving each nexthop to the neighbor's
@@ -2549,8 +2521,7 @@ namespace vnetorch_test
                                const string &ifnames, const string &nexthops)
         {
             vector<FieldValueTuple> fvs = {{"ifname", ifnames}, {"nexthop", nexthops}};
-            programVnetRouteViaCfg(CFG_VNET_RT_TABLE_NAME,
-                                   APP_VNET_RT_TABLE_NAME, vnet, prefix, fvs);
+            programVnetRoute(APP_VNET_RT_TABLE_NAME, vnet, prefix, fvs);
         }
 
         void delVnetLocalRoute(const string &vnet, const string &prefix)
