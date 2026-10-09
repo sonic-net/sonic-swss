@@ -1552,10 +1552,112 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
+    else
+    {
+        cleanDefaultVlanAndBridgeForPorts(oidList);
+    }
 
     SWSS_LOG_NOTICE("Created ports: %s", swss::join(',', oidList.begin(), oidList.end()).c_str());
 
     return true;
+}
+
+void PortsOrch::cleanDefaultVlanAndBridgeForPorts(const std::vector<sai_object_id_t> &port_ids)
+{
+    if (port_ids.empty() || m_default1QBridge == SAI_NULL_OBJECT_ID || m_defaultVlan == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+    std::unordered_set<sai_object_id_t> target_ports(port_ids.begin(), port_ids.end());
+    std::unordered_map<sai_object_id_t, sai_object_id_t> bp_to_port;
+
+    std::vector<sai_object_id_t> bp_list;
+    sai_attribute_t attr;
+    attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
+    attr.value.objlist.count = 0;
+    attr.value.objlist.list = nullptr;
+    sai_status_t status = sai_bridge_api->get_bridge_attribute(m_default1QBridge, 1, &attr);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.objlist.count > 0)
+    {
+        bp_list.resize(attr.value.objlist.count);
+        attr.value.objlist.list = bp_list.data();
+        status = sai_bridge_api->get_bridge_attribute(m_default1QBridge, 1, &attr);
+    }
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get 1Q bridge port list, rv: %d", status);
+        return;
+    }
+
+    for (uint32_t i = 0; i < attr.value.objlist.count; ++i)
+    {
+        sai_attribute_t port_attr;
+        port_attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+        if (sai_bridge_api->get_bridge_port_attribute(bp_list[i], 1, &port_attr) == SAI_STATUS_SUCCESS &&
+            target_ports.count(port_attr.value.oid))
+        {
+            bp_to_port[bp_list[i]] = port_attr.value.oid;
+        }
+    }
+    if (bp_to_port.empty())
+    {
+        return;
+    }
+
+    std::vector<sai_object_id_t> vlm_list;
+    attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
+    attr.value.objlist.count = 0;
+    attr.value.objlist.list = nullptr;
+    status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.objlist.count > 0)
+    {
+        vlm_list.resize(attr.value.objlist.count);
+        attr.value.objlist.list = vlm_list.data();
+        status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
+    }
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get default vlan member list, rv: %d", status);
+        return;
+    }
+
+    for (uint32_t i = 0; i < attr.value.objlist.count; ++i)
+    {
+        sai_attribute_t vlm_attr;
+        vlm_attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
+        if (sai_vlan_api->get_vlan_member_attribute(vlm_list[i], 1, &vlm_attr) == SAI_STATUS_SUCCESS &&
+            bp_to_port.count(vlm_attr.value.oid))
+        {
+            sai_status_t rm_status = sai_vlan_api->remove_vlan_member(vlm_list[i]);
+            if (rm_status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("Removed default vlan member %s for port %s",
+                                sai_serialize_object_id(vlm_list[i]).c_str(),
+                                sai_serialize_object_id(bp_to_port[vlm_attr.value.oid]).c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to remove default vlan member %s, rv: %d",
+                                sai_serialize_object_id(vlm_list[i]).c_str(), rm_status);
+            }
+        }
+    }
+
+    for (const auto &kv : bp_to_port)
+    {
+        sai_status_t rm_status = sai_bridge_api->remove_bridge_port(kv.first);
+        if (rm_status == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Removed default bridge port %s for port %s",
+                            sai_serialize_object_id(kv.first).c_str(),
+                            sai_serialize_object_id(kv.second).c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to remove default bridge port %s, rv: %d",
+                          sai_serialize_object_id(kv.first).c_str(), rm_status);
+        }
+    }
 }
 
 bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
