@@ -1,8 +1,62 @@
 #include <tuple>
+#include <exception>
+#include <string>
 #include "portsorch.h"
 #include "logger.h"
 #include "fdborch.h"
 #include "stporch.h"
+
+namespace {
+
+bool parseStpInstance(const std::string &str, uint16_t &value)
+{
+    if (str.empty() || str.find_first_not_of("0123456789") != std::string::npos)
+    {
+        return false;
+    }
+
+    try
+    {
+        size_t idx = 0;
+        unsigned long parsed = std::stoul(str, &idx, 10);
+        if (idx != str.size() || parsed >= STP_INVALID_INSTANCE)
+        {
+            return false;
+        }
+        value = static_cast<uint16_t>(parsed);
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+bool parseStpState(const std::string &str, uint8_t &state)
+{
+    if (str.empty() || str.find_first_not_of("0123456789") != std::string::npos)
+    {
+        return false;
+    }
+
+    try
+    {
+        size_t idx = 0;
+        unsigned long parsed = std::stoul(str, &idx, 10);
+        if (idx != str.size() || parsed >= STP_STATE_INVALID)
+        {
+            return false;
+        }
+        state = static_cast<uint8_t>(parsed);
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+} // namespace
 
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;
@@ -397,7 +451,12 @@ void StpOrch::doStpTask(Consumer &consumer)
             {
                 if (fvField(i) == "stp_instance")
                 {
-                    instance = (uint16_t)std::stoi(fvValue(i));
+                    if (!parseStpInstance(fvValue(i), instance))
+                    {
+                        SWSS_LOG_ERROR("Invalid stp_instance value '%s' for VLAN %s",
+                                       fvValue(i).c_str(), vlan_alias.c_str());
+                        instance = STP_INVALID_INSTANCE;
+                    }
                 }
             }
 
@@ -443,7 +502,14 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
         }
         string port_alias = key.substr(0, found);
         string stp_instance = key.substr(found+1);
-        uint16_t instance = (uint16_t)std::stoi(stp_instance);
+        uint16_t instance;
+        if (!parseStpInstance(stp_instance, instance))
+        {
+            SWSS_LOG_ERROR("Invalid STP instance '%s' in key %s",
+                           stp_instance.c_str(), key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         Port port;
 
         if (!gPortsOrch->getPort(port_alias, port))
@@ -461,7 +527,12 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
             {
                 if (fvField(i) == "state")
                 {
-                    state = (uint8_t)std::stoi(fvValue(i));
+                    if (!parseStpState(fvValue(i), state))
+                    {
+                        SWSS_LOG_ERROR("Invalid state value '%s' for instance %u port %s",
+                                       fvValue(i).c_str(), instance, port_alias.c_str());
+                        state = STP_STATE_INVALID;
+                    }
                 }
             }
             if(state != STP_STATE_INVALID)
@@ -540,7 +611,14 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
 
             string instance_alias = key.substr(0, found);
             string port_alias = key.substr(found+1);
-            uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
+            uint16_t instance;
+            if (!parseStpInstance(instance_alias, instance))
+            {
+                SWSS_LOG_ERROR("Invalid STP instance '%s' in key %s",
+                               instance_alias.c_str(), key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
