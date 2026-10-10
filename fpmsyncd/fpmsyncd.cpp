@@ -152,6 +152,9 @@ int main(int argc, char **argv)
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
             if (warmStartEnabled)
             {
+                // Reconcile writes the route tables directly on this thread.
+                sync.retireRouteCoalescer();
+
                 /* Obtain warm-restart timer defined for routing application */
                 time_t warmRestartIval = sync.getWarmStartHelper().getRestartTimer();
                 if (!warmRestartIval)
@@ -179,6 +182,7 @@ int main(int argc, char **argv)
             }
             else
             {
+                sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
             }
 
