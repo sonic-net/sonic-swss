@@ -301,6 +301,8 @@ private:
     unique_ptr<swss::Table> m_stateDefaultRouteTb;
 
     RouteTables m_syncdRoutes;
+    /* Host routes over a tunnel removed and created again in the current batch */
+    std::set<std::pair<sai_object_id_t, IpPrefix>> m_tunnelHostRouteRecreates;
     LabelRouteTables m_syncdLabelRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
     NextHopRouteTable m_nextHops;
