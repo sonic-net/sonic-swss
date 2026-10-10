@@ -468,22 +468,19 @@ namespace mux_rollback_test
         IpAddress ip_stranded("192.168.0.3");
         NeighborEntry stranded_entry(ip_stranded, VLAN_1000);
         NextHopKey stranded_nh(ip_stranded, VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[stranded_entry] =
-            { shared_mac, /*hw_configured*/ false, 0, /*prefix_route*/ false };
+        gNeighOrch->setNeighbor(stranded_entry, { shared_mac, /*hw_configured*/ false, 0, /*prefix_route*/ false });
 
         // Different-MAC neighbor — must hit the mac-mismatch continue.
         IpAddress ip_other_mac("192.168.0.4");
         NeighborEntry other_mac_entry(ip_other_mac, VLAN_1000);
         NextHopKey other_mac_nh(ip_other_mac, VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[other_mac_entry] =
-            { other_mac, false, 0, false };
+        gNeighOrch->setNeighbor(other_mac_entry, { other_mac, false, 0, false });
 
         // Prefix-route same-MAC neighbor — must hit the prefix_route continue.
         IpAddress ip_prefix("192.168.0.5");
         NeighborEntry prefix_entry(ip_prefix, VLAN_1000);
         NextHopKey prefix_nh(ip_prefix, VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[prefix_entry] =
-            { shared_mac, false, 0, /*prefix_route*/ true };
+        gNeighOrch->setNeighbor(prefix_entry, { shared_mac, false, 0, /*prefix_route*/ true });
 
         // Pre-populate the FDB cache so getMuxPort() resolves shared_mac to
         // TEST_INTERFACE without going through SAI notifications.
@@ -521,9 +518,9 @@ namespace mux_rollback_test
                   m_MuxOrch->mux_nexthop_tb_.end());
 
         // Clean up the entries we injected so we don't bleed into other tests.
-        gNeighOrch->m_syncdNeighbors.erase(stranded_entry);
-        gNeighOrch->m_syncdNeighbors.erase(other_mac_entry);
-        gNeighOrch->m_syncdNeighbors.erase(prefix_entry);
+        gNeighOrch->eraseNeighbor(stranded_entry);
+        gNeighOrch->eraseNeighbor(other_mac_entry);
+        gNeighOrch->eraseNeighbor(prefix_entry);
         m_MuxOrch->mux_nexthop_tb_.erase(stranded_nh);
         gFdbOrch->m_entries.erase(fdb_entry);
     }

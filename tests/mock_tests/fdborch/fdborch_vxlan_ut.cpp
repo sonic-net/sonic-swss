@@ -292,11 +292,11 @@ namespace fdborch_vxlan_ut
                 {
                     return false;
                 }
-                for (const auto &neighborEntry : bucket.second)
+                for (const auto *neighborEntry : bucket.second)
                 {
-                    auto it = gNeighOrch->m_syncdNeighbors.find(neighborEntry);
-                    if (it == gNeighOrch->m_syncdNeighbors.end() || neighborEntry.alias != bucket.first.first ||
-                        it->second.mac != bucket.first.second)
+                    auto it = gNeighOrch->m_syncdNeighbors.find(*neighborEntry);
+                    if (it == gNeighOrch->m_syncdNeighbors.end() || neighborEntry != &it->first ||
+                        neighborEntry->alias != bucket.first.first || it->second.mac != bucket.first.second)
                     {
                         return false;
                     }
@@ -729,18 +729,28 @@ namespace fdborch_vxlan_ut
         return SAI_STATUS_SUCCESS;
     }
 
-    /* The mock creates no neighbor in the SAI below it, so a later set or remove there must be accepted here */
+    static sai_status_t tnAcceptNeighborRemove(const sai_neighbor_entry_t *)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /*
+     * The mock creates no neighbor in the SAI below it, so a later set or remove
+     * there must be accepted here. Swapped under the mock, so clearing the
+     * mock's expectations does not undo it.
+     */
     struct TnAcceptNeighborChanges
     {
-        decltype(sai_neighbor_api->set_neighbor_entry_attribute) real_set;
-        TnAcceptNeighborChanges() : real_set(sai_neighbor_api->set_neighbor_entry_attribute)
+        sai_neighbor_api_t saved;
+        TnAcceptNeighborChanges() : saved(*sai_neighbor_api)
         {
             sai_neighbor_api->set_neighbor_entry_attribute = tnAcceptNeighborSet;
-            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillRepeatedly(testing::Return(SAI_STATUS_SUCCESS));
+            sai_neighbor_api->remove_neighbor_entry = tnAcceptNeighborRemove;
         }
         ~TnAcceptNeighborChanges()
         {
-            sai_neighbor_api->set_neighbor_entry_attribute = real_set;
+            sai_neighbor_api->set_neighbor_entry_attribute = saved.set_neighbor_entry_attribute;
+            sai_neighbor_api->remove_neighbor_entry = saved.remove_neighbor_entry;
         }
     };
 
@@ -1171,7 +1181,6 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(neighborMacIndexConsistent());
         testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
 
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillRepeatedly(testing::Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
         tnHostRoutes(false);
         EXPECT_TRUE(gNeighOrch->isHwConfigured(n1));
@@ -1218,6 +1227,45 @@ namespace fdborch_vxlan_ut
         tnRemoteMac(TN_MAC2, "2.2.2.2");
         EXPECT_TRUE(gNeighOrch->isHwConfigured(n1));
         EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
+    }
+
+    static sai_status_t tnEncapIndexGet(const sai_neighbor_entry_t *, uint32_t, sai_attribute_t *attr_list)
+    {
+        attr_list[0].value.u32 = 77;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /*
+     * VOQ: the encap index is stored on an existing neighbor, and no table entry
+     * is created for a neighbor that has none (the inband neighbor).
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborVoqEncapIndexCreatesNoEntry)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry n1(TN_IP, string(VLAN40));
+        NeighborEntry inband(TN_IP2, string(VLAN40));
+        /* Stops voqSyncAddNeigh() before it writes to the chassis database, which this fixture does not have */
+        gPortsOrch->m_portList[VLAN40].m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_REMOTE;
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(n1), 1);
+
+        auto real_get = sai_neighbor_api->get_neighbor_entry_attribute;
+        sai_neighbor_api->get_neighbor_entry_attribute = tnEncapIndexGet;
+        string alias = VLAN40;
+        IpAddress ip(TN_IP), ip2(TN_IP2);
+        sai_neighbor_entry_t sai_entry = {};
+        gNeighOrch->voqSyncAddNeigh(alias, ip, MacAddress(TN_MAC), sai_entry);
+        alias = VLAN40;
+        gNeighOrch->voqSyncAddNeigh(alias, ip2, MacAddress(TN_MAC2), sai_entry);
+        sai_neighbor_api->get_neighbor_entry_attribute = real_get;
+
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.at(n1).voq_encap_index, 77u);
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(inband), 0);
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.size(), 1u);
+        EXPECT_TRUE(neighborMacIndexConsistent());
     }
 
     /*
