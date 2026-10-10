@@ -591,6 +591,11 @@ class TestVnet2Orch(object):
         # check_default_vnet_entry picks an arbitrary one.
         vnet_obj.vr_map[vnet_name]["ing"] = vr
         vnet_obj.vr_map[vnet_name]["egr"] = vr
+        # check_router_interface counts ASIC routes since the last snapshot and
+        # expects exactly the new interface ip2me route. The underlay address
+        # and the RouteOrch prefix above are already programmed, so resnapshot
+        # before the interface is created.
+        vnet_obj.fetch_exist_entries(dvs)
         rifs_before = set(vnet_obj.rifs)
         create_phy_interface(dvs, vnet_if, vnet_name, vnet_ip)
         vnet_obj.check_router_interface(dvs, vnet_if, vnet_name)
