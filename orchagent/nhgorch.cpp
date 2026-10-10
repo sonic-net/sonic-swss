@@ -268,6 +268,12 @@ void NhgOrch::doTask(Consumer& consumer)
                         if (nhg->sync())
                         {
                             m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
+
+                            /* Logged once per group that has to start as a temporary one. */
+                            SWSS_LOG_NOTICE("Next hop group table is full (%u): group %s is temporary, "
+                                            "%zu groups of one next hop hold a group object",
+                                            gRouteOrch->getMaxNhgCount(), index.c_str(),
+                                            getKeptSingleNextHopGroupCount());
                         }
                         else
                         {
@@ -822,6 +828,25 @@ bool NextHopGroup::sync()
     return true;
 }
 
+size_t NhgOrch::getKeptSingleNextHopGroupCount() const
+{
+    SWSS_LOG_ENTER();
+
+    size_t count = 0;
+
+    for (const auto &it : m_syncdNextHopGroups)
+    {
+        const auto &nhg = it.second.nhg;
+
+        if (nhg->isSynced() && !nhg->isRecursive() && nhg->getSize() == 1 && nhg->usesGroupObject())
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 /*
  * Purpose:     Create a temporary next hop group when resources are exhausted.
  * Description: Choose one member to represent the group and create a group
@@ -1185,14 +1210,13 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 
     if (nhg_key.getSize() == 1)
     {
-        /* Set before the members change: the group object outlives the shrink. */
-        m_keeps_group_object = true;
-
         /*
          * The members are removed before the new ones are added. When the one
          * next hop left is not a member yet, add it first, so the routes on
-         * the group always have a member; while it has no next hop ID, keep
-         * the current members and let the update be retried.
+         * the group always have a member; while it has no next hop ID or its
+         * member cannot be created, keep the current members and let the
+         * update be retried. A next hop that is resolved but down is skipped
+         * by syncMembers() and does not hold the update back.
          */
         const NextHopKey& nh_key = *nhg_key.getNextHops().begin();
         auto mbr_it = m_members.find(nh_key);
@@ -1205,11 +1229,10 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 
         if (!mbr_it->second.isSynced())
         {
-            syncMembers({nh_key});
-
-            if (!mbr_it->second.isSynced() && mbr_it->second.getNhId() == SAI_NULL_OBJECT_ID)
+            if (!syncMembers({nh_key}) ||
+                (!mbr_it->second.isSynced() && mbr_it->second.getNhId() == SAI_NULL_OBJECT_ID))
             {
-                SWSS_LOG_INFO("Next hop %s is not resolved, group %s keeps its members",
+                SWSS_LOG_INFO("Next hop %s cannot be added, group %s keeps its members",
                               nh_key.to_string().c_str(), to_string().c_str());
                 if (added)
                 {
@@ -1218,6 +1241,9 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
                 return false;
             }
         }
+
+        /* From here the shrink goes ahead: the group object outlives it. */
+        m_keeps_group_object = true;
     }
 
     /* Update the key. */

@@ -151,6 +151,10 @@ public:
     /* Add a temporary next hop group when resources are exhausted. */
     NextHopGroup createTempNhg(const NextHopGroupKey& nhg_key);
 
+    /* Non-recursive groups of one next hop that kept their SAI group object
+     * after shrinking; each holds a group entry a temporary group may wait for. */
+    size_t getKeptSingleNextHopGroupCount() const;
+
     /* Validate / Invalidate a next hop. */
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
