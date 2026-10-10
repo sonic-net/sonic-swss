@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <set>
 #include <string>
@@ -25,7 +26,9 @@ public:
         const std::string &profile_name,
         sai_object_id_t sai_tam_obj,
         sai_object_id_t sai_tam_collector_obj,
-        const CounterNameCache &cache);
+        const CounterNameCache &cache,
+        sai_tam_tel_type_mode_t tel_type_mode,
+        std::unordered_set<sai_object_type_t> tel_type_supported_categories = {});
     ~HFTelProfile();
     HFTelProfile(const HFTelProfile &) = delete;
     HFTelProfile &operator=(const HFTelProfile &) = delete;
@@ -35,6 +38,11 @@ public:
     using sai_guard_t = std::shared_ptr<sai_object_id_t>;
 
     const std::string& getProfileName() const;
+    bool isMixedTypeMode() const { return m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE; }
+    bool isCategorySupported(sai_object_type_t object_type) const
+    {
+        return m_tel_type_supported_categories.count(object_type) != 0;
+    }
     void setStreamState(sai_tam_tel_type_state_t state);
     void setStreamState(sai_object_type_t object_type, sai_tam_tel_type_state_t state);
     sai_tam_tel_type_state_t getStreamState(sai_object_type_t object_type) const;
@@ -44,7 +52,13 @@ public:
     sai_object_type_t getObjectType(sai_object_id_t tam_tel_type_obj) const;
     void setPollInterval(std::uint32_t poll_interval);
     void setBulkSize(std::uint32_t bulk_size);
-    void setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
+    // Returns false (without applying anything) if the label allocator
+    // would exceed the 15-bit IPFIX IE range. The caller is expected to
+    // have already rejected the update with task_need_retry if the shared
+    // tel_type isn't SAI_TAM_TEL_TYPE_STATE_STOP_STREAM (MIXED mode doesn't
+    // support live reconfiguration), since that's a transient condition and
+    // belongs at the task-status level - see HFTelOrch::groupTableSet.
+    bool setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
     void setStatsIDs(const std::string &group_name, const std::set<std::string> &object_counters);
     bool setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id);
     bool delObjectSAIID(sai_object_type_t object_type, const char *object_name);
@@ -79,6 +93,22 @@ private:
             sai_object_id_t>>
         m_name_sai_map;
 
+    const sai_tam_tel_type_mode_t m_tel_type_mode;
+
+    // Object types whose SWITCH_ENABLE_*_STATS attribute the vendor SAI implements
+    // (see HFTelOrch::querySupportedTelTypeModes).
+    const std::unordered_set<sai_object_type_t> m_tel_type_supported_categories;
+
+    // Next IPFIX label to allocate in MIXED_TYPE mode. Unused in SINGLE_TYPE.
+    // labels are monotonic and never reused within a profile.
+    sai_uint16_t m_next_label = 1;
+
+    // Highest label value CounterSyncd's IPFIX template compiler accepts: it
+    // validates each field's Information Element ID against the 15-bit IPFIX
+    // IE range (1..=0x7fff), not the full 16-bit range sai_uint16_t allows.
+    // A label above this is rejected outright, tearing down the session.
+    static constexpr sai_uint16_t MAX_LABEL = 0x7fff;
+
     // SAI objects
     const sai_object_id_t m_sai_tam_obj;
     const sai_object_id_t m_sai_tam_collector_obj;
@@ -98,6 +128,19 @@ private:
 
     bool isObjectTypeInProfile(sai_object_type_t object_type, const std::string &object_name) const;
     bool isMonitoringObjectReady(sai_object_type_t object_type) const;
+    bool areAllMonitoringObjectsReady() const;
+
+    // In MIXED mode the per-profile sai_tam_tel_type / sai_tam_report /
+    // IPFIX template are shared across object types, so they live in the
+    // three maps below under a single key. Callers funnel their
+    // sai_object_type_t lookups through mapKey so SINGLE-mode behavior
+    // (one entry per object type) is preserved without per-call branching.
+    sai_object_type_t mapKey(sai_object_type_t object_type) const
+    {
+        return m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+            ? SAI_OBJECT_TYPE_NULL
+            : object_type;
+    }
 
     // SAI calls
     sai_object_id_t getTAMReportObjID(sai_object_type_t object_type);
