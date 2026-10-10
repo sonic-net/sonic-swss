@@ -442,6 +442,10 @@ void PortsOrch::removeDefaultBridgePorts()
 {
 }
 
+void PortsOrch::cleanDefaultVlanAndBridgeForPorts(const std::vector<sai_object_id_t> &port_ids)
+{
+}
+
 void PortsOrch::initializePortBufferMaximumParameters(const Port &port)
 {
 }
