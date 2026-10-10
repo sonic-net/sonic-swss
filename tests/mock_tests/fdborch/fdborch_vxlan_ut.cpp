@@ -1322,6 +1322,83 @@ namespace fdborch_vxlan_ut
     }
 
     /*
+     * The FDB events that act on the neighbors of a MAC (resolve, flush, move
+     * behind a next hop group, move back to a local port) touch the neighbors
+     * on that MAC and VLAN only, among many neighbors on other MACs.
+     */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborFdbEventsTouchOnlyTheirMac)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        TnAcceptNeighborChanges accept;
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry n1(TN_IP, string(VLAN40));
+        NeighborEntry n2(TN_IP2, string(VLAN40));
+        NeighborEntry other(IpAddress("100.1.1.49"), string(VLAN40));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillRepeatedly(testing::Return(SAI_STATUS_SUCCESS));
+        const int others = 300;
+        for (int i = 0; i < others; i++)
+        {
+            char ip[32], mac[32];
+            snprintf(ip, sizeof(ip), "100.1.%d.%d", 2 + i / 200, 1 + i % 200);
+            snprintf(mac, sizeof(mac), "00:22:00:00:%02x:%02x", i / 256, i % 256);
+            learnNeighbor(m_app_db.get(), VLAN40, ip, mac);
+        }
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP2, TN_MAC);
+        learnNeighbor(m_app_db.get(), VLAN40, "100.1.1.49", TN_MAC2);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.size(), (size_t)others + 3);
+
+        auto programmed = []() {
+            size_t count = 0;
+            for (const auto &neighbor : gNeighOrch->m_syncdNeighbors)
+            {
+                count += neighbor.second.hw_configured ? 1 : 0;
+            }
+            return count;
+        };
+        ASSERT_EQ(programmed(), (size_t)others + 3);
+
+        FdbEntry entry;
+        entry.mac = MacAddress(TN_MAC);
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        entry.port_name = ETH0;
+
+        /* processFDBResolve() */
+        auto sets = testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME);
+        gNeighOrch->processFDBResolve(entry);
+        EXPECT_EQ(gNeighOrch->m_neighborToRefresh, (set<NeighborEntry>{ n1, n2 }));
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), sets + 2);
+
+        /* processFDBFlushUpdate(); an entry of an unknown VLAN is skipped */
+        FdbEntry unknown_vlan = entry;
+        unknown_vlan.bv_id = 0x123456789;
+        FdbFlushUpdate flush;
+        flush.entries = { unknown_vlan, entry };
+        flush.port = m_portsOrch->m_portList[ETH0];
+        gNeighOrch->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, &flush);
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), sets + 4);
+
+        /* processFDBDelete(), MAC now behind a next hop group */
+        gNeighOrch->processFDBDelete(entry, true);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(n1));
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(n2));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(other));
+        EXPECT_EQ(programmed(), (size_t)others + 1);
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.size(), (size_t)others + 3);
+
+        /* processFDBAdd(): a disabled neighbor on another MAC stays disabled */
+        ASSERT_TRUE(gNeighOrch->disableNeighbor(other));
+        ASSERT_EQ(programmed(), (size_t)others);
+        gNeighOrch->processFDBAdd(entry);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(n1));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(n2));
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(other));
+        EXPECT_EQ(programmed(), (size_t)others + 2);
+        EXPECT_TRUE(neighborMacIndexConsistent());
+    }
+
+    /*
      * L3 VNI VRF, remote MAC first, then the neighbor, no host route: programmed.
      * A host route over a tunnel for its address takes it out (the other host
      * stays); FDB updates of its MAC keep it out while the route exists; the
