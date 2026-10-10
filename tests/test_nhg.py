@@ -1774,6 +1774,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Test scenario:
         # - update `group1` to have 4 members and assert they are all added
         # - update `group1` to have only 1 member and assert the other 3 are removed
+        #   while the group and its last member stay
         # - update `group1` to have 2 members and assert a new one is added
         def update_nhgm_count_test():
             # Update the NHG, adding two new members
@@ -1786,8 +1787,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             # Update the group to one NH only
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
             self.nhg_ps.set("group1", fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
-            assert len(self.get_nhgm_ids('group1')) == 0
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert len(self.get_nhgm_ids('group1')) == 1
 
             # Update the group to 2 NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])

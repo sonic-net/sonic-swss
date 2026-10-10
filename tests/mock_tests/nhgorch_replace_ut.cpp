@@ -237,7 +237,9 @@ TEST_F(NhgOrchReplaceTest, OnlySingleNextHopTransitionsReplaceTheId)
     NextHopGroup multi(NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4", string("")), false);
     multi.m_id = 0x5501;
     EXPECT_FALSE(multi.replacesIdOnUpdate(NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.3@Ethernet8", string(""))));
-    EXPECT_TRUE(multi.replacesIdOnUpdate(NextHopGroupKey("10.0.0.1@Ethernet0", string(""))));
+    /* A SAI group stays a group of one member; only a router interface cannot be its member. */
+    EXPECT_FALSE(multi.replacesIdOnUpdate(NextHopGroupKey("10.0.0.1@Ethernet0", string(""))));
+    EXPECT_TRUE(multi.replacesIdOnUpdate(NextHopGroupKey("0.0.0.0@Ethernet0", string(""))));
     multi.m_id = SAI_NULL_OBJECT_ID;
     EXPECT_FALSE(multi.replacesIdOnUpdate(NextHopGroupKey("10.0.0.1@Ethernet0", string(""))));
 }
@@ -272,9 +274,120 @@ TEST_F(NhgOrchReplaceTest, UpdateChangesTheIdOnlyWhenThePredicateSaysSo)
     gNeighOrch->m_syncdNextHops.erase(nh3);
 }
 
-/* Several next hops shrink to one: the routes move to the next hop first, and
- * only then is the old SAI group removed, so its removal cannot fail on them. */
-TEST_F(NhgOrchReplaceTest, ShrinkingToOneNextHopMovesRoutesBeforeRemovingTheGroup)
+/* A link flap as the routing stack reports it, several next hops to one and
+ * back: the SAI group and its ID stay, so no route is touched. */
+TEST_F(NhgOrchReplaceTest, ShrinkingToOneNextHopKeepsTheGroupAndItsRoutes)
+{
+    ASSERT_NO_FATAL_FAILURE(seed("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4"));
+    auto &nhg = *gNhgOrch->m_syncdNextHopGroups.at(index).nhg;
+    ASSERT_EQ(nhg.getId(), group_oid);
+    ASSERT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+
+    EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_)).Times(0);
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(1, _, _, _)).Times(1);
+    EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, 1, _, _, _, _, _)).Times(1);
+
+    const NextHopGroupKey one("10.0.0.2@Ethernet4", string(""));
+    ASSERT_FALSE(nhg.replacesIdOnUpdate(one));
+    EXPECT_TRUE(nhg.update(one));
+    EXPECT_EQ(nhg.getId(), group_oid);
+    EXPECT_EQ(nhg.getSize(), 1u);
+    EXPECT_TRUE(nhg.usesGroupObject());
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 0);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 1);
+
+    const NextHopGroupKey two("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4", string(""));
+    ASSERT_FALSE(nhg.replacesIdOnUpdate(two));
+    EXPECT_TRUE(nhg.update(two));
+    EXPECT_EQ(nhg.getId(), group_oid);
+    EXPECT_EQ(nhg.getSize(), 2u);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+
+    EXPECT_EQ(g_route_set_calls, 0);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+}
+
+/* Shrinking onto a next hop that is not a member yet adds it before the others
+ * go, and waits with all of them in place while it is unresolved. */
+TEST_F(NhgOrchReplaceTest, ShrinkingToANewNextHopAddsItBeforeRemovingTheOthers)
+{
+    const NextHopKey nh3{"10.0.0.3@Ethernet8"};
+    const NextHopKey nh4{"10.0.0.4@Ethernet8"};
+    ASSERT_NO_FATAL_FAILURE(seed("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4"));
+    auto &nhg = *gNhgOrch->m_syncdNextHopGroups.at(index).nhg;
+
+    /* Unresolved: nothing changes and the update is to be retried. */
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _)).Times(0);
+    EXPECT_FALSE(nhg.update(NextHopGroupKey("10.0.0.4@Ethernet8", string(""))));
+    EXPECT_EQ(nhg.getSize(), 2u);
+    EXPECT_FALSE(nhg.hasMember(nh4));
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 1);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+
+    /* Resolved: its member is created before the two old ones are removed. */
+    gNeighOrch->m_syncdNextHops[nh3] = { 0x4403, 0, 0 };
+    {
+        testing::InSequence seq;
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, 1, _, _, _, _, _)).Times(1);
+        EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(2, _, _, _)).Times(1);
+    }
+    EXPECT_TRUE(nhg.update(NextHopGroupKey("10.0.0.3@Ethernet8", string(""))));
+    EXPECT_EQ(nhg.getId(), group_oid);
+    EXPECT_EQ(nhg.getSize(), 1u);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 0);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 0);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh3].ref_count, 1);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+
+    gNhgOrch->m_syncdNextHopGroups.erase(index);
+    gNeighOrch->m_syncdNextHops.erase(nh3);
+    gNeighOrch->m_syncdNextHops.erase(nh4);
+}
+
+/* A kept group of one member follows its next hop like any other group: the
+ * member goes when the neighbor goes and comes back with it, and another
+ * single next hop replaces the member, all under the same ID. */
+TEST_F(NhgOrchReplaceTest, AKeptGroupOfOneMemberFollowsItsNextHop)
+{
+    ASSERT_NO_FATAL_FAILURE(seed("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4"));
+    auto &nhg = *gNhgOrch->m_syncdNextHopGroups.at(index).nhg;
+    ASSERT_TRUE(nhg.update(NextHopGroupKey("10.0.0.2@Ethernet4", string(""))));
+    ASSERT_EQ(nhg.getId(), group_oid);
+
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_)).Times(0);
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(1, _, _, _)).Times(2);
+    EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, 1, _, _, _, _, _)).Times(2);
+
+    EXPECT_TRUE(nhg.invalidateNextHop(nh2));
+    EXPECT_FALSE(nhg.hasSyncedMember());
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 0);
+    EXPECT_TRUE(nhg.validateNextHop(nh2));
+    EXPECT_TRUE(nhg.hasSyncedMember());
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 1);
+
+    const NextHopGroupKey other("10.0.0.1@Ethernet0", string(""));
+    ASSERT_FALSE(nhg.replacesIdOnUpdate(other));
+    EXPECT_TRUE(nhg.update(other));
+    EXPECT_EQ(nhg.getId(), group_oid);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 0);
+
+    EXPECT_EQ(g_route_set_calls, 0);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+
+    /* Removing the index removes the SAI group, not a next hop reference. */
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(group_oid)).Times(1);
+    EXPECT_TRUE(nhg.remove());
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 0);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+}
+
+/* A replacement that drops the SAI group: the routes move to the next hop
+ * first, and only then is the old SAI group removed, so its removal cannot
+ * fail on them. */
+TEST_F(NhgOrchReplaceTest, ReplacingAGroupMovesRoutesBeforeRemovingIt)
 {
     ASSERT_NO_FATAL_FAILURE(seed("10.0.0.1@Ethernet0,10.0.0.2@Ethernet4"));
     ASSERT_EQ(gNhgOrch->m_syncdNextHopGroups.at(index).nhg->getId(), group_oid);

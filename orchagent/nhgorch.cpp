@@ -720,6 +720,8 @@ NextHopGroup& NextHopGroup::operator=(NextHopGroup&& nhg)
 
     m_is_temp = nhg.m_is_temp;
     m_is_recursive = nhg.m_is_recursive;
+    /* Swapped, as NhgCommon swaps the SAI state: nhg releases what this held. */
+    std::swap(m_keeps_group_object, nhg.m_keeps_group_object);
 
     NhgCommon::operator=(std::move(nhg));
 
@@ -746,8 +748,8 @@ bool NextHopGroup::sync()
         return true;
     }
 
-    /* If the group is non-recursive with single member, the group ID will be the only member's NH ID */
-    if (!isRecursive() && (m_members.size() == 1))
+    /* Without a group object, the group ID will be the only member's NH ID */
+    if (!usesGroupObject())
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
@@ -968,9 +970,8 @@ bool NextHopGroup::remove()
     {
         return true;
     }
-    //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
-    if (m_is_temp ||
-        (!isRecursive() && m_members.size() == 1))
+    //  If the group is temporary or has no group object, update the neigh or rif ref-count and reset the ID.
+    if (m_is_temp || !usesGroupObject())
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         auto nh_key = nhgm.getKey();
@@ -1001,7 +1002,7 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
     SWSS_LOG_ENTER();
 
     /* This method should not be called for single-membered non-recursive nexthop groups */
-    assert(isRecursive() || (m_members.size() > 1));
+    assert(usesGroupObject());
 
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -1080,8 +1081,11 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 
 /*
  * Purpose:     Tell whether an update gives the group a new SAI ID.
- * Description: A synced non-recursive group of one next hop uses that next
- *              hop's own ID, so going to or from a single next hop changes it.
+ * Description: A synced group without a group object uses its one next hop's
+ *              own ID, so any other key changes it. A group object stays when
+ *              it shrinks to one next hop, as a group of one member, and so
+ *              keeps its ID: the routes using it need not be touched. Only a
+ *              router interface next hop cannot be a group member.
  * Params:      IN  nhg_key - The new next hop group key.
  * Returns:     true, if update(nhg_key) would replace the group's SAI ID;
  *              false, otherwise.
@@ -1090,7 +1094,17 @@ bool NextHopGroup::replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const
 {
     SWSS_LOG_ENTER();
 
-    return isSynced() && !isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1);
+    if (!isSynced() || isRecursive())
+    {
+        return false;
+    }
+
+    if (!usesGroupObject())
+    {
+        return true;
+    }
+
+    return nhg_key.getSize() == 1 && nhg_key.getNextHops().begin()->isIntfNextHop();
 }
 
 /*
@@ -1167,6 +1181,43 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 
         /* Sync the group only if it was synced before. */
         return (was_synced ? sync() : true);
+    }
+
+    if (nhg_key.getSize() == 1)
+    {
+        /* Set before the members change: the group object outlives the shrink. */
+        m_keeps_group_object = true;
+
+        /*
+         * The members are removed before the new ones are added. When the one
+         * next hop left is not a member yet, add it first, so the routes on
+         * the group always have a member; while it has no next hop ID, keep
+         * the current members and let the update be retried.
+         */
+        const NextHopKey& nh_key = *nhg_key.getNextHops().begin();
+        auto mbr_it = m_members.find(nh_key);
+        bool added = (mbr_it == m_members.end());
+
+        if (added)
+        {
+            mbr_it = m_members.emplace(nh_key, NextHopGroupMember(nh_key)).first;
+        }
+
+        if (!mbr_it->second.isSynced())
+        {
+            syncMembers({nh_key});
+
+            if (!mbr_it->second.isSynced() && mbr_it->second.getNhId() == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Next hop %s is not resolved, group %s keeps its members",
+                              nh_key.to_string().c_str(), to_string().c_str());
+                if (added)
+                {
+                    m_members.erase(mbr_it);
+                }
+                return false;
+            }
+        }
     }
 
     /* Update the key. */
@@ -1284,7 +1335,7 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive() || (m_members.size() > 1))
+    if (usesGroupObject())
     {
         return syncMembers({nh_key});
     }
@@ -1303,7 +1354,7 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive() || (m_members.size() > 1))
+    if (usesGroupObject())
     {
         return removeMembers({nh_key});
     }

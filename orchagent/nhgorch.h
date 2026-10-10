@@ -54,7 +54,8 @@ public:
     explicit NextHopGroup(const NextHopGroupKey& key, bool is_temp);
 
     NextHopGroup(NextHopGroup&& nhg) :
-        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp), m_is_recursive(nhg.m_is_recursive)
+        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp), m_is_recursive(nhg.m_is_recursive),
+        m_keeps_group_object(nhg.m_keeps_group_object)
     { SWSS_LOG_ENTER(); }
 
     NextHopGroup& operator=(NextHopGroup&& nhg);
@@ -76,9 +77,19 @@ public:
 
     /*
      * True when update(nhg_key) would give the synced group a new SAI ID: a
-     * non-recursive group of one next hop uses that next hop's own ID.
+     * group without a SAI group object uses its one next hop's own ID.
      */
     bool replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const;
+
+    /*
+     * True when the group is a SAI group object. A non-recursive group of one
+     * next hop is not, unless it shrank to that next hop from several: it then
+     * keeps its object, so the routes using it keep their next hop ID.
+     */
+    inline bool usesGroupObject() const
+    {
+        return m_is_recursive || m_keeps_group_object || (m_members.size() != 1);
+    }
 
     /* True if sync() can add at least one member: a next hop ID, interface up. */
     bool hasInstallableMember() const;
@@ -113,6 +124,9 @@ private:
 
     /* Whether the group is recursive i.e. having other nexthop group(s) as members */
     bool m_is_recursive;
+
+    /* Whether the group stays a SAI group object with one next hop. */
+    bool m_keeps_group_object = false;
 
     /* Add group's members over the SAI API for the given keys. */
     bool syncMembers(const set<NextHopKey>& nh_keys) override;
