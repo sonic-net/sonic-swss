@@ -1170,10 +1170,18 @@ void NeighOrch::doTask(Consumer &consumer)
              * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
              */
             auto rit = make_reverse_iterator(it);
+            bool del_cancelled = false;
             while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
             {
                 consumer.m_toSync.erase(next(rit).base());
+                del_cancelled = true;
                 SWSS_LOG_NOTICE("Removed pending neighbor DEL operation for %s after SET operation", key.c_str());
+            }
+
+            if (del_cancelled && m_syncdNeighbors.find(neighbor_entry) != m_syncdNeighbors.end())
+            {
+                NeighborUpdate update = { neighbor_entry, m_syncdNeighbors[neighbor_entry].mac, true };
+                notify(SUBJECT_TYPE_NEIGH_REMOVAL_PENDING, static_cast<void *>(&update));
             }
         }
         else if (op == DEL_COMMAND)
@@ -1753,9 +1761,20 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
     {
-        SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
-                      m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
-        return false;
+        /* Let observers that hold an optional reference on the next hop (ACL redirect rules)
+         * release it, so that the neighbor removal is not blocked by them forever. */
+        if (!disable)
+        {
+            NeighborUpdate pending = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, false };
+            notify(SUBJECT_TYPE_NEIGH_REMOVAL_PENDING, static_cast<void *>(&pending));
+        }
+
+        if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
+        {
+            SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
+                          m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
+            return false;
+        }
     }
 
     if (isHwConfigured(neighborEntry) && !disable)
