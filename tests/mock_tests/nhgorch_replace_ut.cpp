@@ -326,8 +326,32 @@ TEST_F(NhgOrchReplaceTest, ShrinkingToANewNextHopAddsItBeforeRemovingTheOthers)
     EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 1);
     testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
 
-    /* Resolved: its member is created before the two old ones are removed. */
+    /* Resolved, but its member cannot be created: nothing changes either. */
     gNeighOrch->m_syncdNextHops[nh3] = { 0x4403, 0, 0 };
+    EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, 1, _, _, _, _, _))
+        .WillOnce([](sai_object_id_t, uint32_t count, const uint32_t *, const sai_attribute_t **,
+                     sai_bulk_op_error_mode_t, sai_object_id_t *ids, sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; i++)
+            {
+                ids[i] = SAI_NULL_OBJECT_ID;
+                statuses[i] = SAI_STATUS_FAILURE;
+            }
+            return SAI_STATUS_FAILURE;
+        });
+    EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _)).Times(0);
+    EXPECT_FALSE(nhg.update(NextHopGroupKey("10.0.0.3@Ethernet8", string(""))));
+    EXPECT_EQ(nhg.getId(), group_oid);
+    EXPECT_EQ(nhg.getSize(), 2u);
+    EXPECT_FALSE(nhg.hasMember(nh3));
+    EXPECT_FALSE(nhg.m_keeps_group_object);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 1);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh3].ref_count, 0);
+    EXPECT_EQ(g_route_set_calls, 0);
+    EXPECT_EQ(gNhgOrch->getKeptSingleNextHopGroupCount(), 0u);
+    testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+
+    /* Resolved: its member is created before the two old ones are removed. */
     {
         testing::InSequence seq;
         EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, 1, _, _, _, _, _)).Times(1);
@@ -339,6 +363,7 @@ TEST_F(NhgOrchReplaceTest, ShrinkingToANewNextHopAddsItBeforeRemovingTheOthers)
     EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 0);
     EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 0);
     EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh3].ref_count, 1);
+    EXPECT_EQ(gNhgOrch->getKeptSingleNextHopGroupCount(), 1u);
     testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
 
     gNhgOrch->m_syncdNextHopGroups.erase(index);

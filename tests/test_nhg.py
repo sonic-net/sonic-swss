@@ -1796,6 +1796,35 @@ class TestNextHopGroup(TestNextHopGroupBase):
             self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
             assert len(self.get_nhgm_ids('group1')) == 2
 
+        # Test scenario (`group1` has the next hops on Ethernet0 and Ethernet4):
+        # - bring Ethernet4 down and assert its member is removed
+        # - update `group1` to only the next hop on Ethernet4 and assert the group
+        #   object stays, with no members, under the same ID
+        # - bring Ethernet4 up and assert the member is added to the same group
+        # - update `group1` back to 2 members
+        def shrink_to_down_member_test():
+            nhg_id = self.get_nhg_id('group1')
+            assert nhg_id is not None
+
+            self.flap_intf(1, 'down')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3'), ("ifname", "Ethernet4")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count)
+            assert self.get_nhg_id('group1') == nhg_id
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+            self.flap_intf(1, 'up')
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 1)
+            assert self.get_nhg_id('group1') == nhg_id
+            assert len(self.get_nhgm_ids('group1')) == 1
+
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'), ("ifname", "Ethernet0,Ethernet4")])
+            self.nhg_ps.set("group1", fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
+            assert self.get_nhg_id('group1') == nhg_id
+
         self.init_test(dvs, 4)
 
         create_recursive_nhg_test()
@@ -1805,6 +1834,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         validate_invalidate_group_member_test()
         inexistent_group_member_test()
         update_nhgm_count_test()
+        shrink_to_down_member_test()
 
         # Cleanup
 
