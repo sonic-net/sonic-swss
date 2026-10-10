@@ -143,6 +143,89 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
+/*
+ * The BUFFER_PG range keys this daemon generates for a pfc_enable value.
+ */
+set<string> BufferMgr::losslessPgCombinations(const string &pfc_enable)
+{
+    vector<string> lossless_pgs = tokenize(pfc_enable, ',');
+    // Convert to bitmap
+    unsigned long lossless_pg_id = 0;
+    for (auto pg : lossless_pgs)
+    {
+        try
+        {
+            uint8_t cur_pg = to_uint<uint8_t>(pg);
+            lossless_pg_id |= (1<<cur_pg);
+        }
+        catch (const std::invalid_argument &e)
+        {
+            // Ignore invalid value
+            continue;
+        }
+    }
+    // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
+    return generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
+}
+
+/*
+ * Remove the given range keys from the port. Only a key whose profile carries the
+ * generated prefix is removed, so a range an operator has pointed at a profile of
+ * their own is left as configured.
+ */
+void BufferMgr::removeLosslessPgs(const string &port, const set<string> &pg_ids_set, const string &reason)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &pg_ids : pg_ids_set)
+    {
+        const string key = port + m_cfgBufferPgTable.getTableNameSeparator() + pg_ids;
+
+        string profile;
+        if (!m_cfgBufferPgTable.hget(key, "profile", profile))
+        {
+            continue;
+        }
+        if (profile.rfind(LOSSLESS_PROFILE_PREFIX, 0) != 0)
+        {
+            SWSS_LOG_NOTICE("Not a generated profile %s is configured on PG %s, won't reclaim buffer",
+                            profile.c_str(), key.c_str());
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("Removing lossless PG %s of port %s, %s", key.c_str(), port.c_str(), reason.c_str());
+        m_cfgBufferPgTable.del(key);
+    }
+}
+
+/*
+ * PFC has been removed from the port. Remove the ranges generated for the last
+ * pfc_enable value together with any still recorded as stale, because the last
+ * value may never have been rendered, in which case the ranges actually present
+ * are the ones an earlier value generated.
+ */
+void BufferMgr::removeAllGeneratedLosslessPgs(const string &port, const string &reason)
+{
+    SWSS_LOG_ENTER();
+
+    set<string> to_remove;
+    auto status = m_portPfcStatus.find(port);
+    if (status != m_portPfcStatus.end())
+    {
+        to_remove = losslessPgCombinations(status->second);
+        m_portPfcStatus.erase(status);
+    }
+
+    auto stale = m_portStalePgs.find(port);
+    if (stale != m_portStalePgs.end())
+    {
+        to_remove.insert(stale->second.begin(), stale->second.end());
+        m_portStalePgs.erase(stale);
+    }
+
+    removeLosslessPgs(port, to_remove, reason);
+}
+
 task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
     string cable;
@@ -158,6 +241,9 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     cable = m_cableLenLookup[port];
     if (cable == "0m")
     {
+        /* A 0m cable means do not regenerate the profile for this port, not that
+         * the port carries no lossless traffic, so what it already has stays.
+         */
         SWSS_LOG_NOTICE("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
         return task_process_status::task_success;
     }
@@ -181,27 +267,10 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
     speed = m_speedLookup[port];
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
+    string buffer_profile_key = LOSSLESS_PROFILE_PREFIX + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
     
-    vector<string> lossless_pgs = tokenize(pfc_enable, ',');
-    // Convert to bitmap
-    unsigned long lossless_pg_id = 0;
-    for (auto pg : lossless_pgs)
-    {
-        try
-        {
-            uint8_t cur_pg = to_uint<uint8_t>(pg);
-            lossless_pg_id |= (1<<cur_pg);
-        }
-        catch (const std::invalid_argument &e)
-        {
-            // Ignore invalid value
-            continue;
-        }
-    }
-    // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
-    set<string> lossless_pg_combinations = generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
+    set<string> lossless_pg_combinations = losslessPgCombinations(pfc_enable);
 
     if (m_portStatusLookup[port] == "down" && (m_platform == "mellanox" || m_platform == "barefoot"))
     {
@@ -304,6 +373,26 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         fvVectorPg.push_back(make_pair("profile", profile_ref));
         m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     }
+
+    /* Remove the ranges recorded as left behind by a pfc_enable change. The record
+     * outlives a pass that returned early, so the next one to get here removes
+     * them. A range the port wants again after a later change is kept.
+     */
+    auto stale = m_portStalePgs.find(port);
+    if (stale != m_portStalePgs.end())
+    {
+        set<string> to_remove;
+        for (const auto &pg_ids : stale->second)
+        {
+            if (lossless_pg_combinations.count(pg_ids) == 0)
+            {
+                to_remove.insert(pg_ids);
+            }
+        }
+        m_portStalePgs.erase(stale);
+        removeLosslessPgs(port, to_remove, "pfc_enable is now " + pfc_enable);
+    }
+
     return task_process_status::task_success;
 }
 
@@ -432,12 +521,28 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             bool update_pfc_enable = false;
+            bool has_pfc_enable = false;
             for (auto itp : kfvFieldsValues(tuple))
             {
                 if (fvField(itp) == "pfc_enable")
                 {
-                    if (m_portPfcStatus.count(port_name) == 0 || m_portPfcStatus[port_name] != fvValue(itp))
+                    has_pfc_enable = true;
+                    const bool had_previous_value = m_portPfcStatus.count(port_name) != 0;
+                    if (!had_previous_value || m_portPfcStatus[port_name] != fvValue(itp))
                     {
+                        // the first value seen for a port is what it is configured
+                        // with, not a change away from something else
+                        if (had_previous_value)
+                        {
+                            const auto new_pgs = losslessPgCombinations(fvValue(itp));
+                            for (const auto &pg_ids : losslessPgCombinations(m_portPfcStatus[port_name]))
+                            {
+                                if (new_pgs.count(pg_ids) == 0)
+                                {
+                                    m_portStalePgs[port_name].insert(pg_ids);
+                                }
+                            }
+                        }
                         m_portPfcStatus[port_name] = fvValue(itp);
                         update_pfc_enable = true;
                     }
@@ -445,16 +550,29 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                     break;
                 }
             }
+
+            /* A SET carries the whole entry, so the field being gone from one we
+             * have already seen with it means PFC was removed from the port. An
+             * entry that never had it is left alone, as it has covered nothing.
+             */
+            if (!has_pfc_enable && m_portPfcStatus.count(port_name) != 0)
+            {
+                SWSS_LOG_INFO("pfc_enable removed from port %s, clearing PFC status", port_name.c_str());
+                removeAllGeneratedLosslessPgs(port_name, "pfc_enable was removed from PORT_QOS_MAP");
+            }
+
             if (update_pfc_enable)
             {
-                // The return status is ignored
+                // The return status is ignored. Stale ranges stay recorded across a
+                // retry and are removed by the next pass for the port, whichever
+                // path that comes from.
                 doSpeedUpdateTask(port_name);
             }
         }
         else if (op == DEL_COMMAND)
         {
             SWSS_LOG_INFO("Port %s removed from PORT_QOS_MAP, clearing PFC status", port_name.c_str());
-            m_portPfcStatus.erase(port_name);
+            removeAllGeneratedLosslessPgs(port_name, "it was removed from PORT_QOS_MAP");
         }
         it = consumer.m_toSync.erase(it);
     }
