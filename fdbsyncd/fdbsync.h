@@ -58,6 +58,12 @@ public:
 
     bool isIntfRestoreDone();
 
+    void dumpBridgeFdb();
+    void dumpBridgeFdb(struct nl_sock *sock);
+
+    void dumpL2Nhg();
+    void dumpL2Nhg(struct nl_sock *sock);
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
@@ -82,7 +88,7 @@ public:
 
     void processStateMclagRemoteFdb();
 
-    void processCfgEvpnNvo();
+    bool processCfgEvpnNvo();
 
     bool m_reconcileDone = false;
 
