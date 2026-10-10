@@ -77,6 +77,214 @@ namespace ut_fpmsyncd
 
 namespace ut_fpmsyncd
 {
+    TEST_F(FpmSyncdSRv6RoutesTest, ReceivingSrv6BgpRouteWithIpv6Prefix)
+    {
+        IpAddress vpn_sid = IpAddress("fcbb:bbbb:2:e000::");
+        IpAddress src_addr = IpAddress("fcbb:bbbb:1::1");
+        IpAddress gateway = IpAddress("2001:db8:301::1");
+        IpPrefix dst = IpPrefix("2001:db8:301::/64");
+        std::string routeKey = "Vrf10:2001:db8:301::/64";
+        std::string fieldValue;
+
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, &src_addr, &vpn_sid,
+                                                           &gateway);
+        ASSERT_NE(nl_obj, nullptr);
+        nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+        ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "protocol", fieldValue), true);
+        ASSERT_EQ(fieldValue, "bgp");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), true);
+        ASSERT_EQ(fieldValue, "2001:db8:301::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "segment", fieldValue), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fcbb:bbbb:2:e000::", "path", fieldValue), false);
+
+        free_nlobj(nl_obj);
+    }
+
+    TEST_F(FpmSyncdSRv6RoutesTest, ReceivingSrv6BgpRouteWithIpv4Prefix)
+    {
+        IpAddress vpn_sid = IpAddress("fcbb:bbbb:2:e000::");
+        IpAddress src_addr = IpAddress("fcbb:bbbb:1::1");
+        IpAddress gateway = IpAddress("2001:db8:300::1");
+        IpPrefix dst = IpPrefix("192.0.2.0/24");
+        std::string routeKey = "Vrf10:192.0.2.0/24";
+        std::string fieldValue;
+
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, &src_addr, &vpn_sid,
+                                                           &gateway);
+        ASSERT_NE(nl_obj, nullptr);
+        nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+        ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "protocol", fieldValue), true);
+        ASSERT_EQ(fieldValue, "bgp");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), true);
+        ASSERT_EQ(fieldValue, "2001:db8:300::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+        ASSERT_EQ(m_routeTable->hget(routeKey, "segment", fieldValue), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fcbb:bbbb:2:e000::", "path", fieldValue), false);
+
+        free_nlobj(nl_obj);
+    }
+
+    TEST_F(FpmSyncdSRv6RoutesTest, ReceivingSrv6BgpRouteIgnoresInvalidNexthopAttrs)
+    {
+        IpAddress vpn_sid = IpAddress("fcbb:bbbb:2:e000::");
+        IpAddress src_addr = IpAddress("fcbb:bbbb:1::1");
+        std::string fieldValue;
+
+        {
+            IpPrefix dst = IpPrefix("2001:db8:302::/64");
+            std::string routeKey = "Vrf10:2001:db8:302::/64";
+            struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, &src_addr, &vpn_sid);
+            ASSERT_NE(nl_obj, nullptr);
+            nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+            uint8_t unsupportedGateway[5] = {};
+            ASSERT_TRUE(nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_GATEWAY, unsupportedGateway,
+                                    static_cast<unsigned int>(sizeof(unsupportedGateway))));
+
+            ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+            m_fpmLink->processRawMsg(&nl_obj->n);
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), false);
+            ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+
+            free_nlobj(nl_obj);
+        }
+
+        {
+            IpPrefix dst = IpPrefix("2001:db8:303::/64");
+            std::string routeKey = "Vrf10:2001:db8:303::/64";
+            struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, &src_addr, &vpn_sid);
+            ASSERT_NE(nl_obj, nullptr);
+            nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+            uint16_t shortVia = AF_INET6;
+            ASSERT_TRUE(nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_VIA, &shortVia,
+                                    static_cast<unsigned int>(sizeof(shortVia))));
+
+            ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+            m_fpmLink->processRawMsg(&nl_obj->n);
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), false);
+            ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+
+            free_nlobj(nl_obj);
+        }
+
+        {
+            IpPrefix dst = IpPrefix("2001:db8:304::/64");
+            std::string routeKey = "Vrf10:2001:db8:304::/64";
+            struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, &src_addr, &vpn_sid);
+            ASSERT_NE(nl_obj, nullptr);
+            nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+            struct
+            {
+                uint16_t family;
+                uint8_t addr[16];
+            } via = {};
+            via.family = AF_UNSPEC;
+            ASSERT_TRUE(nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_VIA, &via,
+                                    static_cast<unsigned int>(sizeof(via))));
+
+            ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+            m_fpmLink->processRawMsg(&nl_obj->n);
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+            ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1");
+
+            ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), false);
+            ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+
+            free_nlobj(nl_obj);
+        }
+    }
+
+    TEST_F(FpmSyncdSRv6RoutesTest, ReceivingSrv6BgpRouteMultipathWithIpv4Prefix)
+    {
+        IpAddress sid1 = IpAddress("fcbb:bbbb:2:e000::");
+        IpAddress sid2 = IpAddress("fcbb:bbbb:3:e000::");
+        IpAddress src1 = IpAddress("fcbb:bbbb:1::1");
+        IpAddress src2 = IpAddress("fcbb:bbbb:1::1");
+        IpAddress via_gateway = IpAddress("2001:db8:401::1");
+        IpAddress gateway = IpAddress("2001:db8:400::1");
+        IpPrefix dst = IpPrefix("192.0.3.0/24");
+        std::string routeKey = "Vrf10:192.0.3.0/24";
+        std::string fieldValue;
+
+        std::vector<Srv6RouteNextHop> srv6Nexthops = {
+            {&via_gateway, &src1, &sid1, 0},
+            {&gateway, &src2, &sid2, 0},
+        };
+
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &dst, srv6Nexthops);
+        ASSERT_NE(nl_obj, nullptr);
+        nl_obj->r.rtm_protocol = RTPROT_BGP;
+
+        ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "protocol", fieldValue), true);
+        ASSERT_EQ(fieldValue, "bgp");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "vpn_sid", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:2:e000::,fcbb:bbbb:3:e000::");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "seg_src", fieldValue), true);
+        ASSERT_EQ(fieldValue, "fcbb:bbbb:1::1,fcbb:bbbb:1::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "nexthop", fieldValue), true);
+        ASSERT_EQ(fieldValue, "2001:db8:401::1,2001:db8:400::1");
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "ifname", fieldValue), false);
+
+        ASSERT_EQ(m_routeTable->hget(routeKey, "segment", fieldValue), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fcbb:bbbb:2:e000::", "path", fieldValue), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fcbb:bbbb:3:e000::", "path", fieldValue), false);
+
+        free_nlobj(nl_obj);
+    }
+
     /* Test Receiving an SRv6 VPN Route (with an IPv4 prefix) */
     TEST_F(FpmSyncdSRv6RoutesTest, RecevingSRv6VpnRoutesWithIPv4Prefix)
     {

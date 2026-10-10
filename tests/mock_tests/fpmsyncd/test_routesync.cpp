@@ -4655,8 +4655,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     vector<FieldValueTuple> fvs;
     EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
 
-    // With ZMQ enabled, all 11 fields should be present (including empty ones)
-    EXPECT_EQ(fvs.size(), 11);
+    // With ZMQ enabled, all 12 fields should be present (including empty ones)
+    EXPECT_EQ(fvs.size(), 12);
 
     // Build a map for easier verification
     std::map<std::string, std::string> fieldMap;
@@ -4685,6 +4685,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     EXPECT_EQ(fieldMap["segment"], "");
     EXPECT_TRUE(fieldMap.count("seg_src") > 0);
     EXPECT_EQ(fieldMap["seg_src"], "");
+    EXPECT_TRUE(fieldMap.count("vpn_sid") > 0);
+    EXPECT_EQ(fieldMap["vpn_sid"], "");
 
     rtnl_route_put(test_route);
 
@@ -4760,6 +4762,7 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
     EXPECT_EQ(fieldMap.count("router_mac"), 0);
     EXPECT_EQ(fieldMap.count("segment"), 0);
     EXPECT_EQ(fieldMap.count("seg_src"), 0);
+    EXPECT_EQ(fieldMap.count("vpn_sid"), 0);
 
     rtnl_route_put(test_route);
 }
@@ -5122,7 +5125,7 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     EXPECT_EQ(fieldNames(route.fieldValueTupleVector()),
               (vector<string>{"protocol", "blackhole", "nexthop", "ifname",
                               "nexthop_group", "mpls_nh", "weight", "vni_label",
-                              "router_mac", "segment", "seg_src"}));
+                              "router_mac", "segment", "seg_src", "vpn_sid"}));
 
     LabelRouteTableFieldValueTupleWrapper label{"100", "bgp", /*nbZmqEnabled=*/true};
     EXPECT_EQ(fieldNames(label.fieldValueTupleVector()),
@@ -5157,7 +5160,7 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     auto zmqKfvs = zmqRoute.KeyOpFieldsValuesTupleVector();
     ASSERT_EQ(zmqKfvs.size(), 1u);
     EXPECT_EQ(kfvOp(zmqKfvs[0]), SET_COMMAND);
-    EXPECT_EQ(kfvFieldsValues(zmqKfvs[0]).size(), 11u);
+    EXPECT_EQ(kfvFieldsValues(zmqKfvs[0]).size(), 12u);
 
     RouteTableFieldValueTupleWrapper redisRoute{"10.1.2.0/24", "bgp", /*nbZmqEnabled=*/false};
     auto redisKfvs = redisRoute.KeyOpFieldsValuesTupleVector();
