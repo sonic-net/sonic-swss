@@ -54,11 +54,13 @@ int main(int argc, char **argv)
 
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
+	TableConnector conf_teamd_mode_table(&conf_db, CFG_TEAMD_MODE_TABLE_NAME);
         TableConnector state_port_table(&state_db, STATE_PORT_TABLE_NAME);
 
         vector<TableConnector> tables = {
             conf_lag_table,
             conf_lag_member_table,
+	    conf_teamd_mode_table,
             state_port_table
         };
 
@@ -93,6 +95,7 @@ int main(int argc, char **argv)
             c->execute();
         }
         teammgr.cleanTeamProcesses();
+	teammgr.ipcCleanup(); 
         SWSS_LOG_NOTICE("Exiting");
     }
     catch (const exception &e)
