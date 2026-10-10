@@ -1,9 +1,11 @@
 #include "redisutility.h"
+#include "logger.h"
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <linux/nexthop.h>
 #include <net/if.h>
+#include <sstream>
 #include "mock_table.h"
 #define private public
 #include "fdbsyncd/neighbour.h"
@@ -34,12 +36,15 @@ using ::testing::_;
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
+/* Falls back to mockCallArgs/mockCmdReturn recording in common/mock_shell_command.cpp when callback is null */
+extern int mockCmdReturn;
 
 static int captureCommand(const std::string &cmd, std::string &)
 {
     mockCallArgs.push_back(cmd);
     return 0;
 }
+
 
 class MockFdbSync : public FdbSync
 {
@@ -1928,32 +1933,152 @@ TEST_F(FdbSyncdEvpnMhTest, TestStaticMacHandling)
     ASSERT_TRUE(true);
 }
 
-TEST_F(FdbSyncdEvpnMhTest, TestUpdateLocalMacDelete)
+/*
+ * updateLocalMac() programs the kernel through "bridge fdb". These tests replace
+ * swss::exec() with the shell mock and capture the SWSS logger output, so both
+ * the issued command and the log level of a failure can be asserted.
+ */
+class FdbSyncdLocalMacTest : public FdbSyncdEvpnMhTest
 {
-    // Test updateLocalMac with DELETE operation
-    struct m_fdb_info info;
-    info.mac = "aa:bb:cc:dd:ee:02";
+public:
+    void SetUp() override
+    {
+        FdbSyncdEvpnMhTest::SetUp();
+
+        // These tests drive swss::exec() through mockCmdReturn/mockCallArgs
+        // directly, not upstream's captureCommand (which always returns 0)
+        callback = nullptr;
+        mockCmdReturn = 0;
+        mockCallArgs.clear();
+
+        m_savedMinPrio = Logger::getMinPrio();
+        Logger::swssOutputNotify("fdbsyncd", "STDOUT");
+        Logger::setMinPrio(Logger::SWSS_INFO);
+
+        m_mockFdbSync.m_isEvpnNvoExist = true;
+        m_mockFdbSync.m_isFdbProtoSupported = true;
+    }
+
+    void TearDown() override
+    {
+        Logger::setMinPrio(m_savedMinPrio);
+        Logger::swssOutputNotify("fdbsyncd", "SYSLOG");
+
+        // The next fixture's constructor probes "bridge fdb" through the same mock
+        mockCmdReturn = 0;
+        mockCallArgs.clear();
+
+        FdbSyncdEvpnMhTest::TearDown();
+    }
+
+    // Record a MAC in m_fdb_mac the way processStateFdb() does for a STATE_DB SET
+    void learnMac(const std::string &vid, const std::string &mac, const std::string &port, short type)
+    {
+        struct m_fdb_info info{};
+        info.vid = vid;
+        info.mac = mac;
+        info.port_name = port;
+        info.type = type;
+        info.op_type = FDB_OPER_ADD;
+        m_mockFdbSync.macUpdateCache(&info);
+    }
+
+    // Run updateLocalMac() and return what the SWSS logger printed meanwhile
+    std::string updateLocalMacCaptureLog(struct m_fdb_info &info)
+    {
+        testing::internal::CaptureStdout();
+        m_mockFdbSync.updateLocalMac(&info);
+        return testing::internal::GetCapturedStdout();
+    }
+
+    static std::vector<std::string> logLinesWith(const std::string &log, const std::string &needle)
+    {
+        std::vector<std::string> lines;
+        std::istringstream in(log);
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.find(needle) != std::string::npos)
+            {
+                lines.push_back(line);
+            }
+        }
+        return lines;
+    }
+
+    Logger::Priority m_savedMinPrio = Logger::SWSS_NOTICE;
+};
+
+TEST_F(FdbSyncdLocalMacTest, TestUpdateLocalMacDeleteSuccess)
+{
+    learnMac("Vlan100", "aa:bb:cc:dd:ee:02", "Ethernet4", FDB_TYPE_STATIC);
+
+    struct m_fdb_info info{};
     info.vid = "Vlan100";
-    info.port_name = "Ethernet4";
-    info.type = FDB_TYPE_STATIC;
+    info.mac = "aa:bb:cc:dd:ee:02";
     info.op_type = FDB_OPER_DEL;
 
-    // First populate m_fdb_mac cache so delete can find it
-    struct m_fdb_info info_add;
-    info_add.mac = info.mac;
-    info_add.vid = info.vid;
-    info_add.port_name = info.port_name;
-    info_add.type = info.type;
-    info_add.op_type = FDB_OPER_ADD;
-    m_mockFdbSync.macUpdateCache(&info_add);
+    mockCmdReturn = 0;
+    std::string log = updateLocalMacCaptureLog(info);
 
-    // Enable EVPN NVO
-    m_mockFdbSync.m_isEvpnNvoExist = true;
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(mockCallArgs[0], " bridge fdb del aa:bb:cc:dd:ee:02 dev Ethernet4 master static vlan 100");
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan100:aa:bb:cc:dd:ee:02"), 0u);
 
-    // Call updateLocalMac with delete operation
-    m_mockFdbSync.updateLocalMac(&info);
+    // INFO is enabled, so the success line shows the capture works and the
+    // absence of WARN/ERROR below is not vacuous
+    EXPECT_EQ(logLinesWith(log, "Success cmd:").size(), 1u) << log;
+    EXPECT_EQ(log.find("Failed cmd:"), std::string::npos) << log;
+    EXPECT_EQ(log.find("WARN"), std::string::npos) << log;
+    EXPECT_EQ(log.find("ERROR"), std::string::npos) << log;
+}
 
-    ASSERT_TRUE(true);
+TEST_F(FdbSyncdLocalMacTest, TestUpdateLocalMacDeleteFailureIsWarning)
+{
+    // vlanmgrd can remove the port from the bridge before fdbsyncd handles the
+    // STATE_DB delete. The kernel has then flushed the entry and the delete
+    // fails (rc 255 from bridge). This must not be reported as an error.
+    learnMac("Vlan100", "aa:bb:cc:dd:ee:01", "Ethernet0", FDB_TYPE_DYNAMIC);
+
+    struct m_fdb_info info{};
+    info.vid = "Vlan100";
+    info.mac = "aa:bb:cc:dd:ee:01";
+    info.op_type = FDB_OPER_DEL;
+
+    mockCmdReturn = 255;
+    std::string log = updateLocalMacCaptureLog(info);
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(mockCallArgs[0], " bridge fdb del aa:bb:cc:dd:ee:01 dev Ethernet0 master dynamic extern_learn vlan 100 proto hw");
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan100:aa:bb:cc:dd:ee:01"), 0u);
+
+    auto failed = logLinesWith(log, "Failed cmd:");
+    ASSERT_EQ(failed.size(), 1u) << log;
+    EXPECT_NE(failed[0].find("WARN"), std::string::npos) << failed[0];
+    EXPECT_NE(failed[0].find("ret=255"), std::string::npos) << failed[0];
+    EXPECT_EQ(log.find("ERROR"), std::string::npos) << log;
+}
+
+TEST_F(FdbSyncdLocalMacTest, TestUpdateLocalMacReplaceFailureStaysError)
+{
+    // Failing to program a MAC into the kernel is not a benign race
+    struct m_fdb_info info{};
+    info.vid = "Vlan100";
+    info.mac = "aa:bb:cc:dd:ee:03";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    mockCmdReturn = 255;
+    std::string log = updateLocalMacCaptureLog(info);
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(mockCallArgs[0], " bridge fdb replace aa:bb:cc:dd:ee:03 dev Ethernet0 master dynamic extern_learn vlan 100 proto hw");
+
+    auto failed = logLinesWith(log, "Failed cmd:");
+    ASSERT_EQ(failed.size(), 1u) << log;
+    EXPECT_NE(failed[0].find("ERROR"), std::string::npos) << failed[0];
+    EXPECT_NE(failed[0].find("ret=255"), std::string::npos) << failed[0];
+    EXPECT_EQ(log.find("WARN"), std::string::npos) << log;
 }
 
 TEST_F(FdbSyncdEvpnMhTest, TestUpdateLocalMacWithVxlanEntry)
