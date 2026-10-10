@@ -2436,7 +2436,7 @@ bool NeighOrch::enableNeighbors(std::list<NeighborContext>& bulk_ctx_list)
 
         ctx->mac = nbr->second.mac;
 
-        if (isHwConfigured(neighborEntry))
+        if (nbr->second.hw_configured)
         {
             SWSS_LOG_INFO("Neighbor %s is already programmed to HW", neighborEntry.ip_address.to_string().c_str());
             continue;
