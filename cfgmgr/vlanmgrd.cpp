@@ -35,6 +35,7 @@ int main(int argc, char **argv)
         vector<string> cfg_vlan_tables = {
             CFG_VLAN_TABLE_NAME,
             CFG_VLAN_MEMBER_TABLE_NAME,
+            CFG_FDB_TABLE_NAME,
         };
         vector<string> state_vlan_tables = {
             STATE_OPER_PORT_TABLE_NAME,

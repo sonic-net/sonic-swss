@@ -18,6 +18,12 @@ class DVSVlan(object):
         vlan_entry = {"vlanid": vlanID, "mac": mac}
         self.config_db.create_entry("VLAN", vlan, vlan_entry)
 
+    def set_vlan_property(self, vlanID, property, value):
+        vlan = "Vlan{}".format(vlanID)
+        vlan_entry = self.config_db.get_entry("VLAN", vlan)
+        vlan_entry[property] = value
+        self.config_db.update_entry("VLAN", vlan, vlan_entry)
+
     def create_vlan_interface(self,  vlanID):
         vlan = "Vlan{}".format(vlanID)
         vlan_intf_entry = {}
