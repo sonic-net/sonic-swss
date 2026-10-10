@@ -1229,6 +1229,34 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
     }
 
+    /* A bulk enable or disable of a neighbor that is not in the table skips it and creates no entry for it. */
+    TEST_F(VxlanFdbOrchTest, TunnelNeighborBulkEnableDisableOfUnknownNeighbor)
+    {
+        tnPorts(m_app_db.get(), m_portsOrch.get());
+        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
+        NeighborEntry n1(TN_IP, string(VLAN40));
+        NeighborEntry unknown(TN_IP2, string(VLAN40));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(n1));
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries).Times(0);
+        std::list<NeighborContext> enable = { NeighborContext(unknown, true) };
+        EXPECT_TRUE(gNeighOrch->enableNeighbors(enable));
+        std::list<NeighborContext> disable = { NeighborContext(unknown, true) };
+        EXPECT_TRUE(gNeighOrch->disableNeighbors(disable));
+
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.count(unknown), 0);
+        EXPECT_EQ(gNeighOrch->m_syncdNeighbors.size(), 1u);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(n1));
+        EXPECT_TRUE(neighborMacIndexConsistent());
+    }
+
     static sai_status_t tnEncapIndexGet(const sai_neighbor_entry_t *, uint32_t, sai_attribute_t *attr_list)
     {
         attr_list[0].value.u32 = 77;
