@@ -200,13 +200,9 @@ void NeighOrch::processFDBAdd(const FdbEntry &entry)
     // If the FDB entry MAC matches with neighbor/ARP entry MAC,
     // and ARP entry incoming interface matches with VLAN name,
     // re-enable neighbor/arp entry.
-    for (const auto &neighborEntry : m_syncdNeighbors)
+    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
-        if (neighborEntry.first.alias == vlan.m_alias &&
-            neighborEntry.second.mac == entry.mac)
-        {
-            enableNeighbor(neighborEntry.first);
-        }
+        enableNeighbor(neighborEntry);
     }
 }
 
@@ -247,13 +243,9 @@ void NeighOrch::processFDBDelete(const FdbEntry &entry, bool behind_nhg)
     // If the FDB entry MAC matches with neighbor/ARP entry MAC,
     // and ARP entry incoming interface matches with VLAN name,
     // del neighbor/arp entry.
-    for (const auto &neighborEntry : m_syncdNeighbors)
+    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
-        if (neighborEntry.first.alias == vlan.m_alias &&
-            neighborEntry.second.mac == entry.mac)
-        {
-            disableNeighbor(neighborEntry.first);
-        }
+        disableNeighbor(neighborEntry);
     }
 }
 
@@ -494,14 +486,10 @@ void NeighOrch::processFDBResolve(const FdbEntry &entry)
     // If the FDB entry MAC matches with neighbor/ARP entry MAC,
     // and ARP entry incoming interface matches with VLAN name,
     // flush neighbor/arp entry.
-    for (const auto &neighborEntry : m_syncdNeighbors)
+    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
-        if (neighborEntry.first.alias == vlan.m_alias &&
-            neighborEntry.second.mac == entry.mac)
-        {
-            resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
-            m_neighborToRefresh.insert(neighborEntry.first);
-        }
+        resolveNeighborEntry(neighborEntry, entry.mac);
+        m_neighborToRefresh.insert(neighborEntry);
     }
     return;
 }
@@ -538,13 +526,9 @@ void NeighOrch::processFDBFlushUpdate(const FdbFlushUpdate& update)
         // If the FDB entry MAC matches with neighbor/ARP entry MAC,
         // and ARP entry incoming interface matches with VLAN name,
         // flush neighbor/arp entry.
-        for (const auto &neighborEntry : m_syncdNeighbors)
+        for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
         {
-            if (neighborEntry.first.alias == vlan.m_alias &&
-                neighborEntry.second.mac == entry.mac)
-            {
-                resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
-            }
+            resolveNeighborEntry(neighborEntry, entry.mac);
         }
     }
     return;
