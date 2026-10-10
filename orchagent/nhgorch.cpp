@@ -1,3 +1,4 @@
+#include <chrono>
 #include <random>
 #include "nhgorch.h"
 #include "neighorch.h"
@@ -267,6 +268,12 @@ void NhgOrch::doTask(Consumer& consumer)
                         if (nhg->sync())
                         {
                             m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
+
+                            /* Logged once per group that has to start as a temporary one. */
+                            SWSS_LOG_NOTICE("Next hop group table is full (%u): group %s is temporary, "
+                                            "%zu groups of one next hop hold a group object",
+                                            gRouteOrch->getMaxNhgCount(), index.c_str(),
+                                            getKeptSingleNextHopGroupCount());
                         }
                         else
                         {
@@ -380,7 +387,14 @@ void NhgOrch::doTask(Consumer& consumer)
                 /* Common update, when all the requirements are met. */
                 else
                 {
-                    success = nhg_ptr->update(nhg_key);
+                    if (nhg_ptr->replacesIdOnUpdate(nhg_key))
+                    {
+                        success = replaceNhg(index, nhg_key);
+                    }
+                    else
+                    {
+                        success = nhg_ptr->update(nhg_key);
+                    }
 
                     /* Keep the msg in loop if any member path is not available yet */
                     if (is_recursive && non_existent_member)
@@ -712,6 +726,8 @@ NextHopGroup& NextHopGroup::operator=(NextHopGroup&& nhg)
 
     m_is_temp = nhg.m_is_temp;
     m_is_recursive = nhg.m_is_recursive;
+    /* Swapped, as NhgCommon swaps the SAI state: nhg releases what this held. */
+    std::swap(m_keeps_group_object, nhg.m_keeps_group_object);
 
     NhgCommon::operator=(std::move(nhg));
 
@@ -738,8 +754,8 @@ bool NextHopGroup::sync()
         return true;
     }
 
-    /* If the group is non-recursive with single member, the group ID will be the only member's NH ID */
-    if (!isRecursive() && (m_members.size() == 1))
+    /* Without a group object, the group ID will be the only member's NH ID */
+    if (!usesGroupObject())
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
@@ -812,6 +828,25 @@ bool NextHopGroup::sync()
     return true;
 }
 
+size_t NhgOrch::getKeptSingleNextHopGroupCount() const
+{
+    SWSS_LOG_ENTER();
+
+    size_t count = 0;
+
+    for (const auto &it : m_syncdNextHopGroups)
+    {
+        const auto &nhg = it.second.nhg;
+
+        if (nhg->isSynced() && !nhg->isRecursive() && nhg->getSize() == 1 && nhg->usesGroupObject())
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 /*
  * Purpose:     Create a temporary next hop group when resources are exhausted.
  * Description: Choose one member to represent the group and create a group
@@ -863,6 +898,88 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
 }
 
 /*
+ * Purpose:     Update a group whose SAI ID changes with the update.
+ * Description: Routes and label routes point at the group's SAI ID directly,
+ *              and a group of one next hop shares its next hop's ID, holding a
+ *              next hop reference in NeighOrch in its place. The new group is
+ *              created and the routes moved to it before the old one is
+ *              released, so no route is left on an object that orchagent no
+ *              longer counts.
+ * Params:      IN  index   - The CP index of the next hop group.
+ *              IN  nhg_key - The new next hop group key.
+ * Returns:     true, if the group was replaced;
+ *              false, otherwise (the old group stays in place).
+ */
+bool NhgOrch::replaceNhg(const string &index, const NextHopGroupKey &nhg_key)
+{
+    SWSS_LOG_ENTER();
+
+    auto &entry = m_syncdNextHopGroups.at(index);
+    sai_object_id_t old_id = entry.nhg->getId();
+
+    /*
+     * sync() creates the SAI group of several next hops even when none of its
+     * members can be added, and an empty group would blackhole the routes. The
+     * old group stays until a retry finds a member to add. A group whose SAI
+     * object and some members exist still replaces the old one; the retried
+     * SET adds the missing members through update().
+     */
+    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
+    bool multi = nhg_key.getSize() > 1;
+    if (multi && !nhg->hasInstallableMember())
+    {
+        SWSS_LOG_INFO("Next hop group %s: no member of %s can be added yet, replacement deferred",
+                      index.c_str(), nhg_key.to_string().c_str());
+        return false;
+    }
+
+    bool complete = nhg->sync();
+    if (!nhg->isSynced() || (multi && !nhg->hasSyncedMember()))
+    {
+        SWSS_LOG_INFO("Failed to sync the replacement of next hop group %s with %s",
+                      index.c_str(), nhg_key.to_string().c_str());
+        return false;
+    }
+
+    sai_object_id_t new_id = nhg->getId();
+    long long move_ms = 0;
+    if (new_id != old_id && entry.ref_count > 0)
+    {
+        auto move_start = std::chrono::steady_clock::now();
+        if (!gRouteOrch->moveNhgIndexRoutes(index, new_id))
+        {
+            /* Put the routes that did move back; the new group goes on return. */
+            if (!gRouteOrch->moveNhgIndexRoutes(index, old_id))
+            {
+                SWSS_LOG_ERROR("Next hop group %s: rollback to 0x%" PRIx64 " incomplete, routes stay on "
+                               "0x%" PRIx64 " until the retried update moves them",
+                               index.c_str(), old_id, new_id);
+            }
+            return false;
+        }
+        move_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - move_start).count();
+    }
+
+    if (new_id != old_id && entry.ref_count > 0)
+    {
+        SWSS_LOG_NOTICE("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s, "
+                        "routes moved in %lld ms",
+                        index.c_str(), old_id, new_id, nhg_key.to_string().c_str(), move_ms);
+    }
+    else if (new_id != old_id)
+    {
+        SWSS_LOG_INFO("Next hop group %s replaced: 0x%" PRIx64 " -> 0x%" PRIx64 " for %s",
+                      index.c_str(), old_id, new_id, nhg_key.to_string().c_str());
+    }
+
+    /* The old group is released when nhg goes out of scope. */
+    entry.nhg.swap(nhg);
+
+    return complete;
+}
+
+/*
  * Purpose:     Remove the next hop group.
  * Description: Reset the group's SAI ID.  If the group has more than one
  *              members, remove the members and the group.
@@ -878,9 +995,8 @@ bool NextHopGroup::remove()
     {
         return true;
     }
-    //  If the group is temporary or non-recursive, update the neigh or rif ref-count and reset the ID.
-    if (m_is_temp ||
-        (!isRecursive() && m_members.size() == 1))
+    //  If the group is temporary or has no group object, update the neigh or rif ref-count and reset the ID.
+    if (m_is_temp || !usesGroupObject())
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         auto nh_key = nhgm.getKey();
@@ -911,7 +1027,7 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
     SWSS_LOG_ENTER();
 
     /* This method should not be called for single-membered non-recursive nexthop groups */
-    assert(isRecursive() || (m_members.size() > 1));
+    assert(usesGroupObject());
 
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -989,6 +1105,79 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 }
 
 /*
+ * Purpose:     Tell whether an update gives the group a new SAI ID.
+ * Description: A synced group without a group object uses its one next hop's
+ *              own ID, so any other key changes it. A group object stays when
+ *              it shrinks to one next hop, as a group of one member, and so
+ *              keeps its ID: the routes using it need not be touched. Only a
+ *              router interface next hop cannot be a group member.
+ * Params:      IN  nhg_key - The new next hop group key.
+ * Returns:     true, if update(nhg_key) would replace the group's SAI ID;
+ *              false, otherwise.
+ */
+bool NextHopGroup::replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const
+{
+    SWSS_LOG_ENTER();
+
+    if (!isSynced() || isRecursive())
+    {
+        return false;
+    }
+
+    if (!usesGroupObject())
+    {
+        return true;
+    }
+
+    return nhg_key.getSize() == 1 && nhg_key.getNextHops().begin()->isIntfNextHop();
+}
+
+/*
+ * Purpose:     Tell whether sync() can add at least one member to the group.
+ * Description: syncMembers() skips a member without a next hop ID and one
+ *              whose interface is down.
+ * Returns:     true, if some member has a next hop ID and its interface up;
+ *              false, otherwise.
+ */
+bool NextHopGroup::hasInstallableMember() const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &mbr : m_members)
+    {
+        /* Check the IP next hop first: getNhId() creates a labeled next hop
+         * over it, which a rejected group would then remove again. */
+        if (gNeighOrch->isNextHopFlagSet(NextHopKey(mbr.first.ip_address, mbr.first.alias), NHFLAGS_IFDOWN))
+        {
+            continue;
+        }
+
+        if (mbr.second.getNhId() != SAI_NULL_OBJECT_ID &&
+            !gNeighOrch->isNextHopFlagSet(mbr.first, NHFLAGS_IFDOWN))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool NextHopGroup::hasSyncedMember() const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &mbr : m_members)
+    {
+        if (mbr.second.isSynced())
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
  * Purpose:     Update the next hop group based on a new next hop group key.
  * Description: Update the group's members by removing the members that aren't
  *              in the new next hop group and adding the new members.  We first
@@ -1003,8 +1192,7 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    if (!isSynced() ||
-        (!isRecursive() && (m_members.size() == 1 || nhg_key.getSize() == 1)))
+    if (!isSynced() || replacesIdOnUpdate(nhg_key))
     {
         bool was_synced = isSynced();
         bool was_temp = isTemp();
@@ -1018,6 +1206,44 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 
         /* Sync the group only if it was synced before. */
         return (was_synced ? sync() : true);
+    }
+
+    if (nhg_key.getSize() == 1)
+    {
+        /*
+         * The members are removed before the new ones are added. When the one
+         * next hop left is not a member yet, add it first, so the routes on
+         * the group always have a member; while it has no next hop ID or its
+         * member cannot be created, keep the current members and let the
+         * update be retried. A next hop that is resolved but down is skipped
+         * by syncMembers() and does not hold the update back.
+         */
+        const NextHopKey& nh_key = *nhg_key.getNextHops().begin();
+        auto mbr_it = m_members.find(nh_key);
+        bool added = (mbr_it == m_members.end());
+
+        if (added)
+        {
+            mbr_it = m_members.emplace(nh_key, NextHopGroupMember(nh_key)).first;
+        }
+
+        if (!mbr_it->second.isSynced())
+        {
+            if (!syncMembers({nh_key}) ||
+                (!mbr_it->second.isSynced() && mbr_it->second.getNhId() == SAI_NULL_OBJECT_ID))
+            {
+                SWSS_LOG_INFO("Next hop %s cannot be added, group %s keeps its members",
+                              nh_key.to_string().c_str(), to_string().c_str());
+                if (added)
+                {
+                    m_members.erase(mbr_it);
+                }
+                return false;
+            }
+        }
+
+        /* From here the shrink goes ahead: the group object outlives it. */
+        m_keeps_group_object = true;
     }
 
     /* Update the key. */
@@ -1135,7 +1361,7 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive() || (m_members.size() > 1))
+    if (usesGroupObject())
     {
         return syncMembers({nh_key});
     }
@@ -1154,7 +1380,7 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    if (isRecursive() || (m_members.size() > 1))
+    if (usesGroupObject())
     {
         return removeMembers({nh_key});
     }
