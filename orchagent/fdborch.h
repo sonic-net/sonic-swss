@@ -163,6 +163,13 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
     std::unique_ptr<MacMoveGuard> m_macMoveGuard;
 
+    /* In FPM MAC-sync mode zebra owns local-host probing after an ASIC
+       ageout. The legacy NEIGH_RESOLVE request would otherwise feed the
+       still-programmed ASIC neighbor back into FDB learning. */
+    bool m_fpmMacSync = false;
+    /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
+    bool m_l3EvpnMh = false;
+
     map<FdbDest, string> destTypeToString =
         { { FdbDest::UNKNOWN, "Unknown" },
           { FdbDest::VTEP, "Vtep"},
