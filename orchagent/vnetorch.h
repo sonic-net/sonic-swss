@@ -610,6 +610,9 @@ private:
     bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
                                         const NextHopGroupKey& nhg, const string& op);
 
+    bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
+    bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx);
+
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
@@ -629,6 +632,10 @@ private:
     handler_map handler_map_;
 
     VNetRouteTable syncd_routes_;
+    // A successful create owns CRM accounting and SAI removal. A duplicate
+    // create borrows an entry owned by another orch; replay must preserve the
+    // original ownership for the same (VR, prefix).
+    std::map<std::pair<sai_object_id_t, IpPrefix>, bool> route_ownership_;
     VNetNextHopObserverTable next_hop_observers_;
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
     std::map<std::string, VNetFgNextHopGroupInfoTable> syncd_fg_nexthop_groups_;
