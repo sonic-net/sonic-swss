@@ -295,26 +295,19 @@ void NeighOrch::setNeighbor(const NeighborEntry &neighborEntry, const NeighborDa
     auto it = m_syncdNeighbors.find(neighborEntry);
     if (it == m_syncdNeighbors.end())
     {
-        m_syncdNeighbors.emplace(neighborEntry, data);
+        it = m_syncdNeighbors.emplace(neighborEntry, data).first;
     }
     else
     {
         if (it->second.mac != data.mac)
         {
-            auto old = m_neighborsByMac.find(make_pair(neighborEntry.alias, it->second.mac));
-            if (old != m_neighborsByMac.end())
-            {
-                old->second.erase(neighborEntry);
-                if (old->second.empty())
-                {
-                    m_neighborsByMac.erase(old);
-                }
-            }
+            unindexNeighbor(it);
         }
         it->second = data;
     }
 
-    m_neighborsByMac[make_pair(neighborEntry.alias, data.mac)].insert(neighborEntry);
+    /* The index points at the table's own key, which stays in place until the entry is erased */
+    m_neighborsByMac[make_pair(it->first.alias, data.mac)].insert(&it->first);
 }
 
 void NeighOrch::eraseNeighbor(const NeighborEntry &neighborEntry)
@@ -325,29 +318,38 @@ void NeighOrch::eraseNeighbor(const NeighborEntry &neighborEntry)
         return;
     }
 
-    auto idx = m_neighborsByMac.find(make_pair(neighborEntry.alias, it->second.mac));
+    unindexNeighbor(it);
+    m_syncdNeighbors.erase(it);
+}
+
+void NeighOrch::unindexNeighbor(NeighborTable::const_iterator it)
+{
+    auto idx = m_neighborsByMac.find(make_pair(it->first.alias, it->second.mac));
     if (idx != m_neighborsByMac.end())
     {
-        idx->second.erase(neighborEntry);
+        idx->second.erase(&it->first);
         if (idx->second.empty())
         {
             m_neighborsByMac.erase(idx);
         }
     }
-
-    m_syncdNeighbors.erase(it);
 }
 
 /* Returned by value and in table order, so the caller may change the neighbors while it walks them */
 vector<NeighborEntry> NeighOrch::getNeighborsByMac(const string &alias, const MacAddress &mac) const
 {
+    vector<NeighborEntry> neighbors;
     auto it = m_neighborsByMac.find(make_pair(alias, mac));
-    if (it == m_neighborsByMac.end())
+    if (it != m_neighborsByMac.end())
     {
-        return {};
+        neighbors.reserve(it->second.size());
+        for (const auto *neighborEntry : it->second)
+        {
+            neighbors.push_back(*neighborEntry);
+        }
     }
 
-    return vector<NeighborEntry>(it->second.begin(), it->second.end());
+    return neighbors;
 }
 
 /*
@@ -368,19 +370,12 @@ void NeighOrch::processFDBRemoteUpdate(const FdbEntry &entry)
         return;
     }
 
-    /* addNeighbor() edits the set */
-    vector<NeighborEntry> retry;
     for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
         if (m_tunnelMacNeighbors.count(neighborEntry) && !hasTunnelHostRoute(vlan, neighborEntry.ip_address))
         {
-            retry.push_back(neighborEntry);
+            enableNeighbor(neighborEntry);
         }
-    }
-
-    for (const auto &neighborEntry : retry)
-    {
-        enableNeighbor(neighborEntry);
     }
 }
 
@@ -3339,8 +3334,12 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
         return;
     }
 
-    NeighborEntry nbrEntry = {ip_address, alias};
-    m_syncdNeighbors[nbrEntry].voq_encap_index = attr.value.u32;
+    /* The inband neighbor has no entry in the table: do not create one here */
+    auto nbr = m_syncdNeighbors.find(NeighborEntry(ip_address, alias));
+    if (nbr != m_syncdNeighbors.end())
+    {
+        nbr->second.voq_encap_index = attr.value.u32;
+    }
 
     //Sync only local neigh. Confirm for the local neigh and
     //get the system port alias for key for syncing to CHASSIS_APP_DB

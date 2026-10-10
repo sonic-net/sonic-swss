@@ -35,8 +35,13 @@ struct NeighborData
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
 typedef map<NeighborEntry, NeighborData> NeighborTable;
-/* (interface alias, MAC) -> the neighbors of that interface with that MAC */
-typedef map<pair<string, MacAddress>, set<NeighborEntry>> NeighborMacIndex;
+/* Orders pointers to NeighborTable keys as the table orders the keys */
+struct NeighborEntryPtrLess
+{
+    bool operator()(const NeighborEntry *a, const NeighborEntry *b) const { return *a < *b; }
+};
+/* (interface alias, MAC) -> the NeighborTable keys of that interface's neighbors with that MAC */
+typedef map<pair<string, MacAddress>, set<const NeighborEntry *, NeighborEntryPtrLess>> NeighborMacIndex;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -153,7 +158,7 @@ private:
     FdbOrch *m_fdbOrch;
     ProducerStateTable m_appNeighResolveProducer;
 
-    /* Add, replace and erase entries only through setNeighbor() and eraseNeighbor(): they keep m_neighborsByMac in step */
+    /* Add and erase entries, and change an entry's MAC, only through setNeighbor() and eraseNeighbor(): they keep m_neighborsByMac in step */
     NeighborTable m_syncdNeighbors;
     /* Lets an FDB event find the neighbors on its MAC without walking m_syncdNeighbors */
     NeighborMacIndex m_neighborsByMac;
@@ -172,6 +177,7 @@ private:
 
     void setNeighbor(const NeighborEntry &neighborEntry, const NeighborData &data);
     void eraseNeighbor(const NeighborEntry &neighborEntry);
+    void unindexNeighbor(NeighborTable::const_iterator it);
     vector<NeighborEntry> getNeighborsByMac(const string &alias, const MacAddress &mac) const;
 
     bool hasTunnelHostRoute(const Port &vlan, const IpAddress &ip) const;
