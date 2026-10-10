@@ -290,6 +290,66 @@ bool NeighOrch::isMacBehindTunnel(const string &alias, const MacAddress &mac)
     return m_fdbOrch->is_fdb_programmed_to_vxlan_tunnel(entry);
 }
 
+void NeighOrch::setNeighbor(const NeighborEntry &neighborEntry, const NeighborData &data)
+{
+    auto it = m_syncdNeighbors.find(neighborEntry);
+    if (it == m_syncdNeighbors.end())
+    {
+        m_syncdNeighbors.emplace(neighborEntry, data);
+    }
+    else
+    {
+        if (it->second.mac != data.mac)
+        {
+            auto old = m_neighborsByMac.find(make_pair(neighborEntry.alias, it->second.mac));
+            if (old != m_neighborsByMac.end())
+            {
+                old->second.erase(neighborEntry);
+                if (old->second.empty())
+                {
+                    m_neighborsByMac.erase(old);
+                }
+            }
+        }
+        it->second = data;
+    }
+
+    m_neighborsByMac[make_pair(neighborEntry.alias, data.mac)].insert(neighborEntry);
+}
+
+void NeighOrch::eraseNeighbor(const NeighborEntry &neighborEntry)
+{
+    auto it = m_syncdNeighbors.find(neighborEntry);
+    if (it == m_syncdNeighbors.end())
+    {
+        return;
+    }
+
+    auto idx = m_neighborsByMac.find(make_pair(neighborEntry.alias, it->second.mac));
+    if (idx != m_neighborsByMac.end())
+    {
+        idx->second.erase(neighborEntry);
+        if (idx->second.empty())
+        {
+            m_neighborsByMac.erase(idx);
+        }
+    }
+
+    m_syncdNeighbors.erase(it);
+}
+
+/* Returned by value and in table order, so the caller may change the neighbors while it walks them */
+vector<NeighborEntry> NeighOrch::getNeighborsByMac(const string &alias, const MacAddress &mac) const
+{
+    auto it = m_neighborsByMac.find(make_pair(alias, mac));
+    if (it == m_neighborsByMac.end())
+    {
+        return {};
+    }
+
+    return vector<NeighborEntry>(it->second.begin(), it->second.end());
+}
+
 /*
  * The FDB entry of a MAC changed (programmed, moved, learned or removed): retry
  * the neighbors on that MAC that were kept out of the SAI while it sat behind a
@@ -310,11 +370,9 @@ void NeighOrch::processFDBRemoteUpdate(const FdbEntry &entry)
 
     /* addNeighbor() edits the set */
     vector<NeighborEntry> retry;
-    for (const auto &neighborEntry : m_tunnelMacNeighbors)
+    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
-        auto it = m_syncdNeighbors.find(neighborEntry);
-        if (neighborEntry.alias == vlan.m_alias && it != m_syncdNeighbors.end() &&
-            it->second.mac == entry.mac && !hasTunnelHostRoute(vlan, neighborEntry.ip_address))
+        if (m_tunnelMacNeighbors.count(neighborEntry) && !hasTunnelHostRoute(vlan, neighborEntry.ip_address))
         {
             retry.push_back(neighborEntry);
         }
@@ -339,14 +397,13 @@ void NeighOrch::processFDBRemoteDelete(const FdbEntry &entry)
         return;
     }
 
-    for (const auto &neighborEntry : m_syncdNeighbors)
+    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
     {
-        if (neighborEntry.first.alias == vlan.m_alias &&
-            neighborEntry.second.mac == entry.mac &&
-            neighborEntry.second.hw_configured)
+        auto it = m_syncdNeighbors.find(neighborEntry);
+        if (it != m_syncdNeighbors.end() && it->second.hw_configured)
         {
-            resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
-            m_neighborToRefresh.insert(neighborEntry.first);
+            resolveNeighborEntry(neighborEntry, entry.mac);
+            m_neighborToRefresh.insert(neighborEntry);
         }
     }
 
@@ -1696,7 +1753,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             /* A host route over a vxlan tunnel carries the host, just save neighbor info */
             SWSS_LOG_NOTICE("Neighbor %s has a host route over a vxlan tunnel, skip hw programming!",
                             ip_address.to_string().c_str());
-            m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
+            setNeighbor(neighborEntry, { macAddress, hw_config, 0, prefix_route });
             if (!hw_config)
             {
                 m_tunnelMacNeighbors.insert(neighborEntry);
@@ -1738,7 +1795,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
                 SWSS_LOG_WARN("Neighbor %s on %s not programmed, mac %s is behind a vxlan tunnel, rv:%d",
                               ip_address.to_string().c_str(), alias.c_str(),
                               macAddress.to_string().c_str(), status);
-                m_syncdNeighbors[neighborEntry] = { macAddress, false, 0, prefix_route };
+                setNeighbor(neighborEntry, { macAddress, false, 0, prefix_route });
                 m_tunnelMacNeighbors.insert(neighborEntry);
                 return true;
             }
@@ -1832,7 +1889,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
                                    ip_address.to_string().c_str(), alias.c_str());
                     return true;
                 }
-                m_syncdNeighbors[neighborEntry] = { macAddress, false, 0, prefix_route };
+                setNeighbor(neighborEntry, { macAddress, false, 0, prefix_route });
                 m_tunnelMacNeighbors.insert(neighborEntry);
                 return true;
             }
@@ -1916,7 +1973,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         }
     }
 
-    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
+    setNeighbor(neighborEntry, { macAddress, hw_config, 0, prefix_route });
     if (hw_config)
     {
         m_tunnelMacNeighbors.erase(neighborEntry);
@@ -2099,7 +2156,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         return true;
     }
 
-    m_syncdNeighbors.erase(neighborEntry);
+    eraseNeighbor(neighborEntry);
     m_tunnelMacNeighbors.erase(neighborEntry);
     clearNeighborRefresh(neighborEntry);
 
@@ -2215,7 +2272,7 @@ bool NeighOrch::processBulkEnableNeighbor(NeighborContext& ctx)
         }
     }
 
-    m_syncdNeighbors[neighborEntry] = { macAddress, true };
+    setNeighbor(neighborEntry, { macAddress, true });
     m_tunnelMacNeighbors.erase(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
@@ -3425,7 +3482,7 @@ bool NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddre
     mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
     if (mux_orch->isStandaloneTunnelRouteInstalled(entry.ip_address))
     {
-        m_syncdNeighbors[entry] = { mac, false };
+        setNeighbor(entry, { mac, false });
         return true;
     }
 

@@ -35,6 +35,8 @@ struct NeighborData
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
 typedef map<NeighborEntry, NeighborData> NeighborTable;
+/* (interface alias, MAC) -> the neighbors of that interface with that MAC */
+typedef map<pair<string, MacAddress>, set<NeighborEntry>> NeighborMacIndex;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -151,7 +153,10 @@ private:
     FdbOrch *m_fdbOrch;
     ProducerStateTable m_appNeighResolveProducer;
 
+    /* Add, replace and erase entries only through setNeighbor() and eraseNeighbor(): they keep m_neighborsByMac in step */
     NeighborTable m_syncdNeighbors;
+    /* Lets an FDB event find the neighbors on its MAC without walking m_syncdNeighbors */
+    NeighborMacIndex m_neighborsByMac;
     NextHopTable m_syncdNextHops;
 
     /* Registrant count per IPinIP tunnel NextHopKey (e.g. MuxOrch, TunnelDecapOrch) */
@@ -164,6 +169,10 @@ private:
     std::set<NeighborEntry> m_tunnelMacNeighbors;
     /* Host routes (VRF, address) whose next hops are VxLAN tunnel next hops */
     std::set<std::pair<sai_object_id_t, IpAddress>> m_tunnelHostRoutes;
+
+    void setNeighbor(const NeighborEntry &neighborEntry, const NeighborData &data);
+    void eraseNeighbor(const NeighborEntry &neighborEntry);
+    vector<NeighborEntry> getNeighborsByMac(const string &alias, const MacAddress &mac) const;
 
     bool hasTunnelHostRoute(const Port &vlan, const IpAddress &ip) const;
     bool isMacBehindTunnel(const string &alias, const MacAddress &mac);
