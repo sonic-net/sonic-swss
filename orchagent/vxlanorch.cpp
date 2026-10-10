@@ -144,6 +144,15 @@ create_tunnel_map(MAP_T map_t)
                                 static_cast<uint32_t>(tunnel_map_attrs.size()),
                                 tunnel_map_attrs.data()
                           );
+    if (status == SAI_STATUS_NOT_SUPPORTED || SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+    {
+        /* A switch may lack some map types (e.g. VLAN maps on an L3 VNI only
+         * device). The tunnel is created with the maps that exist, and an
+         * entry for a missing map is refused in create_tunnel_map_entry(). */
+        SWSS_LOG_WARN("Tunnel map type %s is not supported",
+                      sai_serialize_enum(attr.value.s32, &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
@@ -160,6 +169,11 @@ create_tunnel_map(MAP_T map_t)
 void
 remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -183,6 +197,14 @@ static sai_object_id_t create_tunnel_map_entry(
     sai_attribute_t attr;
     sai_object_id_t tunnel_map_entry_id;
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
+
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Can't create a tunnel map entry for vni %u: no %s tunnel map", vni,
+                       sai_serialize_enum(static_cast<int32_t>(tunnel_map_type(map_t)),
+                                          &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
     attr.value.s32 = tunnel_map_type(map_t);
