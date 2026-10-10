@@ -107,7 +107,8 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -424,6 +425,55 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
     }
 }
 
+/*
+ * A port that leaves a VLAN loses the entries the kernel learned there, but keeps its
+ * extern_learn and static ones, and the kernel refuses a per-MAC delete in a VLAN the
+ * port is no longer in. Flush the port's entries of that type in the VLAN instead, once
+ * per (port, VLAN, type) until a MAC is added there again or the port rejoins the VLAN.
+ * Returns false when the port is a member of the VLAN. Membership comes from STATE_DB,
+ * not the kernel VID list: spanning tree removes the VID from a blocked port that is
+ * still a member, and its other entries there are needed again once the port forwards.
+ */
+bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type)
+{
+    const std::string key = port_name + "|" + vlan + "|" + std::to_string(fdb_type);
+    std::vector<FieldValueTuple> member;
+    if (m_stateVlanMemberTable.get("Vlan" + vlan + "|" + port_name, member))
+    {
+        /* A flush from an earlier leave says nothing about a port that is a member again */
+        m_leftVlanFlushed.erase(key);
+        return false;
+    }
+
+    if (m_leftVlanFlushed.find(key) != m_leftVlanFlushed.end())
+    {
+        SWSS_LOG_INFO("%s has left VLAN %s, its kernel FDB entries there are flushed", port_name.c_str(), vlan.c_str());
+        return true;
+    }
+
+    std::string res;
+    if (swss::exec("test -d /sys/class/net/" + port_name + "/brport", res) != 0)
+    {
+        /* The kernel removed all of the port's entries when it left the bridge */
+        SWSS_LOG_INFO("%s is no longer a bridge port, nothing to delete", port_name.c_str());
+        return true;
+    }
+
+    const std::string cmds = "bridge fdb flush dev " + port_name + " master vlan " + vlan
+        + (fdb_type == FDB_TYPE_DYNAMIC ? " extern_learn" : " static");
+    int ret = swss::exec(cmds, res);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("%s has left VLAN %s, flushed its kernel FDB entries there", port_name.c_str(), vlan.c_str());
+        m_leftVlanFlushed.insert(key);
+    }
+    return true;
+}
+
 void FdbSync::updateLocalMac (struct m_fdb_info *info)
 {
     char *op;
@@ -451,6 +501,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         op = "replace";
         port_name = info->port_name;
         fdb_type = info->type;
+        m_leftVlanFlushed.erase(port_name + "|" + info->vid.substr(4) + "|" + std::to_string(fdb_type));
     }
     else
     {
@@ -491,13 +542,13 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     std::string res;
     int ret = swss::exec(cmds, res);
-    if (ret != 0)
-    {
-        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
-    }
-    else
+    if (ret == 0)
     {
         SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+    }
+    else if ((info->op_type != FDB_OPER_DEL) || !flushLeftVlanMacs(port_name, info->vid.substr(4), fdb_type))
+    {
+        SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
 
     if (info->op_type == FDB_OPER_ADD)
