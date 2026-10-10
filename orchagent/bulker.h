@@ -633,6 +633,16 @@ public:
 
     void flush()
     {
+        class ClearOnExit
+        {
+        public:
+            explicit ClearOnExit(EntityBulker& bulker) : m_bulker(bulker) {}
+            ~ClearOnExit() { m_bulker.clear(); }
+
+        private:
+            EntityBulker& m_bulker;
+        } clearOnExit(*this);
+
         // Removing
         if (!removing_entries.empty())
         {
