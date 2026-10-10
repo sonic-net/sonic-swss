@@ -4,9 +4,11 @@
 #include <orch.h>
 #include <swss/schema.h>
 #include <swss/boolean.h>
+#include <swss/producerstatetable.h>
 
 #include <cinttypes>
 #include <map>
+#include <memory>
 #include <vector>
 #include <sstream>
 
@@ -18,7 +20,7 @@ class MACsecMgr : public Orch
 {
 public:
     using Orch::doTask;
-    MACsecMgr(DBConnector *cfgDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     ~MACsecMgr();
 private:
     void doTask(Consumer &consumer);
@@ -72,7 +74,22 @@ private:
 
     Table m_statePortTable;
 
+    // APPL_DB MACsec tables, written by wpa_supplicant's macsec_sonic driver
+    // and consumed by orchagent. macsecmgrd only touches them to remove what
+    // a supplicant that died without running its deinit left behind. For
+    // each table: the visible entries, the entries a producer has staged but
+    // the consumer has not popped yet, and the producer the deletes go through.
+    struct AppMACsecTable
+    {
+        std::unique_ptr<Table>              visible;
+        std::unique_ptr<Table>              staged;
+        std::unique_ptr<ProducerStateTable> producer;
+    };
+    std::vector<AppMACsecTable> m_appMACsecTables;
+    unsigned int m_clearStaleTimeoutMs;
+
     bool isPortStateOk(const std::string & port_name);
+    bool clearStaleMACsecState(const std::string & port_name);
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
     bool configureMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;
