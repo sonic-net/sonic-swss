@@ -631,13 +631,13 @@ class TestVnet2Orch(object):
             assert syslog_match_count(dvs, marker, "SAI Failed to remove route") == 0
             assert orchagent_is_running(dvs)
 
-            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s\"" % prefix)
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s 20.20.20.5\"" % prefix)
             wait_asic_routes(dvs, prefix, 0)
             self.set_admin_status(vnet_if, "down")
             delete_phy_interface(dvs, vnet_if, vnet_ip)
             vnet_obj.check_del_router_interface(dvs, vnet_if)
         finally:
-            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s\"" % prefix)
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s 20.20.20.5\"" % prefix)
             self.set_admin_status(vnet_if, "down")
             delete_phy_interface(dvs, vnet_if, vnet_ip)
             delete_vnet_entry(dvs, vnet_name)
