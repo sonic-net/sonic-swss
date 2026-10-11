@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 extern HFTelOrch *gHFTOrch;
+extern sai_tam_api_t *sai_tam_api;
 
 namespace hftelorch_notify_test
 {
@@ -220,6 +221,36 @@ namespace hftelorch_notify_test
 
         ASSERT_NO_THROW(stub.p->locallyNotify(msg));
         EXPECT_TRUE(profile.p->m_name_sai_map.empty());
+    }
+
+    /* An HFT SAI create failure must not propagate into the orch that
+     * updates the counter name map (e.g. PortsOrch, BufferOrch). */
+    TEST_F(LocallyNotifyTest, CounterNameUpdater_SaiCreateFailureDoesNotPropagate)
+    {
+        HFTelProfileStub profile;
+        profile.init();
+        profile.p->m_groups.at(SAI_OBJECT_TYPE_PORT).updateStatsIDs({SAI_PORT_STAT_IF_IN_OCTETS});
+        auto tel_type = make_shared<sai_object_id_t>(0x100);
+        profile.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = tel_type;
+        profile.p->m_sai_tam_tel_type_states[tel_type] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+        stub.p->m_type_profile_mapping[SAI_OBJECT_TYPE_PORT].insert(
+            shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {}));
+
+        static sai_tam_api_t default_tam_api{};
+        sai_tam_api_t *orig_api = sai_tam_api ? sai_tam_api : &default_tam_api;
+        sai_tam_api_t ut_api = *orig_api;
+        ut_api.create_tam_counter_subscription = [](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t
+        {
+            return SAI_STATUS_NO_MEMORY;
+        };
+        sai_tam_api_t *saved_api = sai_tam_api;
+        sai_tam_api = &ut_api;
+
+        CounterNameMapUpdater updater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP);
+        EXPECT_NO_THROW(updater.setCounterNameMap("Ethernet0", 0x1000000000001ULL));
+        EXPECT_TRUE(profile.p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT].empty());
+
+        sai_tam_api = saved_api;
     }
 
     /* CounterNameMapUpdater::setCounterNameMap with gHFTOrch non-null.
