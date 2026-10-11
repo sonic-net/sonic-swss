@@ -27,6 +27,27 @@
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include "notifier.h"
+#include "interface.h"
+
+#include <algorithm>
+
+namespace
+{
+bool isNatInterfaceNameSafe(const std::string &name)
+{
+    if (!swss::isInterfaceNameValid(name))
+    {
+        return false;
+    }
+
+    // The name is interpolated into an iptables shell command. The common
+    // interface check only enforces length, so also restrict shell syntax.
+    return std::all_of(name.begin(), name.end(), [](unsigned char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
+    });
+}
+}
 
 using namespace std;
 using namespace swss;
@@ -905,6 +926,12 @@ bool NatMgr::setMangleIptablesRules(const string &opCmd, const string &interface
     if (nat_zone.empty())
     {
         SWSS_LOG_INFO("Nat zone is empty");
+        return false;
+    }
+
+    if (!isNatInterfaceNameSafe(interface))
+    {
+        SWSS_LOG_ERROR("Rejecting unsafe NAT interface name");
         return false;
     }
 
@@ -7383,7 +7410,7 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t), nat_zone = "1";
         vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
-        string op = kfvOp(t), port(keys[0]);
+        string op = kfvOp(t);
         bool skipAddition = false, skipDeletion = false;
         int prefixLen = 0, nat_zone_value = 1;
         vector<string> ipPrefixKeys;
@@ -7409,6 +7436,8 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
             SWSS_LOG_INFO("Key size %zu for %s", keys.size(), key.c_str());
         }
 
+        string port(keys[0]);
+
         /* Ensure the key starts with "Vlan" or "Ethernet" or "PortChannel" or "Loopback", otherwise ignore */
         if ((strncmp(keys[0].c_str(), VLAN_PREFIX, strlen(VLAN_PREFIX))) and
             (strncmp(keys[0].c_str(), ETHERNET_PREFIX, strlen(ETHERNET_PREFIX))) and
@@ -7416,6 +7445,13 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
             (strncmp(keys[0].c_str(), LAG_PREFIX, strlen(LAG_PREFIX))))
         {
             SWSS_LOG_INFO("Invalid key %s format, skipping %s", keys[0].c_str(), key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (!isNatInterfaceNameSafe(port))
+        {
+            SWSS_LOG_ERROR("Rejecting unsafe NAT interface name");
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -8265,4 +8301,3 @@ void NatMgr::flushNotifications(string op, string data)
         SWSS_LOG_ERROR("Received unknown flush nat request");
     }
 }
-
