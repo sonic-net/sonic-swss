@@ -2,6 +2,7 @@
 #include "hftelutils.h"
 
 #include "notifications.h"
+#include "sainotificationorch.h"
 
 #include <swss/schema.h>
 #include <swss/redisutility.h>
@@ -90,6 +91,16 @@ HFTelOrch::HFTelOrch(
     }
 
     Orch::addExecutor(notifier);
+
+    if (gSaiNotificationOrch)
+    {
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            });
+    }
 }
 
 HFTelOrch::~HFTelOrch()
@@ -504,11 +515,25 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-    if (op != SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
+    KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
+    handleNotification(entry);
+}
+
+void HFTelOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
+{
+    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
     {
-        SWSS_LOG_DEBUG("Unknown operation type %s for HFTel Orch", op.c_str());
-        return;
+        handleTamTelTypeConfigChangeNotification(kfvKey(entry));
     }
+    else
+    {
+        SWSS_LOG_DEBUG("Unknown operation type %s for HFTel Orch", kfvOp(entry).c_str());
+    }
+}
+
+void HFTelOrch::handleTamTelTypeConfigChangeNotification(const std::string &data)
+{
+    SWSS_LOG_ENTER();
 
     sai_object_id_t tam_tel_type_obj = SAI_NULL_OBJECT_ID;
 
