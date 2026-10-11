@@ -9941,6 +9941,44 @@ void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsVa
                 continue;
             }
 
+            /*
+             * The notification channel is not authoritative. Avoid a SAI read
+             * for side-effect-free DOWN duplicates, but validate every UP
+             * notification (which refreshes speed/FEC), candidate transition,
+             * and error event against the current hardware state.
+             */
+            if (status == port.m_oper_status && status != SAI_PORT_OPER_STATUS_UP && port_oper_err == 0)
+            {
+                SWSS_LOG_DEBUG("Ignoring duplicate port state notification for %s", port.m_alias.c_str());
+                continue;
+            }
+
+            sai_port_oper_status_t hw_status;
+            if (!getPortOperStatus(port, hw_status))
+            {
+                SWSS_LOG_WARN("Failed to validate port %s oper status notification; ignoring it",
+                              port.m_alias.c_str());
+                continue;
+            }
+
+            Port current_port;
+            if (!getPort(id, current_port) || current_port.m_port_id != port.m_port_id ||
+                current_port.m_alias != port.m_alias)
+            {
+                SWSS_LOG_NOTICE("Port id 0x%" PRIx64 " was removed or replaced while validating oper status; ignoring notification",
+                                id);
+                continue;
+            }
+            port = current_port;
+
+            const bool notification_matches = status == hw_status;
+            if (!notification_matches)
+            {
+                SWSS_LOG_WARN("Port %s oper status notification (%d) does not match SAI status (%d); using SAI status",
+                              port.m_alias.c_str(), status, hw_status);
+            }
+            status = hw_status;
+
             updatePortOperStatus(port, status);
             if (status == SAI_PORT_OPER_STATUS_UP)
             {
@@ -9971,9 +10009,23 @@ void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsVa
                     updateDbPortOperFec(port, "N/A");
                 }
             } else {
-                if (port_oper_err)
+                if (port_oper_err && notification_matches)
                 {
-                    updatePortErrorStatus(port, port_oper_err);
+                    sai_port_error_status_t hw_error_status;
+                    if (getPortOperErrorStatus(port, hw_error_status))
+                    {
+                        updatePortErrorStatus(port, hw_error_status);
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("Failed to validate port %s error status notification; ignoring it",
+                                      port.m_alias.c_str());
+                    }
+                }
+                else if (port_oper_err)
+                {
+                    SWSS_LOG_WARN("Ignoring unverified port error status 0x%" PRIx32 " for %s",
+                                  port_oper_err, port.m_alias.c_str());
                 }
             }
 
@@ -10237,6 +10289,29 @@ bool PortsOrch::getPortOperStatus(const Port& port, sai_port_oper_status_t& stat
 
     status = static_cast<sai_port_oper_status_t>(attr.value.u32);
 
+    return true;
+}
+
+bool PortsOrch::getPortOperErrorStatus(const Port& port, sai_port_error_status_t& status) const
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_ERROR_STATUS;
+
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get error_status for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    status = static_cast<sai_port_error_status_t>(attr.value.s32);
     return true;
 }
 

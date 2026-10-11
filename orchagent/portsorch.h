@@ -289,6 +289,7 @@ public:
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
+    bool getPortOperErrorStatus(const Port& port, sai_port_error_status_t& status) const;
 
     void updateGearboxPortOperStatus(const Port& port);
 
