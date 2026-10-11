@@ -1236,10 +1236,16 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             {
                 removeOverlayNextHops(it_nhg.second, it_nhg.first);
             }
-            else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+            else
             {
+                auto next_hop_group = m_syncdNextHopGroups.find(it_nhg.first);
+                if (next_hop_group == m_syncdNextHopGroups.end() || next_hop_group->second.ref_count != 0)
+                {
+                    continue;
+                }
+
                 // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
-                removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
+                removeNextHopGroup(it_nhg.first, next_hop_group->second.is_default_route_nh_swap);
             }
         }
         // Failed single-MPLS creates may share a next hop with successful
@@ -1381,8 +1387,17 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
     else
     {
-        m_syncdNextHopGroups[nexthops].ref_count ++;
-        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
+        auto next_hop_group = m_syncdNextHopGroups.find(nexthops);
+        if (next_hop_group == m_syncdNextHopGroups.end())
+        {
+            SWSS_LOG_ERROR("Attempt to increase ref count for non-existent next hop group %s",
+                    nexthops.to_string().c_str());
+            return;
+        }
+
+        next_hop_group->second.ref_count ++;
+        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s",
+                next_hop_group->second.ref_count, nexthops.to_string().c_str());
     }
 }
 
@@ -2609,6 +2624,10 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             {
                 return parseHandleSaiStatusFailure(handle_status);
             }
+            /* A handled SAI error is not proof that this route was created.
+             * Publishing bookkeeping here could point at a removed NHG or
+             * at a route with different next-hop attributes. */
+            return false;
         }
 
         if (ipPrefix.isV4())

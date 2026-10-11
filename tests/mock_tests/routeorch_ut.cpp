@@ -1006,6 +1006,77 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
     }
 
+    TEST_F(RouteOrchTest, MissingEcmpRefIncrementDoesNotCreateNhg)
+    {
+        const NextHopGroupKey nhg("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(0));
+        gRouteOrch->increaseNextHopRefCount(nhg);
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(0));
+    }
+
+    TEST_F(RouteOrchTest, BulkCleanupDoesNotRecreateErasedNextHopGroup)
+    {
+        const std::string old_key = "3.3.3.0/24";
+        const std::string new_key = "4.4.4.0/24";
+        const NextHopGroupKey nhg("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({old_key, "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                             {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> create_status{SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
+                            Return(SAI_STATUS_SUCCESS)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.at(nhg).ref_count, static_cast<uint32_t>(1));
+
+        entries.clear();
+        entries.push_back({old_key, "DEL", {}});
+        entries.push_back({new_key, "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                             {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> remove_status{SAI_STATUS_SUCCESS};
+        create_status = {SAI_STATUS_TABLE_FULL};
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(remove_status.begin(), remove_status.end()),
+                            Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
+                            Return(SAI_STATUS_TABLE_FULL)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.count(old_key), static_cast<size_t>(0));
+        EXPECT_EQ(consumer->m_toSync.count(new_key), static_cast<size_t>(1));
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.count(nhg), static_cast<size_t>(0));
+    }
+
+    TEST_F(RouteOrchTest, HandledCreateErrorDoesNotPublishRouteBookkeeping)
+    {
+        const std::string key = "2.2.2.0/24";
+        const IpPrefix prefix(key);
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({key, "SET", {{"ifname", "Ethernet0"},
+                                         {"nexthop", "10.0.0.2"}}});
+        consumer->addToSync(entries);
+
+        std::vector<sai_status_t> create_status{SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()),
+                            Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(consumer->m_toSync.count(key), static_cast<size_t>(1));
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].count(prefix), static_cast<size_t>(0));
+    }
+
     /* Tests SAI_STATUS_ITEM_NOT_FOUND error handling for setting route */
     TEST_F(RouteOrchTest, RouteOrchSetItemNotFound)
     {
