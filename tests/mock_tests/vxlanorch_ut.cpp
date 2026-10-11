@@ -42,6 +42,17 @@ namespace vxlanorch_test
     constexpr sai_object_id_t vxlan_tunnel_term_table_entry_oid = 0x1248;
     constexpr sai_object_id_t vxlan_tunnel_map_entry_oid = 0x1256;
 
+    class ThrowingFlexCounterVxlanTunnelOrch : public VxlanTunnelOrch
+    {
+    public:
+        using VxlanTunnelOrch::VxlanTunnelOrch;
+
+        void removeTunnelFromFlexCounter(sai_object_id_t, const std::string &) override
+        {
+            throw std::runtime_error("counter cleanup failed");
+        }
+    };
+
     class VxlanOrchTest : public ::testing::Test
     {
         public:
@@ -297,6 +308,119 @@ namespace vxlanorch_test
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
+    TEST_F(VxlanOrchTest, TunnelCreateExceptionReleasesMaps)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        auto* tunnel = new VxlanTunnel("vxlan_tunnel_1", IpAddress("10.1.0.1"),
+                                       IpAddress("20.1.0.1"), TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(Throw(std::runtime_error("tunnel creation failed")));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(4)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_FALSE(vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER,
+                                                      1000, 0x1001, 0x1002, 64));
+        EXPECT_FALSE(tunnel->isActive());
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    TEST_F(VxlanOrchTest, TunnelMapExceptionReleasesCreatedMap)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        auto* tunnel = new VxlanTunnel("vxlan_tunnel_1", IpAddress("10.1.0.1"),
+                                       IpAddress("20.1.0.1"), TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)))
+            .WillOnce(Throw(std::runtime_error("tunnel map creation failed")));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _)).Times(0);
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(vxlan_tunnel_map_oid))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_FALSE(vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER,
+                                                      1000, 0x1001, 0x1002, 64));
+        EXPECT_FALSE(tunnel->isActive());
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    TEST_F(VxlanOrchTest, TunnelTermExceptionReleasesTunnelAndMaps)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        auto* tunnel = new VxlanTunnel("vxlan_tunnel_1", IpAddress("10.1.0.1"),
+                                       IpAddress("20.1.0.1"), TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(vxlan_tunnel_oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+            .WillOnce(Throw(std::runtime_error("tunnel term creation failed")));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(vxlan_tunnel_oid))
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(4)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_FALSE(vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER,
+                                                      1000, 0x1001, 0x1002, 64));
+        EXPECT_FALSE(tunnel->isActive());
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    TEST_F(VxlanOrchTest, TunnelCleanupExceptionsDoNotSkipRemainingCleanup)
+    {
+        initSwitchOrch();
+        VxlanTunnelOrch* vxlan_orch = new ThrowingFlexCounterVxlanTunnelOrch(
+            m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+        m_vxlan_tunnel_orch = vxlan_orch;
+        gDirectory.set(vxlan_orch);
+
+        auto* tunnel = new VxlanTunnel("vxlan_tunnel_1", IpAddress("10.1.0.1"),
+                                       IpAddress("20.1.0.1"), TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(vxlan_tunnel_oid), Return(SAI_STATUS_SUCCESS)))
+            .WillOnce(Throw(std::runtime_error("retry tunnel creation failed")));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
+                            Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(vxlan_tunnel_term_table_entry_oid))
+            .WillOnce(Throw(std::runtime_error("termination cleanup failed")));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(vxlan_tunnel_oid))
+            .WillOnce(Throw(std::runtime_error("tunnel cleanup failed")));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(2)
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        ASSERT_TRUE(tunnel->createTunnelHw(TUNNEL_MAP_T_VIRTUAL_ROUTER,
+                                           TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, 64));
+        EXPECT_FALSE(tunnel->createTunnelHw(TUNNEL_MAP_T_VIRTUAL_ROUTER,
+                                            TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, 64));
+        EXPECT_FALSE(tunnel->isActive());
+        EXPECT_EQ(tunnel->getTunnelId(), SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(tunnel->getTunnelTermId(), SAI_NULL_OBJECT_ID);
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
     TEST_F(VxlanOrchTest, TunnelMapCreateFailure)
     {
         initSwitchOrch();
@@ -321,10 +445,7 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_FAILURE)
                         ));
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0);
 
         EXPECT_NO_THROW({
                 bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
