@@ -758,6 +758,21 @@ namespace shlorch_test
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
     }
 
+    TEST_F(ShlOrchTest, ShlMalformedKeyTest)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries = {
+            {"Vlan10", "SET", {{"vteps", "2.2.2.2"}}},
+            {":Ethernet4", "SET", {{"vteps", "2.2.2.2"}}},
+            {"Vlan10:", "SET", {{"vteps", "2.2.2.2"}}},
+        };
+
+        consumer->addToSync(entries);
+        EXPECT_NO_THROW(static_cast<Orch *>(gShlOrch)->doTask());
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 0);
+    }
+
     TEST_F(ShlOrchTest, ShlPortNotReadyTest)
     {
         // Clean up any existing isolation groups first
