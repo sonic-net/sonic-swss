@@ -327,6 +327,15 @@ void NbrMgr::processKernelFailedNeighbor(const string& key, const string& tableS
             return;
         }
 
+        // Preserve server neighbors on SVIs for later advertisements. Routed
+        // uplinks must retain kernel NUD retries when the peer is not ready yet.
+        if (alias.compare(0, 4, "Vlan") != 0)
+        {
+            SWSS_LOG_INFO("Leaving failed kernel neighbor '%s' on a non-VLAN interface to kernel NUD",
+                          key.c_str());
+            return;
+        }
+
         if (!setFailedNeighborIncomplete(alias, ip))
         {
             SWSS_LOG_ERROR("Failed to move kernel neighbor '%s' to INCOMPLETE", key.c_str());
