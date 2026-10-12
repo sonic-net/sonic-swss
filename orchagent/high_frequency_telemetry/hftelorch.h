@@ -29,9 +29,11 @@ public:
     static const std::unordered_map<std::string, sai_object_type_t> SUPPORT_COUNTER_TABLES;
 
     // Mode used when the vendor SAI advertises both SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
-    // and SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE, or when the capability probe is
-    // unavailable. MIXED_TYPE is preferred by default to exercise the shared
-    // tel_type path.
+    // and SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE. MIXED_TYPE is preferred by default
+    // to exercise the shared tel_type path. When the SAI_TAM_TEL_TYPE_ATTR_MODE
+    // capability probe itself is unavailable, querySupportedTelTypeModes()
+    // falls back to SINGLE_TYPE directly (the SAI spec's declared default),
+    // not to this constant - see its comment.
     static constexpr sai_tam_tel_type_mode_t DEFAULT_TEL_TYPE_MODE = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
 
     void locallyNotify(const CounterNameMapUpdater::Message &msg);

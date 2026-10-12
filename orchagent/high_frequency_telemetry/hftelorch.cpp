@@ -74,6 +74,10 @@ HFTelOrch::HFTelOrch(
 {
     SWSS_LOG_ENTER();
 
+    // single_supported/mixed_supported already reflect the query-unavailable
+    // fallback (assume SINGLE_TYPE) done once inside
+    // querySupportedTelTypeModes() - no separate fallback needed here, so
+    // this selection is identical to isSupportedHFTel()'s.
     bool single_supported = false;
     bool mixed_supported = false;
     querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported, m_tel_type_supported_categories);
@@ -289,18 +293,14 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
         }
     }
 
+    // The query-unavailable fallback (assume SINGLE_TYPE, still probe
+    // categories) lives entirely inside querySupportedTelTypeModes(), so its
+    // outputs are already final here regardless of the return value - see
+    // its comment.
     bool single_supported = false;
     bool mixed_supported = false;
     std::unordered_set<sai_object_type_t> tel_type_supported_categories;
-    if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported, tel_type_supported_categories))
-    {
-        // The SAI capability query for SAI_TAM_TEL_TYPE_ATTR_MODE is optional;
-        // older or simpler SAI implementations (e.g. saivs) return
-        // SAI_STATUS_NOT_SUPPORTED. The SAI spec declares SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
-        // as the default value, so fall back to that and let HFT proceed.
-        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query unavailable; assuming SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
-        single_supported = true;
-    }
+    querySupportedTelTypeModes(switch_id, single_supported, mixed_supported, tel_type_supported_categories);
 
     if (!single_supported && !mixed_supported)
     {
@@ -327,52 +327,80 @@ bool HFTelOrch::querySupportedTelTypeModes(
     mixed_supported = false;
     tel_type_supported_categories.clear();
 
+    // Whether the SAI_TAM_TEL_TYPE_ATTR_MODE capability query itself answered
+    // (as opposed to failing or being structurally absent). This is the
+    // single place that decides the query-unavailable fallback: both
+    // isSupportedHFTel() and the constructor consume single_supported /
+    // mixed_supported / tel_type_supported_categories directly and need no
+    // fallback logic of their own - whatever this function returns in those
+    // three outputs is already final.
+    bool mode_query_available = true;
+
     const auto *meta = sai_metadata_get_attr_metadata(
         SAI_OBJECT_TYPE_TAM_TEL_TYPE,
         SAI_TAM_TEL_TYPE_ATTR_MODE);
     if (!meta || (!meta->isenum && !meta->isenumlist))
     {
         SWSS_LOG_WARN("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE is not an enum attribute");
-        return false;
+        mode_query_available = false;
     }
 
-    std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
-    sai_s32_list_t values;
-    values.count = static_cast<uint32_t>(valuesList.size());
-    values.list = valuesList.data();
-
-    sai_status_t status = sai_query_attribute_enum_values_capability(
-        switch_id,
-        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
-        SAI_TAM_TEL_TYPE_ATTR_MODE,
-        &values);
-    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    if (mode_query_available)
     {
-        valuesList.resize(values.count);
+        std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(valuesList.size());
         values.list = valuesList.data();
-        status = sai_query_attribute_enum_values_capability(
+
+        sai_status_t status = sai_query_attribute_enum_values_capability(
             switch_id,
             SAI_OBJECT_TYPE_TAM_TEL_TYPE,
             SAI_TAM_TEL_TYPE_ATTR_MODE,
             &values);
-    }
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query failed (status=%d)", status);
-        return false;
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            valuesList.resize(values.count);
+            values.list = valuesList.data();
+            status = sai_query_attribute_enum_values_capability(
+                switch_id,
+                SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+                SAI_TAM_TEL_TYPE_ATTR_MODE,
+                &values);
+        }
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query failed (status=%d)", status);
+            mode_query_available = false;
+        }
+        else
+        {
+            for (uint32_t i = 0; i < values.count; i++)
+            {
+                SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability[%u] = %d", i, values.list[i]);
+                if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
+                {
+                    single_supported = true;
+                }
+                else if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
+                {
+                    mixed_supported = true;
+                }
+            }
+        }
     }
 
-    for (uint32_t i = 0; i < values.count; i++)
+    if (!mode_query_available)
     {
-        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability[%u] = %d", i, values.list[i]);
-        if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
-        {
-            single_supported = true;
-        }
-        else if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
-        {
-            mixed_supported = true;
-        }
+        // The capability query for SAI_TAM_TEL_TYPE_ATTR_MODE is optional;
+        // older or simpler SAI implementations (e.g. saivs) don't implement
+        // it. The SAI spec declares SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE as the
+        // default value in that case, so fall back to that and still probe
+        // per-category support below - this must stay reachable even when
+        // the mode query itself is unavailable, matching pre-MIXED-mode
+        // behavior where HFT worked unconditionally on exactly this SAI.
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query unavailable; "
+                        "assuming SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
+        single_supported = true;
     }
 
     // A vendor SAI implementing SAI_OBJECT_TYPE_TAM_TEL_TYPE doesn't guarantee every
@@ -397,15 +425,32 @@ bool HFTelOrch::querySupportedTelTypeModes(
         sai_attr_capability_t capability = {};
         sai_status_t enable_status = sai_query_attribute_capability(
             switch_id, SAI_OBJECT_TYPE_TAM_TEL_TYPE, chk.attr, &capability);
-        if (enable_status == SAI_STATUS_SUCCESS && capability.create_implemented)
+        if (enable_status == SAI_STATUS_SUCCESS)
         {
+            if (capability.create_implemented)
+            {
+                tel_type_supported_categories.insert(chk.object_types.begin(), chk.object_types.end());
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("HFTel: %s not supported on SAI_OBJECT_TYPE_TAM_TEL_TYPE; "
+                                "groups for this category will be rejected",
+                                chk.name);
+            }
+        }
+        else if (!mode_query_available)
+        {
+            // Same degraded SAI as the mode query above; assume supported
+            // rather than disabling every category, for the same
+            // backward-compatibility reason.
+            SWSS_LOG_NOTICE("HFTel: %s capability query unavailable; assuming supported", chk.name);
             tel_type_supported_categories.insert(chk.object_types.begin(), chk.object_types.end());
         }
         else
         {
-            SWSS_LOG_NOTICE("HFTel: %s not supported on SAI_OBJECT_TYPE_TAM_TEL_TYPE; "
+            SWSS_LOG_NOTICE("HFTel: %s capability query failed (status=%d); "
                             "groups for this category will be rejected",
-                            chk.name);
+                            chk.name, enable_status);
         }
     }
 
@@ -420,7 +465,7 @@ bool HFTelOrch::querySupportedTelTypeModes(
         single_supported = false;
     }
 
-    return true;
+    return mode_query_available;
 }
 
 task_process_status HFTelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)

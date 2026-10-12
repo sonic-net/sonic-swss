@@ -1,7 +1,11 @@
 #include "mock_sai_capability_wrap.h"
 #include "ut_helper.h"
-#include "mock_orchagent_main.h"
+#define private public
+#define protected public
 #include "high_frequency_telemetry/hftelorch.h"
+#undef private
+#undef protected
+#include "mock_orchagent_main.h"
 #include "schema.h"
 #include <gtest/gtest.h>
 #include <memory>
@@ -383,5 +387,34 @@ namespace hftelorch_test
     {
         HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeQueryNotSupported);
         EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same SAI_TAM_TEL_TYPE_ATTR_MODE query-unavailable condition as
+     * IsSupportedHFTel_mode_query_not_supported, but checked at the point
+     * that actually matters: a constructed HFTelOrch. Before this fix the
+     * constructor's own call to querySupportedTelTypeModes() ignored the
+     * query failure and the per-category probe never ran, leaving
+     * m_tel_type_supported_categories empty and m_tel_type_mode stuck on
+     * DEFAULT_TEL_TYPE_MODE (MIXED_TYPE) - every groupTableSet() would then
+     * reject as unsupported, even though isSupportedHFTel() (checked above)
+     * reports the feature as enabled.
+     */
+    TEST_F(HFTelOrchShutdownTest, ConstructorFallsBackToSingleTypeWhenModeQueryUnsupported)
+    {
+        hftelorch_sai_wrap_ut::setSaiHookAllSupported();
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeQueryNotSupported);
+
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME,
+        };
+
+        auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
+
+        EXPECT_EQ(orch->m_tel_type_mode, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        EXPECT_FALSE(orch->m_tel_type_supported_categories.empty());
+
+        orch.reset();
     }
 }
