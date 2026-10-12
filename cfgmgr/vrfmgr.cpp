@@ -95,13 +95,78 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
 
     cmd.str("");
     cmd.clear();
-    cmd << IP_CMD << " rule | grep '^0:'";
-    if (swss::exec(cmd.str(), res) == 0)
+
+    // Get all local-table rule preferences
+    cmd << IP_CMD
+        << " rule | grep 'from all lookup local' | awk -F'[^0-9]+' '{ print $1 }'";
+
+    swss::exec(cmd.str(), res);
+
+    std::vector<uint32_t> localPrefs;
+    std::stringstream ss(res);
+    std::string line;
+
+    while (std::getline(ss, line))
     {
+        if (!line.empty())
+        {
+            localPrefs.push_back(
+                static_cast<uint32_t>(stoul(line)));
+        }
+    }
+
+    bool foundCanonical = false;
+
+    for (auto pref : localPrefs)
+    {
+        if (pref == TABLE_LOCAL_PREF)
+        {
+            if (!foundCanonical)
+            {
+                foundCanonical = true;
+                continue;
+            }
+        }
+
+        SWSS_LOG_NOTICE(
+            "Removing stale local-table rule pref %u",
+            pref);
+
         cmd.str("");
         cmd.clear();
-        cmd << IP_CMD << " rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " rule del pref 0 && "
-            << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0";
+
+        cmd << IP_CMD << " rule del pref " << pref;
+        swss::exec(cmd.str(), res);
+
+        cmd.str("");
+        cmd.clear();
+
+        cmd << IP_CMD << " -6 rule del pref " << pref;
+        swss::exec(cmd.str(), res);
+    }
+
+    if (!foundCanonical)
+    {
+        SWSS_LOG_NOTICE(
+            "Canonical local-table rule missing. Recreating pref %u",
+            TABLE_LOCAL_PREF);
+
+        cmd.str("");
+        cmd.clear();
+
+        cmd << IP_CMD
+            << " rule add pref "
+            << TABLE_LOCAL_PREF
+            << " table local";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+        cmd.str("");
+        cmd.clear();
+
+        cmd << IP_CMD
+            << " -6 rule add pref "
+            << TABLE_LOCAL_PREF
+            << " table local";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
 
