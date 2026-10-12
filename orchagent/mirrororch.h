@@ -23,6 +23,7 @@
 #define MIRROR_BOTH_DIRECTION    "BOTH"
 #define MIRROR_SESSION_SPAN      "SPAN"
 #define MIRROR_SESSION_ERSPAN    "ERSPAN"
+#define MIRROR_SESSION_SFLOW     "SFLOW"
 
 enum class MirrorBindDirection
 {
@@ -66,6 +67,7 @@ struct MirrorEntry
     // Sampled mirroring fields
     uint32_t sample_rate;                        // 0 = full mirror (default)
     uint32_t truncate_size;                      // 0 = no truncation (default)
+    uint16_t udpDstPort;                         // SFLOW only
     sai_object_id_t samplepacketId;              // SAI_NULL_OBJECT_ID if not sampled
 
     sai_object_id_t sessionId;
