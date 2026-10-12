@@ -2,13 +2,27 @@ use std::sync::Arc;
 
 pub type IPFixTemplates = Arc<Vec<u8>>;
 
+// 2048 ports * 8 queues * 60 enterprise specs * 8 bytes = 7.5 MiB,
+// excluding headers and hardware placeholder slots. Allow headroom for both.
+pub(crate) const MAX_TEMPLATE_CONFIG_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_OBJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
+// Object labels use the nonzero 15-bit IE ID space, not one ID per counter.
+pub(crate) const MAX_OBJECTS_PER_UPDATE: usize = 32_767;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IPFixTemplateOperation {
+    Update,
+    Deactivate,
+    Delete,
+}
+
 #[derive(Debug, Clone)]
 pub struct IPFixTemplatesMessage {
     pub key: String,
     pub templates: Option<IPFixTemplates>,
     pub object_names: Option<Vec<String>>,
     pub object_ids: Option<Vec<u16>>,
-    pub is_delete: bool,
+    pub operation: IPFixTemplateOperation,
 }
 
 impl IPFixTemplatesMessage {
@@ -23,7 +37,7 @@ impl IPFixTemplatesMessage {
             templates: Some(templates),
             object_names,
             object_ids,
-            is_delete: false,
+            operation: IPFixTemplateOperation::Update,
         }
     }
 
@@ -33,7 +47,17 @@ impl IPFixTemplatesMessage {
             templates: None,
             object_names: None,
             object_ids: None,
-            is_delete: true,
+            operation: IPFixTemplateOperation::Delete,
+        }
+    }
+
+    pub fn deactivate(key: String) -> Self {
+        Self {
+            key,
+            templates: None,
+            object_names: None,
+            object_ids: None,
+            operation: IPFixTemplateOperation::Deactivate,
         }
     }
 }

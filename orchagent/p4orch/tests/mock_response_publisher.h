@@ -16,5 +16,9 @@ class MockResponsePublisher : public ResponsePublisherInterface
     MOCK_METHOD5(writeToDB,
                  void(const std::string &table, const std::string &key,
                       const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace));
-    MOCK_METHOD1(setEnableDbWriteAndNotify, void(bool enable_db_write_and_notify));
+    MOCK_METHOD2(setWarmbootStateOnFailure,
+                 void(const std::string& app_name, bool set_on_fail));
+    MOCK_METHOD1(setEnableDbWrite, void(bool enable));
+    MOCK_METHOD1(setEnableNotify, void(bool enable));
+
 };

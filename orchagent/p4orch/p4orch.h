@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "copporch.h"
 #include "notificationconsumer.h"
 #include "notifier.h"
 #include "orch.h"
@@ -48,7 +47,7 @@ class P4Orch : public ZmqOrch
 {
   public:
     P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames,
-        swss::ZmqServer* zmqServer, VRFOrch *vrfOrch, CoppOrch *coppOrch);
+        swss::ZmqServer* zmqServer, VRFOrch *vrfOrch);
     // Add ACL table to ACLRuleManager mapping in P4Orch.
     bool addAclTableToManagerMapping(const std::string &acl_table_name);
     // Remove the ACL table name to AclRuleManager mapping in P4Orch
@@ -63,6 +62,7 @@ class P4Orch : public ZmqOrch
     bool bake() override;
     void handlePortStatusUpdate(const std::string& alias,
                                 const sai_port_oper_status_t& status);
+    void setEnableNotify(bool enable) override;
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager

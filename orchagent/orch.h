@@ -51,6 +51,7 @@ const char state_db_key_delimiter  = '|';
 #define CISCO_PLATFORM_SUBSTRING "cisco"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
 
 inline bool isCiscoPlatform(const std::string &platform)
 {
@@ -179,7 +180,9 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -330,6 +333,11 @@ public:
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
 
+    // TODO: override in every Orch that attaches as an Observer in its
+    //       constructor so OrchDaemon can detach all observers while every
+    //       subject is still alive, eliminating shutdown-order UAFs.
+    virtual void detachObservers() {}
+
     static std::shared_ptr<RingBuffer> gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();
@@ -350,6 +358,10 @@ public:
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
     virtual void doTask(swss::SelectableEvent &event) { }
+
+    virtual void setWarmbootStateOnFailure(const std::string& app_name,
+                                            bool set_on_fail);
+    virtual void setEnableNotify(bool enable);
 
     /*
      * Called once after APPLY_VIEW in warm/fast boot scenario.
