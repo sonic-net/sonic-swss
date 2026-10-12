@@ -5,6 +5,7 @@ import pytest
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
+from gearbox import TestGearboxHelper
 
 # module specific dvs env variables
 DVS_ENV = ["HWSKU=brcm_gearbox_vs"]
@@ -195,6 +196,23 @@ class TestGearbox(object):
         gbasic.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", \
                 line_port_oid, expected_fields)
         """
+
+    def test_GearboxPhyAccessLibName(self, dvs, gearbox, testlog):
+        # phy_access_lib_name is optional; gearsyncd must publish it to APPL_DB when present.
+        phy_id = next(iter(gearbox.phys))
+        assert "phy_access_lib_name" not in gearbox.phys[phy_id]["attrs"]
+
+        lib_name = "libsai_phy_access_vs.so"
+        try:
+            TestGearboxHelper.configure_gearbox_phy_field(dvs, phy_id, "phy_access_lib_name", lib_name)
+            dvs.restart()
+
+            app_db = DVSDatabase(swsscommon.APPL_DB, dvs.redis_sock)
+            app_db.wait_for_field_match("_GEARBOX_TABLE", f"phy:{phy_id}",
+                                        {"phy_access_lib_name": lib_name})
+        finally:
+            TestGearboxHelper.configure_gearbox_phy_field(dvs, phy_id, "phy_access_lib_name", None)
+            dvs.restart()
 
 
 # Add Dummy always-pass test at end as workaroud
