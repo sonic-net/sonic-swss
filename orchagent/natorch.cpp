@@ -28,6 +28,7 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "crmorch.h"
+#include "converter.h"
 
 extern CrmOrch            *gCrmOrch;
 extern PortsOrch          *gPortsOrch;
@@ -2708,8 +2709,17 @@ void NatOrch::doNaptTableTask(Consumer& consumer)
 
         NaptEntryKey keyEntry;
 
-        keyEntry.ip_address = IpAddress(keys[1]);
-        keyEntry.l4_port = stoi(keys[2]);
+        try
+        {
+            keyEntry.ip_address = IpAddress(keys[1]);
+            keyEntry.l4_port = swss::to_int<int>(keys[2]);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid NAPT key %s: %s", key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         keyEntry.prototype = keys[0];
 
         if (op == SET_COMMAND)
@@ -2717,16 +2727,25 @@ void NatOrch::doNaptTableTask(Consumer& consumer)
             NaptEntryValue entry;
             string type;
 
-            for (auto i : kfvFieldsValues(t))
+            try
             {
-                if (fvField(i) == "entry_type")
-                    type = fvValue(i);
-                else if (fvField(i) == "translated_ip")
-                    entry.translated_ip = IpAddress(fvValue(i));
-                else if (fvField(i) == "translated_l4_port")
-                    entry.translated_l4_port = stoi(fvValue(i));
-                else if (fvField(i) == "nat_type")
-                    entry.nat_type = fvValue(i);
+                for (auto i : kfvFieldsValues(t))
+                {
+                    if (fvField(i) == "entry_type")
+                        type = fvValue(i);
+                    else if (fvField(i) == "translated_ip")
+                        entry.translated_ip = IpAddress(fvValue(i));
+                    else if (fvField(i) == "translated_l4_port")
+                        entry.translated_l4_port = swss::to_int<int>(fvValue(i));
+                    else if (fvField(i) == "nat_type")
+                        entry.nat_type = fvValue(i);
+                }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Invalid NAPT field for %s: %s", key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             /* NAT type is either dynamic or static */
@@ -2851,10 +2870,19 @@ void NatOrch::doTwiceNaptTableTask(Consumer& consumer)
 
         TwiceNaptEntryKey keyEntry;
 
-        keyEntry.src_ip      = IpAddress(keys[1]);
-        keyEntry.src_l4_port = stoi(keys[2]);
-        keyEntry.dst_ip      = IpAddress(keys[3]);
-        keyEntry.dst_l4_port = stoi(keys[4]);
+        try
+        {
+            keyEntry.src_ip      = IpAddress(keys[1]);
+            keyEntry.src_l4_port = swss::to_int<int>(keys[2]);
+            keyEntry.dst_ip      = IpAddress(keys[3]);
+            keyEntry.dst_l4_port = swss::to_int<int>(keys[4]);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid twice-NAPT key %s: %s", key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         keyEntry.prototype   = keys[0];
 
         if (op == SET_COMMAND)
@@ -2862,18 +2890,27 @@ void NatOrch::doTwiceNaptTableTask(Consumer& consumer)
             TwiceNaptEntryValue entry;
             string type;
 
-            for (auto i : kfvFieldsValues(t))
+            try
             {
-                if (fvField(i) == "entry_type")
-                    type = fvValue(i);
-                else if (fvField(i) == "translated_src_ip")
-                    entry.translated_src_ip = IpAddress(fvValue(i));
-                else if (fvField(i) == "translated_src_l4_port")
-                    entry.translated_src_l4_port = stoi(fvValue(i));
-                else if (fvField(i) == "translated_dst_ip")
-                    entry.translated_dst_ip = IpAddress(fvValue(i));
-                else if (fvField(i) == "translated_dst_l4_port")
-                    entry.translated_dst_l4_port = stoi(fvValue(i));
+                for (auto i : kfvFieldsValues(t))
+                {
+                    if (fvField(i) == "entry_type")
+                        type = fvValue(i);
+                    else if (fvField(i) == "translated_src_ip")
+                        entry.translated_src_ip = IpAddress(fvValue(i));
+                    else if (fvField(i) == "translated_src_l4_port")
+                        entry.translated_src_l4_port = swss::to_int<int>(fvValue(i));
+                    else if (fvField(i) == "translated_dst_ip")
+                        entry.translated_dst_ip = IpAddress(fvValue(i));
+                    else if (fvField(i) == "translated_dst_l4_port")
+                        entry.translated_dst_l4_port = swss::to_int<int>(fvValue(i));
+                }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Invalid twice-NAPT field for %s: %s", key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             /* NAT type is either dynamic or static */
@@ -2928,35 +2965,44 @@ void NatOrch::doNatGlobalTableTask(Consumer& consumer)
             continue;
         }
 
-        for (auto i : kfvFieldsValues(t))
+        try
         {
-            if (fvField(i) == "admin_mode")
+            for (auto i : kfvFieldsValues(t))
             {
-                mode = fvValue(i);
-
-                /* NAT mode is either enabled or disabled */
-                assert(mode == "enabled" || mode == "disabled");
-
-                if (mode != admin_mode)
+                if (fvField(i) == "admin_mode")
                 {
-                    if (mode == "enabled")
-                        enableNatFeature();
-                    else
-                        disableNatFeature();
+                    mode = fvValue(i);
+
+                    /* NAT mode is either enabled or disabled */
+                    assert(mode == "enabled" || mode == "disabled");
+
+                    if (mode != admin_mode)
+                    {
+                        if (mode == "enabled")
+                            enableNatFeature();
+                        else
+                            disableNatFeature();
+                    }
+                }
+                else if (fvField(i) == "nat_tcp_timeout")
+                {
+                    tcp_timeout = swss::to_int<int>(fvValue(i));
+                }
+                else if (fvField(i) == "nat_udp_timeout")
+                {
+                    udp_timeout = swss::to_int<int>(fvValue(i));
+                }
+                else if (fvField(i) == "nat_timeout")
+                {
+                    timeout = swss::to_int<int>(fvValue(i));
                 }
             }
-            else if (fvField(i) == "nat_tcp_timeout")
-            {
-                tcp_timeout = stoi(fvValue(i));
-            }
-            else if (fvField(i) == "nat_udp_timeout")
-            {
-                udp_timeout = stoi(fvValue(i));
-            }
-            else if (fvField(i) == "nat_timeout")
-            {
-                timeout = stoi(fvValue(i));
-            }
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid NAT global timeout for %s: %s", key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         SWSS_LOG_INFO("Global Values - Admin mode - %s, TCP - %d, UDP - %d and Both - %d", admin_mode.c_str(), tcp_timeout, udp_timeout, timeout);
