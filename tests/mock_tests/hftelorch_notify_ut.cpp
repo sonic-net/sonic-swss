@@ -261,14 +261,15 @@ namespace hftelorch_notify_test
         alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
         HFTelProfile *p = nullptr;
 
-        void init(sai_tam_tel_type_state_t state)
+        void init(sai_tam_tel_type_state_t state,
+                  sai_tam_tel_type_mode_t mode = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
         {
             memset(buf, 0, sizeof(buf));
             p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
 
             new (const_cast<string*>(&p->m_profile_name)) string("profile");
             new (const_cast<sai_tam_tel_type_mode_t*>(&p->m_tel_type_mode))
-                sai_tam_tel_type_mode_t(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+                sai_tam_tel_type_mode_t(mode);
             new (const_cast<unordered_set<sai_object_type_t>*>(&p->m_tel_type_supported_categories))
                 unordered_set<sai_object_type_t>({SAI_OBJECT_TYPE_PORT});
             p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
@@ -287,6 +288,11 @@ namespace hftelorch_notify_test
             // empty map, not raw zeroed memory.
             new (&p->m_sai_tam_report_objs)
                 decay_t<decltype(p->m_sai_tam_report_objs)>();
+            // Constructed even though no test here reads it directly:
+            // notifyConfigReady() -> updateTemplates() unconditionally
+            // assigns into this map.
+            new (&p->m_sai_tam_tel_type_templates)
+                decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
 
             auto guard = make_shared<sai_object_id_t>(0x700);
             p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_NULL] = guard;
@@ -305,6 +311,7 @@ namespace hftelorch_notify_test
             p->m_sai_tam_tel_type_objs.~unordered_map();
             p->m_sai_tam_tel_type_states.~unordered_map();
             p->m_sai_tam_report_objs.~unordered_map();
+            p->m_sai_tam_tel_type_templates.~unordered_map();
             p = nullptr;
         }
     };
@@ -578,4 +585,168 @@ namespace hftelorch_notify_test
     // commit 13a6f8ea is the gate rejecting the update while streaming,
     // which RejectsObjectNamesUpdateWhileStreaming and
     // TracksBlockedKeyOnceAcrossRepeatedRetries earlier in this file cover.
+
+    /* HFTelOrch::hasPendingGroupUpdate() is the lookup
+     * doTask(NotificationConsumer&) uses to decide whether a MIXED profile
+     * may advance to its configured stream state at config-ready, or must
+     * first let another group's still-blocked update commit - see
+     * notifyConfigReady's hold_before_configured. */
+    struct HasPendingGroupUpdateTest : public ::testing::Test
+    {
+        HFTelOrchStub stub;
+
+        void SetUp() override
+        {
+            stub.init();
+        }
+    };
+
+    TEST_F(HasPendingGroupUpdateTest, FalseWhenNothingBlocked)
+    {
+        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
+    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfile)
+    {
+        stub.p->m_group_update_blocked.insert("profile|QUEUE");
+        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
+    TEST_F(HasPendingGroupUpdateTest, FalseForDifferentProfile)
+    {
+        stub.p->m_group_update_blocked.insert("other_profile|QUEUE");
+        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
+    TEST_F(HasPendingGroupUpdateTest, DoesNotFalsePositiveOnNamePrefixCollision)
+    {
+        // "profile2" must not be mistaken for "profile" just because it
+        // starts with the same characters - the delimiter is part of the
+        // match.
+        stub.p->m_group_update_blocked.insert("profile2|QUEUE");
+        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
+    /* HFTelOrch::shouldHoldBeforeConfigured() gates hasPendingGroupUpdate()
+     * on MIXED mode. In SINGLE mode each group's tel_type is independent,
+     * so an unrelated group still blocked says nothing about the one whose
+     * config-ready just fired - holding it anyway would strand it at
+     * STOP_STREAM with no later notification to advance it, since its own
+     * commit has already completed (see the comment on the declaration). */
+    struct ShouldHoldBeforeConfiguredTest : public ::testing::Test
+    {
+        HFTelOrchStub stub;
+        GroupTableSetProfileStub profile;
+        shared_ptr<HFTelProfile> profile_ptr;
+
+        void init(sai_tam_tel_type_mode_t mode)
+        {
+            stub.init();
+            profile.init(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM, mode);
+            profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        }
+    };
+
+    TEST_F(ShouldHoldBeforeConfiguredTest, MixedModeHoldsWhenAnotherGroupPending)
+    {
+        init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+        stub.p->m_group_update_blocked.insert("profile|QUEUE");
+
+        EXPECT_TRUE(stub.p->shouldHoldBeforeConfigured(profile_ptr));
+    }
+
+    TEST_F(ShouldHoldBeforeConfiguredTest, MixedModeDoesNotHoldWhenNothingPending)
+    {
+        init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+
+        EXPECT_FALSE(stub.p->shouldHoldBeforeConfigured(profile_ptr));
+    }
+
+    /* The regression this fix closes: a SINGLE-mode profile must never be
+     * held back by another group's unrelated block, even though
+     * hasPendingGroupUpdate() alone would report one - each group has its
+     * own independent tel_type, so there's nothing for this group's
+     * config-ready to wait on. */
+    TEST_F(ShouldHoldBeforeConfiguredTest, SingleModeNeverHoldsEvenWithAnotherGroupPending)
+    {
+        init(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        stub.p->m_group_update_blocked.insert("profile|QUEUE");
+
+        EXPECT_FALSE(stub.p->shouldHoldBeforeConfigured(profile_ptr));
+    }
+
+    /*
+     * Fixture for HFTelProfile::notifyConfigReady()'s hold_before_configured
+     * parameter: mirrors ProfileTableSetDisableTest's SAI mock, plus
+     * get_tam_tel_type_attribute for updateTemplates() (also called
+     * unconditionally by notifyConfigReady).
+     */
+    struct NotifyConfigReadyTest : public GroupTableSetLiveReconfigTest
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        static sai_status_t mock_set_tam_tel_type_attribute(
+            sai_object_id_t /*tam_tel_type_id*/, const sai_attribute_t * /*attr*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_get_tam_tel_type_attribute(
+            sai_object_id_t /*tam_tel_type_id*/, uint32_t /*attr_count*/, sai_attribute_t *attr_list)
+        {
+            attr_list[0].value.u8list.count = 0;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            GroupTableSetLiveReconfigTest::SetUp();
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.set_tam_tel_type_attribute = mock_set_tam_tel_type_attribute;
+            ut_api.get_tam_tel_type_attribute = mock_get_tam_tel_type_attribute;
+            sai_tam_api = &ut_api;
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+            GroupTableSetLiveReconfigTest::TearDown();
+        }
+    };
+
+    /* The fix for Ze's config-reload/startup report: if another group of the
+     * same MIXED profile is still blocked behind this commit, config-ready
+     * must settle at STOP_STREAM - not jump straight to the profile's
+     * configured state - so the blocked group's retry can apply and commit
+     * too, instead of silently missing the stream. */
+    TEST_F(NotifyConfigReadyTest, HoldsAtStopWhenAnotherGroupStillPending)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+        profile.p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        profile.p->notifyConfigReady(SAI_OBJECT_TYPE_NULL, /*hold_before_configured=*/true);
+
+        EXPECT_EQ(profile.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    /* Once nothing is pending, config-ready advances to the profile's
+     * configured state exactly as before this fix. */
+    TEST_F(NotifyConfigReadyTest, AdvancesToConfiguredStateWhenNothingPending)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+        profile.p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_START_STREAM;
+
+        profile.p->notifyConfigReady(SAI_OBJECT_TYPE_NULL, /*hold_before_configured=*/false);
+
+        EXPECT_EQ(profile.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+    }
 }

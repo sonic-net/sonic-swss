@@ -619,11 +619,15 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     // each mode. task_need_retry (not task_failed) because the block is
     // transient and orchagent's own retry queue re-attempts task_need_retry
     // items on every doTask pass - no new CONFIG_DB write is needed to
-    // trigger the retry. In MIXED mode specifically, that retry only
-    // resolves once an operator explicitly disables the profile: the
-    // GCU-based apply path only writes CONFIG_DB deltas, so resubmitting an
-    // identical desired config produces no new write and so no new
-    // notification either.
+    // trigger the retry. In MIXED mode specifically: if another group's
+    // commit is still in flight (e.g. several groups configured back to
+    // back at startup), the block clears itself once that commit's
+    // config-ready arrives - see notifyConfigReady's hold_before_configured
+    // in doTask(NotificationConsumer&). Once the shared tel_type has
+    // actually reached START_STREAM, though, the retry only resolves once
+    // an operator explicitly disables the profile: the GCU-based apply path
+    // only writes CONFIG_DB deltas, so resubmitting an identical desired
+    // config produces no new write and so no new notification either.
     const string blocked_key = profile_name + "|" + group_name;
     if (!profile->canBeUpdated(type))
     {
@@ -635,7 +639,8 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
                 "HFTel: group %s:%s configuration update is pending - %s",
                 profile_name.c_str(), group_name.c_str(),
                 profile->isMixedTypeMode()
-                    ? "MIXED mode doesn't support live reconfiguration; disable the profile to apply it"
+                    ? "MIXED mode doesn't support live reconfiguration; it is applied once any in-flight "
+                      "commit completes, otherwise disable the profile to apply it"
                     : "a commit is already in progress for this group; it will be applied once that completes");
         }
         return task_process_status::task_need_retry;
@@ -765,6 +770,29 @@ bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) con
     return false;
 }
 
+bool HFTelOrch::hasPendingGroupUpdate(const std::string &profile_name) const
+{
+    SWSS_LOG_ENTER();
+
+    const string prefix = profile_name + "|";
+    for (const auto &key : m_group_update_blocked)
+    {
+        if (key.compare(0, prefix.size(), prefix) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool HFTelOrch::shouldHoldBeforeConfigured(const std::shared_ptr<HFTelProfile> &profile) const
+{
+    SWSS_LOG_ENTER();
+
+    return profile->isMixedTypeMode() && hasPendingGroupUpdate(profile->getProfileName());
+}
+
 void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -811,7 +839,23 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
         // TODO: A potential optimization
         // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
-        profile.second->notifyConfigReady(type);
+        //
+        // In MIXED mode, multiple groups can be queued up (e.g. at startup
+        // config replay) before the shared tel_type's first commit reaches
+        // config-ready. If another group is still blocked behind this
+        // commit, settle at STOP_STREAM instead of jumping to the profile's
+        // configured state: that lets groupTableSet's retry apply the
+        // pending group and commit it too, instead of the commit silently
+        // leaving that group out of the stream.
+        //
+        // This only applies in MIXED mode, where all groups genuinely share
+        // the one tel_type this notification is for. In SINGLE mode each
+        // group has its own independent tel_type, so hasPendingGroupUpdate()
+        // (which isn't type-scoped) could otherwise report an unrelated
+        // group's block and hold this one at STOP_STREAM with no retry path
+        // left to advance it - nothing re-fires its config-ready once its
+        // own commit has already completed - see shouldHoldBeforeConfigured.
+        profile.second->notifyConfigReady(type, shouldHoldBeforeConfigured(profile.second));
 
         // In SINGLE mode SAI fires this callback once per object type, so we
         // write the matching per-group STATE_DB entry. In MIXED mode the

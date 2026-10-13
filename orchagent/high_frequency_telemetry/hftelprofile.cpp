@@ -193,7 +193,7 @@ sai_tam_tel_type_state_t HFTelProfile::getStreamState(sai_object_type_t object_t
     return state_itr->second;
 }
 
-void HFTelProfile::notifyConfigReady(sai_object_type_t object_type)
+void HFTelProfile::notifyConfigReady(sai_object_type_t object_type, bool hold_before_configured)
 {
     SWSS_LOG_ENTER();
 
@@ -204,7 +204,7 @@ void HFTelProfile::notifyConfigReady(sai_object_type_t object_type)
     }
 
     updateTemplates(*itr->second);
-    setStreamState(object_type, m_setting_state);
+    setStreamState(object_type, hold_before_configured ? SAI_TAM_TEL_TYPE_STATE_STOP_STREAM : m_setting_state);
 }
 
 sai_tam_tel_type_state_t HFTelProfile::getTelemetryTypeState(sai_object_type_t object_type) const

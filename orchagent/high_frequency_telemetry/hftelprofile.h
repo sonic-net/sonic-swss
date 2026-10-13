@@ -46,7 +46,13 @@ public:
     void setStreamState(sai_tam_tel_type_state_t state);
     void setStreamState(sai_object_type_t object_type, sai_tam_tel_type_state_t state);
     sai_tam_tel_type_state_t getStreamState(sai_object_type_t object_type) const;
-    void notifyConfigReady(sai_object_type_t object_type);
+    // hold_before_configured settles the tel_type at STOP_STREAM instead of
+    // the profile's configured state (m_setting_state) once config-ready
+    // fires. HFTelOrch sets it when another group of a MIXED profile still
+    // has a configuration update pending at config-ready, so that update
+    // gets to apply (and commit its own CREATE_CONFIG) before the profile
+    // is allowed to start streaming - see HFTelOrch::doTask(NotificationConsumer&).
+    void notifyConfigReady(sai_object_type_t object_type, bool hold_before_configured = false);
     sai_tam_tel_type_state_t getTelemetryTypeState(sai_object_type_t object_type) const;
     sai_guard_t getTAMTelTypeGuard(sai_object_id_t tam_tel_type_obj) const;
     sai_object_type_t getObjectType(sai_object_id_t tam_tel_type_obj) const;
