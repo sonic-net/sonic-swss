@@ -1666,9 +1666,18 @@ bool CoppOrch::bindPolicerCounter(sai_object_id_t policer_id, const std::string 
         return true;
     }
 
-    // Overwrite any stale OID left by warm reboot
+    // Warm reboot re-creates the policer under a new VID, and installed_counters
+    // doesn't know the old one, so its FLEX_COUNTER entry has to be dropped here.
+    std::string policer_oid = sai_serialize_object_id(policer_id);
+    std::string old_oid;
+    if (m_policerCounterTable->hget("", trap_group_name, old_oid) && old_oid != policer_oid)
+    {
+        stopFlexCounterPolling(gSwitchId, std::string(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP) + ":" + old_oid);
+        m_counter_db->del("COUNTERS:" + old_oid);
+    }
+
     vector<FieldValueTuple> nameMapFvs;
-    nameMapFvs.emplace_back(trap_group_name, sai_serialize_object_id(policer_id));
+    nameMapFvs.emplace_back(trap_group_name, policer_oid);
     m_policerCounterTable->set("", nameMapFvs);
 
     // Defer FlexCounter registration until the policer's VID->RID mapping exists

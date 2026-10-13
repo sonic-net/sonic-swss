@@ -1401,4 +1401,39 @@ namespace flexcounter_test
         coppOrch->clearPolicerCounterIdList();
         m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
     }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsWarmRebootDropsStaleVid)
+    {
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsAll);
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+
+        sai_object_id_t tg_oid     = 0x4000000000004;
+        sai_object_id_t old_policer = 0x5000000000004;
+        sai_object_id_t new_policer = 0x5000000000005;
+
+        auto before = makeCoppOrchUnderHook(app_db.get());
+        seedTrapGroupWithPolicer(*before, "test_group_warm", tg_oid, old_policer);
+        before->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*before, old_policer);
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     old_policer, POLICER_COUNTER_ID_LIST));
+
+        // A restarted orchagent has empty process-local maps and a new VID for the same trap group.
+        auto after = makeCoppOrchUnderHook(app_db.get());
+        seedTrapGroupWithPolicer(*after, "test_group_warm", tg_oid, new_policer);
+        after->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*after, new_policer);
+
+        EXPECT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      old_policer, POLICER_COUNTER_ID_LIST));
+        EXPECT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     new_policer, POLICER_COUNTER_ID_LIST));
+        std::string mapped;
+        ASSERT_TRUE(after->m_policerCounterTable->hget("", "test_group_warm", mapped));
+        EXPECT_EQ(mapped, sai_serialize_object_id(new_policer));
+
+        after->clearPolicerCounterIdList();
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
 }

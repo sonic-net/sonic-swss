@@ -10,6 +10,7 @@ extern "C" {
 #include <map>
 #include <set>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include "dbconnector.h"
 #include "orch.h"
@@ -108,8 +109,8 @@ protected:
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     // Policer OID -> trap group name for bound policer counters; process-local
     // dedup so a warm-reboot replay (new VID, stale name map) still rebinds.
-    std::map<sai_object_id_t, std::string> m_policer_obj_name_map;
-    std::map<sai_object_id_t, std::string> m_pendingPolicerAddToFlexCntr;
+    std::unordered_map<sai_object_id_t, std::string> m_policer_obj_name_map;
+    std::unordered_map<sai_object_id_t, std::string> m_pendingPolicerAddToFlexCntr;
 
     std::shared_ptr<DBConnector> m_counter_db;
     std::shared_ptr<DBConnector> m_asic_db;
