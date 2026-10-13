@@ -109,6 +109,31 @@ class TestAcl:
             # Verify the STATE_DB entry is removed
             dvs_acl.verify_acl_table_status(L3_TABLE_NAME, None)
 
+    def test_AclTableGroupMemberPriority(self, dvs_acl):
+        # Omitting priority yields the default group member priority of 100.
+        try:
+            dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
+
+            acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+            acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3_BIND_PORTS))
+
+            dvs_acl.verify_acl_table_group_member_priority(acl_table_id, "100", len(acl_table_group_ids))
+        finally:
+            dvs_acl.remove_acl_table(L3_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+        # A configured priority is programmed as the group member priority.
+        try:
+            dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS, priority="555")
+
+            acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+            acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3_BIND_PORTS))
+
+            dvs_acl.verify_acl_table_group_member_priority(acl_table_id, "555", len(acl_table_group_ids))
+        finally:
+            dvs_acl.remove_acl_table(L3_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
     def test_InvalidAclTableCreationDeletion(self, dvs_acl):
         try:
             dvs_acl.create_acl_table("INVALID_ACL_TABLE", L3_TABLE_TYPE, "dummy_port", "invalid_stage")
