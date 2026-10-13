@@ -707,6 +707,22 @@ bool VNetRouteOrch::del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
 
 static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
 
+/*
+ * RouteOrch's cache is read instead of the SAI entry: syncd rejects a GET on
+ * a route entry while it is in INIT_VIEW, which is where warm reboot replays.
+ */
+static bool route_orch_forwards_to_rif(sai_object_id_t vr_id, const IpPrefix& prefix, sai_object_id_t rif_id)
+{
+    const auto nhg = gRouteOrch->getSyncdRouteNhgKey(vr_id, prefix);
+    if (nhg.getSize() != 1)
+    {
+        return false;
+    }
+
+    const auto& nh = *nhg.getNextHops().begin();
+    return nh.isIntfNextHop() && gIntfsOrch->getRouterIntfsId(nh.alias) == rif_id;
+}
+
 bool VNetRouteOrch::add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
 {
     const auto key = std::make_pair(vr_id, getIpPrefixFromSaiPrefix(ip_pfx));
@@ -727,17 +743,26 @@ bool VNetRouteOrch::add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sa
          * The prefix can already be programmed: the connected route for an
          * interface assigned to a VNET arrives through RouteOrch, and a config
          * reload or an fpmsyncd replay re-delivers it here as a subnet route.
-         * Converge onto the existing entry instead of failing the task, the way
-         * del_route() already tolerates SAI_STATUS_ITEM_NOT_FOUND.
-         * The CRM counter is deliberately not incremented: the entry was
-         * accounted for when it was first programmed.
+         * A route this orch created is converged onto with a next hop update.
+         * An entry another orch created is only borrowed, never repointed:
+         * its owner keeps the next hop and the CRM count, and del_route()
+         * leaves the entry for that owner to remove.
          */
-        SWSS_LOG_INFO("Route already programmed, updating next hop instead");
-        if (!update_route(vr_id, ip_pfx, nh_id))
+        auto ownership = route_ownership_.find(key);
+        if (ownership != route_ownership_.end() && ownership->second)
         {
-            return false;
+            SWSS_LOG_INFO("Route %s already programmed, updating next hop",
+                          key.second.to_string().c_str());
+            return update_route(vr_id, ip_pfx, nh_id);
         }
+
         route_ownership_.emplace(key, false);
+
+        if (!route_orch_forwards_to_rif(vr_id, key.second, nh_id))
+        {
+            SWSS_LOG_WARN("Route %s is programmed by another orch with a different next hop, "
+                          "leaving it in place", key.second.to_string().c_str());
+        }
         return true;
     }
     else if (status != SAI_STATUS_SUCCESS)
@@ -1903,6 +1928,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
     }
 
+    bool subnet_route_programmed = true;
     for (auto vr_id : vr_set)
     {
         if (vr_id == SAI_NULL_OBJECT_ID)
@@ -1915,6 +1941,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
             {
                 SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
+                subnet_route_programmed = false;
                 break;
             }
             else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
@@ -1935,6 +1962,19 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     if (op == SET_COMMAND)
     {
+        const auto& cached_routes = vrf_obj->getRouteMap();
+        auto cached = cached_routes.find(ipPrefix);
+        if (subnet_route_programmed
+            && cached != cached_routes.end()
+            && vrf_obj->getTunnelRoutes().find(ipPrefix) == vrf_obj->getTunnelRoutes().end()
+            && (cached->second.ips != nh.ips || cached->second.ifname != nh.ifname))
+        {
+            const auto& cached_ips = cached->second.ips;
+            bool cached_is_subnet = cached_ips.empty() ||
+                std::any_of(cached_ips.begin(), cached_ips.end(),
+                            [](const IpAddress& a) { return a.isZero(); });
+            vrf_obj->removeRoute(ipPrefix, cached_is_subnet);
+        }
         vrf_obj->addRoute(ipPrefix, nh, is_subnet);
     }
     else
