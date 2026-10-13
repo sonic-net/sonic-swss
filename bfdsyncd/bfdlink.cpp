@@ -357,7 +357,10 @@ void BfdLink::handleBfdDpMessage(size_t start)
         return;
     }
 
-    memcpy(&bm, bmp, sizeof(bm));
+    /* bm is zero-initialized; copy only the validated bytes for this message
+     * type so a short message (e.g. a 12-byte counter request) never reads
+     * past the end of the receive buffer. */
+    memcpy(&bm, bmp, msg_len);
 
     /* HW offload does not support counters, return 0 for counters here */
     if (type == DP_REQUEST_SESSION_COUNTERS)
@@ -420,6 +423,27 @@ void BfdLink::handleBfdDpMessage(size_t start)
         it = m_key2bfd.find(bfdkey_map);
         if (it != m_key2bfd.end())
         {
+            /* FRR signals administrative shutdown via DP_ADD_SESSION with
+             * SESSION_SHUTDOWN set, not via DP_DELETE_SESSION. Handle this
+             * explicitly before the generic duplicate check below: otherwise
+             * this would be treated as an unchanged duplicate and
+             * bfdStateUpdate() would echo back the (possibly stale) "Up"
+             * state cached in STATE_DB, undoing the peer's administrative
+             * shutdown. */
+            if (flags & SESSION_SHUTDOWN)
+            {
+                SWSS_LOG_NOTICE("bfd session key %s administratively shutdown by peer, reporting down to bfdd", bfdkey_map.c_str());
+                /* Keep the cached entry's timing fields in the same
+                 * host-byte-order convention used everywhere else (see the
+                 * ntohl() conversion below this block), so later duplicate
+                 * detection on this cached entry stays correct. */
+                it->second.data.session = bm.data.session;
+                it->second.data.session.min_rx = ntohl(bmp->data.session.min_rx);
+                it->second.data.session.min_tx = ntohl(bmp->data.session.min_tx);
+                sendBfdSessionState(it->second.data.session, STATE_ADMINDOWN);
+                return;
+            }
+
             /* check if there is any timing parameter change. return if not */
             bool changed = false;
             if (it->second.data.session.min_rx != ntohl(bmp->data.session.min_rx))
@@ -560,6 +584,30 @@ void BfdLink::bfdDebugMessage(struct bfddp_message *bm)
         SWSS_LOG_INFO("dst %s", inet_ntoa(*(struct in_addr *)&bm->data.session.dst));
     }
 
+}
+
+void BfdLink::sendBfdSessionState(const struct bfddp_session &session, uint8_t state)
+{
+    struct bfddp_message msg = {};
+    uint16_t msglen = sizeof(msg.header) + sizeof(msg.data.state);
+
+    /* Message header. */
+    msg.header.version = BFD_DP_VERSION;
+    msg.header.length = htons(msglen);
+    msg.header.type = htons(BFD_STATE_CHANGE);
+
+    /* Message payload. */
+    msg.data.state.lid = session.lid;
+    msg.data.state.state = state;
+
+    if (msglen > m_bufSize)
+    {
+        /* should not be reached here */
+        SWSS_LOG_THROW("Message length %d is greater than the send buffer size %d", msglen, m_bufSize);
+    }
+
+    memcpy(m_sendBuffer, &msg, msglen);
+    sendmsg(msglen);
 }
 
 void BfdLink::bfdStateUpdate(std::string key)

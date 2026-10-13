@@ -38,7 +38,8 @@ bfd_msg_len (const bfd_msg_hdr_t *hdr)
 /*
  * bfd_msg_ok
  *
- * Returns TRUE if a message looks well-formed.
+ * Returns TRUE if a message looks well-formed, including that its declared
+ * length is large enough to hold the full payload required by its type.
  *
  * @param len The length in bytes from 'hdr' to the end of the buffer.
  */
@@ -46,14 +47,23 @@ static inline int
 bfd_msg_ok (const bfd_msg_hdr_t *hdr)
 {
   size_t msg_len;
+  size_t min_len;
 
-  if ((ntohs(hdr->type) != DP_ADD_SESSION) && (ntohs(hdr->type) != DP_DELETE_SESSION) && (ntohs(hdr->type) != DP_REQUEST_SESSION_COUNTERS))
+  switch (ntohs(hdr->type))
   {
+  case DP_ADD_SESSION:
+  case DP_DELETE_SESSION:
+      min_len = BFD_MSG_HDR_LEN + sizeof(struct bfddp_session);
+      break;
+  case DP_REQUEST_SESSION_COUNTERS:
+      min_len = BFD_MSG_HDR_LEN + sizeof(struct bfddp_request_counters);
+      break;
+  default:
       return 0;
   }
 
   msg_len = bfd_msg_len (hdr);
-  if (msg_len < BFD_MSG_HDR_LEN || msg_len > BFD_MAX_MSG_LEN)
+  if (msg_len < min_len || msg_len > BFD_MAX_MSG_LEN)
     return 0;
 
   return 1;
@@ -91,6 +101,10 @@ public:
     char *m_messageBuffer;
 
 private:
+    /* Report a session's state directly to bfdd, bypassing STATE_DB. Used to
+     * honor administrative shutdown without echoing back a stale cached state. */
+    void sendBfdSessionState(const struct bfddp_session &session, uint8_t state);
+
     /* bfd table */
     ProducerStateTable m_bfdTable;
     Table m_bfdStateTable;
