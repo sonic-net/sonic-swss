@@ -1,6 +1,8 @@
 #ifndef SWSS_EVPNMHORCH_H
 #define SWSS_EVPNMHORCH_H
 
+#include <chrono>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -83,8 +85,8 @@ private:
 
     std::map<std::string, EsBackupEntry> m_esBackup;
     std::set<std::string> m_esBackupPending;
-    /* ES ports back up and still switched over, until the switchback hold passes. */
-    std::set<std::string> m_esBackupSwitchback;
+    /* ES ports back up and still switched over, each until its switchback hold passes. */
+    std::map<std::string, std::chrono::steady_clock::time_point> m_esBackupSwitchback;
     swss::SelectableTimer *m_esBackupSwitchbackTimer = nullptr;
     bool m_esBackupCapChecked = false;
     bool m_esBackupSupported = false;
@@ -106,6 +108,7 @@ private:
     void onEsBackupPortOperChange(const Port &port);
     void onEsBackupLagMemberChange(const std::string &member_alias, const Port *changed_member);
     void onEsBackupSwitchbackTimer();
+    void armEsBackupSwitchbackTimer();
     void onEsBackupBridgePortChange(const Port &port, bool add);
 };
 

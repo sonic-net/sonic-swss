@@ -1,5 +1,7 @@
 #include "evpnmhorch.h"
 
+#include <algorithm>
+
 #include "fdborch.h"
 #include "l2nhgorch.h"
 #include "portsorch.h"
@@ -16,8 +18,8 @@ extern sai_bridge_api_t *sai_bridge_api;
 /*
  * An ES port that comes back up stays switched over this long: its LAG member
  * starts distributing after the LAG goes oper up, and the host starts collecting
- * on the link later still (measured on a TH5: ~100 ms of loss switching back at
- * oper up). Traffic keeps flowing through the peers meanwhile.
+ * on the link later still, so switching back at oper up loses traffic. Traffic
+ * keeps flowing through the peers meanwhile.
  */
 #define ES_BACKUP_SWITCHBACK_HOLD_SEC 1
 
@@ -687,8 +689,8 @@ bool EvpnMhOrch::isEsBackupAttached(const std::string &port_name) const
 /*
  * A LAG forwards only through members that are up and distributing. When its last
  * member stops distributing, the LAG stops forwarding before its oper state follows:
- * the member's collection disable and the LAG oper down come after it (~15 ms on a
- * TH5, where the collection disable is slow). A member counts as forwarding unless
+ * the member's collection disable and the LAG oper down come after it, which can
+ * take milliseconds where the collection disable is slow. A member counts as forwarding unless
  * it is known to be oper down or not distributing. changed_member, when set, is a
  * member whose new oper state PortsOrch has not stored yet.
  */
@@ -737,9 +739,9 @@ void EvpnMhOrch::updateEsBackupSwitchover(const std::string &port_name, bool dow
     {
         if (e->second.switchover)
         {
-            m_esBackupSwitchback.insert(port_name);
-            m_esBackupSwitchbackTimer->stop();
-            m_esBackupSwitchbackTimer->start();
+            m_esBackupSwitchback[port_name] = std::chrono::steady_clock::now() +
+                                              std::chrono::seconds(ES_BACKUP_SWITCHBACK_HOLD_SEC);
+            armEsBackupSwitchbackTimer();
         }
         return;
     }
@@ -779,12 +781,40 @@ void EvpnMhOrch::onEsBackupLagMemberChange(const std::string &member_alias, cons
     }
 }
 
-void EvpnMhOrch::onEsBackupSwitchbackTimer()
+/* The timer fires at the earliest switchback deadline; each port switches back only
+ * once its own hold has passed. */
+void EvpnMhOrch::armEsBackupSwitchbackTimer()
 {
     m_esBackupSwitchbackTimer->stop();
-    std::vector<std::string> deleted;
-    for (const auto &port_name : m_esBackupSwitchback)
+    if (m_esBackupSwitchback.empty())
     {
+        return;
+    }
+    auto first = m_esBackupSwitchback.begin()->second;
+    for (const auto &kv : m_esBackupSwitchback)
+    {
+        first = std::min(first, kv.second);
+    }
+    auto wait = std::chrono::duration_cast<std::chrono::nanoseconds>(first - std::chrono::steady_clock::now());
+    long long ns = std::max<long long>(wait.count(), 1000000);
+    m_esBackupSwitchbackTimer->setInterval(timespec { .tv_sec = static_cast<time_t>(ns / 1000000000),
+                                                      .tv_nsec = static_cast<long>(ns % 1000000000) });
+    m_esBackupSwitchbackTimer->start();
+}
+
+void EvpnMhOrch::onEsBackupSwitchbackTimer()
+{
+    auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> deleted;
+    for (auto it = m_esBackupSwitchback.begin(); it != m_esBackupSwitchback.end();)
+    {
+        if (it->second > now)
+        {
+            ++it;
+            continue;
+        }
+        const std::string port_name = it->first;
+        it = m_esBackupSwitchback.erase(it);
         auto e = m_esBackup.find(port_name);
         Port port;
         if (e == m_esBackup.end() || !e->second.switchover ||
@@ -802,7 +832,7 @@ void EvpnMhOrch::onEsBackupSwitchbackTimer()
             deleted.push_back(port_name);
         }
     }
-    m_esBackupSwitchback.clear();
+    armEsBackupSwitchbackTimer();
     for (const auto &port_name : deleted)
     {
         if (!finishEsBackupDelete(port_name))
