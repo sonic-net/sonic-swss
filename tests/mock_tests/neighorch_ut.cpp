@@ -11,6 +11,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "mock_table.h"
 #include "subscriberstatetable.h"
 
 EXTERN_MOCK_FNS
@@ -101,6 +102,49 @@ namespace neighorch_test
             gNeighOrch->addExistingData(&neigh_table);
             static_cast<Orch *>(gNeighOrch)->doTask();
             neigh_table.del(key);
+        }
+
+        void DeleteNeighbor(std::string vlan, std::string ip)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gNeighOrch->getExecutor(APP_NEIGH_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            string key = vlan + consumer->getConsumerTable()->getTableNameSeparator() + ip;
+            consumer->addToSync({ key, DEL_COMMAND, {} });
+            static_cast<Orch *>(gNeighOrch)->doTask(*consumer);
+        }
+
+        bool HasNeighResolveKey(std::string vlan, std::string ip)
+        {
+            Table resolve_table = Table(m_app_db.get(), APP_NEIGH_RESOLVE_TABLE_NAME);
+            std::vector<FieldValueTuple> fvs;
+            return resolve_table.get(vlan + resolve_table.getTableNameSeparator() + ip, fvs);
+        }
+
+        FdbEntry Vlan1000FdbEntry(const string &mac)
+        {
+            Port vlan_port;
+            gPortsOrch->getPort(VLAN_1000, vlan_port);
+
+            FdbEntry fdb_entry;
+            fdb_entry.mac = MacAddress(mac);
+            fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+            fdb_entry.port_name = ETHERNET0;
+            return fdb_entry;
+        }
+
+        void SendFdbEvent(sai_fdb_event_t type, const string &mac, const string &port_alias)
+        {
+            Port vlan_port;
+            ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan_port));
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(port_alias, port));
+            ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+            sai_fdb_entry_t entry = {};
+            entry.switch_id = gSwitchId;
+            memcpy(entry.mac_address, MacAddress(mac).getMac(), sizeof(sai_mac_t));
+            entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+            gFdbOrch->update(type, &entry, port.m_bridge_port_id, SAI_FDB_ENTRY_TYPE_DYNAMIC);
         }
 
         std::unique_ptr<Consumer> CreateVoqSystemNeighConsumer()
@@ -656,6 +700,124 @@ namespace neighorch_test
 
         // Verify neighbor entry is still present (ARP resolve doesn't remove it)
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+    }
+
+    TEST_F(NeighOrchTest, ProcessFDBResolve_ClearedWhenNeighborReported)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+        testing_db::resetOperationCounters();
+
+        gNeighOrch->processFDBResolve(Vlan1000FdbEntry(MAC1));
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), 1u);
+
+        // The kernel reports the neighbor with the same MAC once it is refreshed
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        EXPECT_FALSE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_RESOLVE_TABLE_NAME), 1u);
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+
+        // Later updates for the neighbor do not touch the resolve table
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_RESOLVE_TABLE_NAME), 1u);
+    }
+
+    TEST_F(NeighOrchTest, ProcessFDBResolve_ClearedWhenNeighborMacChanges)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        gNeighOrch->processFDBResolve(Vlan1000FdbEntry(MAC1));
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(::testing::AnyNumber());
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(::testing::AnyNumber());
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC3);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors[VLAN1000_NEIGH].mac, MacAddress(MAC3));
+
+        EXPECT_FALSE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+    }
+
+    TEST_F(NeighOrchTest, ProcessFDBResolve_ClearedWhenNeighborRemoved)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        gNeighOrch->processFDBResolve(Vlan1000FdbEntry(MAC1));
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+
+        // The refresh failed and the kernel deleted the neighbor
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry);
+        DeleteNeighbor(VLAN_1000, TEST_IP);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0);
+
+        EXPECT_FALSE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+    }
+
+    TEST_F(NeighOrchTest, ProcessFDBResolve_DisableKeepsRefreshPending)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        gNeighOrch->processFDBResolve(Vlan1000FdbEntry(MAC1));
+        EXPECT_TRUE(gNeighOrch->disableNeighbor(VLAN1000_NEIGH));
+
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_EQ(gNeighOrch->m_neighborToRefresh.count(VLAN1000_NEIGH), 1u);
+    }
+
+    TEST_F(NeighOrchTest, ProcessFDBResolve_KeepsPendingNextHopResolve)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        // A route asked for the same neighbor; that request owns the shared key
+        gNeighOrch->m_neighborToResolve.insert(VLAN1000_NEIGH);
+        gNeighOrch->processFDBResolve(Vlan1000FdbEntry(MAC1));
+        testing_db::resetOperationCounters();
+
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_RESOLVE_TABLE_NAME), 0u);
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
+        gNeighOrch->m_neighborToResolve.erase(VLAN1000_NEIGH);
+    }
+
+    TEST_F(NeighOrchTest, FdbAgeOutThenRelearnResolvesOnceAndClears)
+    {
+        const string HOST_MAC = "62:f9:65:10:2f:0a";
+
+        // FdbOrch drops a learn on a port that is oper down
+        Port eth0;
+        ASSERT_TRUE(gPortsOrch->getPort(ETHERNET0, eth0));
+        eth0.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        gPortsOrch->setPort(ETHERNET0, eth0);
+
+        SendFdbEvent(SAI_FDB_EVENT_LEARNED, HOST_MAC, ETHERNET0);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, HOST_MAC);
+        testing_db::resetOperationCounters();
+
+        // A station move reported as an age-out of the old entry plus a new learn
+        SendFdbEvent(SAI_FDB_EVENT_AGED, HOST_MAC, ETHERNET0);
+        SendFdbEvent(SAI_FDB_EVENT_LEARNED, HOST_MAC, ETHERNET0);
+
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), 1u);
+        EXPECT_TRUE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+
+        LearnNeighbor(VLAN_1000, TEST_IP, HOST_MAC);
+
+        EXPECT_FALSE(HasNeighResolveKey(VLAN_1000, TEST_IP));
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), 1u);
+        EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
     }
 
     TEST_F(NeighOrchTest, ProcessFDBResolve_InvalidVlanId)
