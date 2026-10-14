@@ -26,6 +26,21 @@ class TestHFT(object):
         ])
         tbl.set(name, fvs)
 
+    def set_hft_profile_state(self, dvs, name="test", status="disabled"):
+        """Set an existing HFT profile's stream_state in CONFIG_DB.
+
+        In MIXED mode a group/profile delete while the shared tel_type is
+        actively streaming is rejected (by design - live reconfiguration
+        isn't supported once the stream has started), so callers must drive
+        the profile back to disabled before deleting any of its groups or
+        itself, then give orchagent time to settle before deleting.
+        """
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_PROFILE")
+        if tbl.get(name)[0]:
+            tbl.set(name, swsscommon.FieldValuePairs([("stream_state", status)]))
+            time.sleep(1)
+
     def create_hft_group(self, dvs, profile_name="test", group_name="PORT",
                          object_names="Ethernet0",
                          object_counters="IF_IN_OCTETS"):
@@ -345,6 +360,10 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(1, 1)])
 
+        # Disable the profile before deleting its group - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
+
         # Clean up group first
         self.delete_hft_group(dvs)
         time.sleep(2)
@@ -373,6 +392,10 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(3, 3)])
 
+        # Disable the profile before deleting its group - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
+
         # Clean up group
         self.delete_hft_group(dvs)
         time.sleep(2)
@@ -400,6 +423,10 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(3, 3)])
 
+        # Disable the profile before deleting its group - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
+
         # Delete group
         self.delete_hft_group(dvs)
         time.sleep(2)
@@ -413,13 +440,17 @@ class TestHFT(object):
                               object_names="Ethernet0,Ethernet4,Ethernet8",
                               object_counters="IF_IN_OCTETS,IF_IN_UCAST_PKTS,"
                                               "IF_IN_DISCARDS")
+
+        # Re-enable the profile so the recreated group streams again
+        self.set_hft_profile_state(dvs, status="enabled")
         time.sleep(5)
 
         # Verify ASIC objects are created again
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(3, 3)])
 
-        # Final cleanup
+        # Final cleanup - disable before deleting the group again
+        self.set_hft_profile_state(dvs)
         self.delete_hft_group(dvs)
         time.sleep(2)
 
@@ -570,6 +601,10 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(1, 1)])
 
+        # Disable the profile before deleting its group - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
+
         self.delete_hft_group(dvs, group_name="QUEUE")
         time.sleep(2)
 
@@ -608,6 +643,10 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         self.verify_asic_db_objects(asic_db, groups=[(3, 3), (3,3)], watermark_count=3)
         # self.verify_asic_db_objects(asic_db, groups=[(3, 3), (3,3), (3, 3), (3, 3)])
+
+        # Disable the profile before deleting its groups - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
 
         # Clean up group
         self.delete_hft_group(dvs, group_name="PORT")
@@ -773,6 +812,9 @@ class TestHFT(object):
                     f"Expected non-empty object_ids for {key}; entry={entry}"
                 )
         finally:
+            # Disable the profile before deleting its groups - MIXED mode
+            # rejects a group delete while the shared tel_type is streaming
+            self.set_hft_profile_state(dvs, name=profile_name)
             self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
             self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
             self.delete_hft_profile(dvs, name=profile_name)
@@ -871,6 +913,9 @@ class TestHFT(object):
                 "combined IPFIX template)"
             )
         finally:
+            # Disable the profile before deleting its groups - MIXED mode
+            # rejects a group delete while the shared tel_type is streaming
+            self.set_hft_profile_state(dvs, name=profile_name)
             self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
             self.delete_hft_group(dvs, profile_name=profile_name, group_name=queue_group)
             self.delete_hft_profile(dvs, name=profile_name)
