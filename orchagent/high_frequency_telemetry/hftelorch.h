@@ -64,6 +64,15 @@ private:
     // groupTableSet log exactly once per block instead of on every retry.
     std::unordered_set<std::string> m_group_update_blocked;
 
+    // Tracks "profile|group" keys ("profile|" for a profile-level delete)
+    // currently rejected by groupTableDel()/profileTableDel() with
+    // task_need_retry because the profile is still streaming. Logged once
+    // per block via the same insert()-returns-true-only-once pattern as
+    // m_group_update_blocked, but kept separate so these delete-only keys
+    // don't make hasPendingGroupUpdate()'s profile_name + "|" prefix match
+    // report a pending group *update* for an unrelated delete.
+    std::unordered_set<std::string> m_group_delete_blocked;
+
     // True if m_group_update_blocked still holds a key for this profile,
     // i.e. some group's configuration update hasn't been applied yet. Used
     // at config-ready time to decide whether the profile may advance to its

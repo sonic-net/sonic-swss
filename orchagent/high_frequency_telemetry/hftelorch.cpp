@@ -577,9 +577,22 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
 
     if (!profile_itr->second->canBeUpdated())
     {
+        if (m_group_delete_blocked.insert(profile_name + "|").second)
+        {
+            // .second is true only on first insertion, so this fires once
+            // per block, not on every retry.
+            SWSS_LOG_WARN(
+                "HFTel: delete of profile %s is pending - profile is streaming; "
+                "set stream_state=disabled to apply it",
+                profile_name.c_str());
+        }
         return task_process_status::task_need_retry;
     }
+    m_group_delete_blocked.erase(profile_name + "|");
 
+    // isEmpty()/isProfileInUse() just means groups are still being deleted
+    // first (profileTableDel runs after each groupTableDel), which is a
+    // normal, short-lived ordering wait - not worth a warning.
     if (!profile_itr->second->isEmpty() || isProfileInUse(profile_itr->second))
     {
         return task_process_status::task_need_retry;
@@ -707,15 +720,26 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
 
     auto type = HFTelUtils::group_name_to_sai_type(group_name);
 
+    const string blocked_key = profile_name + "|" + group_name;
     if (!profile->canBeUpdated(type))
     {
+        if (m_group_delete_blocked.insert(blocked_key).second)
+        {
+            // .second is true only on first insertion, so this fires once
+            // per block, not on every retry.
+            SWSS_LOG_WARN(
+                "HFTel: delete of group %s is pending - profile %s is streaming; "
+                "set stream_state=disabled to apply it",
+                blocked_key.c_str(), profile_name.c_str());
+        }
         return task_process_status::task_need_retry;
     }
+    m_group_delete_blocked.erase(blocked_key);
 
     profile->clearGroup(group_name);
     m_type_profile_mapping[type].erase(profile);
     m_state_telemetry_session.del(profile_name + "|" + HFTelUtils::sai_type_to_group_name(type));
-    m_group_update_blocked.erase(profile_name + "|" + group_name);
+    m_group_update_blocked.erase(blocked_key);
 
     SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is deleted", group_name.c_str(), profile_name.c_str());
 

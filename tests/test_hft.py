@@ -493,6 +493,10 @@ class TestHFT(object):
                 "600", \
                 "Expected tam report report interval to be 600"
 
+        # Disable the profile before deleting its group - MIXED mode
+        # rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs)
+
         # Clean up
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
@@ -535,7 +539,9 @@ class TestHFT(object):
                 f"Expected stream_status=enabled for {session_key}, got {entry.get('stream_status')} (entry={entry})"
             )
 
-        # Cleanup
+        # Cleanup - disable the profile before deleting its groups; MIXED
+        # mode rejects a group delete while the shared tel_type is streaming
+        self.set_hft_profile_state(dvs, name=profile_name)
         self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group_name)
         self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group_name)
         self.delete_hft_profile(dvs, name=profile_name)
