@@ -115,6 +115,9 @@ bool L2NhgOrch::deleteL2NextHopGroup(string nhg_id)
 
     if (m_nhg_nh.count(nhg_id))
     {
+        /* A group being removed is no longer handed out, even while its removal is retried. */
+        m_nhg_nh[nhg_id].is_active = false;
+
         /* Remove bridge port and portsorch l2 nexthop group cache*/
         Port nhgPort;
         auto nhg_port_name = getNextHopGroupPortName(nhg_id);
