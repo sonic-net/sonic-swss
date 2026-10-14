@@ -91,19 +91,9 @@ bool EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
 
     if (gPortsOrch->getVlanMember(port_name, port, vlan_member_id))
     {
-        /*
-         * TODO: Verify the correct SAI attribute to use.
-         * Current: SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP (workaround)
-         * HLD suggests: SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_NEXT_HOP_GROUP_ID
-         * Need to confirm with SAI implementation and HLD requirements.
-         *
-         * FIXME: Verify logic correctness - attribute name suggests BUM traffic should
-         * be DROPPED on non-DF. If true, this should be: !existing_entry->is_df
-         * (DF=false → DROP=true, DF=true → DROP=false)
-         */
         sai_attribute_t attr;
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = existing_entry->is_df;
+        attr.value.booldata = isTunnelTermBumDropped(port_name, port.m_vlan_info.vlan_id);
 
         auto status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &attr);
         if (status != SAI_STATUS_SUCCESS)
@@ -144,14 +134,7 @@ bool EvpnMhOrch::deleteEsCache(string &key)
     }
     if (gPortsOrch->getVlanMember(port_name, port, vlan_member_id))
     {
-        /*
-         * TODO: Verify the correct SAI attribute to use.
-         * Current: SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP (workaround)
-         * HLD suggests: SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_NEXT_HOP_GROUP_ID
-         * Need to confirm with SAI implementation and HLD requirements.
-         *
-         * Note: Setting to false on delete to restore default forwarding behavior.
-         */
+        /* Without a DF entry isTunnelTermBumDropped() is false. */
         sai_attribute_t attr;
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
         attr.value.booldata = false;
@@ -187,20 +170,12 @@ bool EvpnMhOrch::vlanMembersApplyNonDF(string port_name)
     {
         auto vlan_id = member.first;
         auto vlan_mem_entry = member.second;
-        /*
-         * TODO: Verify the correct SAI attribute to use.
-         * Current: SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP (workaround)
-         * HLD suggests: SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_NEXT_HOP_GROUP_ID
-         * Need to confirm with SAI implementation and HLD requirements.
-         *
-         * FIXME: Verify logic correctness - attribute name suggests BUM traffic should
-         * be DROPPED on non-DF. If true, this should be: !isInterfaceDF(...)
-         * (DF=false → DROP=true, DF=true → DROP=false)
-         */
+        /* Also runs when the port leaves its ES, which clears the drop. */
         sai_attribute_t attr;
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = isInterfaceDF(port_name, vlan_id);
-        SWSS_LOG_NOTICE("vlanMembersApplyNonDF: set Non-DF for port: %s, vlan: %d", port_name.c_str(), vlan_id);
+        attr.value.booldata = isTunnelTermBumDropped(port_name, vlan_id);
+        SWSS_LOG_NOTICE("vlanMembersApplyNonDF: port: %s, vlan: %d, tunnel-terminated BUM drop: %d",
+                        port_name.c_str(), vlan_id, attr.value.booldata);
 
         auto status = sai_vlan_api->set_vlan_member_attribute(vlan_mem_entry.vlan_member_id, &attr);
         if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
@@ -311,6 +286,16 @@ bool EvpnMhOrch::isInterfaceDF(const std::string &port_name, sai_vlan_id_t vlan_
     if (EsCacheEntry *entry = getEsCache(df_key))
         return entry->is_df;
     return false;
+}
+
+bool EvpnMhOrch::isTunnelTermBumDropped(const std::string &port_name, sai_vlan_id_t vlan_id)
+{
+    if (!isPortInterfaceAssociatedToEs(port_name))
+        return false;
+
+    std::string df_key = VLAN_PREFIX + std::to_string(vlan_id) + ":" + port_name;
+    EsCacheEntry *entry = getEsCache(df_key);
+    return entry != nullptr && !entry->is_df;
 }
 
 // Returns true if the port participates in EVPN-MH either:

@@ -7760,7 +7760,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
         /* TODO: Use proper attribute once its available in SAI */
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
+        attr.value.booldata = gEvpnMhOrch->isTunnelTermBumDropped(port.m_alias, vlan.m_vlan_info.vlan_id);
         attrs.push_back(attr);
     }
 

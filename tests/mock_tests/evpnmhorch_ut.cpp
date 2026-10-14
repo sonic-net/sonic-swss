@@ -331,11 +331,12 @@ namespace evpnmhorch_test
 
     TEST_F(EvpnMhOrchTest, ESProgramDFAfterPort)
     {
-         _hook_sai_vlan_api();
+        _hook_sai_vlan_api();
 
         auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
-        sai_attr_id_t df_attr_received[2];
-        bool df_attr_value[2];
+        auto consumer_es = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ETHERNET_SEGMENT"));
+        std::vector<sai_attr_id_t> df_attr_received;
+        std::vector<bool> df_attr_value;
 
         ApplyDualTorConfigs();
         Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
@@ -345,16 +346,10 @@ namespace evpnmhorch_test
             {"type", "TYPE_3_MAC_BASED"}
         });
 
-        df_attr_received[0] = 0;
-        df_attr_received[1] = 0;
-        df_attr_value[0] = false;
-        df_attr_value[1] = false;
-        iter = 0;
         auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
         vlanSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t * attr) -> sai_status_t {
-            df_attr_received[iter] = attr->id;
-            df_attr_value[iter] = attr->value.booldata;
-            iter++;
+            df_attr_received.push_back(attr->id);
+            df_attr_value.push_back(attr->value.booldata);
 
             return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
         });
@@ -367,35 +362,71 @@ namespace evpnmhorch_test
         ASSERT_TRUE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 20));
         ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
         ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 20));
+        /* No DF entry yet: the ES member does not drop tunnel-terminated BUM. */
+        ASSERT_EQ(df_attr_value.size(), 2u);
         ASSERT_EQ(df_attr_received[0], SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
-        ASSERT_EQ(df_attr_value[0], gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+        ASSERT_FALSE(df_attr_value[0]);
         ASSERT_EQ(df_attr_received[1], SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
-        ASSERT_EQ(df_attr_value[1], gEvpnMhOrch->isInterfaceDF("Ethernet1", 20));
+        ASSERT_FALSE(df_attr_value[1]);
 
-        df_attr_received[0] = 0;
-        df_attr_received[1] = 0;
-        df_attr_value[0] = false;
-        df_attr_value[1] = false;
-        iter = 0;
-
-        vlanSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t * attr) -> sai_status_t {
-            df_attr_received[iter] = attr->id;
-            df_attr_value[iter] = attr->value.booldata;
-            iter++;
-
-            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
-        });
-
+        df_attr_received.clear();
+        df_attr_value.clear();
         std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.clear();
         entries.push_back({"Vlan10:Ethernet1", "SET", {{"df", "true"} }});
+        entries.push_back({"Vlan20:Ethernet1", "SET", {{"df", "false"} }});
         consumer_df->addToSync(entries);
         static_cast<Orch *>(gEvpnMhOrch)->doTask();
 
+        /* The DF forwards tunnel-terminated BUM, the non-DF drops it. */
         ASSERT_TRUE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
         ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 20));
+        ASSERT_EQ(df_attr_value.size(), 2u);
         ASSERT_EQ(df_attr_received[0], SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
-        ASSERT_EQ(df_attr_value[0], gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+        ASSERT_FALSE(df_attr_value[0]);
+        ASSERT_EQ(df_attr_received[1], SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
+        ASSERT_TRUE(df_attr_value[1]);
+
+        /* Removing the non-DF entry of a port still in the ES clears the drop. */
+        df_attr_value.clear();
+        entries.clear();
+        entries.push_back({"Vlan20:Ethernet1", "DEL", { {} }});
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(df_attr_value.size(), 1u);
+        ASSERT_FALSE(df_attr_value[0]);
+
+        /* A new non-DF entry sets it again. */
+        df_attr_value.clear();
+        entries.clear();
+        entries.push_back({"Vlan20:Ethernet1", "SET", {{"df", "false"} }});
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(df_attr_value.size(), 1u);
+        ASSERT_TRUE(df_attr_value[0]);
+
+        /* Leaving the ES clears the drop on every VLAN, also where a non-DF entry is still cached. */
+        df_attr_value.clear();
+        entries.clear();
+        entries.push_back({"Ethernet1", "DEL", { {} }});
+        consumer_es->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_FALSE(gEvpnMhOrch->isPortInterfaceAssociatedToEs("Ethernet1"));
+        ASSERT_EQ(df_attr_value.size(), 2u);
+        ASSERT_FALSE(df_attr_value[0]);
+        ASSERT_FALSE(df_attr_value[1]);
+
+        /* The DF entry removed after the port left the ES keeps the drop cleared. */
+        df_attr_value.clear();
+        entries.clear();
+        entries.push_back({"Vlan20:Ethernet1", "DEL", { {} }});
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(df_attr_value.size(), 1u);
+        ASSERT_FALSE(df_attr_value[0]);
         _unhook_sai_vlan_api();
     }
 
@@ -404,7 +435,7 @@ namespace evpnmhorch_test
         _hook_sai_vlan_api();
 
         auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
-        sai_attr_id_t df_attr_received;
+        sai_attr_id_t df_attr_received = 0;
         // bool df_attr_value[2];
 
         Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
@@ -414,8 +445,8 @@ namespace evpnmhorch_test
         gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
         static_cast<Orch *>(gEvpnMhOrch)->doTask();
 
-        bool df_attr_found;
-        bool df_attr_value;
+        bool df_attr_found = false;
+        bool df_attr_value = false;
 
         auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
         vlanSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
@@ -427,7 +458,7 @@ namespace evpnmhorch_test
                 if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
                 {
                     df_attr_found = true;
-                    // This is inverted from the currently proposed NON_DF SAI attribute
+                    // TUNNEL_TERM_BUM_TX_DROP=true on the non-DF
                     df_attr_value = attrs[i].value.booldata;
                 }
             }
@@ -441,6 +472,7 @@ namespace evpnmhorch_test
         ASSERT_TRUE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 10));
         ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
         ASSERT_TRUE(df_attr_found);
+        /* No DF entry yet: the ES member does not drop tunnel-terminated BUM. */
         ASSERT_FALSE(df_attr_value);
 
         auto vlanMemberAttrSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
@@ -459,7 +491,235 @@ namespace evpnmhorch_test
 
         ASSERT_TRUE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
         ASSERT_EQ(df_attr_received, SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
-        ASSERT_EQ(df_attr_value, gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+        ASSERT_FALSE(df_attr_value);
+
+        df_attr_received = 0;
+        entries.clear();
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "false" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_FALSE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+        ASSERT_EQ(df_attr_received, SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
+        ASSERT_TRUE(df_attr_value);
+
+        _unhook_sai_vlan_api();
+    }
+
+    /* DF entries that arrive before their VLAN are applied when the VLAN member is created. */
+    TEST_F(EvpnMhOrchTest, ESMemberCreatedAfterDfEntry)
+    {
+        _hook_sai_vlan_api();
+
+        auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        std::map<sai_object_id_t, bool> create_value;
+        std::map<sai_object_id_t, bool> set_value;
+
+        auto createSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
+        createSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count,
+                                const sai_attribute_t *attrs) -> sai_status_t {
+            sai_object_id_t vlan_oid = SAI_NULL_OBJECT_ID;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_VLAN_ID)
+                {
+                    vlan_oid = attrs[i].value.oid;
+                }
+            }
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+                {
+                    create_value[vlan_oid] = attrs[i].value.booldata;
+                }
+            }
+            return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
+        });
+        auto setSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        setSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+            {
+                set_value[oid] = attr->value.booldata;
+            }
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+
+        Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+        evpnEsIntfTable.set("Ethernet1", { { "df_pref", "32767" },
+                                           { "esi", "AUTO" },
+                                           { "type", "TYPE_3_MAC_BASED" } });
+        gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "false" } } });
+        entries.push_back({ "Vlan20:Ethernet1", "SET", { { "df", "true" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ApplyDualTorConfigs();
+
+        Port vlan10, vlan20;
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_1, vlan10));
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_2, vlan20));
+        /* The cached roles reach the members at create: drop on the non-DF, not on the DF. */
+        ASSERT_EQ(create_value.count(vlan10.m_vlan_info.vlan_oid), 1u);
+        ASSERT_TRUE(create_value[vlan10.m_vlan_info.vlan_oid]);
+        ASSERT_EQ(create_value.count(vlan20.m_vlan_info.vlan_oid), 1u);
+        ASSERT_FALSE(create_value[vlan20.m_vlan_info.vlan_oid]);
+        _unhook_sai_vlan_api();
+    }
+
+    /* A DF entry for a port outside any ES sets no drop; the ES config then applies the cached role. */
+    TEST_F(EvpnMhOrchTest, ESConfiguredAfterDfEntry)
+    {
+        _hook_sai_vlan_api();
+
+        auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        auto consumer_es = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ETHERNET_SEGMENT"));
+        std::map<sai_object_id_t, bool> set_value;
+
+        ApplyDualTorConfigs();
+
+        Port vlan10, vlan20;
+        sai_object_id_t member10, member20;
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_1, vlan10));
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_2, vlan20));
+        ASSERT_TRUE(gPortsOrch->getVlanMember(TEST_INTERFACE_1, vlan10, member10));
+        ASSERT_TRUE(gPortsOrch->getVlanMember(TEST_INTERFACE_1, vlan20, member20));
+
+        auto setSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        setSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+            {
+                set_value[oid] = attr->value.booldata;
+            }
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "false" } } });
+        entries.push_back({ "Vlan20:Ethernet1", "SET", { { "df", "true" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_value.size(), 2u);
+        ASSERT_FALSE(set_value[member10]);
+        ASSERT_FALSE(set_value[member20]);
+
+        set_value.clear();
+        entries.clear();
+        entries.push_back({ "Ethernet1", "SET", { { "df_pref", "32767" },
+                                                  { "esi", "AUTO" },
+                                                  { "type", "TYPE_3_MAC_BASED" } } });
+        consumer_es->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_value.size(), 2u);
+        ASSERT_TRUE(set_value[member10]);
+        ASSERT_FALSE(set_value[member20]);
+
+        _unhook_sai_vlan_api();
+    }
+
+    /*
+     * A VLAN that the ES port joins after its DF election (in FRR: a VLAN mapped to a VNI
+     * after the port joined the ES) gets no EVPN_DF_TABLE entry until zebra sends one. It
+     * must not drop tunnel-terminated BUM meanwhile, while the port's other VLANs keep their
+     * DF role, also when the ES is applied again.
+     */
+    TEST_F(EvpnMhOrchTest, ESVlanAddedLaterWithoutDfEntryDoesNotDrop)
+    {
+        _hook_sai_vlan_api();
+
+        auto consumer_df = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        auto consumer_es = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ETHERNET_SEGMENT"));
+        std::map<sai_object_id_t, bool> set_value;
+        std::vector<bool> create_value;
+
+        ApplyDualTorConfigsForSingleVlan();
+
+        auto setSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        setSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+            {
+                set_value[oid] = attr->value.booldata;
+            }
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+        auto createSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
+        createSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count,
+                                const sai_attribute_t *attrs) -> sai_status_t {
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+                {
+                    create_value.push_back(attrs[i].value.booldata);
+                }
+            }
+            return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
+        });
+
+        Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+        evpnEsIntfTable.set("Ethernet1", { { "df_pref", "32767" },
+                                           { "esi", "AUTO" },
+                                           { "type", "TYPE_3_MAC_BASED" } });
+        gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "false" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        Port vlan10;
+        sai_object_id_t member10;
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_1, vlan10));
+        ASSERT_TRUE(gPortsOrch->getVlanMember(TEST_INTERFACE_1, vlan10, member10));
+        ASSERT_EQ(set_value.count(member10), 1u);
+        ASSERT_TRUE(set_value[member10]);
+
+        /* Vlan20 and its ES member are created later; no DF entry for Vlan20 arrives. */
+        Table vlan_table = Table(m_appl_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlan_member_table = Table(m_appl_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+        vlan_table.set(VLAN_NAME_2, { { "admin_status", "up" },
+                                      { "mtu", "9100" },
+                                      { "mac", "00:aa:bb:cc:dd:ee" } });
+        vlan_member_table.set(
+            VLAN_NAME_2 + vlan_member_table.getTableNameSeparator() + TEST_INTERFACE_1,
+            { { "tagging_mode", "tagged" } });
+        gPortsOrch->addExistingData(&vlan_table);
+        gPortsOrch->addExistingData(&vlan_member_table);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan20;
+        sai_object_id_t member20;
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_NAME_2, vlan20));
+        ASSERT_TRUE(gPortsOrch->getVlanMember(TEST_INTERFACE_1, vlan20, member20));
+        ASSERT_EQ(create_value.size(), 1u);
+        ASSERT_FALSE(create_value[0]);
+
+        /* Applying the ES again (as after a restart or a df_pref change) keeps both values. */
+        set_value.clear();
+        entries.clear();
+        entries.push_back({ "Ethernet1", "SET", { { "df_pref", "100" },
+                                                  { "esi", "AUTO" },
+                                                  { "type", "TYPE_3_MAC_BASED" } } });
+        consumer_es->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_value.size(), 2u);
+        ASSERT_TRUE(set_value[member10]);
+        ASSERT_FALSE(set_value[member20]);
+
+        /* zebra's non-DF entry for Vlan20 turns the drop on there. */
+        set_value.clear();
+        entries.clear();
+        entries.push_back({ "Vlan20:Ethernet1", "SET", { { "df", "false" } } });
+        consumer_df->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(set_value.size(), 1u);
+        ASSERT_EQ(set_value.count(member20), 1u);
+        ASSERT_TRUE(set_value[member20]);
 
         _unhook_sai_vlan_api();
     }
