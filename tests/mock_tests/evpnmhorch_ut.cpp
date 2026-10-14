@@ -7,6 +7,11 @@
 #define protected public
 #include "orch.h"
 #undef protected
+#define private public
+#include "portsorch.h"
+#include "l2nhgorch.h"
+#include "evpnmhorch.h"
+#undef private
 
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
@@ -14,7 +19,7 @@
 #include "bulker.h"
 #include "logger.h"
 
-#include "evpnmhorch.h"
+#include "saispy.h"
 
 namespace evpnmhorch_test
 {
@@ -179,9 +184,12 @@ namespace evpnmhorch_test
             TableConnector appDbDfTable(m_appl_db.get(), "EVPN_DF_TABLE");
             TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
 
+            TableConnector appDbEsBackupNhgTable(m_appl_db.get(), "EVPN_ES_BACKUP_NHG_TABLE");
+
             vector<TableConnector> evpn_df_es_table_connectors = {
                 appDbDfTable,
                 confDbEvpnEsTable,
+                appDbEsBackupNhgTable,
             };
 
             ASSERT_EQ(gEvpnMhOrch, nullptr);
@@ -462,5 +470,1014 @@ namespace evpnmhorch_test
         ASSERT_EQ(df_attr_value, gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
 
         _unhook_sai_vlan_api();
+    }
+    /*
+     * ES backup next hop group (EVPN_ES_BACKUP_NHG_TABLE): the group becomes the ES
+     * port bridge port's protection group, and the port's oper state drives the
+     * switchover.
+     */
+    static const string ES_BACKUP_NHG = "536870913";
+    static const sai_object_id_t ES_BACKUP_NHG_OID = 0x5000000000abcULL;
+    static const string ES_BACKUP_NHG_2 = "9200";
+    static const sai_object_id_t ES_BACKUP_NHG_2_OID = 0x5000000000abdULL;
+
+    static int es_flush_calls;
+    static sai_fdb_api_t es_ut_fdb_api;
+    static sai_fdb_api_t *es_org_fdb_api;
+
+    static sai_status_t _ut_count_fdb_flush(sai_object_id_t, uint32_t, const sai_attribute_t *)
+    {
+        es_flush_calls++;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    struct EsBackupSetAttr
+    {
+        sai_attr_id_t id;
+        bool value;
+        sai_object_id_t oid;
+    };
+
+    /* A bridge port SAI call: a set of attribute id, or a remove (id 0). */
+    struct EsBridgePortCall
+    {
+        bool remove;
+        sai_object_id_t bridge_port_id;
+        sai_attr_id_t id;
+    };
+
+    struct EvpnMhEsBackupTest : public EvpnMhOrchTest
+    {
+        std::vector<EsBackupSetAttr> set_calls;
+        std::vector<EsBridgePortCall> bp_calls;
+        /* A bridge port the test made up: its calls succeed without reaching the SAI. */
+        sai_object_id_t fake_bp = SAI_NULL_OBJECT_ID;
+        int fail_switchover = 0; /* SET_SWITCHOVER calls to refuse */
+        std::shared_ptr<SaiSpyFunctor<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT, sai_status_t,
+                                      sai_object_id_t, const sai_attribute_t *>> bpSpy;
+
+        void SetUp() override
+        {
+            EvpnMhOrchTest::SetUp();
+
+            vector<string> mlag_tables = { CFG_MCLAG_TABLE_NAME, CFG_MCLAG_INTF_TABLE_NAME };
+            ASSERT_EQ(gMlagOrch, nullptr);
+            gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
+            ut_orch_list.push_back((Orch **)&gMlagOrch);
+
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME, FdbOrch::fdborch_pri },
+                { APP_VXLAN_FDB_TABLE_NAME, FdbOrch::fdborch_pri },
+                { APP_MCLAG_FDB_TABLE_NAME, FdbOrch::fdborch_pri }
+            };
+            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+            TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+            ASSERT_EQ(gFdbOrch, nullptr);
+            gFdbOrch = new FdbOrch(m_appl_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb,
+                                   gPortsOrch, m_config_db.get());
+            ut_orch_list.push_back((Orch **)&gFdbOrch);
+
+            ASSERT_EQ(gL2NhgOrch, nullptr);
+            gL2NhgOrch = new L2NhgOrch(m_appl_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+            ut_orch_list.push_back((Orch **)&gL2NhgOrch);
+
+            es_org_fdb_api = sai_fdb_api;
+            es_ut_fdb_api = *sai_fdb_api;
+            es_ut_fdb_api.flush_fdb_entries = _ut_count_fdb_flush;
+            sai_fdb_api = &es_ut_fdb_api;
+            es_flush_calls = 0;
+
+            bpSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(
+                &sai_bridge_api->set_bridge_port_attribute);
+            auto orig = bpSpy->original_fn;
+            bpSpy->callFake([this, orig](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+                bp_calls.push_back({ false, oid, attr->id });
+                if (oid == fake_bp && fake_bp != SAI_NULL_OBJECT_ID)
+                {
+                    return SAI_STATUS_SUCCESS;
+                }
+                if (attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER && fail_switchover > 0)
+                {
+                    fail_switchover--;
+                    return SAI_STATUS_FAILURE;
+                }
+                if (attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID ||
+                    attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+                {
+                    set_calls.push_back({ attr->id, attr->value.booldata, attr->value.oid });
+                    return SAI_STATUS_SUCCESS;
+                }
+                return orig(oid, attr);
+            });
+
+            /* The capability query is not answered by the mock SAI. */
+            gEvpnMhOrch->m_esBackupCapChecked = true;
+            gEvpnMhOrch->m_esBackupSupported = true;
+
+            ApplyDualTorConfigs();
+            ASSERT_NE(gPortsOrch->m_portList[TEST_INTERFACE_1].m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            /* EVPN_ETHERNET_SEGMENT (CONFIG_DB) entry of the ES port. */
+            gEvpnMhOrch->m_esIntfMap[TEST_INTERFACE_1] = true;
+            setOper(SAI_PORT_OPER_STATUS_UP);
+            es_flush_calls = 0;
+        }
+
+        void TearDown() override
+        {
+            unhookBridgePortRemoval();
+            bpSpy.reset();
+            sai_fdb_api = es_org_fdb_api;
+            EvpnMhOrchTest::TearDown();
+        }
+
+        /* For PortsOrch::removeBridgePort(): StpOrch, host interfaces, and a bridge port
+         * remove that refuse_remove makes the SAI refuse (without removing anything). */
+        bool refuse_remove = false;
+        std::shared_ptr<SaiSpyFunctor<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT, sai_status_t,
+                                      sai_object_id_t>> removeBpSpy;
+        std::shared_ptr<SaiSpyFunctor<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF, sai_status_t,
+                                      sai_object_id_t, const sai_attribute_t *>> hostifSpy;
+
+        void hookBridgePortRemoval()
+        {
+            removeBpSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->remove_bridge_port);
+            removeBpSpy->callFake([this](sai_object_id_t oid) -> sai_status_t {
+                bp_calls.push_back({ true, oid, 0 });
+                return refuse_remove ? SAI_STATUS_OBJECT_IN_USE : SAI_STATUS_SUCCESS;
+            });
+            hostifSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->set_hostif_attribute);
+            hostifSpy->callFake([](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_SUCCESS;
+            });
+            vector<string> stp_tables = { "STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_STATE_TABLE",
+                                          "STP_FASTAGEING_FLUSH_TABLE", "STP_INST_PORT_FLUSH_TABLE" };
+            gStpOrch = new StpOrch(m_appl_db.get(), m_state_db.get(), stp_tables);
+        }
+
+        void unhookBridgePortRemoval()
+        {
+            removeBpSpy.reset();
+            hostifSpy.reset();
+            delete gStpOrch;
+            gStpOrch = nullptr;
+        }
+
+        /* The group's bridge port, as L2NhgOrch creates it, with a made-up bridge port id. */
+        Port addGroupBridgePort()
+        {
+            fake_bp = 0x3a00000000abcULL;
+            Port nhgPort(gL2NhgOrch->getNextHopGroupPortName(ES_BACKUP_NHG), Port::NEXTHOP_GROUP);
+            nhgPort.m_nexthop_group_id = ES_BACKUP_NHG_OID;
+            nhgPort.m_bridge_port_id = fake_bp;
+            gPortsOrch->m_portList[nhgPort.m_alias] = nhgPort;
+            return nhgPort;
+        }
+
+        void activateBackupNhg(const string &nhg = ES_BACKUP_NHG, sai_object_id_t oid = ES_BACKUP_NHG_OID)
+        {
+            gL2NhgOrch->m_nhg_nh[nhg].oid = oid;
+            gL2NhgOrch->m_nhg_nh[nhg].is_active = true;
+        }
+
+        /* What L2NhgOrch::deleteL2NextHopGroup() does first: remove the group's bridge port. */
+        void removeGroupBridgePort(const string &nhg = ES_BACKUP_NHG, sai_object_id_t oid = ES_BACKUP_NHG_OID)
+        {
+            Port nhgPort(gL2NhgOrch->getNextHopGroupPortName(nhg), Port::NEXTHOP_GROUP);
+            nhgPort.m_nexthop_group_id = oid;
+            PortUpdate update = { nhgPort, false };
+            gEvpnMhOrch->update(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &update);
+        }
+
+        void pushBackup(const string &op, const string &port = TEST_INTERFACE_1,
+                        const string &nhg = ES_BACKUP_NHG)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ES_BACKUP_NHG_TABLE"));
+            ASSERT_NE(consumer, nullptr);
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            if (op == "SET")
+            {
+                entries.push_back({ port, "SET", { { "nexthop_group", nhg } } });
+            }
+            else
+            {
+                entries.push_back({ port, "DEL", { {} } });
+            }
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gEvpnMhOrch)->doTask();
+            ASSERT_TRUE(consumer->m_toSync.empty());
+        }
+
+        /* The switchback timer fires with every port's hold passed. */
+        void expireSwitchbackHold()
+        {
+            for (auto &kv : gEvpnMhOrch->m_esBackupSwitchback)
+            {
+                kv.second = std::chrono::steady_clock::time_point::min();
+            }
+            gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        }
+
+        /* What PortsOrch::updatePortOperStatus() does for the observers. */
+        void setOper(sai_port_oper_status_t status)
+        {
+            gPortsOrch->m_portList[TEST_INTERFACE_1].m_oper_status = status;
+            PortOperStateUpdate update = { gPortsOrch->m_portList[TEST_INTERFACE_1], status };
+            gFdbOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+            gEvpnMhOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+        }
+    };
+
+    TEST_F(EvpnMhEsBackupTest, SwitchoverFollowsPortOperState)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+
+        ASSERT_EQ(set_calls.size(), 1u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[0].oid, ES_BACKUP_NHG_OID);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+
+        /* Down: switch over, and keep the port's MACs (they forward through the group). */
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_TRUE(set_calls[1].value);
+        ASSERT_EQ(es_flush_calls, 0);
+
+        /* Up: switched back only when the hold timer fires. */
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+
+        /* DEL takes the group off the bridge port. */
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+
+        /* Without a backup group a down port is flushed as before. */
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(set_calls.size(), 4u);
+    }
+
+    TEST_F(EvpnMhEsBackupTest, FlapWithinTheHoldStaysSwitchedOver)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(es_flush_calls, 0);
+    }
+
+    /* The timer can fire for another port's hold: a port switches back only after its own. */
+    TEST_F(EvpnMhEsBackupTest, SwitchbackWaitsForTheHoldOfItsOwnPort)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.count(TEST_INTERFACE_1));
+
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.count(TEST_INTERFACE_1));
+
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.empty());
+    }
+
+    TEST_F(EvpnMhEsBackupTest, WaitsForTheGroupAndSwitchesOverOnAttach)
+    {
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        es_flush_calls = 0;
+
+        pushBackup("SET");
+        ASSERT_TRUE(set_calls.empty());
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+
+        /* L2NhgOrch activates the group later and tells EvpnMhOrch at once, in the
+         * same pass (a warm restart's view must have the protection group). */
+        activateBackupNhg();
+        gEvpnMhOrch->onL2NhgActive(ES_BACKUP_NHG);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_TRUE(set_calls[1].value);
+
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 2u);
+    }
+
+    TEST_F(EvpnMhEsBackupTest, DetachedBeforeTheGroupBridgePortGoes)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(es_flush_calls, 0);
+
+        /* L2NhgOrch removes the group's bridge port before the group. */
+        removeGroupBridgePort();
+
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        /* Nothing protects the down port any more: its MACs are flushed. */
+        ASSERT_EQ(es_flush_calls, 1);
+
+        gL2NhgOrch->m_nhg_nh.erase(ES_BACKUP_NHG);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 4u);
+
+        /* The group comes back (same id): attached and switched over again. */
+        activateBackupNhg();
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 6u);
+        ASSERT_EQ(set_calls[4].oid, ES_BACKUP_NHG_OID);
+        ASSERT_TRUE(set_calls[5].value);
+    }
+
+    /*
+     * Through PortsOrch::removeBridgePort(), as L2NhgOrch removes the group: the ES port
+     * is switched back and the group taken off it while the group's bridge port still
+     * exists. A SAI may refuse to remove a group bridge port while a port is switched over to it.
+     */
+    TEST_F(EvpnMhEsBackupTest, DetachedWhileTheGroupBridgePortStillExists)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        const sai_object_id_t es_bp = gPortsOrch->m_portList[TEST_INTERFACE_1].m_bridge_port_id;
+
+        /* The group's bridge port, as L2NhgOrch creates it. */
+        fake_bp = 0x3a00000000abcULL;
+        Port nhgPort(gL2NhgOrch->getNextHopGroupPortName(ES_BACKUP_NHG), Port::NEXTHOP_GROUP);
+        nhgPort.m_nexthop_group_id = ES_BACKUP_NHG_OID;
+        nhgPort.m_bridge_port_id = fake_bp;
+        gPortsOrch->m_portList[nhgPort.m_alias] = nhgPort;
+
+        auto removeSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->remove_bridge_port);
+        auto origRemove = removeSpy->original_fn;
+        removeSpy->callFake([this, origRemove](sai_object_id_t oid) -> sai_status_t {
+            bp_calls.push_back({ true, oid, 0 });
+            return oid == fake_bp ? SAI_STATUS_SUCCESS : origRemove(oid);
+        });
+        vector<string> stp_tables = { "STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_STATE_TABLE",
+                                      "STP_FASTAGEING_FLUSH_TABLE", "STP_INST_PORT_FLUSH_TABLE" };
+        ASSERT_EQ(gStpOrch, nullptr);
+        gStpOrch = new StpOrch(m_appl_db.get(), m_state_db.get(), stp_tables);
+        bp_calls.clear();
+
+        bool removed = gPortsOrch->removeBridgePort(nhgPort);
+
+        delete gStpOrch;
+        gStpOrch = nullptr;
+        removeSpy.reset();
+        ASSERT_TRUE(removed);
+
+        int switchback_at = -1, detach_at = -1, remove_at = -1;
+        for (int i = 0; i < (int)bp_calls.size(); i++)
+        {
+            const auto &c = bp_calls[i];
+            if (!c.remove && c.bridge_port_id == es_bp && c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+            {
+                switchback_at = i;
+            }
+            if (!c.remove && c.bridge_port_id == es_bp &&
+                c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID)
+            {
+                detach_at = i;
+            }
+            if (c.remove && c.bridge_port_id == fake_bp)
+            {
+                remove_at = i;
+            }
+        }
+        ASSERT_GE(switchback_at, 0);
+        ASSERT_GE(detach_at, 0);
+        ASSERT_GE(remove_at, 0);
+        ASSERT_LT(switchback_at, detach_at);
+        ASSERT_LT(detach_at, remove_at);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(gPortsOrch->m_portList[nhgPort.m_alias].m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    }
+
+    /*
+     * The SAI refuses to remove the ES port's bridge port: the group was taken off it
+     * before the removal, and is attached and switched over again on the bridge port that stays.
+     */
+    TEST_F(EvpnMhEsBackupTest, RefusedPortBridgePortRemovalKeepsTheGroup)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        hookBridgePortRemoval();
+        refuse_remove = true;
+        Port port = gPortsOrch->m_portList[TEST_INTERFACE_1];
+        bool removed = gPortsOrch->removeBridgePort(port);
+        unhookBridgePortRemoval();
+
+        ASSERT_FALSE(removed);
+        ASSERT_EQ(set_calls.size(), 6u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(set_calls[4].oid, ES_BACKUP_NHG_OID);
+        ASSERT_EQ(set_calls[5].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_TRUE(set_calls[5].value);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+    }
+
+    /* While L2NhgOrch retries a refused removal of the group, the group is not attached again. */
+    TEST_F(EvpnMhEsBackupTest, GroupBeingRemovedIsNotAttachedAgain)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        addGroupBridgePort();
+
+        hookBridgePortRemoval();
+        refuse_remove = true;
+        bool deleted = gL2NhgOrch->deleteL2NextHopGroup(ES_BACKUP_NHG);
+        unhookBridgePortRemoval();
+
+        ASSERT_FALSE(deleted);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+    }
+
+    TEST_F(EvpnMhEsBackupTest, IgnoredWhenTheSaiLacksProtection)
+    {
+        gEvpnMhOrch->m_esBackupSupported = false;
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+
+        ASSERT_TRUE(set_calls.empty());
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 1);
+    }
+
+    /*
+     * A DEL while the port is switched over and down is held: the group keeps carrying
+     * the port's MACs until the port is back and the switchback hold has passed.
+     */
+    TEST_F(EvpnMhEsBackupTest, DeleteWhileSwitchedOverIsHeldUntilTheSwitchback)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 0);
+        /* A second oper down (FdbOrch's flush site) keeps the MACs too. */
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(es_flush_calls, 0);
+        /* A retry or a second DEL does not end the hold. */
+        gEvpnMhOrch->m_esBackupPending.insert(TEST_INTERFACE_1);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackup.at(TEST_INTERFACE_1).deleted);
+
+        /* A flap within the hold: still held. */
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        /* Back up: switched back after the hold, then detached; nothing is flushed. */
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+
+        /* Gone for good: a later down flushes as without a group. */
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(es_flush_calls, 1);
+    }
+
+    TEST_F(EvpnMhEsBackupTest, DeleteDuringTheSwitchbackHoldWaitsForIt)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+    }
+
+    /* A DEL + SET (a group replace) while down moves the port to the new group in place. */
+    TEST_F(EvpnMhEsBackupTest, SetAfterAHeldDeleteReplacesTheGroupInPlace)
+    {
+        activateBackupNhg();
+        activateBackupNhg(ES_BACKUP_NHG_2, ES_BACKUP_NHG_2_OID);
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        pushBackup("DEL");
+        pushBackup("SET", TEST_INTERFACE_1, ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[2].oid, ES_BACKUP_NHG_2_OID);
+        ASSERT_EQ(es_flush_calls, 0);
+
+        /* No longer held: the first group's removal does not touch the port. */
+        removeGroupBridgePort(ES_BACKUP_NHG);
+        ASSERT_EQ(set_calls.size(), 3u);
+
+        /* Re-attaching the same group while held sends nothing. */
+        pushBackup("DEL");
+        pushBackup("SET", TEST_INTERFACE_1, ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 3u);
+
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[3].value);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+    }
+
+    TEST_F(EvpnMhEsBackupTest, HeldDeleteEndsWhenTheGroupBridgePortGoes)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        removeGroupBridgePort();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupPending.empty());
+    }
+
+    TEST_F(EvpnMhEsBackupTest, HeldDeleteEndsWhenThePortBridgePortGoes)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        /* Taken off the bridge port before PortsOrch removes it. */
+        PortUpdate removed = { gPortsOrch->m_portList[TEST_INTERFACE_1], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &removed);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+
+        ASSERT_EQ(gEvpnMhOrch->m_esBackupPending.count(TEST_INTERFACE_1), 0u);
+    }
+
+    /* The port leaves its ES (EVPN_ETHERNET_SEGMENT DEL): a held DEL completes. */
+    TEST_F(EvpnMhEsBackupTest, HeldDeleteEndsWhenThePortLeavesItsEs)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        auto consumer = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_ETHERNET_SEGMENT"));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> entries = { { TEST_INTERFACE_1, "DEL", { {} } } };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+    }
+
+    /* A port that is not an ES any more is not held: detached and flushed at once. */
+    TEST_F(EvpnMhEsBackupTest, DeleteOnAPortThatLeftItsEsIsNotHeld)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        gEvpnMhOrch->m_esIntfMap.erase(TEST_INTERFACE_1);
+
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+    }
+
+    /* A replacement group that is not active yet: the old one stays until it is. */
+    TEST_F(EvpnMhEsBackupTest, SetOfAGroupNotActiveYetKeepsTheOldOneWhileSwitchedOver)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        pushBackup("SET", TEST_INTERFACE_1, ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 0);
+
+        activateBackupNhg(ES_BACKUP_NHG_2, ES_BACKUP_NHG_2_OID);
+        gEvpnMhOrch->onL2NhgActive(ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[2].oid, ES_BACKUP_NHG_2_OID);
+        ASSERT_EQ(es_flush_calls, 0);
+    }
+
+    /* The old group goes while the new one is not active: detached, as without a replacement. */
+    TEST_F(EvpnMhEsBackupTest, OldGroupRemovedBeforeTheNewOneIsActive)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        pushBackup("SET", TEST_INTERFACE_1, ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        removeGroupBridgePort(ES_BACKUP_NHG, ES_BACKUP_NHG_OID);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 1);
+
+        activateBackupNhg(ES_BACKUP_NHG_2, ES_BACKUP_NHG_2_OID);
+        gEvpnMhOrch->onL2NhgActive(ES_BACKUP_NHG_2);
+        ASSERT_EQ(set_calls.size(), 6u);
+        ASSERT_EQ(set_calls[4].oid, ES_BACKUP_NHG_2_OID);
+        ASSERT_TRUE(set_calls[5].value);
+    }
+
+    /* A refused switchback while held is retried, then the group is detached. */
+    TEST_F(EvpnMhEsBackupTest, HeldDeleteRetriesARefusedSwitchback)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        pushBackup("DEL");
+        setOper(SAI_PORT_OPER_STATUS_UP);
+
+        fail_switchover = 1;
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupPending.count(TEST_INTERFACE_1));
+
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+    }
+
+    /* Not switched over (the port is up): a DEL detaches at once, as before. */
+    TEST_F(EvpnMhEsBackupTest, DeleteWhileUpDetachesAtOnce)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        pushBackup("DEL");
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(set_calls[1].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
+        ASSERT_EQ(es_flush_calls, 0);
+    }
+
+    /*
+     * An ES LAG (PortChannel1 = TEST_INTERFACE_1 + TEST_INTERFACE_2, both up) switches
+     * over when its last member stops forwarding, before the LAG goes oper down.
+     */
+    static const string ES_LAG = "PortChannel1";
+    static const sai_object_id_t ES_LAG_OID = 0x2000000000001ULL;
+    static const sai_object_id_t ES_LAG_BRIDGE_PORT_OID = 0x3a000000000fffULL;
+
+    struct EvpnMhEsBackupLagTest : public EvpnMhEsBackupTest
+    {
+        std::shared_ptr<SaiSpyFunctor<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER, sai_status_t,
+                                      sai_object_id_t, const sai_attribute_t *>> lagMemberSpy;
+
+        void SetUp() override
+        {
+            EvpnMhEsBackupTest::SetUp();
+
+            Port lag(ES_LAG, Port::LAG);
+            lag.m_lag_id = ES_LAG_OID;
+            lag.m_bridge_port_id = ES_LAG_BRIDGE_PORT_OID;
+            lag.m_members = { TEST_INTERFACE_1, TEST_INTERFACE_2 };
+            lag.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            gPortsOrch->m_portList[ES_LAG] = lag;
+            gEvpnMhOrch->m_esIntfMap[ES_LAG] = true;
+            sai_object_id_t member_oid = 0x1b000000000001ULL;
+            for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
+            {
+                auto &member = gPortsOrch->m_portList[alias];
+                member.m_lag_id = ES_LAG_OID;
+                member.m_lag_member_id = member_oid++;
+                member.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            }
+
+            lagMemberSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+            lagMemberSpy->callFake([](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_SUCCESS;
+            });
+        }
+
+        void TearDown() override
+        {
+            lagMemberSpy.reset();
+            gPortsOrch->m_portList.erase(ES_LAG);
+            for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
+            {
+                gPortsOrch->m_portList[alias].m_lag_id = SAI_NULL_OBJECT_ID;
+                gPortsOrch->m_portList[alias].m_lag_member_id = SAI_NULL_OBJECT_ID;
+            }
+            EvpnMhEsBackupTest::TearDown();
+        }
+
+        /* PortsOrch programming a member's distribution (egress enable). */
+        void setDistribution(const string &alias, bool enable)
+        {
+            Port member = gPortsOrch->m_portList[alias];
+            ASSERT_TRUE(gPortsOrch->setDistributionOnLagMember(member, enable));
+        }
+
+        /* PortsOrch::updatePortOperStatus(): observers run before m_portList is updated. */
+        void setPortOper(const string &alias, sai_port_oper_status_t status)
+        {
+            Port port = gPortsOrch->m_portList[alias];
+            port.m_oper_status = status;
+            PortOperStateUpdate update = { port, status };
+            gEvpnMhOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+            gPortsOrch->m_portList[alias] = port;
+        }
+
+        size_t switchoverCalls(bool value)
+        {
+            size_t n = 0;
+            for (const auto &c : set_calls)
+            {
+                n += c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER && c.value == value;
+            }
+            return n;
+        }
+    };
+
+    TEST_F(EvpnMhEsBackupLagTest, SwitchesOverWhenTheLastMemberStopsDistributing)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 1u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+
+        /* The other member still forwards. */
+        setDistribution(TEST_INTERFACE_1, false);
+        ASSERT_EQ(set_calls.size(), 1u);
+
+        /* The last one stops: switched over while the LAG is still oper up. */
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_DOWN);
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_DOWN);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        /* Up again, but no member distributes yet: the hold does not start. */
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_UP);
+        setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_UP);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        setDistribution(TEST_INTERFACE_1, true);
+        ASSERT_EQ(set_calls.size(), 2u);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, SwitchesOverWhenTheLastMemberGoesDown)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 1u);
+
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 1u);
+        /* Link down, before teamd disables the member or the LAG goes down. */
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* A flap that teamd never saw: back up, switched back after the hold. */
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 2u);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MembersDisabledBeforeTheGroupIsAttached)
+    {
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_TRUE(set_calls.empty());
+
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, RemovedMemberIsNoLongerTrackedAsDisabled)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+
+        /* Removed and re-added: PortsOrch programs its distribution again from scratch. */
+        LagMemberUpdate removed = { gPortsOrch->m_portList[ES_LAG], gPortsOrch->m_portList[TEST_INTERFACE_1], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &removed);
+        ASSERT_FALSE(gEvpnMhOrch->m_lagMembersNotDistributing.count(TEST_INTERFACE_1));
+
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(set_calls.size(), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MemberAddedDistributingSwitchesBack)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* TEST_INTERFACE_1 leaves the LAG: still nothing forwards. */
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        lag.m_members = { TEST_INTERFACE_2 };
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        LagMemberUpdate removed = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &removed);
+        expireSwitchbackHold();
+        ASSERT_EQ(switchoverCalls(false), 0u);
+
+        /* Re-added already distributing (created with distribution on): the LAG forwards again. */
+        lag.m_members = { TEST_INTERFACE_1, TEST_INTERFACE_2 };
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        LagMemberUpdate added = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], true };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &added);
+        ASSERT_EQ(switchoverCalls(false), 0u);
+        expireSwitchbackHold();
+        ASSERT_EQ(switchoverCalls(false), 1u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, MemberCreatedNotDistributingDoesNotForward)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+
+        /* TEST_INTERFACE_2 is re-created not distributing: PortsOrch reports that just
+         * before the member add. */
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        LagMemberDistributionUpdate distribution = { gPortsOrch->m_portList[TEST_INTERFACE_2], false };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_DISTRIBUTION_CHANGE, &distribution);
+        LagMemberUpdate added = { lag, gPortsOrch->m_portList[TEST_INTERFACE_2], true };
+        gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &added);
+
+        ASSERT_TRUE(gEvpnMhOrch->m_lagMembersNotDistributing.count(TEST_INTERFACE_2));
+        ASSERT_EQ(switchoverCalls(true), 1u);
+        expireSwitchbackHold();
+        ASSERT_EQ(switchoverCalls(false), 0u);
+    }
+
+    TEST_F(EvpnMhEsBackupLagTest, HoldDoesNotSwitchBackOntoALagThatDoesNotForward)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+
+        /* The hold expires while the LAG is oper up but no member distributes. */
+        gEvpnMhOrch->m_esBackupSwitchback[ES_LAG] = std::chrono::steady_clock::now();
+        expireSwitchbackHold();
+        ASSERT_EQ(switchoverCalls(false), 0u);
+    }
+
+    /*
+     * A DEL after the last member stopped distributing but before the LAG went oper
+     * down: held, so FdbOrch's flush at the LAG oper down keeps the MACs as well.
+     */
+    TEST_F(EvpnMhEsBackupLagTest, DeleteBeforeTheLagGoesDownKeepsItsMacs)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        pushBackup("DEL", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        lag.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+        PortOperStateUpdate update = { lag, SAI_PORT_OPER_STATUS_DOWN };
+        gFdbOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+        gEvpnMhOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        /* Back: switched back after the hold and detached, nothing flushed. */
+        setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_UP);
+        setDistribution(TEST_INTERFACE_1, true);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(switchoverCalls(false), 1u);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(ES_LAG), 0u);
+    }
+
+    /* The group goes while a DEL is held in that window: the flush follows the LAG's forwarding. */
+    TEST_F(EvpnMhEsBackupLagTest, HeldDeleteFlushesALagThatDoesNotForward)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        setDistribution(TEST_INTERFACE_1, false);
+        setDistribution(TEST_INTERFACE_2, false);
+        pushBackup("DEL", ES_LAG);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        removeGroupBridgePort();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(ES_LAG), 0u);
     }
 }
