@@ -8,6 +8,9 @@
 #include "swssnet.h"
 #include "qosorch.h"
 #include "subscriberstatetable.h"
+#include "sai_serialize.h"
+#include "flex_counter_manager.h"
+#include "redisapi.h"
 
 using namespace std;
 using namespace swss;
@@ -28,6 +31,20 @@ extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
 extern QosOrch*         gQosOrch;
 extern NeighOrch*       gNeighOrch;
+extern FlexManagerDirectory g_FlexManagerDirectory;
+extern bool gTraditionalFlexCounter;
+
+#define TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "TUNNEL_STAT_COUNTER"
+#define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+#define TUNNELDECAP_FLEX_COUNTER_UPD_INTERVAL 1
+
+static const std::vector<sai_tunnel_stat_t> tunnel_decap_stat_ids =
+{
+    SAI_TUNNEL_STAT_IN_OCTETS,
+    SAI_TUNNEL_STAT_IN_PACKETS,
+    SAI_TUNNEL_STAT_OUT_OCTETS,
+    SAI_TUNNEL_STAT_OUT_PACKETS
+};
 
 TunnelDecapOrch::TunnelDecapOrch(
     DBConnector *appDb, DBConnector *stateDb,
@@ -48,6 +65,123 @@ TunnelDecapOrch::TunnelDecapOrch(
     }
 
     Orch::addExecutor(new Consumer(cfgSubnetDecapSubTable, this, CFG_SUBNET_DECAP_TABLE_NAME));
+
+    // Tunnel decap flex counter setup; shares the TUNNEL_STAT_COUNTER group with VxlanTunnelOrch
+    FieldValueTuple fv;
+    string tunnel_rate_plugin = "tunnel_rates.lua";
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+    try
+    {
+        string tunnel_rate_script = swss::loadLuaScript(tunnel_rate_plugin);
+        string tunnel_rate_sha = swss::loadRedisScript(m_counter_db.get(), tunnel_rate_script);
+        fv = FieldValueTuple(TUNNEL_PLUGIN_FIELD, tunnel_rate_sha);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("Tunnel flex counter group plugin was not set successfully: %s", e.what());
+    }
+
+    tunnel_stat_manager = g_FlexManagerDirectory.createFlexCounterManager(TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, fv);
+
+    m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));
+    m_tunnelTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_TYPE_MAP));
+
+    if (gTraditionalFlexCounter)
+    {
+        m_vidToRidTable = make_unique<Table>(m_asic_db.get(), "VIDTORID");
+    }
+
+    auto intervT = timespec { .tv_sec = TUNNELDECAP_FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_FlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "TUNNELDECAP_FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
+}
+
+void TunnelDecapOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
+    {
+        string value;
+        const auto id = sai_serialize_object_id(it->first);
+
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering tunnel %s, id %s to flex counter", it->second.c_str(), id.c_str());
+            vector<FieldValueTuple> tunnelNameFvs;
+            vector<FieldValueTuple> tunnelTypeFvs;
+            string type = "SAI_TUNNEL_TYPE_IPINIP";
+
+            tunnelNameFvs.emplace_back(it->second, id);
+            tunnelTypeFvs.emplace_back(id, type);
+
+            m_tunnelNameTable->set("", tunnelNameFvs);
+            m_tunnelTypeTable->set("", tunnelTypeFvs);
+            auto tunnel_stats = generateTunnelCounterStats();
+
+            tunnel_stat_manager->setCounterIdList(it->first, CounterType::TUNNEL, tunnel_stats);
+            it = m_pendingAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void TunnelDecapOrch::addTunnelToFlexCounter(sai_object_id_t oid, const string &name)
+{
+    m_pendingAddToFlexCntr[oid] = name;
+}
+
+void TunnelDecapOrch::removeTunnelFromFlexCounter(sai_object_id_t oid, const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Not removing NULL OID from flex for tunnel %s", name.c_str());
+        return;
+    }
+
+    if (m_pendingAddToFlexCntr.find(oid) != m_pendingAddToFlexCntr.end())
+    {
+        m_pendingAddToFlexCntr.erase(oid);
+        return;
+    }
+
+    string sai_oid = sai_serialize_object_id(oid);
+
+    m_tunnelNameTable->hdel("", name);
+    m_tunnelTypeTable->hdel("", sai_oid);
+    tunnel_stat_manager->clearCounterIdList(oid);
+    SWSS_LOG_DEBUG("Unregistered tunnel %s from Flex counter", name.c_str());
+}
+
+std::unordered_set<std::string> TunnelDecapOrch::generateTunnelCounterStats()
+{
+    std::unordered_set<std::string> counter_stats;
+
+    for (const auto& it: tunnel_decap_stat_ids)
+    {
+        counter_stats.emplace(sai_serialize_tunnel_stat(it));
+    }
+    return counter_stats;
+}
+
+void TunnelDecapOrch::generateTunnelCounterMap()
+{
+    if (m_isTunnelCounterMapGenerated)
+    {
+        return;
+    }
+
+    m_FlexCounterUpdTimer->start();
+
+    m_isTunnelCounterMapGenerated = true;
 }
 
 void TunnelDecapOrch::doTask(Consumer &consumer)
@@ -873,6 +1007,7 @@ bool TunnelDecapOrch::addDecapTunnel(
         SAI_NULL_OBJECT_ID      // encap_tc_to_queue_map_id
     };
     setDecapTunnelStatus(key);
+    addTunnelToFlexCounter(tunnel_id, key);
 
     return true;
 }
@@ -1210,6 +1345,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string table_name, string key)
         }
     }
 
+    removeTunnelFromFlexCounter(tunnel_info->tunnel_id, key);
     tunnelTable.erase(key);
     gQosOrch->removeTunnelReference(table_name, key);
     removeDecapTunnelStatus(key);

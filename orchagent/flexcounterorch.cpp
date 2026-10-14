@@ -19,6 +19,7 @@
 #include "switchorch.h"
 #include "debugcounterorch.h"
 #include "fabricportsorch.h"
+#include "tunneldecaporch.h"
 
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
@@ -163,6 +164,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     }
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    TunnelDecapOrch* tunnel_decap_orch = gDirectory.get<TunnelDecapOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
     DashHaOrch* dash_ha_orch = gDirectory.get<DashHaOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
@@ -299,6 +301,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
+                    if (tunnel_decap_orch && (key == TUNNEL_KEY) && (value == "enable"))
+                    {
+                        tunnel_decap_orch->generateTunnelCounterMap();
                     }
                     if (dash_orch && (key == ENI_KEY))
                     {
