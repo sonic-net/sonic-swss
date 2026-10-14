@@ -2927,16 +2927,9 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     // Extract end point ip
     auto end_point_ip = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN from the key. A DEL carries no VNI attribute.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
@@ -2983,7 +2976,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
         return false;
     }
 
-    return tunnel_orch->delTunnelUser(end_point_ip, vni_id, vlan_id, TUNNEL_USER_IMR);
+    return tunnel_orch->delTunnelUser(end_point_ip, 0, vlan_id, TUNNEL_USER_IMR);
 }
 
 //------------------- EVPN_NVO Table --------------------------//
