@@ -421,6 +421,13 @@ void EvpnMhOrch::doEvpnEsBackupNhgTask(Consumer &consumer)
                     nhg_id = fvValue(fv);
                 }
             }
+            if (nhg_id.empty())
+            {
+                SWSS_LOG_ERROR("ES %s: backup next hop group entry without a nexthop_group, ignored",
+                               port_name.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             auto &entry = m_esBackup[port_name];
             if (entry.deleted)
             {
@@ -552,7 +559,7 @@ bool EvpnMhOrch::applyEsBackup(const std::string &port_name)
     }
     if (entry.nhg_oid != want)
     {
-        /* While switched over, the SAI moves the port's entries to the new group. */
+        /* Replaced in place: a switched over port's traffic follows the group it now has. */
         if (!setEsBackupAttr(entry, port_name, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID,
                              false, want))
         {
@@ -864,19 +871,29 @@ void EvpnMhOrch::onEsBackupBridgePortChange(const Port &port, bool add)
                 m_esBackupPending.insert(port.m_alias);
             }
         }
-        else if (e->second.deleted)
-        {
-            m_esBackupSwitchback.erase(port.m_alias);
-            m_esBackupPending.erase(port.m_alias);
-            m_esBackup.erase(e);
-        }
         else
         {
-            /* The attributes go with the bridge port. */
+            /*
+             * PortsOrch notifies before it removes the bridge port: take the group off it
+             * first, so nothing stays switched over if the removal fails and the bridge
+             * port stays (it is then notified again as added, and attached again).
+             */
+            if (e->second.bridge_port_id == port.m_bridge_port_id)
+            {
+                detachEsBackup(e->second, port.m_alias);
+            }
             m_esBackupSwitchback.erase(port.m_alias);
-            e->second.bridge_port_id = SAI_NULL_OBJECT_ID;
-            e->second.nhg_oid = SAI_NULL_OBJECT_ID;
-            e->second.switchover = false;
+            if (e->second.deleted)
+            {
+                m_esBackupPending.erase(port.m_alias);
+                m_esBackup.erase(e);
+            }
+            else
+            {
+                e->second.bridge_port_id = SAI_NULL_OBJECT_ID;
+                e->second.nhg_oid = SAI_NULL_OBJECT_ID;
+                e->second.switchover = false;
+            }
         }
         return;
     }

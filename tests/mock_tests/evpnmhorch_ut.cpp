@@ -798,9 +798,53 @@ namespace evpnmhorch_test
 
         void TearDown() override
         {
+            unhookBridgePortRemoval();
             bpSpy.reset();
             sai_fdb_api = es_org_fdb_api;
             EvpnMhOrchTest::TearDown();
+        }
+
+        /* For PortsOrch::removeBridgePort(): StpOrch, host interfaces, and a bridge port
+         * remove that refuse_remove makes the SAI refuse (without removing anything). */
+        bool refuse_remove = false;
+        std::shared_ptr<SaiSpyFunctor<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT, sai_status_t,
+                                      sai_object_id_t>> removeBpSpy;
+        std::shared_ptr<SaiSpyFunctor<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF, sai_status_t,
+                                      sai_object_id_t, const sai_attribute_t *>> hostifSpy;
+
+        void hookBridgePortRemoval()
+        {
+            removeBpSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->remove_bridge_port);
+            removeBpSpy->callFake([this](sai_object_id_t oid) -> sai_status_t {
+                bp_calls.push_back({ true, oid, 0 });
+                return refuse_remove ? SAI_STATUS_OBJECT_IN_USE : SAI_STATUS_SUCCESS;
+            });
+            hostifSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->set_hostif_attribute);
+            hostifSpy->callFake([](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_SUCCESS;
+            });
+            vector<string> stp_tables = { "STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_STATE_TABLE",
+                                          "STP_FASTAGEING_FLUSH_TABLE", "STP_INST_PORT_FLUSH_TABLE" };
+            gStpOrch = new StpOrch(m_appl_db.get(), m_state_db.get(), stp_tables);
+        }
+
+        void unhookBridgePortRemoval()
+        {
+            removeBpSpy.reset();
+            hostifSpy.reset();
+            delete gStpOrch;
+            gStpOrch = nullptr;
+        }
+
+        /* The group's bridge port, as L2NhgOrch creates it, with a made-up bridge port id. */
+        Port addGroupBridgePort()
+        {
+            fake_bp = 0x3a00000000abcULL;
+            Port nhgPort(gL2NhgOrch->getNextHopGroupPortName(ES_BACKUP_NHG), Port::NEXTHOP_GROUP);
+            nhgPort.m_nexthop_group_id = ES_BACKUP_NHG_OID;
+            nhgPort.m_bridge_port_id = fake_bp;
+            gPortsOrch->m_portList[nhgPort.m_alias] = nhgPort;
+            return nhgPort;
         }
 
         void activateBackupNhg(const string &nhg = ES_BACKUP_NHG, sai_object_id_t oid = ES_BACKUP_NHG_OID)
@@ -1056,6 +1100,58 @@ namespace evpnmhorch_test
         ASSERT_EQ(gPortsOrch->m_portList[nhgPort.m_alias].m_bridge_port_id, SAI_NULL_OBJECT_ID);
     }
 
+    /*
+     * The SAI refuses to remove the ES port's bridge port: the group was taken off it
+     * before the removal, and is attached and switched over again on the bridge port that stays.
+     */
+    TEST_F(EvpnMhEsBackupTest, RefusedPortBridgePortRemovalKeepsTheGroup)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+
+        hookBridgePortRemoval();
+        refuse_remove = true;
+        Port port = gPortsOrch->m_portList[TEST_INTERFACE_1];
+        bool removed = gPortsOrch->removeBridgePort(port);
+        unhookBridgePortRemoval();
+
+        ASSERT_FALSE(removed);
+        ASSERT_EQ(set_calls.size(), 6u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(set_calls[4].oid, ES_BACKUP_NHG_OID);
+        ASSERT_EQ(set_calls[5].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_TRUE(set_calls[5].value);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+    }
+
+    /* While L2NhgOrch retries a refused removal of the group, the group is not attached again. */
+    TEST_F(EvpnMhEsBackupTest, GroupBeingRemovedIsNotAttachedAgain)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        addGroupBridgePort();
+
+        hookBridgePortRemoval();
+        refuse_remove = true;
+        bool deleted = gL2NhgOrch->deleteL2NextHopGroup(ES_BACKUP_NHG);
+        unhookBridgePortRemoval();
+
+        ASSERT_FALSE(deleted);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
+
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+    }
+
     TEST_F(EvpnMhEsBackupTest, IgnoredWhenTheSaiLacksProtection)
     {
         gEvpnMhOrch->m_esBackupSupported = false;
@@ -1197,10 +1293,12 @@ namespace evpnmhorch_test
         pushBackup("DEL");
         ASSERT_EQ(set_calls.size(), 2u);
 
-        /* The attributes go with the bridge port (PortsOrch flushes its MACs). */
+        /* Taken off the bridge port before PortsOrch removes it. */
         PortUpdate removed = { gPortsOrch->m_portList[TEST_INTERFACE_1], false };
         gEvpnMhOrch->update(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &removed);
-        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls.size(), 4u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
         ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
         ASSERT_EQ(gEvpnMhOrch->m_esBackup.count(TEST_INTERFACE_1), 0u);
 
