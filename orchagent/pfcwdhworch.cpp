@@ -15,8 +15,6 @@ extern sai_queue_api_t* sai_queue_api;
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
-// Global instance pointer for SAI callback
-
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
                          const vector<sai_port_stat_t> &portStatIds,
                          const vector<sai_queue_stat_t> &queueStatIds,
@@ -32,8 +30,6 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
 {
     SWSS_LOG_ENTER();
-
-    // Set global instance pointer
 
     // Mark hardware watchdog recovery in STATE_DB
     this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_HARDWARE);
@@ -250,7 +246,7 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             }
             else
             {
-                SWSS_LOG_WARN("PFC deadlock DETECTED on queue 0x%" PRIx64 " (no port info)", notification.queue_id);
+                SWSS_LOG_WARN("PFC Watchdog detected PFC storm on queue id 0x%" PRIx64 ", port unknown", notification.queue_id);
             }
 
             // Recovery mode is not selectable from here. This notification reached us over
@@ -278,7 +274,7 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
             }
             else
             {
-                SWSS_LOG_NOTICE("PFC deadlock RECOVERED on queue 0x%" PRIx64 " (no port info)", notification.queue_id);
+                SWSS_LOG_WARN("PFC Watchdog storm restored on queue id 0x%" PRIx64 ", port unknown", notification.queue_id);
             }
         }
         else
@@ -478,62 +474,62 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
 task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
-	// GLOBAL is a config key, not a port, and createEntry already special-cases it.
-	// Short-circuit before the port lookup so a routine DEL of PFC_WD|GLOBAL does not
-	// log "Invalid port interface GLOBAL". The base class guards the same way.
-	if (key == PFC_WD_GLOBAL)
-	{
-		return task_process_status::task_success;
-	}
+    // GLOBAL is a config key, not a port, and createEntry already special-cases it.
+    // Short-circuit before the port lookup so a routine DEL of PFC_WD|GLOBAL does not
+    // log "Invalid port interface GLOBAL". The base class guards the same way.
+    if (key == PFC_WD_GLOBAL)
+    {
+        return task_process_status::task_success;
+    }
 
-	Port port;
-	if (!gPortsOrch->getPort(key, port))
-	{
-		SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
-		return task_process_status::task_invalid_entry;
-	}
+    Port port;
+    if (!gPortsOrch->getPort(key, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
 
-	// If hardware watchdog is configured on this port, disallow deletion
-	// while any lossless queue is still in stormed state.
-	if (m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end())
-	{
-		if (isPortInStormedState(port))
-		{
-			SWSS_LOG_ERROR(
-				"Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
-				"Wait for storm to pass before making changes.",
-				port.m_alias.c_str());
-			return task_process_status::task_invalid_entry;
-		}
-	}
+    // If hardware watchdog is configured on this port, disallow deletion
+    // while any lossless queue is still in stormed state.
+    if (m_pfcwd_ports.find(port.m_alias) != m_pfcwd_ports.end())
+    {
+        if (isPortInStormedState(port))
+        {
+            SWSS_LOG_ERROR(
+                "Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
+                "Wait for storm to pass before making changes.",
+                port.m_alias.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
 
-	// Delegate to base implementation to stop watchdog on the port and
-	// update common bookkeeping.
-	task_process_status status = PfcWdBaseOrch::deleteEntry(key);
+    // Delegate to base implementation to stop watchdog on the port and
+    // update common bookkeeping.
+    task_process_status status = PfcWdBaseOrch::deleteEntry(key);
 
-	// A port deferred for a missing lossless TC is only removed from the pending
-	// set when it starts, so a port deleted while still deferred would stay there
-	// for the lifetime of the process.
-	if (status == task_process_status::task_success)
-	{
-		clearPfcWdPending(port);
-	}
+    // A port deferred for a missing lossless TC is only removed from the pending
+    // set when it starts, so a port deleted while still deferred would stay there
+    // for the lifetime of the process.
+    if (status == task_process_status::task_success)
+    {
+        clearPfcWdPending(port);
+    }
 
-	return status;
+    return status;
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,
-	    uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
-	// For hardware-based watchdog, all hardware programming and flex counter
-	// registration are handled in configureHwWatchdog().
-	// Any existing configuration is cleaned up via stopWdOnPort() before this
-	// function is invoked from createEntry().
-	return configureHwWatchdog(port, detectionTime, restorationTime, action);
+    // For hardware-based watchdog, all hardware programming and flex counter
+    // registration are handled in configureHwWatchdog().
+    // Any existing configuration is cleaned up via stopWdOnPort() before this
+    // function is invoked from createEntry().
+    return configureHwWatchdog(port, detectionTime, restorationTime, action);
 }
 
 bool PfcWdHwOrch::stopWdOnPort(const Port& port)

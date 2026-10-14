@@ -6199,6 +6199,47 @@ TEST_F(PfcWdHwOrchTest, InvalidConfigRejected)
     ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 }
 
+TEST_F(PfcWdHwOrchTest, PfcStatHistoryAcceptedAndIgnored)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // pfc_stat_history is read only by the software detection plugin, which hardware
+    // mode does not run. The entry is accepted so a default config that sets the field
+    // stays valid, and the field is ignored rather than silently honoured.
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" },
+          { "detection_time", "200" },
+          { "restoration_time", "200" },
+          { "pfc_stat_history", "enable" } });
+
+    ASSERT_EQ(status, task_process_status::task_success);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, PfcStatHistoryInvalidValueRejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" },
+          { "detection_time", "200" },
+          { "restoration_time", "200" },
+          { "pfc_stat_history", "up" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, DeleteEntryGlobalReturnsSuccess)
+{
+    // A routine DEL of PFC_WD|GLOBAL short-circuits before the port lookup, so it
+    // neither logs "Invalid port interface GLOBAL" nor reaches the unregister path.
+    // Matches PfcWdBaseOrch::deleteEntry and the GLOBAL guard in createEntry.
+    ASSERT_EQ(gPfcWdHwOrch->deleteEntry("GLOBAL"), task_process_status::task_success);
+}
+
 TEST_F(PfcWdHwOrchTest, NoLosslessTcFailure)
 {
     bringUpPorts();
