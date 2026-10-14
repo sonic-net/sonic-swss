@@ -65,6 +65,13 @@ counter_group_meta = {
         'pre_test': 'pre_vxlan_tunnel_counter_test',
         'post_test':  'post_vxlan_tunnel_counter_test',
     },
+    'tunnel_decap_counter': {
+        'key': 'TUNNEL',
+        'group_name': 'TUNNEL_STAT_COUNTER',
+        'name_map': 'COUNTERS_TUNNEL_NAME_MAP',
+        'pre_test': 'pre_ipinip_tunnel_counter_test',
+        'post_test':  'post_ipinip_tunnel_counter_test',
+    },
     'acl_counter': {
         'key': 'ACL',
         'group_name': 'ACL_STAT_COUNTER',
@@ -241,6 +248,28 @@ class TestFlexCounters(TestFlexCountersBase):
         self.config_db.delete_entry("VLAN","Vlan10")
         self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
         self.config_db.delete_entry("VLAN_TUNNEL_MAP","vtep1|map_100_Vlan10")
+        self.verify_no_flex_counters_tables_after_delete(meta_data['group_name'])
+
+    def pre_ipinip_tunnel_counter_test(self, meta_data):
+        # Create an IPINIP decap tunnel (TunnelDecapOrch) that should register for TUNNEL_STAT_COUNTER
+        ps = swsscommon.ProducerStateTable(self.app_db.db_connection, "TUNNEL_DECAP_TABLE")
+        fvs = swsscommon.FieldValuePairs([
+            ("tunnel_type", "IPINIP"),
+            ("dscp_mode", "uniform"),
+            ("ecn_mode", "standard"),
+            ("ttl_mode", "pipe"),
+        ])
+        ps.set("IPINIP_TUNNEL_UT", fvs)
+
+    def post_ipinip_tunnel_counter_test(self, meta_data):
+        # The decap tunnel must be registered in the name map and tagged IPINIP
+        counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
+        assert "IPINIP_TUNNEL_UT" in counters_keys, "IPINIP decap tunnel not registered for TUNNEL_STAT_COUNTER"
+        oid = counters_keys["IPINIP_TUNNEL_UT"]
+        type_map = self.counters_db.get_entry(TUNNEL_TYPE_MAP, "")
+        assert type_map.get(oid) == "SAI_TUNNEL_TYPE_IPINIP"
+        ps = swsscommon.ProducerStateTable(self.app_db.db_connection, "TUNNEL_DECAP_TABLE")
+        ps._del("IPINIP_TUNNEL_UT")
         self.verify_no_flex_counters_tables_after_delete(meta_data['group_name'])
 
     def post_acl_tunnel_counter_test(self, meta_data):
