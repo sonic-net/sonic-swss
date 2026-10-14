@@ -13,6 +13,11 @@
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
 
+#ifndef CFG_FDB_SYNC_TABLE_NAME
+// TODO: drop once sonic-net/sonic-buildimage#29312 is merged.
+#define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
+
 /*
  * Default timer interval for fdbsyncd reconcillation
  */
