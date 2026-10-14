@@ -14,13 +14,16 @@ using namespace std;
 
 namespace swss {
 
-class NbrMgr : public Orch
+class NbrMgr : public Orch, public NetMsg
 {
 public:
     NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
     bool isNeighRestoreDone();
+
+    /* RTM_DELNEIGH / RTM_NEWLINK: put back static neighbours the kernel flushed */
+    void onMsg(int nlmsg_type, struct nl_object *obj) override;
 
 private:
     void reconcileNeighResolveTable(DBConnector *appDb);
@@ -43,10 +46,18 @@ private:
     bool addKernelNeigh(string odev, IpAddress ip_addr, MacAddress mac_addr);
     bool delKernelNeigh(string odev, IpAddress ip_addr);
     bool isIntfOperUp(const std::string &alias);
+    bool isNetdevUp(const std::string &alias);
+    void reinstallStaticNeighbors(const std::vector<std::string> &cfgKeys);
     unique_ptr<Table> m_cfgVoqInbandInterfaceTable;
 
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable, m_stateNeighRestoreTable;
     struct nl_sock *m_nl_sock;
+
+    Table m_cfgNeighTable;
+    /* "<alias>|<canonical ip>" -> CONFIG_DB NEIGH key, for entries with a MAC */
+    std::map<std::string, std::string> m_staticNeigh;
+    /* alias -> CONFIG_DB NEIGH keys flushed while the netdev was admin down */
+    std::map<std::string, std::set<std::string>> m_flushedStatic;
 };
 
 }
