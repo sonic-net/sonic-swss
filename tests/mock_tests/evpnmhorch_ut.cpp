@@ -837,6 +837,16 @@ namespace evpnmhorch_test
             ASSERT_TRUE(consumer->m_toSync.empty());
         }
 
+        /* The switchback timer fires with every port's hold passed. */
+        void expireSwitchbackHold()
+        {
+            for (auto &kv : gEvpnMhOrch->m_esBackupSwitchback)
+            {
+                kv.second = std::chrono::steady_clock::time_point::min();
+            }
+            gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        }
+
         /* What PortsOrch::updatePortOperStatus() does for the observers. */
         void setOper(sai_port_oper_status_t status)
         {
@@ -867,7 +877,7 @@ namespace evpnmhorch_test
         /* Up: switched back only when the hold timer fires. */
         setOper(SAI_PORT_OPER_STATUS_UP);
         ASSERT_EQ(set_calls.size(), 2u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 3u);
         ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
@@ -894,14 +904,34 @@ namespace evpnmhorch_test
 
         setOper(SAI_PORT_OPER_STATUS_UP);
         setOper(SAI_PORT_OPER_STATUS_DOWN);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 2u);
 
         setOper(SAI_PORT_OPER_STATUS_UP);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 3u);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(es_flush_calls, 0);
+    }
+
+    /* The timer can fire for another port's hold: a port switches back only after its own. */
+    TEST_F(EvpnMhEsBackupTest, SwitchbackWaitsForTheHoldOfItsOwnPort)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.count(TEST_INTERFACE_1));
+
+        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.count(TEST_INTERFACE_1));
+
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_FALSE(set_calls[2].value);
+        ASSERT_TRUE(gEvpnMhOrch->m_esBackupSwitchback.empty());
     }
 
     TEST_F(EvpnMhEsBackupTest, WaitsForTheGroupAndSwitchesOverOnAttach)
@@ -1066,13 +1096,13 @@ namespace evpnmhorch_test
         /* A flap within the hold: still held. */
         setOper(SAI_PORT_OPER_STATUS_UP);
         setOper(SAI_PORT_OPER_STATUS_DOWN);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 2u);
 
         /* Back up: switched back after the hold, then detached; nothing is flushed. */
         setOper(SAI_PORT_OPER_STATUS_UP);
         ASSERT_EQ(set_calls.size(), 2u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 4u);
         ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
@@ -1099,7 +1129,7 @@ namespace evpnmhorch_test
 
         pushBackup("DEL");
         ASSERT_EQ(set_calls.size(), 2u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 4u);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
@@ -1133,7 +1163,7 @@ namespace evpnmhorch_test
         ASSERT_EQ(set_calls.size(), 3u);
 
         setOper(SAI_PORT_OPER_STATUS_UP);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 4u);
         ASSERT_FALSE(set_calls[3].value);
         ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
@@ -1264,7 +1294,7 @@ namespace evpnmhorch_test
         setOper(SAI_PORT_OPER_STATUS_UP);
 
         fail_switchover = 1;
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 2u);
         ASSERT_TRUE(gEvpnMhOrch->m_esBackupPending.count(TEST_INTERFACE_1));
 
@@ -1392,12 +1422,12 @@ namespace evpnmhorch_test
         /* Up again, but no member distributes yet: the hold does not start. */
         setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_UP);
         setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_UP);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 2u);
 
         setDistribution(TEST_INTERFACE_1, true);
         ASSERT_EQ(set_calls.size(), 2u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 3u);
         ASSERT_EQ(switchoverCalls(false), 1u);
     }
@@ -1419,10 +1449,10 @@ namespace evpnmhorch_test
         setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
         ASSERT_EQ(set_calls.size(), 2u);
         setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 2u);
         setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_UP);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 3u);
         ASSERT_EQ(switchoverCalls(false), 1u);
     }
@@ -1469,7 +1499,7 @@ namespace evpnmhorch_test
         gPortsOrch->m_portList[ES_LAG] = lag;
         LagMemberUpdate removed = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], false };
         gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &removed);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(switchoverCalls(false), 0u);
 
         /* Re-added already distributing (created with distribution on): the LAG forwards again. */
@@ -1478,7 +1508,7 @@ namespace evpnmhorch_test
         LagMemberUpdate added = { lag, gPortsOrch->m_portList[TEST_INTERFACE_1], true };
         gEvpnMhOrch->update(SUBJECT_TYPE_LAG_MEMBER_CHANGE, &added);
         ASSERT_EQ(switchoverCalls(false), 0u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(switchoverCalls(false), 1u);
     }
 
@@ -1498,7 +1528,7 @@ namespace evpnmhorch_test
 
         ASSERT_TRUE(gEvpnMhOrch->m_lagMembersNotDistributing.count(TEST_INTERFACE_2));
         ASSERT_EQ(switchoverCalls(true), 1u);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(switchoverCalls(false), 0u);
     }
 
@@ -1511,8 +1541,8 @@ namespace evpnmhorch_test
         ASSERT_EQ(switchoverCalls(true), 1u);
 
         /* The hold expires while the LAG is oper up but no member distributes. */
-        gEvpnMhOrch->m_esBackupSwitchback.insert(ES_LAG);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        gEvpnMhOrch->m_esBackupSwitchback[ES_LAG] = std::chrono::steady_clock::now();
+        expireSwitchbackHold();
         ASSERT_EQ(switchoverCalls(false), 0u);
     }
 
@@ -1543,7 +1573,7 @@ namespace evpnmhorch_test
         /* Back: switched back after the hold and detached, nothing flushed. */
         setPortOper(ES_LAG, SAI_PORT_OPER_STATUS_UP);
         setDistribution(TEST_INTERFACE_1, true);
-        gEvpnMhOrch->onEsBackupSwitchbackTimer();
+        expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 4u);
         ASSERT_EQ(switchoverCalls(false), 1u);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
