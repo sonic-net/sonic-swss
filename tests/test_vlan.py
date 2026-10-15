@@ -37,6 +37,17 @@ class TestVlan(object):
 
         assert num.strip() == str(expected_cnt)
 
+    def verify_port_pvid(self, dvs, interface, pvid):
+        # The port entry carries the PVID only once orchagent has set it; until then it is VLAN 1
+        port_oid = dvs.asic_db.port_name_map[interface]
+
+        def _pvid_matches():
+            fvs = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+            return (fvs.get("SAI_PORT_ATTR_PORT_VLAN_ID", "1") == pvid, fvs)
+
+        wait_for_result(_pvid_matches, PollingConfig(polling_interval=0.2, timeout=5, strict=True),
+                        "{} PVID is not {}".format(interface, pvid))
+
     def test_VlanAddRemove(self, dvs):
 
         vlan = "2"
@@ -348,11 +359,11 @@ class TestVlan(object):
     @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
-        (["tagging_mode", "untagged"], [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
-        (["tagging_mode", "tagged"], [1, "SAI_VLAN_TAGGING_MODE_TAGGED"]),
-        (["tagging_mode", "priority_tagged"], [1, "SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED"]),
-        (["tagging_mode", "unexpected_mode"], [0, ""]),
-        (["no_tag_mode", ""], [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
+        (["tagging_mode", "untagged"], [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED", "2"]),
+        (["tagging_mode", "tagged"], [1, "SAI_VLAN_TAGGING_MODE_TAGGED", "1"]),
+        (["tagging_mode", "priority_tagged"], [1, "SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED", "2"]),
+        (["tagging_mode", "unexpected_mode"], [0, "", "1"]),
+        (["no_tag_mode", ""], [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED", "2"]),
     ])
 
     def test_VlanMemberTaggingMode(self, dvs, test_input, expected):
@@ -380,8 +391,12 @@ class TestVlan(object):
             # TODO: refactor to use loganalyzer
             self.check_syslog(dvs, marker, "vlanmgrd", "Wrong tagging_mode", test_input, 1)
 
+        # Untagged and priority-tagged members set the port VLAN ID; tagged members leave it alone
+        self.verify_port_pvid(dvs, interface, expected[2])
+
         self.dvs_vlan.remove_vlan_member(vlan, interface)
         self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        self.verify_port_pvid(dvs, interface, "1")
 
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)

@@ -5706,6 +5706,127 @@ namespace portsorch_test
             << "Port should be a VLAN member after deferred SET completes";
     }
 
+    // The VS switch lives for the whole suite, so each test uses a VLAN and ports of its own.
+    struct VlanMemberPvidTest : PortsOrchTest
+    {
+        static string suitePort(size_t index)
+        {
+            auto ports = ut_helper::getInitialSaiPorts();
+            auto it = ports.begin();
+            std::advance(it, index);
+            return it->first;
+        }
+
+        void initPorts()
+        {
+            Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            auto ports = ut_helper::getInitialSaiPorts();
+            for (const auto &it : ports)
+            {
+                portTable.set(it.first, it.second);
+            }
+            portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+            portTable.set("PortInitDone", { { } });
+            gPortsOrch->addExistingData(&portTable);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+
+        void apply(const string &table, const KeyOpFieldsValuesTuple &entry)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(table));
+            consumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{ entry });
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            vector<string> ts;
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << table << " task left pending: " << kfvKey(entry);
+        }
+
+        void setVlanMember(const string &vlan, const string &member, const string &tagging_mode)
+        {
+            apply(APP_VLAN_MEMBER_TABLE_NAME,
+                  { vlan + ":" + member, SET_COMMAND, { { "tagging_mode", tagging_mode } } });
+        }
+
+        void delVlanMember(const string &vlan, const string &member)
+        {
+            apply(APP_VLAN_MEMBER_TABLE_NAME, { vlan + ":" + member, DEL_COMMAND, { } });
+        }
+
+        // Checks both orchagent's copy of the PVID and the value programmed in the SAI
+        void expectPvid(const string &alias, sai_uint16_t pvid)
+        {
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            EXPECT_EQ(port.m_port_vlan_id, pvid) << alias;
+
+            sai_attribute_t attr;
+            memset(&attr, 0, sizeof(attr));
+            sai_status_t status;
+            if (port.m_type == Port::LAG)
+            {
+                attr.id = SAI_LAG_ATTR_PORT_VLAN_ID;
+                status = sai_lag_api->get_lag_attribute(port.m_lag_id, 1, &attr);
+            }
+            else
+            {
+                attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+                status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+            }
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS) << alias;
+            EXPECT_EQ(attr.value.u16, pvid) << alias;
+        }
+    };
+
+    TEST_F(VlanMemberPvidTest, PvidFollowsTaggingModeOnAddAndRemove)
+    {
+        initPorts();
+        string testPort = suitePort(0);
+        apply(APP_VLAN_TABLE_NAME, { "Vlan311", SET_COMMAND, { { "admin_status", "up" }, { "mtu", "9100" } } });
+
+        const vector<pair<string, sai_uint16_t>> cases = {
+            { "untagged", 311 },
+            { "priority_tagged", 311 },
+            { "tagged", DEFAULT_PORT_VLAN_ID },
+        };
+        for (const auto &c : cases)
+        {
+            SCOPED_TRACE(c.first);
+
+            setVlanMember("Vlan311", testPort, c.first);
+            Port vlan;
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan311", vlan));
+            ASSERT_NE(vlan.m_members.find(testPort), vlan.m_members.end());
+            expectPvid(testPort, c.second);
+
+            delVlanMember("Vlan311", testPort);
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan311", vlan));
+            ASSERT_EQ(vlan.m_members.find(testPort), vlan.m_members.end());
+            expectPvid(testPort, DEFAULT_PORT_VLAN_ID);
+        }
+    }
+
+    TEST_F(VlanMemberPvidTest, PriorityTaggedLagSetsLagPvid)
+    {
+        initPorts();
+        string firstPort = suitePort(1);
+        string secondPort = suitePort(2);
+
+        apply(APP_LAG_TABLE_NAME, { "PortChannel1", SET_COMMAND, { { "admin_status", "up" }, { "mtu", "9100" } } });
+        apply(APP_LAG_MEMBER_TABLE_NAME, { "PortChannel1:" + firstPort, SET_COMMAND, { { "status", "enabled" } } });
+        apply(APP_VLAN_TABLE_NAME, { "Vlan312", SET_COMMAND, { { "admin_status", "up" }, { "mtu", "9100" } } });
+
+        setVlanMember("Vlan312", "PortChannel1", "priority_tagged");
+        expectPvid("PortChannel1", 312);
+
+        // A port joining the LAG takes the LAG's PVID
+        apply(APP_LAG_MEMBER_TABLE_NAME, { "PortChannel1:" + secondPort, SET_COMMAND, { { "status", "enabled" } } });
+        expectPvid(secondPort, 312);
+
+        delVlanMember("Vlan312", "PortChannel1");
+        expectPvid("PortChannel1", DEFAULT_PORT_VLAN_ID);
+    }
+
     struct PostPortInitTests : PortsOrchTest
     {
     };
