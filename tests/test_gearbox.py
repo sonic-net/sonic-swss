@@ -152,7 +152,10 @@ def enable_port_counter(dvs):
     # Enable port counter
     flex_counter_table.hset("PORT", "FLEX_COUNTER_STATUS", "enable")
     yield
-    # Disable port counter
+    # Disable port counter. Re-open the table: dvs.restart() in later tests
+    # invalidates the connection opened at setup.
+    flex_counter_table = swsscommon.Table(dvs.get_config_db().db_connection,
+        "FLEX_COUNTER_TABLE")
     flex_counter_table.hdel("PORT", "FLEX_COUNTER_STATUS")
 
 class TestGearbox(object):
