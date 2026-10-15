@@ -366,17 +366,20 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
             l3vni_table_[vni].l3_vni = true;
             vrf_vni_map_table_[vrf_name] = vni;
 
-            /* This VRF is now an EVPN L3-VNI VRF. All the interfaces share the
-             * same MAC address and hence the same auto-generated link-local
-             * ipv6 address with eui64 interface-id. Add a single /128 route
-             * entry for the link-local interface address pointing to the CPU
-             * port. This is gated behind L3-VNI binding so non-EVPN VRFs are
-             * not altered.
-             */
-            RouteOrch* routeOrch = gDirectory.get<RouteOrch*>();
-            IpPrefix linklocal_prefix = routeOrch->getLinkLocalEui64Addr(gMacAddress);
-            routeOrch->addLinkLocalRouteToMe(vrf_table_[vrf_name].vrf_id, linklocal_prefix);
-            SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in EVPN L3 VRF %s", linklocal_prefix.to_string().c_str(), vrf_name.c_str());
+            if (vrf_name != DEFAULT_VRF_NAME)
+            {
+                /* This VRF is now an EVPN L3-VNI VRF. All the interfaces share the
+                 * same MAC address and hence the same auto-generated link-local
+                 * ipv6 address with eui64 interface-id. Add a single /128 route
+                 * entry for the link-local interface address pointing to the CPU
+                 * port. The default VRF route is owned by RouteOrch and must not be
+                 * recreated by VRFOrch.
+                 */
+                RouteOrch* routeOrch = gDirectory.get<RouteOrch*>();
+                IpPrefix linklocal_prefix = routeOrch->getLinkLocalEui64Addr(gMacAddress);
+                routeOrch->addLinkLocalRouteToMe(vrf_table_[vrf_name].vrf_id, linklocal_prefix);
+                SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in EVPN L3 VRF %s", linklocal_prefix.to_string().c_str(), vrf_name.c_str());
+            }
 
             vlan_id = tunnel_orch->getVlanMappedToVni(vni);
             l3vni_table_[vni].vlan_id = vlan_id;
@@ -417,10 +420,11 @@ bool VRFOrch::delVrfVNIMap(const std::string& vrf_name, uint32_t vni)
         }
 
         /* Remove the EVPN L3-VNI eui64 /128 link-local CPU route added when
-         * this VRF was bound to an L3 VNI. Gated so non-EVPN VRFs are untouched.
+         * this named VRF was bound to an L3 VNI. The default VRF route is owned
+         * by RouteOrch and must remain present across map and logical-VRF removal.
          */
         auto vrf_it = vrf_table_.find(vrf_name);
-        if (vrf_it != vrf_table_.end())
+        if (vrf_name != DEFAULT_VRF_NAME && vrf_it != vrf_table_.end())
         {
             RouteOrch* routeOrch = gDirectory.get<RouteOrch*>();
             IpPrefix linklocal_prefix = routeOrch->getLinkLocalEui64Addr(gMacAddress);
