@@ -57,6 +57,8 @@ namespace hftelorch_notify_test
                 decay_t<decltype(p->m_name_profile_mapping)>();
             new (&p->m_group_update_blocked)
                 decay_t<decltype(p->m_group_update_blocked)>();
+            new (&p->m_group_delete_blocked)
+                decay_t<decltype(p->m_group_delete_blocked)>();
         }
 
         ~HFTelOrchStub()
@@ -66,8 +68,10 @@ namespace hftelorch_notify_test
             using ProfileMapType = decay_t<decltype(p->m_type_profile_mapping)>;
             using NameProfileMapType = decay_t<decltype(p->m_name_profile_mapping)>;
             using BlockedSetType = decay_t<decltype(p->m_group_update_blocked)>;
+            using DeleteBlockedSetType = decay_t<decltype(p->m_group_delete_blocked)>;
             p->m_name_profile_mapping.~NameProfileMapType();
             p->m_group_update_blocked.~BlockedSetType();
+            p->m_group_delete_blocked.~DeleteBlockedSetType();
             p->m_counter_name_cache.~CacheType();
             p->m_type_profile_mapping.~ProfileMapType();
             p = nullptr;
