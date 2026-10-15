@@ -20,6 +20,7 @@ using namespace testing;
 using namespace swss;
 
 DEFINE_SAI_GENERIC_API_MOCK_WITH_SET(virtual_router, virtual_router);
+DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
 
 class VrfOrchTest : public MockOrchTest
 {
@@ -31,6 +32,7 @@ class VrfOrchTest : public MockOrchTest
     void PostSetUp() override
     {
         INIT_SAI_API_MOCK(virtual_router);
+        INIT_SAI_API_MOCK(route);
         MockSaiApis();
 
         m_vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(
@@ -49,6 +51,7 @@ class VrfOrchTest : public MockOrchTest
         delete m_evpn_nvo_orch;
         m_evpn_nvo_orch = nullptr;
         RestoreSaiApis();
+        DEINIT_SAI_API_MOCK(route);
         DEINIT_SAI_API_MOCK(virtual_router);
     }
 
@@ -266,6 +269,35 @@ TEST_F(VrfOrchTest, DefaultVrfExplicitZeroRemovesAndAllowsReadd)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 4200u);
     EXPECT_TRUE(gVrfOrch->isL3VniVlan(4200));
+}
+
+TEST_F(VrfOrchTest, DefaultVrfVniLifecyclePreservesRouteOrchLinkLocalRoute)
+{
+    provisionEvpnVtep();
+    auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+
+    EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router(_, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_sai_virtual_router_api, remove_virtual_router(_)).Times(0);
+    EXPECT_CALL(*mock_sai_route_api, create_route_entry(_, _, _)).Times(0);
+    EXPECT_CALL(*mock_sai_route_api, remove_route_entry(_)).Times(0);
+
+    consumer->addToSync({{"default", "SET", {{"vni", "4250"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(gVrfOrch->isVRFexists("default"));
+    ASSERT_EQ(gVrfOrch->getVRFmappedVNI("default"), 4250u);
+
+    consumer->addToSync({{"default", "SET", {{"vni", "0"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(gVrfOrch->isVRFexists("default"));
+    ASSERT_EQ(gVrfOrch->getVRFmappedVNI("default"), 0u);
+
+    consumer->addToSync({{"default", "DEL", {}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(gVrfOrch->isVRFexists("default"));
 }
 
 TEST_F(VrfOrchTest, DefaultVrfSameVniReplayIsIdempotent)
