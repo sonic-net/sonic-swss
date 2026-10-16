@@ -303,13 +303,14 @@ size_t VNetVrfObject::getRouteCount() const
 
 bool VNetVrfObject::getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh)
 {
-    if (!hasRoute(ipPrefix))
+    const auto route = routes_.find(ipPrefix);
+    if (route == routes_.end())
     {
         SWSS_LOG_INFO("VNET route '%s' does'nt exist", ipPrefix.to_string().c_str());
         return false;
     }
 
-    nh = routes_.at(ipPrefix);
+    nh = route->second;
     return true;
 }
 
@@ -473,6 +474,7 @@ bool VNetOrch::addOperation(const Request& request)
     string tunnel;
     string scope;
     swss::MacAddress overlay_dmac;
+    set<string> decap_tunnel_list = {};
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -508,6 +510,10 @@ bool VNetOrch::addOperation(const Request& request)
         {
             overlay_dmac = request.getAttrMacAddress("overlay_dmac");
         }
+        else if (name == "decap_tunnel_list")
+        {
+            decap_tunnel_list = request.getAttrSet("decap_tunnel_list");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -534,7 +540,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac, decap_tunnel_list };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
@@ -545,6 +551,23 @@ bool VNetOrch::addOperation(const Request& request)
                     SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                     vnet_name.c_str(), tunnel.c_str());
                     return false;
+                }
+
+                for (const auto& decap_tunnel : decap_tunnel_list)
+                {
+                    if (!vxlan_orch->isTunnelExists(decap_tunnel))
+                    {
+                        SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", decap_tunnel.c_str());
+                        return false;
+                    }
+
+                    if (!vxlan_orch->createVxlanTunnelMap(decap_tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                          vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
+                    {
+                        SWSS_LOG_ERROR("VNET '%s', decap tunnel '%s', map create failed",
+                                        vnet_name.c_str(), decap_tunnel.c_str());
+                        return false;
+                    }
                 }
 
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
@@ -619,6 +642,15 @@ bool VNetOrch::delOperation(const Request& request)
             {
                 SWSS_LOG_ERROR("VNET '%s' map delete failed", vnet_name.c_str());
                 return false;
+            }
+
+            for (const auto& decap_tunnel : vrf_obj->getDecapTunnelList())
+            {
+                if (!vxlan_orch->removeVxlanTunnelMap(decap_tunnel, vrf_obj->getVni()))
+                {
+                    SWSS_LOG_ERROR("VNET '%s' decap map delete failed", vnet_name.c_str());
+                    return false;
+                }
             }
         }
     }
@@ -2287,6 +2319,16 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
+    if (request.getOperation() == SET_COMMAND)
+    {
+        const std::string& vnet = request.getKeyString(0);
+        const swss::IpPrefix prefix = request.getKeyIpPrefix(1);
+        if (deferIfTunnelRouteExists(vnet, prefix))
+        {
+            return false;
+        }
+    }
+
     std::vector<IpAddress> ip_addresses;
     string ifname = "";
 
@@ -3922,6 +3964,28 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             consistent_hashing_buckets);
     }
 
+    return true;
+}
+
+bool VNetRouteOrch::deferIfTunnelRouteExists(const std::string& vnet,
+                                             const swss::IpPrefix& prefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (!vnet_orch_->isVnetExecVrf() || !vnet_orch_->isVnetExists(vnet))
+    {
+        return false;
+    }
+
+    auto it = syncd_tunnel_routes_.find(vnet);
+    if (it == syncd_tunnel_routes_.end() || it->second.find(prefix) == it->second.end())
+    {
+        return false;
+    }
+
+    SWSS_LOG_INFO("VNET_ROUTE SET deferred: vnet=%s prefix=%s "
+                  "waiting for VNET_ROUTE_TUNNEL DEL for same prefix)",
+                  vnet.c_str(), prefix.to_string().c_str());
     return true;
 }
 
