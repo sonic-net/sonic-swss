@@ -147,6 +147,7 @@ public:
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
+    bool hasBindingGuard() const;
 
     bool isIpInSubnet(IpAddress ip);
 
