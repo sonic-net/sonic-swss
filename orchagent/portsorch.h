@@ -303,6 +303,11 @@ public:
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
     task_process_status setPortFastLinkupEnabled(Port &port, bool enable);
 
+    // Whether xcvrd is expected to run on this platform (i.e. SI settings will be
+    // provided by xcvrd). Derived once at init from pmon_daemon_control.json.
+    bool m_xcvrdSiSyncExpected = true;
+    bool isXcvrdExpectedToRun();
+
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
     unique_ptr<Table> m_counterSysPortTable;
@@ -394,6 +399,14 @@ private:
     map<set<uint32_t>, PortConfig> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     map<string, Port> m_pluggedModulesPort;
+
+    /* Per-port SI-settings admin gate state. */
+    struct PortAdminSiGate
+    {
+        bool si_notified = false;       // NOTIFIED/UNAVAIL received (DEFAULT clears it)
+        bool admin_up_deferred = false; // a config admin-up was held pending SI settings
+    };
+    map<string, PortAdminSiGate> m_portAdminSiGate;
     map<string, vlan_members_t> m_portVlanMember;
     map<string, std::vector<sai_object_id_t>> m_port_voq_ids;
     /* mapping from SAI object ID to Name for faster
@@ -448,6 +461,7 @@ private:
     void initializeQueuesBulk(std::vector<Port>& ports);
     void initializeSchedulerGroupsBulk(std::vector<Port>& ports);
     void initializePortHostTxReadyBulk(std::vector<Port>& ports);
+    void initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports);
     void initializePortMtuBulk(std::vector<Port>& ports);
 
     void initializePortBufferMaximumParameters(const Port &port);
@@ -500,6 +514,7 @@ private:
     bool setSaiHostTxSignal(const Port &port, bool enable);
 
     void setHostTxReady(Port port, const std::string &status);
+    void setPortSiSettingsSyncStatus(const Port& port, const std::string& status);
     // Get supported speeds on system side
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
@@ -589,6 +604,7 @@ private:
 
     bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
                        std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
+    bool applyPortSerdesConfig(Port &port, const PortConfig &pCfg);
 
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
