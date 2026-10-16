@@ -238,7 +238,12 @@ ShlOrch::doShlTblTask(Consumer &consumer)
                     acquireVtepRefs(ifname, del_vteps);
                 }
             } else {
-                SWSS_LOG_ERROR("entry for key:%s does not exist", shl_key.c_str());
+                /*
+                 * Not an error: zebra sends a port's VLAN deletes without tracking which
+                 * ones it sent an entry for, and a SET then DEL of a key can arrive as
+                 * the DEL alone.
+                 */
+                SWSS_LOG_INFO("No split horizon entry for %s, nothing to remove", shl_key.c_str());
             }
         }
         else

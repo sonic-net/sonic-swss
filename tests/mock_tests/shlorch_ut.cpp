@@ -828,6 +828,74 @@ namespace shlorch_test
         EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 0);
     }
 
+    /*
+     * A DEL of a key ShlOrch holds no entry for is consumed without an error and changes nothing: zebra sends a
+     * port's VLAN deletes without tracking which ones it sent an entry for (a VLAN that got its VNI after the ES
+     * port joined it has none), and a SET then DEL of a key can arrive as the DEL alone.
+     */
+    TEST_F(ShlOrchTest, ShlDelAbsentEntryTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ(gShlOrch->getVtepsListCount(), 1);
+        ASSERT_EQ(gShlOrch->getIsolationGroupCount(), 1);
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers(), 1);
+
+        // runs one batch and returns what it logged at ERROR or above
+        auto errorsOf = [&](const std::deque<KeyOpFieldsValuesTuple> &entries) {
+            auto prio = swss::Logger::getMinPrio();
+            swss::Logger::swssOutputNotify("orchagent", "STDERR");
+            swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+            testing::internal::CaptureStderr();
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+            string out = testing::internal::GetCapturedStderr();
+            swss::Logger::setMinPrio(prio);
+            const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+            swss::Logger::swssOutputNotify("orchagent",
+                (syslogStdout != nullptr && string(syslogStdout) == "1") ? "STDOUT" : "SYSLOG");
+            return out;
+        };
+        auto unchanged = [&]() {
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_EQ(gShlOrch->getVtepsListCount(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfPendingMembers(), 0);
+        };
+
+        // another VLAN of a port that has an entry
+        EXPECT_EQ(errorsOf({{"Vlan20:Ethernet4", "DEL", {}}}), "");
+        unchanged();
+
+        // a port that has no entry
+        EXPECT_EQ(errorsOf({{"Vlan20:Ethernet5", "DEL", {}}}), "");
+        unchanged();
+
+        // a SET and a DEL of one key taken in the same batch
+        EXPECT_EQ(errorsOf({{"Vlan30:Ethernet5", "SET", {{"vteps", "2.2.2.2"}}},
+                            {"Vlan30:Ethernet5", "DEL", {}}}), "");
+        unchanged();
+
+        consumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{
+            {"Vlan10:Ethernet4", "DEL", {}}
+        });
+        static_cast<Orch *>(gShlOrch)->doTask();
+        EXPECT_EQ(gShlOrch->getVtepsListCount(), 0);
+        EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 0);
+    }
+
     TEST_F(ShlOrchTest, ShlPortNotReadyTest)
     {
         // Clean up any existing isolation groups first
