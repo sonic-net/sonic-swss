@@ -727,6 +727,61 @@ namespace shlorch_test
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
     }
 
+    /*
+     * Split horizon is requested per vlan and port while the isolation group is per
+     * bridge port, so one vlan releasing a port must not drop the isolation another
+     * vlan still needs.
+     */
+    TEST_F(ShlOrchTest, ShlSharedPortAcrossVlansTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", VTEP_REMOTE_IP_2}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Second vlan asks for the same port and vtep
+        entries.push_back({"Vlan20:Ethernet4", "SET", {
+            {"vteps", VTEP_REMOTE_IP_2}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 2);
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 1);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Vlan10 goes away, Vlan20 still needs Ethernet4 isolated
+        entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 1);
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // Last vlan releases the port
+        entries.push_back({"Vlan20:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 0);
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+    }
+
     TEST_F(ShlOrchTest, ShlUnknownAttributeTest)
     {
         Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
@@ -770,6 +825,74 @@ namespace shlorch_test
         consumer->addToSync(entries);
         EXPECT_NO_THROW(static_cast<Orch *>(gShlOrch)->doTask());
         EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 0);
+    }
+
+    /*
+     * A DEL of a key ShlOrch holds no entry for is consumed without an error and changes nothing: zebra sends a
+     * port's VLAN deletes without tracking which ones it sent an entry for (a VLAN that got its VNI after the ES
+     * port joined it has none), and a SET then DEL of a key can arrive as the DEL alone.
+     */
+    TEST_F(ShlOrchTest, ShlDelAbsentEntryTest)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        ASSERT_EQ(gShlOrch->getVtepsListCount(), 1);
+        ASSERT_EQ(gShlOrch->getIsolationGroupCount(), 1);
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers(), 1);
+
+        // runs one batch and returns what it logged at ERROR or above
+        auto errorsOf = [&](const std::deque<KeyOpFieldsValuesTuple> &entries) {
+            auto prio = swss::Logger::getMinPrio();
+            swss::Logger::swssOutputNotify("orchagent", "STDERR");
+            swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+            testing::internal::CaptureStderr();
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+            string out = testing::internal::GetCapturedStderr();
+            swss::Logger::setMinPrio(prio);
+            const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+            swss::Logger::swssOutputNotify("orchagent",
+                (syslogStdout != nullptr && string(syslogStdout) == "1") ? "STDOUT" : "SYSLOG");
+            return out;
+        };
+        auto unchanged = [&]() {
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_EQ(gShlOrch->getVtepsListCount(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers(), 1);
+            EXPECT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfPendingMembers(), 0);
+        };
+
+        // another VLAN of a port that has an entry
+        EXPECT_EQ(errorsOf({{"Vlan20:Ethernet4", "DEL", {}}}), "");
+        unchanged();
+
+        // a port that has no entry
+        EXPECT_EQ(errorsOf({{"Vlan20:Ethernet5", "DEL", {}}}), "");
+        unchanged();
+
+        // a SET and a DEL of one key taken in the same batch
+        EXPECT_EQ(errorsOf({{"Vlan30:Ethernet5", "SET", {{"vteps", "2.2.2.2"}}},
+                            {"Vlan30:Ethernet5", "DEL", {}}}), "");
+        unchanged();
+
+        consumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{
+            {"Vlan10:Ethernet4", "DEL", {}}
+        });
+        static_cast<Orch *>(gShlOrch)->doTask();
+        EXPECT_EQ(gShlOrch->getVtepsListCount(), 0);
         EXPECT_EQ(gShlOrch->getIsolationGroupCount(), 0);
     }
 
@@ -867,6 +990,266 @@ namespace shlorch_test
 
         // Verify cleanup
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+    }
+
+    /* SAI calls in the order they were made, for the bridge port removal test. */
+    static vector<string> shl_order;
+    static bool shl_refuse_bridge_port_remove = false;
+
+    sai_status_t _ut_order_create_isolation_group_member(
+        _Out_ sai_object_id_t *grp_member_id, _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count, _In_ const sai_attribute_t *attr_list)
+    {
+        shl_order.push_back("member_create");
+        return _ut_stub_sai_create_isolation_group_member(grp_member_id, switch_id, attr_count, attr_list);
+    }
+
+    sai_status_t _ut_order_remove_isolation_group_member(_In_ sai_object_id_t grp_member_id)
+    {
+        shl_order.push_back("member_remove");
+        return _ut_stub_sai_remove_isolation_group_member(grp_member_id);
+    }
+
+    sai_status_t _ut_order_set_bridge_port_attribute(
+        _In_ sai_object_id_t bridge_port_id, _In_ const sai_attribute_t *attr)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_order_remove_bridge_port(_In_ sai_object_id_t bridge_port_id)
+    {
+        shl_order.push_back("bridge_port_remove");
+        return shl_refuse_bridge_port_remove ? SAI_STATUS_OBJECT_IN_USE : SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_order_set_hostif_attribute(_In_ sai_object_id_t hostif_id, _In_ const sai_attribute_t *attr)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /*
+     * Through PortsOrch::removeBridgePort(): the port's isolation group member, whose
+     * isolation object is the bridge port, is removed before the bridge port. When the
+     * SAI refuses the removal, the bridge port stays and the member is added back.
+     */
+    TEST_F(ShlOrchTest, ShlMemberRemovedBeforeItsBridgePort)
+    {
+        Table shlTable = Table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", "2.2.2.2"}
+        });
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        auto grp = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(grp, nullptr);
+        ASSERT_EQ(grp->getMemberPorts().size(), 1u);
+
+        vector<string> stp_tables = { "STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_STATE_TABLE",
+                                      "STP_FASTAGEING_FLUSH_TABLE", "STP_INST_PORT_FLUSH_TABLE" };
+        ASSERT_EQ(gStpOrch, nullptr);
+        gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), stp_tables);
+        sai_hostif_api_t ut_hostif_api = *sai_hostif_api;
+        sai_hostif_api_t *old_hostif_api = sai_hostif_api;
+        ut_hostif_api.set_hostif_attribute = _ut_order_set_hostif_attribute;
+        sai_hostif_api = &ut_hostif_api;
+        ut_sai_isolation_group_api.create_isolation_group_member = _ut_order_create_isolation_group_member;
+        ut_sai_isolation_group_api.remove_isolation_group_member = _ut_order_remove_isolation_group_member;
+        ut_sai_bridge_api.set_bridge_port_attribute = _ut_order_set_bridge_port_attribute;
+        auto old_remove_bridge_port = ut_sai_bridge_api.remove_bridge_port;
+        ut_sai_bridge_api.remove_bridge_port = _ut_order_remove_bridge_port;
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+        shl_order.clear();
+        shl_refuse_bridge_port_remove = true;
+        bool refused_done = gPortsOrch->removeBridgePort(port);
+        vector<string> refused = shl_order;
+        size_t members_after_refused = grp->getMemberPorts().size();
+
+        shl_order.clear();
+        shl_refuse_bridge_port_remove = false;
+        bool found = gPortsOrch->getPort("Ethernet4", port);
+        bool removed = found && gPortsOrch->removeBridgePort(port);
+        vector<string> done = shl_order;
+
+        sai_hostif_api = old_hostif_api;
+        ut_sai_isolation_group_api.create_isolation_group_member = _ut_stub_sai_create_isolation_group_member;
+        ut_sai_isolation_group_api.remove_isolation_group_member = _ut_stub_sai_remove_isolation_group_member;
+        ut_sai_bridge_api.set_bridge_port_attribute = _ut_stub_sai_set_bridge_port_attribute;
+        ut_sai_bridge_api.remove_bridge_port = old_remove_bridge_port;
+        delete gStpOrch;
+        gStpOrch = nullptr;
+
+        /* Refused: the member was removed first, then added back for the bridge port that stays. */
+        ASSERT_FALSE(refused_done);
+        ASSERT_EQ(refused, (vector<string>{ "member_remove", "bridge_port_remove", "member_create" }));
+        ASSERT_EQ(members_after_refused, 1u);
+
+        /* Removed: the member goes first, and waits for the port's next bridge port. */
+        ASSERT_TRUE(removed);
+        ASSERT_EQ(done, (vector<string>{ "member_remove", "bridge_port_remove" }));
+        ASSERT_EQ(grp->getMemberPorts().size(), 0u);
+
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> cleanup_entries;
+        cleanup_entries.push_back({"Vlan10:Ethernet4", "DEL", { {} }});
+        consumer->addToSync(cleanup_entries);
+        static_cast<Orch *>(gShlOrch)->doTask();
+    }
+
+    /* Bridge port calls in the order the SAI saw them: {"set"|"remove", oid, attr id, value}. */
+    struct BridgePortCall
+    {
+        string op;
+        sai_object_id_t oid;
+        sai_attr_id_t attr_id;
+        sai_object_id_t value;
+    };
+    vector<BridgePortCall> bridge_port_calls;
+    sai_status_t bridge_port_unbind_status = SAI_STATUS_SUCCESS;
+
+    sai_status_t _ut_record_set_bridge_port_attribute(
+        _In_ sai_object_id_t bridge_port_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        bridge_port_calls.push_back({ "set", bridge_port_id, attr->id, attr->value.oid });
+        if (attr->id == SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP && attr->value.oid == SAI_NULL_OBJECT_ID)
+        {
+            return bridge_port_unbind_status;
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_record_remove_bridge_port(
+        _In_ sai_object_id_t bridge_port_id)
+    {
+        bridge_port_calls.push_back({ "remove", bridge_port_id, 0, SAI_NULL_OBJECT_ID });
+        return SAI_STATUS_SUCCESS;
+    }
+
+    /* Records bridge port calls and runs PortsOrch's STP handling for one tunnel removal; undone on scope exit. */
+    struct TunnelRemovalScope
+    {
+        decltype(ut_sai_bridge_api.set_bridge_port_attribute) old_set;
+        decltype(ut_sai_bridge_api.remove_bridge_port) old_remove;
+
+        TunnelRemovalScope(swss::DBConnector *appDb, swss::DBConnector *stateDb, sai_status_t unbind_status)
+        {
+            vector<string> stp_tables = { "STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_TABLE",
+                                          "STP_PORT_STATE_TABLE", "STP_FASTAGEING_FLUSH_TABLE",
+                                          "STP_INST_PORT_FLUSH_TABLE" };
+            gStpOrch = new StpOrch(appDb, stateDb, stp_tables);
+            bridge_port_calls.clear();
+            bridge_port_unbind_status = unbind_status;
+            old_set = ut_sai_bridge_api.set_bridge_port_attribute;
+            old_remove = ut_sai_bridge_api.remove_bridge_port;
+            ut_sai_bridge_api.set_bridge_port_attribute = _ut_record_set_bridge_port_attribute;
+            ut_sai_bridge_api.remove_bridge_port = _ut_record_remove_bridge_port;
+        }
+
+        ~TunnelRemovalScope()
+        {
+            ut_sai_bridge_api.set_bridge_port_attribute = old_set;
+            ut_sai_bridge_api.remove_bridge_port = old_remove;
+            bridge_port_unbind_status = SAI_STATUS_SUCCESS;
+            delete gStpOrch;
+            gStpOrch = nullptr;
+        }
+    };
+
+    /* Binds a group to VTEP_REMOTE_IP_2's tunnel and returns the tunnel port. */
+    static std::shared_ptr<ShlIsolationGroup> bindGroupToTunnel(swss::DBConnector *appDb, Port &tunnel)
+    {
+        Table shlTable = Table(appDb, APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        shlTable.set("Vlan10:Ethernet4", {
+            {"vteps", VTEP_REMOTE_IP_2}
+        });
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        gShlOrch->addExistingData(&shlTable);
+        static_cast<Orch *>(gShlOrch)->doTask();
+
+        const string tunnel_alias = string("Port_EVPN_") + VTEP_REMOTE_IP_2;
+        gPortsOrch->m_portList[tunnel_alias].m_type = Port::TUNNEL;
+        gPortsOrch->getPort(tunnel_alias, tunnel);
+        return gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+    }
+
+    /*
+     * A tunnel can go away while a split-horizon group is still bound to it (the
+     * remote VNI is withdrawn before the ES peer). The group must be unbound from the
+     * tunnel's bridge port before that bridge port is removed: once it is gone the
+     * SAI binding can no longer be released, and the SAI refuses to remove a group
+     * that still has bindings.
+     */
+    TEST_F(ShlOrchTest, ShlTunnelRemovalUnbindsBeforeBridgePortRemoval)
+    {
+        Port tunnel;
+        auto grp = bindGroupToTunnel(m_app_db.get(), tunnel);
+        ASSERT_NE(grp, nullptr);
+        ASSERT_EQ(grp->getNumOfBindPorts(), 1);
+        const sai_object_id_t bridge_port = tunnel.m_bridge_port_id;
+        ASSERT_NE(bridge_port, SAI_NULL_OBJECT_ID);
+
+        bool removed;
+        vector<BridgePortCall> calls;
+        {
+            TunnelRemovalScope scope(m_app_db.get(), m_state_db.get(), SAI_STATUS_SUCCESS);
+            removed = gPortsOrch->removeBridgePort(tunnel);
+            calls = bridge_port_calls;
+        }
+        ASSERT_TRUE(removed);
+
+        int unbind_at = -1, remove_at = -1;
+        for (int i = 0; i < (int)calls.size(); i++)
+        {
+            const auto &c = calls[i];
+            if (c.oid != bridge_port)
+            {
+                continue;
+            }
+            if (c.op == "set" && c.attr_id == SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP &&
+                c.value == SAI_NULL_OBJECT_ID && unbind_at < 0)
+            {
+                unbind_at = i;
+            }
+            if (c.op == "remove" && remove_at < 0)
+            {
+                remove_at = i;
+            }
+        }
+        ASSERT_GE(unbind_at, 0);
+        ASSERT_GE(remove_at, 0);
+        ASSERT_LT(unbind_at, remove_at);
+
+        /* The group waits for the tunnel to come back. */
+        ASSERT_EQ(grp->getNumOfBindPorts(), 0);
+        ASSERT_EQ(grp->getNumOfPendingBindports(), 1);
+    }
+
+    /* A refused unbind of a tunnel whose bridge port goes still leaves the group waiting, not bound. */
+    TEST_F(ShlOrchTest, ShlTunnelRemovalWithRefusedUnbindWaitsForTheTunnel)
+    {
+        Port tunnel;
+        auto grp = bindGroupToTunnel(m_app_db.get(), tunnel);
+        ASSERT_NE(grp, nullptr);
+        ASSERT_EQ(grp->getNumOfBindPorts(), 1);
+
+        bool removed;
+        {
+            TunnelRemovalScope scope(m_app_db.get(), m_state_db.get(), SAI_STATUS_FAILURE);
+            removed = gPortsOrch->removeBridgePort(tunnel);
+        }
+        ASSERT_TRUE(removed);
+        ASSERT_EQ(grp->getNumOfBindPorts(), 0);
+        ASSERT_EQ(grp->getNumOfPendingBindports(), 1);
     }
 
     TEST_F(ShlOrchTest, ShlIsolationGroupGettersTest)
