@@ -8,6 +8,7 @@
 #include "sai.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
+#include "flex_counter_manager.h"
 
 
 enum TunnelTermType
@@ -86,6 +87,8 @@ public:
         return subnetDecapConfig;
     }
 
+    void generateTunnelCounterMap();
+
 private:
     TunnelTable tunnelTable;
     TunnelNhs   tunnelNhs;
@@ -99,6 +102,17 @@ private:
         "IPINIP_SUBNET",
         "IPINIP_SUBNET_V6"
     };
+
+    // Tunnel decap flex counter (SAI_TUNNEL_STAT_*); shares TUNNEL_STAT_COUNTER group with VxlanTunnelOrch
+    std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
+    FlexCounterManager *tunnel_stat_manager = nullptr;
+    bool m_isTunnelCounterMapGenerated = false;
+    std::unique_ptr<swss::Table> m_tunnelNameTable;
+    std::unique_ptr<swss::Table> m_tunnelTypeTable;
+    std::unique_ptr<swss::Table> m_vidToRidTable;
+    std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::shared_ptr<swss::DBConnector> m_asic_db;
+    swss::SelectableTimer* m_FlexCounterUpdTimer = nullptr;
 
     bool addDecapTunnel(std::string key, std::string type, swss::IpAddress* p_src_ip,
                         std::string dscp, std::string ecn, std::string encap_ecn, std::string ttl,
@@ -134,6 +148,10 @@ private:
 
     sai_object_id_t getNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     void doTask(Consumer& consumer);
+    void doTask(swss::SelectableTimer& timer);
+    std::unordered_set<std::string> generateTunnelCounterStats();
+    void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
+    void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
     void doDecapTunnelTask(Consumer &consumer);
     void doDecapTunnelTermTask(Consumer &consumer);
     void doSubnetDecapTask(Consumer &consumer);
