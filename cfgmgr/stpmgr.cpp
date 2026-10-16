@@ -486,7 +486,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
                 {
                     int value = 0;
                     configValid = parseInteger(fvValue(i), value, "max_hops");
-                    msg.max_hops = static_cast<uint8_t>(value);
+                    msg.max_hop = static_cast<uint8_t>(value);
                 }
                 else
                 {
@@ -713,7 +713,8 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "loop_guard")
             {
-                msg->loop_guard = (value == "true") ? 1 : 0;
+                // Enable the below line once updated stp_ipc.h is available
+                // msg->loop_guard = (value == "true") ? 1 : 0;
             }
             else if (field == "bpdu_guard")
             {
@@ -751,7 +752,7 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
-                msg->edge_port = (value == "true") ? 1 : 0;
+                msg->edge = (value == "true") ? 1 : 0;
             }
             else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
             {
@@ -1216,7 +1217,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        STP_MST_INST_CONFIG_MSG *msg = NULL;
+        MST_INST_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
 
         KeyOpFieldsValuesTuple t = it->second;
@@ -1277,12 +1278,12 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             updateVlanInstanceMap(instance_id, vlan_ids, true);
 
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
-            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
+            len = sizeof(MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
 
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
+                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
                 return;
             }
 
@@ -1301,8 +1302,8 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            len = sizeof(STP_MST_INST_CONFIG_MSG);
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+            len = sizeof(MST_INST_CONFIG_MSG);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
                 SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
