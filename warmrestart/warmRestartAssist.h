@@ -84,6 +84,8 @@ public:
     void warmStartDisabled(void);
     void insertToMap(std::string tableName, std::string key, std::vector<FieldValueTuple> fvVector, bool delete_key);
     void reconcile(void);
+    // Marks every STALE cache entry SAME so the reconcile keeps it; for a replay known to be incomplete.
+    void keepStaleEntries(void);
     bool isWarmStartInProgress(void)
     {
         return m_warmStartInProgress;

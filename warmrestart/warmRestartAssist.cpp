@@ -248,6 +248,27 @@ void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldVal
 }
 
 /*
+ * An application whose replay stopped early cannot tell a STALE entry that is gone
+ * from one it never replayed, so the reconcile keeps them all.
+ */
+void AppRestartAssist::keepStaleEntries()
+{
+    for (auto &table : appTableCacheMap)
+    {
+        size_t kept = 0;
+        for (auto &entry : table.second)
+        {
+            if (getCacheEntryState(entry.second) == STALE)
+            {
+                setCacheEntryState(entry.second, SAME);
+                kept++;
+            }
+        }
+        SWSS_LOG_NOTICE("%s: keeping %zu stale entries", table.first.c_str(), kept);
+    }
+}
+
+/*
  * Reconcile logic:
  *  iterate through the cache map
  *  if the entry has "SAME" flag, do nothing

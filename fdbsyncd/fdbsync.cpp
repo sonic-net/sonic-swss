@@ -3,11 +3,15 @@
 
 #include <string>
 #include <algorithm>
+#include <memory>
+#include <cstring>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
 #include <netlink/route/link/vxlan.h>
+#include <netlink/msg.h>
+#include <netlink/socket.h>
 #include <arpa/inet.h>
 
 #include "logger.h"
@@ -15,6 +19,7 @@
 #include "producerstatetable.h"
 #include "ipaddress.h"
 #include "netmsg.h"
+#include "netdispatcher.h"
 #include "macaddress.h"
 #include "exec.h"
 #include "fdbsync.h"
@@ -178,6 +183,111 @@ bool FdbSync::isIntfRestoreDone()
     }
     
     return true;
+}
+
+namespace
+{
+
+int dispatchFdbDumpReply(struct nl_msg *msg, void *)
+{
+    NetDispatcher::getInstance().onNetlinkMessage(msg);
+    return NL_OK;
+}
+
+int readFdbDumpDone(struct nl_msg *msg, void *arg)
+{
+    struct nlmsghdr *hdr = nlmsg_hdr(msg);
+
+    if (nlmsg_datalen(hdr) >= static_cast<int>(sizeof(int)))
+    {
+        memcpy(arg, nlmsg_data(hdr), sizeof(int));
+    }
+    return NL_STOP;
+}
+
+}
+
+/*
+ * Remote MACs and IMET routes exist in the kernel as bridge FDB entries, which are
+ * AF_BRIDGE neighbours served by rtnl_fdb_dump(). A neighbour dump of AF_UNSPEC walks
+ * only the ARP/ND tables, and the kernel rejects an AF_BRIDGE request that carries a
+ * bare rtgenmsg with EINVAL, so the request carries a full ndmsg. After a warm restart
+ * this dump is the only replay of those entries into the reconcile cache: the kernel
+ * keeps them, so no event announces them again.
+ */
+void FdbSync::dumpBridgeFdb()
+{
+    std::unique_ptr<struct nl_sock, decltype(&nl_socket_free)> sock(nl_socket_alloc(), nl_socket_free);
+    if (!sock)
+    {
+        SWSS_LOG_ERROR("Unable to allocate a netlink socket for the bridge FDB dump");
+        throw runtime_error("fdbsyncd: unable to allocate a netlink socket for the bridge FDB dump");
+    }
+
+    int err = nl_connect(sock.get(), NETLINK_ROUTE);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect the bridge FDB dump socket: %s", nl_geterror(err));
+        throw runtime_error("fdbsyncd: unable to connect the bridge FDB dump socket");
+    }
+
+    dumpBridgeFdb(sock.get());
+}
+
+/*
+ * Sends the dump request on sock and hands every reply to NetDispatcher, as the
+ * main netlink socket does, until the kernel ends the dump.
+ */
+void FdbSync::dumpBridgeFdb(struct nl_sock *sock)
+{
+    int doneErr = 0;
+
+    nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, dispatchFdbDumpReply, nullptr);
+    nl_socket_modify_cb(sock, NL_CB_FINISH, NL_CB_CUSTOM, readFdbDumpDone, &doneErr);
+
+    struct ndmsg ndm;
+    memset(&ndm, 0, sizeof(ndm));
+    ndm.ndm_family = AF_BRIDGE;
+
+    int err = nl_send_simple(sock, RTM_GETNEIGH, NLM_F_DUMP, &ndm, sizeof(ndm));
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to request the bridge FDB dump: %s", nl_geterror(err));
+        throw runtime_error("fdbsyncd: unable to request the bridge FDB dump");
+    }
+
+    do
+    {
+        err = nl_recvmsgs_default(sock);
+    }
+    while (err == -NLE_INTR);
+
+    /* Entries that change while the dump runs also arrive as events on the main socket. */
+    if (err == -NLE_DUMP_INTR)
+    {
+        SWSS_LOG_WARN("Bridge FDB dump was inconsistent: the FDB changed while it ran");
+    }
+    else if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to read the bridge FDB dump: %s", nl_geterror(err));
+        throw runtime_error("fdbsyncd: unable to read the bridge FDB dump");
+    }
+
+    /*
+     * The kernel ended the dump early, so the entries after the failure were not
+     * replayed. In a warm restart keep them rather than let the reconcile delete them.
+     */
+    if (doneErr < 0)
+    {
+        SWSS_LOG_ERROR("Kernel failed the bridge FDB dump: %s (errno %d)", strerror(-doneErr), -doneErr);
+        if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+        {
+            m_AppRestartAssist->keepStaleEntries();
+        }
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Bridge FDB dump complete");
 }
 
 void FdbSync::processCfgEvpnNvo()
@@ -887,6 +997,15 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     std::vector<FieldValueTuple> fvVector;
     string svni = to_string(vni);
 
+    /*
+     * A MAC that is already programmed is deleted first, so fields of its old
+     * destination (remote_vtep vs nexthop_group) do not linger. During a warm restart
+     * every change goes through the reconcile cache instead: a direct delete there
+     * removes an entry that the cache then finds unchanged and never sets again.
+     */
+    bool replace = m_mac.find(key) != m_mac.end() &&
+                   !(m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress());
+
     /* Update the DB with Vxlan MAC */
     m_mac[key].type = type;
     m_mac[key].vni = vni;
@@ -899,7 +1018,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
 
     if (dest_type == FdbDest::NEXTHOPGROUP)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
         m_mac[key].nexthop_value = nexthop_group;
@@ -910,7 +1029,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     }
     else if (dest_type == FdbDest::VTEP)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         char buf[MAX_ADDR_SIZE + 1] = {0};
         m_mac[key].nhtype = FdbDest::VTEP;
@@ -923,7 +1042,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     }
     else if (dest_type == FdbDest::IFNAME)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         m_mac[key].nhtype = FdbDest::IFNAME;
         m_mac[key].nexthop_value = intf_name;
