@@ -269,6 +269,13 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 	}
     }
 
+    /* A freshly enslaved bridge port starts unlocked and flooding, so re-apply the
+     * locked / no-flood flags for a port PAC has left unauthenticated. */
+    if (m_pacLockedPorts.find(port_alias) != m_pacLockedPorts.end())
+    {
+        setHostPortBridgeLocked(port_alias, true);
+    }
+
     return true;
 }
 
@@ -287,6 +294,20 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     //               /sbin/ip link set {{port_alias}} nomaster;
     //               fi;
     //               else exit $ret; fi )'
+
+    /* The kernel drops the port's FDB entries of this VLAN with it; remove the mirrored
+     * PAC clients explicitly anyway so no static entry outlives the membership.
+     * They stay recorded and are re-added if the port rejoins while locked. */
+    if (m_pacLockedPorts.count(port_alias))
+    {
+        for (const auto &kv : m_pacAuthFdb)
+        {
+            if (kv.second.port == port_alias && kv.second.vlan_id == vlan_id)
+            {
+                setHostPacFdbMirror(kv.second, false);
+            }
+        }
+    }
 
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     ostringstream cmds, inner;
@@ -723,6 +744,151 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
     }
 }
 
+bool VlanMgr::setHostPortBridgeLocked(const string &port_alias, bool locked)
+{
+    SWSS_LOG_ENTER();
+
+    // The commands should be generated as:
+    // /sbin/bridge link set dev {{port_alias}} locked {on|off}
+    // /sbin/bridge fdb flush dev Bridge brport {{port_alias}} dynamic      (lock only)
+    // /sbin/bridge link set dev {{port_alias}} flood {off|on} mcast_flood {off|on} bcast_flood {off|on}
+    //
+    // PAC puts an unauthenticated port into "cpu_trap"/"drop" learning mode, so the
+    // ASIC stops forwarding frames with an unknown source MAC. Those frames are still
+    // punted to the CPU, where they enter the Dot1Q bridge through the port netdev, and
+    // the kernel would software-forward them to the other members, so unauthenticated
+    // traffic would pass anyway.
+    //
+    // locked on is the guard against that leak. It is an INGRESS check: the bridge
+    // drops every non-link-local frame received on the port whose source MAC has no
+    // FDB entry pointing at the port, whatever the destination (unknown unicast,
+    // broadcast or multicast). EAPOL is link-local and is not affected.
+    //
+    // flood / mcast_flood / bcast_flood are EGRESS flags: they only stop the bridge
+    // flooding unknown-unicast, multicast and broadcast frames TOWARDS this port, so the
+    // unauthenticated client receives no flooded LAN traffic from the kernel path. They
+    // do not stop anything received on the port and are not a substitute for locked.
+    //
+    // PAC still sees the punted frames, because it reads them from a raw
+    // PF_PACKET/ETH_P_ALL socket bound to the port netdev and packet taps are served
+    // before bridge processing, so MAC Authentication Bypass keeps working. An
+    // authorized client is forwarded by the ASIC: PAC installs a static FDB entry, its
+    // source MAC is no longer unknown, and its frames are not punted to the CPU.
+    if (locked)
+    {
+        m_pacLockedPorts.insert(port_alias);
+    }
+    else
+    {
+        m_pacLockedPorts.erase(port_alias);
+    }
+
+    const string lockState = locked ? "on" : "off";
+    const string floodState = locked ? "off" : "on";
+    const string bridgeLink = string(BRIDGE_CMD) + " link set dev " + shellquote(port_alias);
+
+    string res;
+    if (swss::exec(bridgeLink + " locked " + lockState, res) != 0)
+    {
+        // The port is not a bridge member yet when PAC configures a port that has not
+        // been added to a VLAN. Nothing to guard in that case, and addHostVlanMember()
+        // re-applies the flags when the port joins the bridge.
+        SWSS_LOG_WARN("Failed to set locked %s on bridge port %s: %s",
+                      lockState.c_str(), port_alias.c_str(), res.c_str());
+        return false;
+    }
+
+    if (locked)
+    {
+        // A locked port only admits a source MAC that has an FDB entry pointing at the
+        // port, and dynamic entries the bridge learned on the port before it was locked
+        // (a punted frame, or the window before PAC's learn mode reached vlanmgr) would
+        // keep admitting those MACs until they age out. Drop them so the guard applies
+        // at once; static entries are kept.
+        const string flush = string(BRIDGE_CMD) + " fdb flush dev " + DOT1Q_BRIDGE_NAME +
+                             " brport " + shellquote(port_alias) + " dynamic";
+        if (swss::exec(flush, res) != 0)
+        {
+            SWSS_LOG_WARN("Failed to flush dynamic bridge FDB entries of %s: %s",
+                          port_alias.c_str(), res.c_str());
+        }
+    }
+
+    // Authorized PAC clients on this port are mirrored into the kernel FDB as static
+    // entries while it is locked (see setHostPacFdbMirror()). The flush above is limited
+    // to dynamic entries so it never removes them; re-add them on every (re)lock, e.g.
+    // after the port rejoined the bridge, and remove them when the port is unlocked.
+    for (const auto &kv : m_pacAuthFdb)
+    {
+        if (kv.second.port == port_alias)
+        {
+            setHostPacFdbMirror(kv.second, locked);
+        }
+    }
+
+    // bridge rejects the whole command when one keyword is unknown, so if the combined
+    // command fails, set the flood flags one by one and log each failure on its own.
+    // The locked guard above stays in place either way.
+    const string floodFlags = " flood " + floodState + " mcast_flood " + floodState +
+                              " bcast_flood " + floodState;
+    bool floodOk = true;
+    if (swss::exec(bridgeLink + floodFlags, res) != 0)
+    {
+        for (const auto &flag : { "flood", "mcast_flood", "bcast_flood" })
+        {
+            if (swss::exec(bridgeLink + " " + flag + " " + floodState, res) != 0)
+            {
+                floodOk = false;
+                SWSS_LOG_ERROR("Failed to set %s %s on bridge port %s: %s",
+                               flag, floodState.c_str(), port_alias.c_str(), res.c_str());
+            }
+        }
+    }
+
+    SWSS_LOG_NOTICE("Set locked %s / flood, mcast_flood, bcast_flood %s%s on bridge port %s",
+                    lockState.c_str(), floodState.c_str(),
+                    floodOk ? "" : " (partially, see errors above)", port_alias.c_str());
+    return true;
+}
+
+void VlanMgr::setHostPacFdbMirror(const PacAuthFdb &entry, bool add)
+{
+    SWSS_LOG_ENTER();
+
+    // The command should be generated as:
+    // /sbin/bridge fdb replace {{mac}} dev {{port_alias}} vlan {{vlan_id}} master static
+    // /sbin/bridge fdb del {{mac}} dev {{port_alias}} vlan {{vlan_id}} master static
+    //
+    // PAC authorizes a client by installing a static FDB entry, but only in the ASIC. A
+    // locked kernel bridge port admits a source MAC only when the KERNEL FDB has an entry
+    // for it on that port, so without this mirror the authorized client's frames that are
+    // punted to the CPU (ARP to the Vlan interface, DHCP relay, ...) would be dropped by
+    // the lock. Data-plane forwarding is done by the ASIC and does not need it.
+    const string cmd = string(BRIDGE_CMD) + " fdb " + (add ? "replace " : "del ") +
+                       shellquote(entry.mac) + " dev " + shellquote(entry.port) +
+                       " vlan " + to_string(entry.vlan_id) + " master static";
+    string res;
+    if (swss::exec(cmd, res) != 0)
+    {
+        if (add)
+        {
+            SWSS_LOG_WARN("Failed to mirror PAC client %s vlan %d into the bridge FDB of %s: %s",
+                          entry.mac.c_str(), entry.vlan_id, entry.port.c_str(), res.c_str());
+        }
+        else
+        {
+            // Already gone: the port left the VLAN or the bridge, which flushes it.
+            SWSS_LOG_INFO("PAC client %s vlan %d not in the bridge FDB of %s: %s",
+                          entry.mac.c_str(), entry.vlan_id, entry.port.c_str(), res.c_str());
+        }
+        return;
+    }
+
+    SWSS_LOG_NOTICE("%s PAC client %s vlan %d %s the bridge FDB of %s",
+                    add ? "Mirrored" : "Removed", entry.mac.c_str(), entry.vlan_id,
+                    add ? "into" : "from", entry.port.c_str());
+}
+
 void VlanMgr::doVlanPacPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -754,6 +920,13 @@ void VlanMgr::doVlanPacPortTask(Consumer &consumer)
                 FieldValueTuple portLearnMode("learn_mode", learn_mode);
                 fvVector.push_back(portLearnMode);
                 m_appPortTableProducer.set(alias, fvVector);
+
+                /* Keep the kernel bridge from software-forwarding the frames the
+                 * ASIC traps to the CPU while the port is unauthenticated.
+                 * Only the two modes PAC uses for an unauthenticated port are
+                 * guarded; a mode that is meant to keep forwarding is left alone. */
+                setHostPortBridgeLocked(alias,
+                                        learn_mode == "cpu_trap" || learn_mode == "drop");
             }
         }
         else if (op == DEL_COMMAND)
@@ -764,6 +937,9 @@ void VlanMgr::doVlanPacPortTask(Consumer &consumer)
                 FieldValueTuple portLearnMode("learn_mode", "hardware");
                 fvVector.push_back(portLearnMode);
                 m_appPortTableProducer.set(alias, fvVector);
+
+                /* Port is back to normal forwarding - release the bridge guard. */
+                setHostPortBridgeLocked(alias, false);
             }
         }
         it = consumer.m_toSync.erase(it);
@@ -830,10 +1006,42 @@ void VlanMgr::doVlanPacFdbTask(Consumer &consumer)
             fvVector.push_back(d);
 
             m_appFdbTableProducer.set(key, fvVector);
+
+            /* Keep the kernel mirror of authorized clients in step: drop the
+             * old one if the client moved or is now blocked, add it while the port is
+             * locked. */
+            auto mirror = m_pacAuthFdb.find(key);
+            if (mirror != m_pacAuthFdb.end() && (mirror->second.port != port || discard != "false"))
+            {
+                if (m_pacLockedPorts.count(mirror->second.port))
+                {
+                    setHostPacFdbMirror(mirror->second, false);
+                }
+                m_pacAuthFdb.erase(mirror);
+            }
+            if (discard == "false" && !port.empty())
+            {
+                PacAuthFdb entry = { port, vlan_id, mac.to_string() };
+                m_pacAuthFdb[key] = entry;
+                if (m_pacLockedPorts.count(port))
+                {
+                    setHostPacFdbMirror(entry, true);
+                }
+            }
         }
         else if (op == DEL_COMMAND)
         {
             m_appFdbTableProducer.del(key);
+
+            auto mirror = m_pacAuthFdb.find(key);
+            if (mirror != m_pacAuthFdb.end())
+            {
+                if (m_pacLockedPorts.count(mirror->second.port))
+                {
+                    setHostPacFdbMirror(mirror->second, false);
+                }
+                m_pacAuthFdb.erase(mirror);
+            }
         }
         it = consumer.m_toSync.erase(it);
     }
