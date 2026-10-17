@@ -940,6 +940,33 @@ namespace flexcounter_test
                                          {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
 
+        // A malformed GLOBAL POLL_INTERVAL must be rejected and dropped rather
+        // than left pending (where it would block every later PFC_WD update),
+        // and the group must keep its previous interval. A negative value is
+        // not covered: swss::to_uint<> is built on stoul(), which wraps "-1"
+        // to ULONG_MAX, and on 32-bit targets that is within uint32 range.
+        for (const auto &badInterval : {"abc", "200ms", ""})
+        {
+            entries.push_back({"GLOBAL", "SET",
+                              {
+                                {POLL_INTERVAL_FIELD, badInterval},
+                              }});
+            consumer->addToSync(entries);
+            entries.clear();
+            static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->doTask();
+
+            std::vector<std::string> pfcwdPending;
+            static_cast<Orch *>(gPfcwdOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>)->dumpPendingTasks(pfcwdPending);
+            ASSERT_TRUE(pfcwdPending.empty()) << "POLL_INTERVAL=" << badInterval;
+            ASSERT_TRUE(checkFlexCounterGroup(PFC_WD_FLEX_COUNTER_GROUP,
+                                              {
+                                                  {POLL_INTERVAL_FIELD, "200"},
+                                                  {STATS_MODE_FIELD, STATS_MODE_READ},
+                                                  {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                                  {QUEUE_PLUGIN_FIELD, ""}
+                                              })) << "POLL_INTERVAL=" << badInterval;
+        }
+
         entries.push_back({firstPort.m_alias, "DEL", { {}}});
         consumer->addToSync(entries);
         entries.clear();
