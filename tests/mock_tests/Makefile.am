@@ -55,6 +55,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_redisreply.cpp \
                 mock_sai_api.cpp \
                 bulker_ut.cpp \
+                bulker_failure_ut.cpp \
                 portmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
                 policerorch_ut.cpp \
