@@ -91,6 +91,7 @@ public:
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch, SwitchOrch *switchOrch);
 
     bool bake() override;
+    void onWarmBootEnd() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
@@ -109,6 +110,7 @@ private:
     SwitchOrch *m_switchOrch;
     // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
     uint8_t m_maxNumTC;
+    bool m_isWarmRestoreStage = false;
 
     Table m_mirrorTable;
 
