@@ -23,7 +23,8 @@ tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp ../orchagent/request_parser
         quoted_ut.cpp ../lib/recorder.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
-tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I../orchagent
+tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I../orchagent \
+        -DASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD=10
 tests_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main
 

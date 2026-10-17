@@ -23,9 +23,13 @@ using namespace swss;
 namespace
 {
 
-vector<string> waitForRecordedLines(const string& path, const string& marker, size_t expected)
+vector<string> waitForRecordedLines(
+        const string& path,
+        const string& marker,
+        size_t expected,
+        size_t maxRetries = 50)
 {
-    for (size_t retry = 0; retry < 50; ++retry)
+    for (size_t retry = 0; retry < maxRetries; ++retry)
     {
         ifstream ifs(path);
         vector<string> matches;
@@ -53,9 +57,10 @@ vector<string> waitForRecordedLines(const string& path, const string& marker, si
 AsyncSwssRecorderDebugStats waitForRecorderStats(
         SwSSRec& recorder,
         uint64_t expectedEnqueued,
-        uint64_t expectedDrained)
+        uint64_t expectedDrained,
+        size_t maxRetries = 50)
 {
-    for (size_t retry = 0; retry < 50; ++retry)
+    for (size_t retry = 0; retry < maxRetries; ++retry)
     {
         auto stats = recorder.getAsyncDebugStats();
         if (stats.enqueued_total >= expectedEnqueued &&
@@ -286,6 +291,102 @@ TEST(swssrec, setAsyncDisableDrainsWorkerAndSingleTupleFallsBackToSync)
 
     ASSERT_EQ(remove(fullpath.c_str()), 0);
     ASSERT_EQ(rmdir(dirname.c_str()), 0);
+}
+
+TEST(swssrec, recordTuplesAsyncBulkEnqueue)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-bulk-enqueue.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+    const string keyPrefix = "batch-enqueue-key-";
+    const size_t batchSize = 1024;
+
+    SwSSRec recorder;
+    recorder.setRecord(true);
+    recorder.setLocation(dirname);
+    recorder.setFileName(filename);
+    recorder.setAsync(true);
+    recorder.startRec(true);
+
+    deque<KeyOpFieldsValuesTuple> entries;
+    for (size_t i = 0; i < batchSize; ++i)
+    {
+        entries.push_back(KeyOpFieldsValuesTuple(
+            { keyPrefix + to_string(i),
+              SET_COMMAND,
+              { { "field1", "value1" } } }));
+    }
+
+    recorder.recordTuplesAsync(prefix, entries);
+
+    const auto stats = waitForRecorderStats(recorder, batchSize, batchSize, 200);
+    EXPECT_EQ(stats.enqueued_total, batchSize);
+    EXPECT_EQ(stats.drained_total, batchSize);
+    EXPECT_EQ(stats.pending_count, 0u);
+    EXPECT_GE(stats.high_watermark, batchSize);
+
+    const auto lines = waitForRecordedLines(fullpath, keyPrefix, batchSize, 200);
+    ASSERT_EQ(lines.size(), batchSize);
+
+    const string firstMarker = keyPrefix + "0|SET";
+    const string lastMarker = keyPrefix + to_string(batchSize - 1) + "|SET";
+    bool foundFirst = false;
+    bool foundLast = false;
+    for (const auto& line : lines)
+    {
+        if (line.find(firstMarker) != string::npos)
+        {
+            foundFirst = true;
+        }
+        if (line.find(lastMarker) != string::npos)
+        {
+            foundLast = true;
+        }
+    }
+    EXPECT_TRUE(foundFirst);
+    EXPECT_TRUE(foundLast);
+}
+
+TEST(swssrec, pendingThresholdWarningTracksHighWatermark)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-pending-threshold.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+    const size_t enqueueCount = 30;
+
+    SwSSRec recorder;
+    recorder.setRecord(true);
+    recorder.setLocation(dirname);
+    recorder.setFileName(filename);
+    recorder.setAsync(true);
+    recorder.startRec(true);
+
+    deque<KeyOpFieldsValuesTuple> entries;
+    for (size_t i = 0; i < enqueueCount; ++i)
+    {
+        entries.push_back(KeyOpFieldsValuesTuple(
+            { "threshold-key-" + to_string(i),
+              SET_COMMAND,
+              { { "field1", "value1" } } }));
+    }
+
+    recorder.recordTuplesAsync(prefix, entries);
+
+    const auto stats = waitForRecorderStats(recorder, enqueueCount, enqueueCount);
+    EXPECT_EQ(stats.enqueued_total, enqueueCount);
+    EXPECT_EQ(stats.drained_total, enqueueCount);
+    EXPECT_EQ(stats.pending_count, 0u);
+    EXPECT_GE(stats.high_watermark, static_cast<uint64_t>(ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD));
 }
 
 TEST(swssrec, signalSafeStatsDumpFormatsOutput)
