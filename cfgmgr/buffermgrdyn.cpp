@@ -1283,6 +1283,12 @@ bool BufferMgrDynamic::isReadyToReclaimBufferOnPort(const string &port)
         }
     }
 
+    if (portInfo.oper_status != "down")
+    {
+        SWSS_LOG_NOTICE("Port %s oper status is still %s, reclaiming reserved buffer deferred", port.c_str(), portInfo.oper_status.c_str());
+        return false;
+    }
+
     return true;
 }
 
@@ -2295,6 +2301,28 @@ task_process_status BufferMgrDynamic::handlePortStateTable(KeyOpFieldsValuesTupl
                         {
                             portInfo.state = PORT_READY;
                             refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
+                        }
+                    }
+                }
+            }
+            else if (fvField(i) == "netdev_oper_status")
+            {
+                auto &portInfo = m_portInfoLookup[port];
+                if (fvValue(i) != portInfo.oper_status)
+                {
+                    portInfo.oper_status = fvValue(i);
+                    SWSS_LOG_INFO("Port %s: oper status updated to %s", port.c_str(), portInfo.oper_status.c_str());
+                    if (portInfo.oper_status == "down" && m_pendingApplyZeroProfilePorts.find(port) != m_pendingApplyZeroProfilePorts.end())
+                    {
+                        if (!m_bufferPoolReady || m_defaultThreshold.empty())
+                        {
+                            SWSS_LOG_INFO("Buffer pool of default threshold not ready, keep port %s pending", port.c_str());
+                        }
+                        else if (isReadyToReclaimBufferOnPort(port))
+                        {
+                            SWSS_LOG_INFO("Admin-down port %s is handled after oper status have been down", port.c_str());
+                            reclaimReservedBufferForPort(port, m_portPgLookup, BUFFER_PG);
+                            reclaimReservedBufferForPort(port, m_portQueueLookup, BUFFER_QUEUE);
                         }
                     }
                 }
