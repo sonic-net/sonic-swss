@@ -566,7 +566,22 @@ int main(int argc, char **argv)
             }
             break;
         case 't':
-            create_switch_timeout = atoi(optarg);
+            if (optarg)
+            {
+                auto timeout = atoi(optarg);
+                if (timeout > 0)
+                {
+                    create_switch_timeout = static_cast<uint32_t>(timeout);
+                    SWSS_LOG_NOTICE("Setting create switch timeout to %u sec",
+                                    create_switch_timeout);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid create switch timeout: %d. Ignoring -t",
+                                   timeout);
+                    create_switch_timeout = 0;
+                }
+            }
             break;
         case 'v':
             if (optarg)
