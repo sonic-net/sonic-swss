@@ -29,8 +29,8 @@ namespace portmgr_ut
         virtual void SetUp() override
         {
             ::testing_db::reset();
-            vector<string> cfg_port_tables = {
-                CFG_PORT_TABLE_NAME,
+            vector<TableConnector> cfg_port_tables = {
+                {m_config_db.get(), CFG_PORT_TABLE_NAME},
             };
             m_portMgr.reset(new PortMgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_port_tables));
         }
