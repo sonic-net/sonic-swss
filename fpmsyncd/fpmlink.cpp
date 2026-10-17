@@ -314,6 +314,13 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
         }
         else
         {
+            /*
+             * libnl drops the SONiC-private FPM_RTA_BACKUP_NH attribute, so
+             * pick up BGP PIC backup nexthops from the raw message before
+             * dispatching. The setter resets its state on every call, so
+             * the backups scope to this message.
+             */
+            m_routesync->setPendingBackupNexthopsFromRawMsg(nl_hdr);
             NetDispatcher::getInstance().onNetlinkMessage(msg);
         }
         nlmsg_free(msg);
