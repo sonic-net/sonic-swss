@@ -2492,6 +2492,23 @@ namespace vnetorch_test
             Port p;
             ASSERT_TRUE(gPortsOrch->getPort(port, p));
 
+            // PortsOrch validates notifications against SAI. Make the mock
+            // hardware state match the transition being injected by this
+            // helper, while leaving every other port attribute unchanged.
+            auto original_get_port_attribute = sai_port_api->get_port_attribute;
+            auto port_spy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(
+                &sai_port_api->get_port_attribute);
+            port_spy->callFake(
+                [original_get_port_attribute, status](sai_object_id_t oid, uint32_t count,
+                                                      sai_attribute_t *attrs) -> sai_status_t {
+                    if (count == 1 && attrs[0].id == SAI_PORT_ATTR_OPER_STATUS)
+                    {
+                        attrs[0].value.u32 = static_cast<uint32_t>(status);
+                        return SAI_STATUS_SUCCESS;
+                    }
+                    return original_get_port_attribute(oid, count, attrs);
+                });
+
             sai_port_oper_status_notification_t ntf{};
             ntf.port_id = p.m_port_id;
             ntf.port_state = status;
