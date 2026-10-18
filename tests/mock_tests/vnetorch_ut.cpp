@@ -1124,6 +1124,15 @@ namespace vnetorch_test
             static_cast<Orch *>(m_vnetOrch)->doTask();
         }
 
+        void setVnetMultiTunnel(const string &name, const string &tunnels,
+                                const string &vni)
+        {
+            Table tbl(m_app_db.get(), APP_VNET_TABLE_NAME);
+            tbl.set(name, {{"vxlan_tunnel_list", tunnels}, {"vni", vni}});
+            m_vnetOrch->addExistingData(&tbl);
+            static_cast<Orch *>(m_vnetOrch)->doTask();
+        }
+
         // Deletes must flow through the consumer as a DEL_COMMAND: replaying an
         // addExistingData() after removing the APP_DB key would silently no-op
         // the delete handler and lose delete/refcount coverage.
@@ -2860,6 +2869,56 @@ namespace vnetorch_test
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->vr, vnetVr);
         EXPECT_EQ(r->next_hop_id, nh.oid);
+    }
+
+    // A VNET bound to an IPv4 and an IPv6 tunnel (vxlan_tunnel_list) uses the
+    // tunnel whose underlay family matches each route endpoint.
+    TEST_F(VNetOrchTest, VnetDualStackRoutesSelectTunnelByEndpointFamily)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVxlanTunnel("tunnel_v6", "fc00::10");
+        setVnetMultiTunnel("Vnet_2000", "tunnel_v4,tunnel_v6", "2000");
+
+        ASSERT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
+        EXPECT_EQ(m_vnetOrch->getTunnelNames("Vnet_2000"),
+                  (set<string>{"tunnel_v4", "tunnel_v6"}));
+        ASSERT_EQ(m_tun.tunnels.size(), 2U);
+
+        const auto tunnelIdForSource = [this](const string &source) {
+            const auto tunnel = find_if(m_tun.tunnels.begin(), m_tun.tunnels.end(),
+                                        [&source](const TunnelCaptures::Tunnel &entry) {
+                                            return ipAddrEquals(entry.src, source);
+                                        });
+            return tunnel == m_tun.tunnels.end() ? SAI_NULL_OBJECT_ID : tunnel->oid;
+        };
+        const sai_object_id_t ipv4Tunnel = tunnelIdForSource("10.10.10.10");
+        const sai_object_id_t ipv6Tunnel = tunnelIdForSource("fc00::10");
+        ASSERT_NE(ipv4Tunnel, SAI_NULL_OBJECT_ID);
+        ASSERT_NE(ipv6Tunnel, SAI_NULL_OBJECT_ID);
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+        setVnetRoute("Vnet_2000", "2001:db8:100::1/128", "fc00::1");
+
+        ASSERT_EQ(m_rt.nexthops.size(), 2U);
+        const auto nextHopForEndpoint = [this](const string &endpoint) {
+            return find_if(m_rt.nexthops.begin(), m_rt.nexthops.end(),
+                           [&endpoint](const RouteCaptures::NextHop &nextHop) {
+                               return ipAddrEquals(nextHop.ip, endpoint);
+                           });
+        };
+        const auto ipv4NextHop = nextHopForEndpoint("10.10.10.1");
+        const auto ipv6NextHop = nextHopForEndpoint("fc00::1");
+        ASSERT_NE(ipv4NextHop, m_rt.nexthops.end());
+        ASSERT_NE(ipv6NextHop, m_rt.nexthops.end());
+        EXPECT_EQ(ipv4NextHop->tunnel_id, ipv4Tunnel);
+        EXPECT_EQ(ipv6NextHop->tunnel_id, ipv6Tunnel);
+
+        delVnetRoute("Vnet_2000", "100.100.1.1/32");
+        delVnetRoute("Vnet_2000", "2001:db8:100::1/128");
+        EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(),
+                       ipv4NextHop->oid), m_rt.removedNexthops.end());
+        EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(),
+                       ipv6NextHop->oid), m_rt.removedNexthops.end());
     }
 
     // A route whose endpoint carries an inner MAC programs the tunnel next hop
