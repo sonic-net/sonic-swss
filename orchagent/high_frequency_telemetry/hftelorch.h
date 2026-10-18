@@ -72,24 +72,26 @@ private:
     // m_group_update_blocked, and kept as a separate set so each of
     // groupTableSet()/groupTableDel()/profileTableDel() gets its own
     // once-per-block WARN with its own wording, instead of one operation's
-    // block silently suppressing another's log. hasPendingGroupUpdate()
+    // block silently suppressing another's log. hasPendingGroupChange()
     // checks both sets - a pending delete has the identical dependency on
     // reaching STOP_STREAM that a pending update does.
     std::unordered_set<std::string> m_group_delete_blocked;
 
     // True if m_group_update_blocked or m_group_delete_blocked still holds
     // a key for this profile, i.e. some group's configuration update or
-    // delete hasn't been applied yet - both are gated by canBeUpdated(type)
-    // and so share the same dependency on the profile reaching STOP_STREAM.
-    // Used at config-ready time to decide whether the profile may advance
-    // to its configured stream state or must first let that update/delete
-    // commit - see doTask(NotificationConsumer&).
-    bool hasPendingGroupUpdate(const std::string &profile_name) const;
+    // delete hasn't been applied yet - both are gated by one of
+    // canBeUpdated()'s overloads (canBeUpdated(type) for a group,
+    // canBeUpdated() for the whole profile) and so share the same
+    // dependency on the profile reaching STOP_STREAM. Used at config-ready
+    // time to decide whether the profile may advance to its configured
+    // stream state or must first let that update/delete commit - see
+    // doTask(NotificationConsumer&).
+    bool hasPendingGroupChange(const std::string &profile_name) const;
 
     // True only when a config-ready notification for this profile must
     // settle at STOP_STREAM instead of the profile's configured state (see
     // notifyConfigReady's hold_before_configured in doTask(NotificationConsumer&)).
-    // Gated on MIXED mode: hasPendingGroupUpdate() isn't type-scoped, and in
+    // Gated on MIXED mode: hasPendingGroupChange() isn't type-scoped, and in
     // SINGLE mode each group's tel_type is independent, so an unrelated
     // group still blocked says nothing about this one - holding it anyway
     // would strand it at STOP_STREAM with no later notification to advance

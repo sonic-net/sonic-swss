@@ -426,7 +426,7 @@ namespace hftelorch_notify_test
      * exactly once in m_group_delete_blocked (not grow or duplicate), and
      * must never touch m_group_update_blocked - the two sets track disjoint
      * operation kinds even though both are now read by
-     * hasPendingGroupUpdate(). */
+     * hasPendingGroupChange(). */
     TEST_F(GroupTableSetLiveReconfigTest, TracksGroupDeleteBlockedKeyOnce)
     {
         GroupTableSetProfileStub profile;
@@ -464,7 +464,7 @@ namespace hftelorch_notify_test
     /* profileTableDel()'s blocked branch records the bare "profile|" key
      * (no group name) - distinct in shape from groupTableDel()'s
      * "profile|group" keys, but matched by the same profile_name + "|"
-     * prefix hasPendingGroupUpdate() uses. */
+     * prefix hasPendingGroupChange() uses. */
     TEST_F(GroupTableSetLiveReconfigTest, TracksProfileLevelDeleteBlockedKey)
     {
         GroupTableSetProfileStub profile;
@@ -735,12 +735,12 @@ namespace hftelorch_notify_test
     // RejectsObjectNamesUpdateWhileStreaming and
     // TracksBlockedKeyOnceAcrossRepeatedRetries earlier in this file cover.
 
-    /* HFTelOrch::hasPendingGroupUpdate() is the lookup
+    /* HFTelOrch::hasPendingGroupChange() is the lookup
      * doTask(NotificationConsumer&) uses to decide whether a MIXED profile
      * may advance to its configured stream state at config-ready, or must
      * first let another group's still-blocked update or delete commit -
      * see notifyConfigReady's hold_before_configured. */
-    struct HasPendingGroupUpdateTest : public ::testing::Test
+    struct HasPendingGroupChangeTest : public ::testing::Test
     {
         HFTelOrchStub stub;
 
@@ -750,30 +750,30 @@ namespace hftelorch_notify_test
         }
     };
 
-    TEST_F(HasPendingGroupUpdateTest, FalseWhenNothingBlocked)
+    TEST_F(HasPendingGroupChangeTest, FalseWhenNothingBlocked)
     {
-        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_FALSE(stub.p->hasPendingGroupChange("profile"));
     }
 
-    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfile)
+    TEST_F(HasPendingGroupChangeTest, TrueForBlockedProfile)
     {
         stub.p->m_group_update_blocked.insert("profile|QUEUE");
-        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_TRUE(stub.p->hasPendingGroupChange("profile"));
     }
 
-    TEST_F(HasPendingGroupUpdateTest, FalseForDifferentProfile)
+    TEST_F(HasPendingGroupChangeTest, FalseForDifferentProfile)
     {
         stub.p->m_group_update_blocked.insert("other_profile|QUEUE");
-        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_FALSE(stub.p->hasPendingGroupChange("profile"));
     }
 
-    TEST_F(HasPendingGroupUpdateTest, DoesNotFalsePositiveOnNamePrefixCollision)
+    TEST_F(HasPendingGroupChangeTest, DoesNotFalsePositiveOnNamePrefixCollision)
     {
         // "profile2" must not be mistaken for "profile" just because it
         // starts with the same characters - the delimiter is part of the
         // match.
         stub.p->m_group_update_blocked.insert("profile2|QUEUE");
-        EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_FALSE(stub.p->hasPendingGroupChange("profile"));
     }
 
     /* A pending delete has the identical dependency on the profile reaching
@@ -783,22 +783,22 @@ namespace hftelorch_notify_test
      * never get a chance to retry successfully once the profile reaches its
      * configured state (see shouldHoldBeforeConfigured's MIXED-mode tests
      * below for the end-to-end version of this). */
-    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfileViaPendingDelete)
+    TEST_F(HasPendingGroupChangeTest, TrueForBlockedProfileViaPendingDelete)
     {
         stub.p->m_group_delete_blocked.insert("profile|QUEUE");
-        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_TRUE(stub.p->hasPendingGroupChange("profile"));
     }
 
     /* profileTableDel()'s own blocked key has no group name ("profile|"
      * rather than "profile|group") - still matches the profile_name + "|"
      * prefix this function uses. */
-    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfileViaPendingProfileDelete)
+    TEST_F(HasPendingGroupChangeTest, TrueForBlockedProfileViaPendingProfileDelete)
     {
         stub.p->m_group_delete_blocked.insert("profile|");
-        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+        EXPECT_TRUE(stub.p->hasPendingGroupChange("profile"));
     }
 
-    /* HFTelOrch::shouldHoldBeforeConfigured() gates hasPendingGroupUpdate()
+    /* HFTelOrch::shouldHoldBeforeConfigured() gates hasPendingGroupChange()
      * on MIXED mode. In SINGLE mode each group's tel_type is independent,
      * so an unrelated group still blocked says nothing about the one whose
      * config-ready just fired - holding it anyway would strand it at
@@ -850,7 +850,7 @@ namespace hftelorch_notify_test
 
     /* The regression this fix closes: a SINGLE-mode profile must never be
      * held back by another group's unrelated block, even though
-     * hasPendingGroupUpdate() alone would report one - each group has its
+     * hasPendingGroupChange() alone would report one - each group has its
      * own independent tel_type, so there's nothing for this group's
      * config-ready to wait on. */
     TEST_F(ShouldHoldBeforeConfiguredTest, SingleModeNeverHoldsEvenWithAnotherGroupPending)

@@ -830,18 +830,20 @@ bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) con
     return false;
 }
 
-bool HFTelOrch::hasPendingGroupUpdate(const std::string &profile_name) const
+bool HFTelOrch::hasPendingGroupChange(const std::string &profile_name) const
 {
     SWSS_LOG_ENTER();
 
     // A pending delete has the exact same dependency on reaching STOP_STREAM
-    // as a pending update does - both are gated by canBeUpdated(type) - so
-    // both must be checked here. m_group_update_blocked and
-    // m_group_delete_blocked stay separate sets (see their declarations):
-    // that split only exists so groupTableSet()/groupTableDel()/
-    // profileTableDel() each log their own once-per-block WARN
-    // independently; it says nothing about which blocks this profile needs
-    // to wait on before advancing past STOP_STREAM.
+    // as a pending update does - both are gated by one of canBeUpdated()'s
+    // overloads (canBeUpdated(type) for a group, canBeUpdated() for the
+    // whole profile) - so both must be checked here.
+    // m_group_update_blocked and m_group_delete_blocked stay separate sets
+    // (see their declarations): that split only exists so
+    // groupTableSet()/groupTableDel()/profileTableDel() each log their own
+    // once-per-block WARN independently; it says nothing about which
+    // blocks this profile needs to wait on before advancing past
+    // STOP_STREAM.
     const string prefix = profile_name + "|";
     for (const auto &key : m_group_update_blocked)
     {
@@ -865,7 +867,7 @@ bool HFTelOrch::shouldHoldBeforeConfigured(const std::shared_ptr<HFTelProfile> &
 {
     SWSS_LOG_ENTER();
 
-    return profile->isMixedTypeMode() && hasPendingGroupUpdate(profile->getProfileName());
+    return profile->isMixedTypeMode() && hasPendingGroupChange(profile->getProfileName());
 }
 
 void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
@@ -927,7 +929,7 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         //
         // This only applies in MIXED mode, where all groups genuinely share
         // the one tel_type this notification is for. In SINGLE mode each
-        // group has its own independent tel_type, so hasPendingGroupUpdate()
+        // group has its own independent tel_type, so hasPendingGroupChange()
         // (which isn't type-scoped) could otherwise report an unrelated
         // group's block and hold this one at STOP_STREAM with no retry path
         // left to advance it - nothing re-fires its config-ready once its
