@@ -66,18 +66,24 @@ private:
 
     // Tracks "profile|group" keys ("profile|" for a profile-level delete)
     // currently rejected by groupTableDel()/profileTableDel() with
-    // task_need_retry because the profile is still streaming. Logged once
-    // per block via the same insert()-returns-true-only-once pattern as
-    // m_group_update_blocked, but kept separate so these delete-only keys
-    // don't make hasPendingGroupUpdate()'s profile_name + "|" prefix match
-    // report a pending group *update* for an unrelated delete.
+    // task_need_retry because the profile is still streaming (or, like
+    // m_group_update_blocked, mid-CREATE_CONFIG). Logged once per block via
+    // the same insert()-returns-true-only-once pattern as
+    // m_group_update_blocked, and kept as a separate set so each of
+    // groupTableSet()/groupTableDel()/profileTableDel() gets its own
+    // once-per-block WARN with its own wording, instead of one operation's
+    // block silently suppressing another's log. hasPendingGroupUpdate()
+    // checks both sets - a pending delete has the identical dependency on
+    // reaching STOP_STREAM that a pending update does.
     std::unordered_set<std::string> m_group_delete_blocked;
 
-    // True if m_group_update_blocked still holds a key for this profile,
-    // i.e. some group's configuration update hasn't been applied yet. Used
-    // at config-ready time to decide whether the profile may advance to its
-    // configured stream state or must first let that update commit - see
-    // doTask(NotificationConsumer&).
+    // True if m_group_update_blocked or m_group_delete_blocked still holds
+    // a key for this profile, i.e. some group's configuration update or
+    // delete hasn't been applied yet - both are gated by canBeUpdated(type)
+    // and so share the same dependency on the profile reaching STOP_STREAM.
+    // Used at config-ready time to decide whether the profile may advance
+    // to its configured stream state or must first let that update/delete
+    // commit - see doTask(NotificationConsumer&).
     bool hasPendingGroupUpdate(const std::string &profile_name) const;
 
     // True only when a config-ready notification for this profile must

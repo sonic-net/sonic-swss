@@ -638,8 +638,8 @@ namespace hftelorch_notify_test
     /* HFTelOrch::hasPendingGroupUpdate() is the lookup
      * doTask(NotificationConsumer&) uses to decide whether a MIXED profile
      * may advance to its configured stream state at config-ready, or must
-     * first let another group's still-blocked update commit - see
-     * notifyConfigReady's hold_before_configured. */
+     * first let another group's still-blocked update or delete commit -
+     * see notifyConfigReady's hold_before_configured. */
     struct HasPendingGroupUpdateTest : public ::testing::Test
     {
         HFTelOrchStub stub;
@@ -676,6 +676,28 @@ namespace hftelorch_notify_test
         EXPECT_FALSE(stub.p->hasPendingGroupUpdate("profile"));
     }
 
+    /* A pending delete has the identical dependency on the profile reaching
+     * STOP_STREAM that a pending update does (both are gated by
+     * canBeUpdated(type)), so it must be visible here too - a delete blocked
+     * behind an in-flight commit that config-ready doesn't wait for would
+     * never get a chance to retry successfully once the profile reaches its
+     * configured state (see shouldHoldBeforeConfigured's MIXED-mode tests
+     * below for the end-to-end version of this). */
+    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfileViaPendingDelete)
+    {
+        stub.p->m_group_delete_blocked.insert("profile|QUEUE");
+        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
+    /* profileTableDel()'s own blocked key has no group name ("profile|"
+     * rather than "profile|group") - still matches the profile_name + "|"
+     * prefix this function uses. */
+    TEST_F(HasPendingGroupUpdateTest, TrueForBlockedProfileViaPendingProfileDelete)
+    {
+        stub.p->m_group_delete_blocked.insert("profile|");
+        EXPECT_TRUE(stub.p->hasPendingGroupUpdate("profile"));
+    }
+
     /* HFTelOrch::shouldHoldBeforeConfigured() gates hasPendingGroupUpdate()
      * on MIXED mode. In SINGLE mode each group's tel_type is independent,
      * so an unrelated group still blocked says nothing about the one whose
@@ -700,6 +722,21 @@ namespace hftelorch_notify_test
     {
         init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
         stub.p->m_group_update_blocked.insert("profile|QUEUE");
+
+        EXPECT_TRUE(stub.p->shouldHoldBeforeConfigured(profile_ptr));
+    }
+
+    /* The regression this closes: a group delete blocked behind this same
+     * commit (m_group_delete_blocked) must hold the profile just as much as
+     * a blocked update does - otherwise the profile jumps to its configured
+     * (streaming) state here, and the delete's own canBeUpdated(type) gate
+     * then never passes again in MIXED mode until an operator disables the
+     * profile, even though the commit that was blocking it has already
+     * completed. */
+    TEST_F(ShouldHoldBeforeConfiguredTest, MixedModeHoldsWhenAnotherGroupDeletePending)
+    {
+        init(SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE);
+        stub.p->m_group_delete_blocked.insert("profile|QUEUE");
 
         EXPECT_TRUE(stub.p->shouldHoldBeforeConfigured(profile_ptr));
     }

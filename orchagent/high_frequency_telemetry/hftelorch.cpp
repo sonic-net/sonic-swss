@@ -818,8 +818,23 @@ bool HFTelOrch::hasPendingGroupUpdate(const std::string &profile_name) const
 {
     SWSS_LOG_ENTER();
 
+    // A pending delete has the exact same dependency on reaching STOP_STREAM
+    // as a pending update does - both are gated by canBeUpdated(type) - so
+    // both must be checked here. m_group_update_blocked and
+    // m_group_delete_blocked stay separate sets (see their declarations):
+    // that split only exists so groupTableSet()/groupTableDel()/
+    // profileTableDel() each log their own once-per-block WARN
+    // independently; it says nothing about which blocks this profile needs
+    // to wait on before advancing past STOP_STREAM.
     const string prefix = profile_name + "|";
     for (const auto &key : m_group_update_blocked)
+    {
+        if (key.compare(0, prefix.size(), prefix) == 0)
+        {
+            return true;
+        }
+    }
+    for (const auto &key : m_group_delete_blocked)
     {
         if (key.compare(0, prefix.size(), prefix) == 0)
         {
@@ -886,11 +901,13 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         //
         // In MIXED mode, multiple groups can be queued up (e.g. at startup
         // config replay) before the shared tel_type's first commit reaches
-        // config-ready. If another group is still blocked behind this
-        // commit, settle at STOP_STREAM instead of jumping to the profile's
-        // configured state: that lets groupTableSet's retry apply the
-        // pending group and commit it too, instead of the commit silently
-        // leaving that group out of the stream.
+        // config-ready. If another group's update or delete is still
+        // blocked behind this commit, settle at STOP_STREAM instead of
+        // jumping to the profile's configured state: that lets
+        // groupTableSet's/groupTableDel's retry apply the pending change
+        // and commit it too, instead of the commit silently leaving that
+        // group's change unapplied - and, for a delete, unretryable once
+        // the profile is streaming again.
         //
         // This only applies in MIXED mode, where all groups genuinely share
         // the one tel_type this notification is for. In SINGLE mode each
