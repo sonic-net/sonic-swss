@@ -348,9 +348,9 @@ namespace hftelorch_notify_test
         }
     };
 
-    /* commit 13a6f8ea: a MIXED-mode profile actively streaming must reject
-     * an object_names update with task_need_retry - not apply it, not fail
-     * it outright - so it's automatically retried once the profile stops. */
+    /* A MIXED-mode profile actively streaming must reject an object_names
+     * update with task_need_retry - not apply it, not fail it outright - so
+     * it's automatically retried once the profile stops. */
     TEST_F(GroupTableSetLiveReconfigTest, RejectsObjectNamesUpdateWhileStreaming)
     {
         GroupTableSetProfileStub profile;
@@ -550,10 +550,55 @@ namespace hftelorch_notify_test
         EXPECT_EQ(profile.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
     }
 
-    /* The regression Ze's review caught: disabling together with a
-     * poll_interval change must still retry as a whole while CREATE_CONFIG
-     * is in progress, not let the disable through via the poll_interval
-     * exception. */
+    /* An enable must never reach setStreamState() while a tel_type is
+     * mid-commit either: our own setStreamState() treats CREATE_CONFIG ->
+     * START_STREAM as a no-op transition and would send it to SAI
+     * immediately, before the config-ready notification the real TAM
+     * tel_type state machine requires first. Mirrors
+     * RejectsDisableWhileCreateConfigInProgress for the enable direction. */
+    TEST_F(GroupTableSetLiveReconfigTest, RejectsEnableWhileCreateConfigInProgress)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+        HFTelGroup port_group("PORT");
+        port_group.updateObjects({"Ethernet0"});
+        profile.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(port_group));
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+
+        auto status = stub.p->profileTableSet("profile", {{"stream_state", "enabled"}});
+
+        EXPECT_EQ(status, task_process_status::task_need_retry);
+        EXPECT_EQ(profile.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+    }
+
+    /* Same as RejectsEnableWhileCreateConfigInProgress, but in SINGLE mode,
+     * where mapKey() keys each tel_type by its own object type instead of
+     * sharing the SAI_OBJECT_TYPE_NULL key GroupTableSetProfileStub::init()
+     * populates - so the CREATE_CONFIG state is seeded directly under the
+     * group's own object type here. */
+    TEST_F(GroupTableSetLiveReconfigTest, RejectsEnableWhileCreateConfigInProgressSingleMode)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        HFTelGroup port_group("PORT");
+        port_group.updateObjects({"Ethernet0"});
+        profile.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(port_group));
+        auto port_guard = make_shared<sai_object_id_t>(0x701);
+        profile.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = port_guard;
+        profile.p->m_sai_tam_tel_type_states[port_guard] = SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG;
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+
+        auto status = stub.p->profileTableSet("profile", {{"stream_state", "enabled"}});
+
+        EXPECT_EQ(status, task_process_status::task_need_retry);
+        EXPECT_EQ(profile.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+    }
+
+    /* Disabling together with a poll_interval change must still retry as a
+     * whole while CREATE_CONFIG is in progress, not let the disable through
+     * via the poll_interval exception. */
     TEST_F(GroupTableSetLiveReconfigTest, RejectsPollIntervalWithDisableWhileCreateConfigInProgress)
     {
         GroupTableSetProfileStub profile;
@@ -585,9 +630,9 @@ namespace hftelorch_notify_test
     // trade-off: exercise lower-level methods instead of routing through
     // setObjectNames(). The "once stopped, setObjectNames() applies
     // correctly" behavior itself is already covered by hftelprofile_ut.cpp's
-    // existing setObjectNames()-focused tests; what's new and specific to
-    // commit 13a6f8ea is the gate rejecting the update while streaming,
-    // which RejectsObjectNamesUpdateWhileStreaming and
+    // existing setObjectNames()-focused tests; what's new here is the gate
+    // rejecting the update while streaming, which
+    // RejectsObjectNamesUpdateWhileStreaming and
     // TracksBlockedKeyOnceAcrossRepeatedRetries earlier in this file cover.
 
     /* HFTelOrch::hasPendingGroupUpdate() is the lookup
@@ -725,11 +770,11 @@ namespace hftelorch_notify_test
         }
     };
 
-    /* The fix for Ze's config-reload/startup report: if another group of the
-     * same MIXED profile is still blocked behind this commit, config-ready
-     * must settle at STOP_STREAM - not jump straight to the profile's
-     * configured state - so the blocked group's retry can apply and commit
-     * too, instead of silently missing the stream. */
+    /* If another group of the same MIXED profile is still blocked behind
+     * this commit, config-ready must settle at STOP_STREAM - not jump
+     * straight to the profile's configured state - so the blocked group's
+     * retry can apply and commit too, instead of silently missing the
+     * stream. */
     TEST_F(NotifyConfigReadyTest, HoldsAtStopWhenAnotherGroupStillPending)
     {
         GroupTableSetProfileStub profile;

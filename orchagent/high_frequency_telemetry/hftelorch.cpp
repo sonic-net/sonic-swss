@@ -487,16 +487,18 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
 
     const bool requesting_disable = value_opt && state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
 
-    // A disable is NOT safe to apply while any tel_type is mid-commit
-    // (CREATE_CONFIG): our own setStreamState() treats CREATE_CONFIG ->
-    // STOP_STREAM as a no-op transition and sends it to SAI immediately,
-    // but the real TAM tel_type state machine only allows that transition
-    // after the config-ready notification arrives. Before stream_state was
-    // exempted from the blanket canBeUpdated() gate (see below), this case
-    // was covered incidentally - canBeUpdated() rejected the whole call
-    // while any group was in CREATE_CONFIG. Keep that specific protection
-    // explicitly instead of relying on it as a side effect.
-    if (requesting_disable && profile->isAnyCreateConfigInProgress())
+    // No stream_state change is safe to apply while any tel_type is
+    // mid-commit (CREATE_CONFIG): our own setStreamState() treats
+    // CREATE_CONFIG -> STOP_STREAM as a no-op transition and sends it to
+    // SAI immediately, and would likewise send START_STREAM to SAI before
+    // config-ready for an enable - but the real TAM tel_type state machine
+    // only allows either transition after the config-ready notification
+    // arrives. Before stream_state was exempted from the blanket
+    // canBeUpdated() gate (see below), this case was covered incidentally -
+    // canBeUpdated() rejected the whole call while any group was in
+    // CREATE_CONFIG. Keep that specific protection explicitly instead of
+    // relying on it as a side effect.
+    if (value_opt && profile->isAnyCreateConfigInProgress())
     {
         return task_process_status::task_need_retry;
     }
@@ -580,11 +582,20 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
         if (m_group_delete_blocked.insert(profile_name + "|").second)
         {
             // .second is true only on first insertion, so this fires once
-            // per block, not on every retry.
+            // per block, not on every retry. canBeUpdated() being false
+            // doesn't by itself mean the profile is streaming: it's also
+            // false while some group's tel_type is mid-commit
+            // (CREATE_CONFIG) - the only blocking case in SINGLE mode, and
+            // also reachable in MIXED when deleting several groups of a
+            // disabled profile re-commits the shared tel_type for the rest.
+            // Word the message by the actual state instead of assuming
+            // streaming.
             SWSS_LOG_WARN(
-                "HFTel: delete of profile %s is pending - profile is streaming; "
-                "set stream_state=disabled to apply it",
-                profile_name.c_str());
+                "HFTel: delete of profile %s is pending - %s",
+                profile_name.c_str(),
+                profile_itr->second->isAnyCreateConfigInProgress()
+                    ? "a commit is already in progress for this profile; it will be applied once that completes"
+                    : "profile is streaming; set stream_state=disabled to apply it");
         }
         return task_process_status::task_need_retry;
     }
@@ -726,11 +737,20 @@ task_process_status HFTelOrch::groupTableDel(const std::string &profile_name, co
         if (m_group_delete_blocked.insert(blocked_key).second)
         {
             // .second is true only on first insertion, so this fires once
-            // per block, not on every retry.
+            // per block, not on every retry. canBeUpdated(type) being false
+            // doesn't by itself mean the profile is streaming: it's also
+            // false while this group's tel_type is mid-commit
+            // (CREATE_CONFIG) - the only blocking case in SINGLE mode, and
+            // also reachable in MIXED when deleting several groups of a
+            // disabled profile re-commits the shared tel_type for the rest.
+            // Word the message by the actual state instead of assuming
+            // streaming.
             SWSS_LOG_WARN(
-                "HFTel: delete of group %s is pending - profile %s is streaming; "
-                "set stream_state=disabled to apply it",
-                blocked_key.c_str(), profile_name.c_str());
+                "HFTel: delete of group %s is pending - %s",
+                blocked_key.c_str(),
+                profile->getTelemetryTypeState(type) == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG
+                    ? "a commit is already in progress for this group; it will be applied once that completes"
+                    : "profile is streaming; set stream_state=disabled to apply it");
         }
         return task_process_status::task_need_retry;
     }
