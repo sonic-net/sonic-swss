@@ -421,6 +421,106 @@ namespace hftelorch_notify_test
         EXPECT_FALSE(profile.p->m_groups.empty());
     }
 
+    /* Delete-path equivalent of TracksBlockedKeyOnceAcrossRepeatedRetries:
+     * repeated groupTableDel() calls while blocked must track "profile|PORT"
+     * exactly once in m_group_delete_blocked (not grow or duplicate), and
+     * must never touch m_group_update_blocked - the two sets track disjoint
+     * operation kinds even though both are now read by
+     * hasPendingGroupUpdate(). */
+    TEST_F(GroupTableSetLiveReconfigTest, TracksGroupDeleteBlockedKeyOnce)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        HFTelGroup port_group("PORT");
+        port_group.updateObjects({"Ethernet0"});
+        profile.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(port_group));
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+
+        stub.p->groupTableDel("profile", "PORT");
+        stub.p->groupTableDel("profile", "PORT");
+        stub.p->groupTableDel("profile", "PORT");
+
+        ASSERT_EQ(stub.p->m_group_delete_blocked.size(), 1u);
+        EXPECT_EQ(*stub.p->m_group_delete_blocked.begin(), "profile|PORT");
+        EXPECT_TRUE(stub.p->m_group_update_blocked.empty());
+    }
+
+    // Deliberately no "block clears, delete actually succeeds, key is
+    // erased" test here, for the same reason groupTableSet()'s matching
+    // apply path is untested in this file (see the comment near
+    // TracksBlockedKeyOnceAcrossRepeatedRetries): groupTableDel()'s success
+    // path reaches m_state_telemetry_session.del(), and m_state_telemetry_session
+    // is a real swss::Table that needs a live DBConnector to construct -
+    // HFTelOrchStub deliberately doesn't construct it, so driving
+    // groupTableDel() all the way to success here would call a method on an
+    // object this stub never actually built. The erase itself
+    // (hftelorch.cpp's m_group_delete_blocked.erase(blocked_key) immediately
+    // after the canBeUpdated(type) gate, before any SAI/Table call) is a
+    // one-line mirror of m_group_update_blocked's identical erase two lines
+    // below it, covered by code review rather than a unit test for that
+    // reason.
+
+    /* profileTableDel()'s blocked branch records the bare "profile|" key
+     * (no group name) - distinct in shape from groupTableDel()'s
+     * "profile|group" keys, but matched by the same profile_name + "|"
+     * prefix hasPendingGroupUpdate() uses. */
+    TEST_F(GroupTableSetLiveReconfigTest, TracksProfileLevelDeleteBlockedKey)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        HFTelGroup port_group("PORT");
+        port_group.updateObjects({"Ethernet0"});
+        profile.p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, move(port_group));
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+
+        auto status = stub.p->profileTableDel("profile");
+
+        EXPECT_EQ(status, task_process_status::task_need_retry);
+        ASSERT_EQ(stub.p->m_group_delete_blocked.size(), 1u);
+        EXPECT_EQ(*stub.p->m_group_delete_blocked.begin(), "profile|");
+    }
+
+    /* The staleness bug this closes: a group blocked on delete, then
+     * re-set (CONFIG_DB/Consumer collapses to one desired op per key, so a
+     * SET supersedes an earlier blocked DEL) instead of actually being
+     * deleted, must not leave its old m_group_delete_blocked entry behind -
+     * otherwise a later, unrelated delete block of the same key would find
+     * the stale entry and silently skip its own WARN. */
+    TEST_F(GroupTableSetLiveReconfigTest, GroupSetClearsStaleDeleteBlockedKey)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+        stub.p->m_group_delete_blocked.insert("profile|PORT");
+
+        // Still streaming, so this SET blocks too - the stale delete-block
+        // key must be cleared regardless of whether the SET itself applies.
+        auto status = stub.p->groupTableSet("profile", "PORT", {});
+
+        EXPECT_EQ(status, task_process_status::task_need_retry);
+        EXPECT_TRUE(stub.p->m_group_delete_blocked.empty());
+    }
+
+    /* Same staleness fix at the profile level: profileTableSet() must clear
+     * a stale "profile|" entry left behind by an earlier blocked
+     * profileTableDel() that a later SET has superseded. */
+    TEST_F(GroupTableSetLiveReconfigTest, ProfileSetClearsStaleDeleteBlockedKey)
+    {
+        GroupTableSetProfileStub profile;
+        profile.init(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
+        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
+        stub.p->m_group_delete_blocked.insert("profile|");
+
+        auto status = stub.p->profileTableSet("profile", {});
+
+        EXPECT_EQ(status, task_process_status::task_success);
+        EXPECT_TRUE(stub.p->m_group_delete_blocked.empty());
+    }
+
     /* profileTableSet()'s poll_interval is a configuration field, so it's
      * subject to the same stopped-only rule as group configuration, applied
      * before stream_state is handled (see hftelorch.cpp's comment). */
