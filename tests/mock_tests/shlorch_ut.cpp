@@ -85,6 +85,9 @@ namespace shlorch_test
     int alloc_index;
     bool simulate_sai_failure = false;
     bool simulate_bridge_failure = false;
+    bool simulate_member_create_failure = false;
+    bool simulate_member_remove_failure = false;
+    int live_isolation_groups = 0;
 
     void checkIsolationGroup(uint32_t attr_count, const sai_attribute_t *attr_list) {
         ASSERT_TRUE(attr_count == 1);
@@ -103,6 +106,7 @@ namespace shlorch_test
             return SAI_STATUS_FAILURE;
         }
         *grp_id = (sai_object_id_t)oid_values[alloc_index++];
+        live_isolation_groups++;
         return SAI_STATUS_SUCCESS;
     }
 
@@ -112,6 +116,7 @@ namespace shlorch_test
         if (simulate_sai_failure) {
             return SAI_STATUS_FAILURE;
         }
+        live_isolation_groups--;
         return SAI_STATUS_SUCCESS;
     }
 
@@ -121,7 +126,7 @@ namespace shlorch_test
     _In_ uint32_t attr_count,
     _In_ const sai_attribute_t *attr_list)
     {
-        if (simulate_sai_failure) {
+        if (simulate_sai_failure || simulate_member_create_failure) {
             return SAI_STATUS_FAILURE;
         }
         *grp_member_id = (sai_object_id_t)(0x2);
@@ -131,7 +136,7 @@ namespace shlorch_test
     sai_status_t _ut_stub_sai_remove_isolation_group_member(
     _In_ sai_object_id_t grp_member_id)
     {
-        if (simulate_sai_failure) {
+        if (simulate_sai_failure || simulate_member_remove_failure) {
             return SAI_STATUS_FAILURE;
         }
         return SAI_STATUS_SUCCESS;
@@ -298,6 +303,9 @@ namespace shlorch_test
             // Reset failure simulation flags
             simulate_sai_failure = false;
             simulate_bridge_failure = false;
+            simulate_member_create_failure = false;
+            simulate_member_remove_failure = false;
+            live_isolation_groups = 0;
 
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -780,6 +788,164 @@ namespace shlorch_test
         ASSERT_EQ((gShlOrch->getVtepsListCount()), 0);
         ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
         ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+    }
+
+    /*
+     * A member removal that fails on DEL must leave a vtep shared with another vlan
+     * referenced, so the next release of the key cannot remove the member that vlan needs.
+     */
+    TEST_F(ShlOrchTest, ShlDelFailureKeepsSharedVtepTest)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        auto apply = [&](const KeyOpFieldsValuesTuple &entry) {
+            std::deque<KeyOpFieldsValuesTuple> entries = {entry};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+        };
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        oid_values[1] = isolation_group_ids[VTEP_REMOTE_IP_4];
+
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", "2.2.2.2,4.4.4.4"} }});
+        apply({"Vlan20:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 2);
+
+        // Only 4.4.4.4 needs its member removed, and that fails
+        simulate_member_remove_failure = true;
+        apply({"Vlan10:Ethernet4", "DEL", { {} }});
+        simulate_member_remove_failure = false;
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 2);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_4)->getNumOfMembers()), 1);
+
+        // A re-sent DEL retries only what is left; Vlan20 still needs 2.2.2.2
+        apply({"Vlan10:Ethernet4", "DEL", { {} }});
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 1);
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_4), nullptr);
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        apply({"Vlan20:Ethernet4", "DEL", { {} }});
+
+        ASSERT_EQ((gShlOrch->getVtepsListCount()), 0);
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(live_isolation_groups, 0);
+    }
+
+    /*
+     * A vtep whose member removal fails on SET stays cached, so a later SET of the same
+     * list retries the removal.
+     */
+    TEST_F(ShlOrchTest, ShlSetRemoveFailureIsRetriedTest)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        auto apply = [&](const KeyOpFieldsValuesTuple &entry) {
+            std::deque<KeyOpFieldsValuesTuple> entries = {entry};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+        };
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        oid_values[1] = isolation_group_ids[VTEP_REMOTE_IP_4];
+
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", "2.2.2.2,4.4.4.4"} }});
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 2);
+
+        simulate_member_remove_failure = true;
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        simulate_member_remove_failure = false;
+
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_4)->getNumOfMembers()), 1);
+
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+
+        ASSERT_EQ(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_4), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        apply({"Vlan10:Ethernet4", "DEL", { {} }});
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(live_isolation_groups, 0);
+    }
+
+    /*
+     * A failed member add takes no reference, so another vlan asking the port for the same
+     * vtep programs it, and the failed group is not leaked.
+     */
+    TEST_F(ShlOrchTest, ShlAddFailureTakesNoRefTest)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        auto apply = [&](const KeyOpFieldsValuesTuple &entry) {
+            std::deque<KeyOpFieldsValuesTuple> entries = {entry};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+        };
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        oid_values[1] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        simulate_member_create_failure = true;
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        simulate_member_create_failure = false;
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(live_isolation_groups, 0);
+
+        apply({"Vlan20:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        // The failed key's re-sent SET now only takes a reference
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        apply({"Vlan20:Ethernet4", "DEL", { {} }});
+
+        ASSERT_NE(gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2), nullptr);
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        apply({"Vlan10:Ethernet4", "DEL", { {} }});
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(live_isolation_groups, 0);
+    }
+
+    /* A failed member add to an existing group is retried by a later SET of the same list. */
+    TEST_F(ShlOrchTest, ShlAddToExistingGroupFailureIsRetriedTest)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        auto apply = [&](const KeyOpFieldsValuesTuple &entry) {
+            std::deque<KeyOpFieldsValuesTuple> entries = {entry};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gShlOrch)->doTask();
+        };
+
+        ApplyVlanConfigs();
+
+        alloc_index = 0;
+        oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+
+        apply({"Vlan10:Ethernet4", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        simulate_member_create_failure = true;
+        apply({"Vlan20:Ethernet5", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+        simulate_member_create_failure = false;
+
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 1);
+
+        apply({"Vlan20:Ethernet5", "SET", { {"vteps", VTEP_REMOTE_IP_2} }});
+
+        ASSERT_EQ((gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2)->getNumOfMembers()), 2);
+
+        apply({"Vlan10:Ethernet4", "DEL", { {} }});
+        apply({"Vlan20:Ethernet5", "DEL", { {} }});
+
+        ASSERT_EQ((gShlOrch->getIsolationGroupCount()), 0);
+        ASSERT_EQ(live_isolation_groups, 0);
     }
 
     TEST_F(ShlOrchTest, ShlUnknownAttributeTest)
