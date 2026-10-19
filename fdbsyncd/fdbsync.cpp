@@ -117,7 +117,8 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
-        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        /* macAddVxlan() replaces a MAC whose set of fields changes; the reconcile does the same. */
+        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable, true);
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
     m_isFdbProtoSupported = checkFdbProtoSupport();
@@ -188,6 +189,8 @@ bool FdbSync::isIntfRestoreDone()
 namespace
 {
 
+const int BRIDGE_FDB_DUMP_ATTEMPTS = 3;
+
 int dispatchFdbDumpReply(struct nl_msg *msg, void *)
 {
     NetDispatcher::getInstance().onNetlinkMessage(msg);
@@ -236,7 +239,9 @@ void FdbSync::dumpBridgeFdb()
 
 /*
  * Sends the dump request on sock and hands every reply to NetDispatcher, as the
- * main netlink socket does, until the kernel ends the dump.
+ * main netlink socket does, until the kernel ends the dump. A dump that the kernel
+ * flags inconsistent or ends with an errno can skip entries that did not change, and
+ * no event replays those, so it is run again, up to BRIDGE_FDB_DUMP_ATTEMPTS times.
  */
 void FdbSync::dumpBridgeFdb(struct nl_sock *sock)
 {
@@ -249,45 +254,142 @@ void FdbSync::dumpBridgeFdb(struct nl_sock *sock)
     memset(&ndm, 0, sizeof(ndm));
     ndm.ndm_family = AF_BRIDGE;
 
-    int err = nl_send_simple(sock, RTM_GETNEIGH, NLM_F_DUMP, &ndm, sizeof(ndm));
-    if (err < 0)
+    for (int attempt = 1; attempt <= BRIDGE_FDB_DUMP_ATTEMPTS; attempt++)
     {
-        SWSS_LOG_ERROR("Unable to request the bridge FDB dump: %s", nl_geterror(err));
-        throw runtime_error("fdbsyncd: unable to request the bridge FDB dump");
-    }
+        doneErr = 0;
+        int err = nl_send_simple(sock, RTM_GETNEIGH, NLM_F_DUMP, &ndm, sizeof(ndm));
+        if (err < 0)
+        {
+            SWSS_LOG_ERROR("Unable to request the bridge FDB dump: %s", nl_geterror(err));
+            throw runtime_error("fdbsyncd: unable to request the bridge FDB dump");
+        }
 
-    do
-    {
-        err = nl_recvmsgs_default(sock);
-    }
-    while (err == -NLE_INTR);
+        do
+        {
+            err = nl_recvmsgs_default(sock);
+        }
+        while (err == -NLE_INTR);
 
-    /* Entries that change while the dump runs also arrive as events on the main socket. */
-    if (err == -NLE_DUMP_INTR)
-    {
-        SWSS_LOG_WARN("Bridge FDB dump was inconsistent: the FDB changed while it ran");
-    }
-    else if (err < 0)
-    {
-        SWSS_LOG_ERROR("Unable to read the bridge FDB dump: %s", nl_geterror(err));
-        throw runtime_error("fdbsyncd: unable to read the bridge FDB dump");
+        if (err < 0 && err != -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_ERROR("Unable to read the bridge FDB dump: %s", nl_geterror(err));
+            throw runtime_error("fdbsyncd: unable to read the bridge FDB dump");
+        }
+
+        if (err == 0 && doneErr == 0)
+        {
+            SWSS_LOG_NOTICE("Bridge FDB dump complete");
+            return;
+        }
+
+        if (err == -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_WARN("Bridge FDB dump %d of %d was inconsistent: the FDB changed while it ran",
+                          attempt, BRIDGE_FDB_DUMP_ATTEMPTS);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Kernel failed bridge FDB dump %d of %d: %s (errno %d)",
+                           attempt, BRIDGE_FDB_DUMP_ATTEMPTS, strerror(-doneErr), -doneErr);
+        }
     }
 
     /*
-     * The kernel ended the dump early, so the entries after the failure were not
-     * replayed. In a warm restart keep them rather than let the reconcile delete them.
+     * Some entries may not have been replayed. In a warm restart keep them rather than
+     * let the reconcile delete them, and track them so that later events for them apply.
      */
-    if (doneErr < 0)
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
     {
-        SWSS_LOG_ERROR("Kernel failed the bridge FDB dump: %s (errno %d)", strerror(-doneErr), -doneErr);
-        if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+        m_AppRestartAssist->keepStaleEntries(
+            [this](const string &tableName, const string &key, const vector<FieldValueTuple> &fvVector)
+            {
+                trackKeptEntry(tableName, key, fvVector);
+            });
+    }
+}
+
+/*
+ * Records an entry that a warm restart keeps without a replay, so that a later delete
+ * of it, or a change of its destination, is handled as for a replayed entry.
+ */
+void FdbSync::trackKeptEntry(const string &tableName, const string &key, const vector<FieldValueTuple> &fvVector)
+{
+    unsigned int vni = 0;
+    for (auto const &fv : fvVector)
+    {
+        if (fvField(fv) == "vni")
         {
-            m_AppRestartAssist->keepStaleEntries();
+            vni = static_cast<unsigned int>(strtoul(fvValue(fv).c_str(), nullptr, 10));
         }
+    }
+
+    if (tableName == APP_VXLAN_REMOTE_VNI_TABLE_NAME)
+    {
+        m_imet_route.emplace(key, m_imet_info{vni});
         return;
     }
 
-    SWSS_LOG_NOTICE("Bridge FDB dump complete");
+    if (tableName != APP_VXLAN_FDB_TABLE_NAME || m_mac.find(key) != m_mac.end())
+    {
+        return;
+    }
+
+    m_mac_info info = {};
+    info.nhtype = FdbDest::UNKNOWN;
+    info.vni = vni;
+    info.protocol = RTPROT_UNSPEC;
+    for (auto const &fv : fvVector)
+    {
+        if (fvField(fv) == "remote_vtep")
+        {
+            info.nhtype = FdbDest::VTEP;
+            info.nexthop_value = fvValue(fv);
+        }
+        else if (fvField(fv) == "nexthop_group")
+        {
+            info.nhtype = FdbDest::NEXTHOPGROUP;
+            info.nexthop_value = fvValue(fv);
+        }
+        else if (fvField(fv) == "ifname")
+        {
+            info.nhtype = FdbDest::IFNAME;
+            info.nexthop_value = fvValue(fv);
+            info.ifname = fvValue(fv);
+        }
+        else if (fvField(fv) == "type")
+        {
+            info.type = fvValue(fv);
+        }
+        else if (fvField(fv) == "protocol")
+        {
+            info.protocol = static_cast<uint8_t>(strtoul(fvValue(fv).c_str(), nullptr, 10));
+        }
+    }
+
+    if (info.nhtype == FdbDest::UNKNOWN)
+    {
+        SWSS_LOG_WARN("Kept VXLAN_FDB_TABLE entry %s has no destination, not tracked", key.c_str());
+        return;
+    }
+
+    /* APPL_DB does not hold the VXLAN device, which onMsgNbr() names <name>-<vlan id>. */
+    if (info.ifname.empty())
+    {
+        size_t sep = key.find(':');
+        string suffix = "-" + (sep == string::npos ? string() : key.substr(4, sep - 4));
+        for (auto const &intf : m_intf_info)
+        {
+            const string &ifname = intf.second.ifname;
+            if (intf.second.vni == vni && ifname.size() > suffix.size() &&
+                ifname.compare(ifname.size() - suffix.size(), suffix.size(), suffix) == 0)
+            {
+                info.ifname = ifname;
+                break;
+            }
+        }
+    }
+
+    m_mac[key] = info;
 }
 
 void FdbSync::processCfgEvpnNvo()
@@ -998,12 +1100,16 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     string svni = to_string(vni);
 
     /*
-     * A MAC that is already programmed is deleted first, so fields of its old
-     * destination (remote_vtep vs nexthop_group) do not linger. During a warm restart
-     * every change goes through the reconcile cache instead: a direct delete there
-     * removes an entry that the cache then finds unchanged and never sets again.
+     * A MAC whose set of fields changes (its destination type, or whether it has a
+     * protocol) is deleted first, so a field of the old value does not linger; a set of
+     * the same fields overwrites them. During a warm restart every change goes through
+     * the reconcile cache instead: a direct delete there removes an entry that the cache
+     * then finds unchanged and never sets again.
      */
-    bool replace = m_mac.find(key) != m_mac.end() &&
+    auto existing = m_mac.find(key);
+    bool replace = existing != m_mac.end() &&
+                   (existing->second.nhtype != dest_type ||
+                    (existing->second.protocol == RTPROT_UNSPEC) != (protocol == RTPROT_UNSPEC)) &&
                    !(m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress());
 
     /* Update the DB with Vxlan MAC */

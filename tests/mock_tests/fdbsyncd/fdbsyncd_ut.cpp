@@ -1,5 +1,9 @@
 #include "redisutility.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <map>
+#include <tuple>
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <linux/nexthop.h>
@@ -258,6 +262,9 @@ namespace fake_kernel
     int recv_error;      // libnl error returned by recv() instead of a datagram
     int done_error;      // errno the kernel reports in NLMSG_DONE of an accepted dump
     bool dump_intr;      // every reply carries NLM_F_DUMP_INTR, the kernel's inconsistent-dump flag
+    size_t faulty_requests;  // dump_intr and done_error apply to this many requests, the first ones
+    size_t faulty_entries;   // a dump that dump_intr or done_error applies to returns at most this many entries
+    bool reply_intr;     // the reply being built carries NLM_F_DUMP_INTR
 
     void reset()
     {
@@ -279,13 +286,16 @@ namespace fake_kernel
         recv_error = 0;
         done_error = 0;
         dump_intr = false;
+        faulty_requests = SIZE_MAX;
+        faulty_entries = SIZE_MAX;
+        reply_intr = false;
     }
 
     void append(std::string &datagram, const struct nlmsghdr *msg, const struct nlmsghdr *request)
     {
         // Rewritten in a copy: a std::string buffer is not guaranteed to be aligned for nlmsghdr.
         struct nlmsghdr hdr = *msg;
-        hdr.nlmsg_flags = static_cast<__u16>(dump_intr ? NLM_F_MULTI | NLM_F_DUMP_INTR : NLM_F_MULTI);
+        hdr.nlmsg_flags = static_cast<__u16>(reply_intr ? NLM_F_MULTI | NLM_F_DUMP_INTR : NLM_F_MULTI);
         hdr.nlmsg_seq = request->nlmsg_seq;
         hdr.nlmsg_pid = request->nlmsg_pid;
         datagram.append(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
@@ -327,16 +337,22 @@ namespace fake_kernel
             return -NLE_OPNOTSUPP;
         }
 
+        bool faulty = requests.size() <= faulty_requests;
+        reply_intr = dump_intr && faulty;
         const std::vector<struct nlmsghdr *> *entries = &ip_neighbours;
-        int error = done_error;
+        int error = faulty ? done_error : 0;
         if (family == AF_BRIDGE)
         {
             entries = len < sizeof(struct ndmsg) ? nullptr : &bridge_fdb;
-            error = entries ? done_error : -EINVAL;
+            error = entries ? error : -EINVAL;
         }
 
         std::string first, second;
         size_t count = entries ? entries->size() : 0;
+        if (faulty && (dump_intr || done_error))
+        {
+            count = std::min(count, faulty_entries);
+        }
         for (size_t i = 0; i < count; i++)
         {
             append(i == 0 ? first : second, (*entries)[i], request);
@@ -517,8 +533,9 @@ TEST_F(FdbSyncdTest, testBridgeFdbDumpSocketFailureThrows)
 }
 
 /*
- * A dump whose replies carry NLM_F_DUMP_INTR still delivers its entries; changes made
- * during the dump also arrive as events on the main socket.
+ * A dump whose replies carry NLM_F_DUMP_INTR still delivers its entries, also when
+ * every attempt is interrupted; changes made during the dump also arrive as events on
+ * the main socket.
  */
 TEST_F(FdbSyncdTest, testInterruptedBridgeFdbDumpKeepsEntries)
 {
@@ -533,6 +550,7 @@ TEST_F(FdbSyncdTest, testInterruptedBridgeFdbDumpKeepsEntries)
         EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
     }
     nl_socket_free(sock);
+    EXPECT_EQ(fake_kernel::requests.size(), 3u);
     EXPECT_TRUE(fake_kernel::datagrams.empty());
     fake_kernel::reset();
 
@@ -545,8 +563,9 @@ TEST_F(FdbSyncdTest, testInterruptedBridgeFdbDumpKeepsEntries)
 extern int fake_keep_stale_entries_calls;
 
 /*
- * An errno in NLMSG_DONE ends the dump early without an exception. In a warm restart
- * the entries it did not replay are kept: the reconcile would otherwise delete them.
+ * An errno in NLMSG_DONE ends the dump early without an exception. When every attempt
+ * fails, a warm restart keeps the entries the dumps did not replay: the reconcile would
+ * otherwise delete them.
  */
 TEST_F(FdbSyncdTest, testBridgeFdbDumpKernelErrorKeepsEntries)
 {
@@ -575,7 +594,7 @@ TEST_F(FdbSyncdTest, testBridgeFdbDumpKernelErrorKeepsEntries)
         EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
     }
     nl_socket_free(sock);
-    EXPECT_EQ(fake_kernel::requests.size(), 1u);
+    EXPECT_EQ(fake_kernel::requests.size(), 3u);
     EXPECT_TRUE(fake_kernel::datagrams.empty());
     EXPECT_EQ(fake_keep_stale_entries_calls, 1);
 
@@ -605,6 +624,174 @@ TEST_F(FdbSyncdTest, testBridgeFdbDumpKernelErrorKeepsEntries)
     nl_socket_free(sock);
     EXPECT_EQ(fake_keep_stale_entries_calls, 1);
     fake_kernel::reset();
+}
+
+/*
+ * An interrupted dump can skip entries that did not change, and no event replays them:
+ * the dump runs again. Replaying a MAC again with the same destination only sets it.
+ */
+TEST_F(FdbSyncdTest, testInterruptedBridgeFdbDumpIsRetried)
+{
+    fake_kernel::reset();
+    fake_kernel::dump_intr = true;
+    fake_kernel::faulty_requests = 1;
+    fake_kernel::faulty_entries = 1;
+    fake_kernel::bridge_fdb.push_back(mac_route_msg(true, 0, "1.1.1.1", 143, 20, swss::MacAddress("00:02:03:04:05:01")));
+    fake_kernel::bridge_fdb.push_back(mac_route_msg(true, 0, "2.2.2.2", 144, 30, swss::MacAddress("00:02:03:04:05:02")));
+
+    struct nl_sock *sock = fake_kernel::openSocket();
+    {
+        NeighDispatch dispatch(&m_mockFdbSync);
+        EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
+    }
+    nl_socket_free(sock);
+    EXPECT_EQ(fake_kernel::requests.size(), 2u);
+    EXPECT_TRUE(fake_kernel::datagrams.empty());
+
+    Table vxlan_fdb_table(m_appDb.get(), "VXLAN_FDB_TABLE");
+    std::vector<FieldValueTuple> fieldValues;
+    EXPECT_TRUE(vxlan_fdb_table.get("Vlan20:00:02:03:04:05:01", fieldValues));
+    EXPECT_TRUE(vxlan_fdb_table.get("Vlan30:00:02:03:04:05:02", fieldValues));
+    EXPECT_EQ(testing_db::getProducerDelCount("VXLAN_FDB_TABLE"), 0u);
+
+    /* In a warm restart a dump that completes on a retry keeps nothing stale. */
+    auto *assist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss", 0);
+    assist->m_warmStartInProgress = true;
+    m_mockFdbSync.m_AppRestartAssist = assist;
+    fake_keep_stale_entries_calls = 0;
+
+    fake_kernel::reset();
+    fake_kernel::dump_intr = true;
+    fake_kernel::faulty_requests = 2;
+    fake_kernel::bridge_fdb.push_back(mac_route_msg(true, 0, "1.1.1.1", 143, 20, swss::MacAddress("00:02:03:04:05:01")));
+    sock = fake_kernel::openSocket();
+    {
+        NeighDispatch dispatch(&m_mockFdbSync);
+        EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
+    }
+    nl_socket_free(sock);
+    EXPECT_EQ(fake_kernel::requests.size(), 3u);
+    EXPECT_EQ(fake_keep_stale_entries_calls, 0);
+
+    m_mockFdbSync.m_AppRestartAssist = NULL;
+    delete assist;
+    fake_kernel::reset();
+}
+
+/* A dump that the kernel ends with an errno runs again, and the retry's entries arrive. */
+TEST_F(FdbSyncdTest, testBridgeFdbDumpKernelErrorIsRetried)
+{
+    auto *assist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss", 0);
+    assist->m_warmStartInProgress = true;
+    m_mockFdbSync.m_AppRestartAssist = assist;
+    fake_keep_stale_entries_calls = 0;
+
+    fake_kernel::reset();
+    fake_kernel::done_error = -EBUSY;
+    fake_kernel::faulty_requests = 1;
+    fake_kernel::faulty_entries = 0;
+    fake_kernel::bridge_fdb.push_back(mac_route_msg(true, 0, "1.1.1.1", 143, 20, swss::MacAddress("00:02:03:04:05:01")));
+    struct nl_sock *sock = fake_kernel::openSocket();
+    {
+        NeighDispatch dispatch(&m_mockFdbSync);
+        EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
+    }
+    nl_socket_free(sock);
+    EXPECT_EQ(fake_kernel::requests.size(), 2u);
+    EXPECT_TRUE(fake_kernel::datagrams.empty());
+    EXPECT_EQ(fake_keep_stale_entries_calls, 0);
+    EXPECT_NE(m_mockFdbSync.m_mac.find("Vlan20:00:02:03:04:05:01"), m_mockFdbSync.m_mac.end());
+
+    m_mockFdbSync.m_AppRestartAssist = NULL;
+    delete assist;
+    fake_kernel::reset();
+}
+
+extern std::vector<std::tuple<std::string, std::string, std::vector<FieldValueTuple>>> fake_kept_entries;
+
+/*
+ * Entries kept after every dump attempt failed are tracked like replayed ones: once the
+ * warm restart ends, the kernel deleting one removes it from APPL_DB, and a MAC that
+ * comes back with another destination type loses the fields of the old one.
+ */
+TEST_F(FdbSyncdTest, testKeptEntriesTakeLaterEvents)
+{
+    Table vxlan_fdb_table(m_appDb.get(), "VXLAN_FDB_TABLE");
+    Table vxlan_remote_vni_table(m_appDb.get(), "VXLAN_REMOTE_VNI_TABLE");
+    std::vector<FieldValueTuple> vtepMac = { { "remote_vtep", "1.1.1.1" }, { "type", "dynamic" }, { "vni", "5003" } };
+    std::vector<FieldValueTuple> nhgMac = { { "nexthop_group", "536870913" }, { "type", "dynamic" }, { "vni", "5004" } };
+    std::vector<FieldValueTuple> imet = { { "vni", "5003" } };
+    vxlan_fdb_table.set("Vlan20:00:02:03:04:05:09", vtepMac);
+    vxlan_fdb_table.set("Vlan30:00:02:03:04:05:0a", nhgMac);
+    vxlan_remote_vni_table.set("Vlan20:1.1.1.1", imet);
+    fake_kept_entries = {
+        std::make_tuple(std::string("VXLAN_FDB_TABLE"), std::string("Vlan20:00:02:03:04:05:09"), vtepMac),
+        std::make_tuple(std::string("VXLAN_FDB_TABLE"), std::string("Vlan30:00:02:03:04:05:0a"), nhgMac),
+        std::make_tuple(std::string("VXLAN_REMOTE_VNI_TABLE"), std::string("Vlan20:1.1.1.1"), imet),
+    };
+
+    auto *assist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss", 0);
+    assist->m_warmStartInProgress = true;
+    m_mockFdbSync.m_AppRestartAssist = assist;
+    fake_keep_stale_entries_calls = 0;
+
+    fake_kernel::reset();
+    fake_kernel::done_error = -EBUSY;
+    struct nl_sock *sock = fake_kernel::openSocket();
+    {
+        NeighDispatch dispatch(&m_mockFdbSync);
+        EXPECT_NO_THROW(m_mockFdbSync.dumpBridgeFdb(sock));
+    }
+    nl_socket_free(sock);
+    fake_kept_entries.clear();
+    fake_kernel::reset();
+    EXPECT_EQ(fake_keep_stale_entries_calls, 1);
+
+    auto mac = m_mockFdbSync.m_mac.find("Vlan20:00:02:03:04:05:09");
+    ASSERT_NE(mac, m_mockFdbSync.m_mac.end());
+    EXPECT_EQ(mac->second.nhtype, FdbDest::VTEP);
+    EXPECT_EQ(mac->second.nexthop_value, "1.1.1.1");
+    EXPECT_EQ(mac->second.ifname, "Vxlan-20");
+    EXPECT_EQ(mac->second.vni, 5003u);
+    mac = m_mockFdbSync.m_mac.find("Vlan30:00:02:03:04:05:0a");
+    ASSERT_NE(mac, m_mockFdbSync.m_mac.end());
+    EXPECT_EQ(mac->second.nhtype, FdbDest::NEXTHOPGROUP);
+    EXPECT_EQ(mac->second.ifname, "Vxlan-30");
+    ASSERT_NE(m_mockFdbSync.m_imet_route.find("Vlan20:1.1.1.1"), m_mockFdbSync.m_imet_route.end());
+
+    /* The reconcile has run. */
+    assist->m_warmStartInProgress = false;
+
+    struct nlmsghdr *nlmsg = mac_route_msg(false, 0, "1.1.1.1", 143, 20, swss::MacAddress("00:02:03:04:05:09"));
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    nlmsg = mac_route_msg(false, 0, "1.1.1.1", 143, 20, swss::MacAddress("00:00:00:00:00:00"));
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    nlmsg = mac_route_msg(true, 0, "2.2.2.2", 144, 30, swss::MacAddress("00:02:03:04:05:0a"));
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+
+    m_mockFdbSync.m_AppRestartAssist = NULL;
+    delete assist;
+
+    std::vector<FieldValueTuple> fieldValues;
+    EXPECT_FALSE(vxlan_fdb_table.get("Vlan20:00:02:03:04:05:09", fieldValues));
+    EXPECT_FALSE(vxlan_remote_vni_table.get("Vlan20:1.1.1.1", fieldValues));
+    ASSERT_TRUE(vxlan_fdb_table.get("Vlan30:00:02:03:04:05:0a", fieldValues));
+    EXPECT_EQ(swss::fvsGetValue(fieldValues, "remote_vtep", true).get(), "2.2.2.2");
+    EXPECT_FALSE(swss::fvsGetValue(fieldValues, "nexthop_group", true));
+}
+
+extern std::map<std::string, bool> fake_registered_tables;
+
+/* A warm reconcile replaces a VXLAN_FDB_TABLE entry whose fields change, as macAddVxlan() does. */
+TEST_F(FdbSyncdTest, testVxlanFdbTableReplacesFieldsOnReconcile)
+{
+    ASSERT_EQ(fake_registered_tables.count("VXLAN_FDB_TABLE"), 1u);
+    EXPECT_TRUE(fake_registered_tables["VXLAN_FDB_TABLE"]);
+    ASSERT_EQ(fake_registered_tables.count("VXLAN_REMOTE_VNI_TABLE"), 1u);
+    EXPECT_FALSE(fake_registered_tables["VXLAN_REMOTE_VNI_TABLE"]);
 }
 
 /*
