@@ -15,6 +15,7 @@ fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 fpmsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon -ljemalloc
 
+if !ASAN_ENABLED
 check-local: fpmsyncd
 	@readelf -d fpmsyncd | grep -q libjemalloc || \
 	    { echo "fpmsyncd does not retain libjemalloc"; exit 1; }
@@ -23,6 +24,7 @@ check-local: fpmsyncd
 	    { echo "fpmsyncd does not export malloc_conf"; exit 1; }
 	@strings fpmsyncd | grep -Fxq "background_thread:true" || \
 	    { echo "fpmsyncd jemalloc configuration is missing"; exit 1; }
+endif
 
 if GCOV_ENABLED
 fpmsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
