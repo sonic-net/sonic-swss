@@ -210,6 +210,10 @@ namespace stporch_test
         result = gStpOrch->stpVlanFdbFlush(VLAN_1000);
         ASSERT_TRUE(result);
 
+        gPortsOrch->m_portList[ETHERNET0].m_bridge_port_id = 1234;
+        result = gStpOrch->stpInstancePortFdbFlush(ETHERNET0, stp_instance);
+        ASSERT_TRUE(result);
+
         EXPECT_CALL(mock_sai_stp_,
             remove_stp_port(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
         result = gStpOrch->removeStpPort(port, stp_instance);
