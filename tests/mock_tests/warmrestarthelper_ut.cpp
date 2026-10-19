@@ -209,4 +209,62 @@ namespace wrhelper_test
         EXPECT_EQ(testing_db::getProducerDelCount("SRV6_MY_SID_TABLE"), 3u);
         EXPECT_EQ(wrHelper->getState(), WarmStart::RECONCILED);
     }
+
+    /*
+     * fpmsyncd registers the EVPN MH tables next to ROUTE_TABLE and files each entry
+     * under its own table, so a bgp warm restart deletes the EVPN entries zebra no
+     * longer sends and leaves ROUTE_TABLE alone.
+     */
+    TEST_F(WRHelperTest, testEvpnMhTablesReconcileStaleEntries)
+    {
+        swss::Table shlTable(m_app_db.get(), "EVPN_SPLIT_HORIZON_TABLE");
+        swss::Table dfTable(m_app_db.get(), "EVPN_DF_TABLE");
+        swss::Table nhgTable(m_app_db.get(), "EVPN_ES_BACKUP_NHG_TABLE");
+        swss::ProducerStateTable shlProducer(m_app_db.get(), "EVPN_SPLIT_HORIZON_TABLE");
+        swss::ProducerStateTable dfProducer(m_app_db.get(), "EVPN_DF_TABLE");
+        swss::ProducerStateTable nhgProducer(m_app_db.get(), "EVPN_ES_BACKUP_NHG_TABLE");
+        wrHelper->registerTable(m_pipeline.get(), &shlProducer, "EVPN_SPLIT_HORIZON_TABLE");
+        wrHelper->registerTable(m_pipeline.get(), &dfProducer, "EVPN_DF_TABLE");
+        wrHelper->registerTable(m_pipeline.get(), &nhgProducer, "EVPN_ES_BACKUP_NHG_TABLE");
+
+        m_routeTable->set("10.1.0.0/24", {{"nexthop", "10.0.0.1"}, {"ifname", "Ethernet0"}});
+        shlTable.set("Vlan10:PortChannel1", {{"vteps", "10.0.0.1"}});
+        shlTable.set("Vlan20:PortChannel1", {{"vteps", "10.0.0.2"}});
+        dfTable.set("Vlan10:PortChannel1", {{"df", "true"}});
+        dfTable.set("Vlan20:PortChannel1", {{"df", "true"}});
+        nhgTable.set("PortChannel1", {{"nexthop_group", "5000"}});
+
+        wrHelper->setState(WarmStart::INITIALIZED);
+        ASSERT_TRUE(wrHelper->runRestoration());
+
+        wrHelper->insertRefreshMap({"10.1.0.0/24", "SET", {{"nexthop", "10.0.0.1"}, {"ifname", "Ethernet0"}}});
+        wrHelper->insertRefreshMap("EVPN_SPLIT_HORIZON_TABLE", {"Vlan10:PortChannel1", "SET", {{"vteps", "10.0.0.1"}}});
+        wrHelper->insertRefreshMap("EVPN_DF_TABLE", {"Vlan10:PortChannel1", "SET", {{"df", "false"}}});
+        wrHelper->insertRefreshMap("EVPN_ES_BACKUP_NHG_TABLE", {"PortChannel1", "SET", {{"nexthop_group", "5000"}}});
+
+        testing_db::resetOperationCounters();
+        wrHelper->reconcile();
+        EXPECT_EQ(wrHelper->getState(), WarmStart::RECONCILED);
+
+        std::vector<swss::FieldValueTuple> fields;
+        std::string value;
+        EXPECT_FALSE(shlTable.get("Vlan20:PortChannel1", fields));
+        EXPECT_FALSE(dfTable.get("Vlan20:PortChannel1", fields));
+        ASSERT_TRUE(shlTable.hget("Vlan10:PortChannel1", "vteps", value));
+        EXPECT_EQ(value, "10.0.0.1");
+        ASSERT_TRUE(dfTable.hget("Vlan10:PortChannel1", "df", value));
+        EXPECT_EQ(value, "false");
+        EXPECT_TRUE(nhgTable.get("PortChannel1", fields));
+        EXPECT_FALSE(m_routeTable->get("Vlan10:PortChannel1", fields));
+        EXPECT_FALSE(m_routeTable->get("PortChannel1", fields));
+
+        EXPECT_EQ(testing_db::getProducerSetCount("ROUTE_TABLE"), 0u);
+        EXPECT_EQ(testing_db::getProducerDelCount("ROUTE_TABLE"), 0u);
+        EXPECT_EQ(testing_db::getProducerSetCount("EVPN_SPLIT_HORIZON_TABLE"), 0u);
+        EXPECT_EQ(testing_db::getProducerDelCount("EVPN_SPLIT_HORIZON_TABLE"), 1u);
+        EXPECT_EQ(testing_db::getProducerSetCount("EVPN_DF_TABLE"), 1u);
+        EXPECT_EQ(testing_db::getProducerDelCount("EVPN_DF_TABLE"), 2u);
+        EXPECT_EQ(testing_db::getProducerSetCount("EVPN_ES_BACKUP_NHG_TABLE"), 0u);
+        EXPECT_EQ(testing_db::getProducerDelCount("EVPN_ES_BACKUP_NHG_TABLE"), 0u);
+    }
 }
