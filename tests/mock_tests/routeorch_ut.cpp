@@ -1006,6 +1006,65 @@ namespace routeorch_test
         static_cast<Orch *>(gRouteOrch)->doTask();
     }
 
+    /* A bulk that removes the last route of a VRF and adds another route to the
+     * same VRF must record the new route, so that a later DEL removes it. */
+    TEST_F(RouteOrchTest, RouteOrchVrfLastRouteDelAndSetSameBulk)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf2", "SET", { {"vni", "500200"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+        entries.push_back({"Ethernet8", "SET", { {"vrf_name", "Vrf2"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        sai_object_id_t vrf_id = gVrfOrch->getVRFid("Vrf2");
+        IpPrefix v4_prefix("20.0.0.0/24");
+        IpPrefix v6_prefix("fc00:1::/64");
+
+        auto routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        entries.clear();
+        entries.push_back({"Vrf2:20.0.0.0/24", "SET", { {"protocol", "kernel"},
+                                                        {"nexthop", "0.0.0.0"},
+                                                        {"ifname", "Ethernet8"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).size(), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).count(v4_prefix), 1u);
+        int vrf_ref_count = gVrfOrch->getVrfRefCount("Vrf2");
+
+        /* The DEL sorts before the SET, so its post processing runs first. */
+        auto create_count = create_route_count;
+        auto remove_count = remove_route_count;
+        entries.clear();
+        entries.push_back({"Vrf2:20.0.0.0/24", "DEL", {}});
+        entries.push_back({"Vrf2:fc00:1::/64", "SET", { {"protocol", "kernel"},
+                                                        {"nexthop", "::"},
+                                                        {"ifname", "Ethernet8"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+        ASSERT_EQ(create_route_count, create_count + 1);
+        ASSERT_EQ(remove_route_count, remove_count + 1);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).size(), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).count(v6_prefix), 1u);
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf2"), vrf_ref_count);
+
+        entries.clear();
+        entries.push_back({"Vrf2:fc00:1::/64", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+        ASSERT_EQ(remove_route_count, remove_count + 2);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 0u);
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf2"), vrf_ref_count - 1);
+    }
+
     /* Tests SAI_STATUS_ITEM_NOT_FOUND error handling for setting route */
     TEST_F(RouteOrchTest, RouteOrchSetItemNotFound)
     {
@@ -1738,5 +1797,67 @@ namespace routeorch_test
 
         (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
         ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
+    }
+
+    TEST_F(RouteOrchTest, RemoveNhgAfterAllMembersInvalidatedWithoutReplacement)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Add ECMP route with 2 nexthops (both already resolved in SetUp)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // Verify the NHG was created
+        NextHopGroupKey nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_NE(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG not found after adding ECMP route";
+
+        // Invalidate both nexthops without calling validnexthop afterward.
+        // This is the exact sequence MuxPrefixBasedNbrHandler::disable() performs:
+        // it removes NHG members from SAI but does not add tunnel replacements.
+        NextHopKey nh1(IpAddress("10.0.0.2"), "Ethernet0");
+        NextHopKey nh2(IpAddress("10.0.0.3"), "Ethernet0");
+        uint32_t count = 0;
+
+        // Capture nexthop refcounts before invalidation
+        auto refcount1_before = gNeighOrch->getNextHopRefCount(nh1);
+        auto refcount2_before = gNeighOrch->getNextHopRefCount(nh2);
+        ASSERT_GT(refcount1_before, 0);
+        ASSERT_GT(refcount2_before, 0);
+
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh1, count));
+        ASSERT_EQ(count, 1u);
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh2, count));
+        ASSERT_EQ(count, 1u);
+
+        // invalidnexthopinNextHopGroup only removes SAI members;
+        // NeighOrch refcounts must remain unchanged until the NHG is destroyed.
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before);
+
+        // Delete the route — triggers removeNextHopGroup which decrements refcounts
+        auto fail_before = sai_fail_count;
+
+        entries.clear();
+        entries.push_back({"9.9.9.0/24", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_EQ(sai_fail_count, fail_before)
+            << "Route deletion should not trigger any SAI failures";
+
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG should be removed after route deletion";
+
+        // After NHG destruction, refcounts must be decremented
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
     }
 }

@@ -6,8 +6,6 @@
 #include "timer.h"
 #include <array>
 
-#define PFC_WD_TC_MAX 8
-
 extern "C" {
 #include "sai.h"
 }
