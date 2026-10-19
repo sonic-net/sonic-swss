@@ -105,7 +105,7 @@ public:
     {
         size_t len = RTA_LENGTH(alen);
         struct rtattr *rta =
-            (struct rtattr *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+            (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
         rta->rta_type = (unsigned short)type;
         rta->rta_len = (unsigned short)len;
         memcpy(RTA_DATA(rta), data, alen);
@@ -449,7 +449,7 @@ public:
 
     const nlmsghdr *at(size_t i) const
     {
-        return reinterpret_cast<const nlmsghdr *>(m_sent.at(i).data());
+        return static_cast<const nlmsghdr *>(static_cast<const void *>(m_sent.at(i).data()));
     }
 
 private:
@@ -468,7 +468,7 @@ static const struct rtattr *findAttr(const nlmsghdr *hdr, int type)
     const struct ndmsg *ndm = (const struct ndmsg *)NLMSG_DATA(hdr);
     int len = (int)(hdr->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
     const struct rtattr *rta =
-        (const struct rtattr *)((const char *)ndm + NLMSG_ALIGN(sizeof(struct ndmsg)));
+        (const struct rtattr *)(const void *)((const char *)ndm + NLMSG_ALIGN(sizeof(struct ndmsg)));
 
     for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
     {

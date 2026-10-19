@@ -48,7 +48,7 @@ static bool addAttr(struct nlmsghdr *n, size_t maxLen, int type,
         return false;
     }
 
-    struct rtattr *rta = (struct rtattr *)(((char *)n) + NLMSG_ALIGN(n->nlmsg_len));
+    struct rtattr *rta = (struct rtattr *)(void *)(((char *)n) + NLMSG_ALIGN(n->nlmsg_len));
     rta->rta_type = (unsigned short)type;
     rta->rta_len = (unsigned short)len;
     if (alen)
@@ -363,7 +363,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
 
     struct rtattr *tb[NDA_MAX + 1];
-    parseRtAttrs(tb, NDA_MAX, (struct rtattr *)((char *)ndm + sizeof(struct ndmsg)), len);
+    parseRtAttrs(tb, NDA_MAX, (struct rtattr *)(void *)((char *)ndm + sizeof(struct ndmsg)), len);
 
     if (!tb[NDA_LLADDR] || RTA_PAYLOAD(tb[NDA_LLADDR]) != ETHER_ADDR_LEN)
     {
