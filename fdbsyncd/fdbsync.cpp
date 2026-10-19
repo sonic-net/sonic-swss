@@ -3,6 +3,7 @@
 
 #include <string>
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <cstring>
 #include <netinet/in.h>
@@ -189,7 +190,10 @@ bool FdbSync::isIntfRestoreDone()
 namespace
 {
 
-const int BRIDGE_FDB_DUMP_ATTEMPTS = 3;
+const int DUMP_ATTEMPTS = 3;
+
+using DumpSocket = std::unique_ptr<struct nl_sock, decltype(&nl_socket_free)>;
+using NetlinkMsg = std::unique_ptr<struct nl_msg, decltype(&nlmsg_free)>;
 
 int dispatchFdbDumpReply(struct nl_msg *msg, void *)
 {
@@ -197,7 +201,7 @@ int dispatchFdbDumpReply(struct nl_msg *msg, void *)
     return NL_OK;
 }
 
-int readFdbDumpDone(struct nl_msg *msg, void *arg)
+int readDumpDone(struct nl_msg *msg, void *arg)
 {
     struct nlmsghdr *hdr = nlmsg_hdr(msg);
 
@@ -206,6 +210,128 @@ int readFdbDumpDone(struct nl_msg *msg, void *arg)
         memcpy(arg, nlmsg_data(hdr), sizeof(int));
     }
     return NL_STOP;
+}
+
+/* Opens a NETLINK_ROUTE socket for one dump; logs and returns an empty socket on failure. */
+DumpSocket openDumpSocket(const char *what)
+{
+    DumpSocket sock(nl_socket_alloc(), nl_socket_free);
+    if (!sock)
+    {
+        SWSS_LOG_ERROR("Unable to allocate a netlink socket for the %s dump", what);
+        return sock;
+    }
+
+    int err = nl_connect(sock.get(), NETLINK_ROUTE);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect the %s dump socket: %s", what, nl_geterror(err));
+        sock.reset();
+    }
+    return sock;
+}
+
+/*
+ * Sends an NLM_F_DUMP request of type with header hdr on sock and passes every reply to
+ * onReply until the kernel ends the dump. A dump that the kernel flags inconsistent or
+ * ends with an errno in NLMSG_DONE can skip entries that did not change, and no event
+ * replays those, so it is run again, up to DUMP_ATTEMPTS times; onReply sees the replies
+ * of every attempt. Returns 0 once an attempt completes; the libnl error of a failed
+ * send or read, after logging it; or, when no attempt completed, -NLE_DUMP_INTR or 0
+ * with the kernel's errno in doneErr.
+ */
+int runDump(struct nl_sock *sock, const char *what, int type, void *hdr, size_t len,
+            nl_recvmsg_msg_cb_t onReply, void *arg, int &doneErr)
+{
+    int err = 0;
+
+    nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, onReply, arg);
+    nl_socket_modify_cb(sock, NL_CB_FINISH, NL_CB_CUSTOM, readDumpDone, &doneErr);
+
+    for (int attempt = 1; attempt <= DUMP_ATTEMPTS; attempt++)
+    {
+        doneErr = 0;
+        err = nl_send_simple(sock, type, NLM_F_DUMP, hdr, len);
+        if (err < 0)
+        {
+            SWSS_LOG_ERROR("Unable to request the %s dump: %s", what, nl_geterror(err));
+            break;
+        }
+
+        do
+        {
+            err = nl_recvmsgs_default(sock);
+        }
+        while (err == -NLE_INTR);
+
+        if (err < 0 && err != -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_ERROR("Unable to read the %s dump: %s", what, nl_geterror(err));
+            break;
+        }
+
+        err = err < 0 ? err : 0;
+        if (err == 0 && doneErr == 0)
+        {
+            break;
+        }
+
+        if (err == -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_WARN("The %s dump %d of %d was inconsistent: it changed while the dump ran",
+                          what, attempt, DUMP_ATTEMPTS);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Kernel failed the %s dump %d of %d: %s (errno %d)",
+                           what, attempt, DUMP_ATTEMPTS, strerror(-doneErr), -doneErr);
+        }
+    }
+
+    /* The callbacks point at the caller's stack: clear them so the socket can be reused. */
+    nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_DEFAULT, nullptr, nullptr);
+    nl_socket_modify_cb(sock, NL_CB_FINISH, NL_CB_DEFAULT, nullptr, nullptr);
+    return err < 0 ? err : 0;
+}
+
+/*
+ * The kernel dumps next hops in ID order, and a group can have a lower ID than its
+ * members. Group replies are held back here, by ID, and handled after every plain next
+ * hop, so that onMsgNhg() knows each group's members when it sees the group. A retried
+ * dump replaces the copy of a group that an earlier attempt held.
+ */
+struct NhgDump
+{
+    std::map<uint32_t, NetlinkMsg> groups;
+    size_t replies = 0;
+};
+
+int deferNhgGroupReply(struct nl_msg *msg, void *arg)
+{
+    auto *dump = static_cast<NhgDump *>(arg);
+    struct nlmsghdr *hdr = nlmsg_hdr(msg);
+    struct nlattr *id = nlmsg_find_attr(hdr, sizeof(struct nhmsg), NHA_ID);
+
+    dump->replies++;
+    if (hdr->nlmsg_type == RTM_NEWNEXTHOP && id && nlmsg_find_attr(hdr, sizeof(struct nhmsg), NHA_GROUP))
+    {
+        struct nl_msg *copy = nlmsg_convert(hdr);
+        if (copy)
+        {
+            auto group = dump->groups.find(nla_get_u32(id));
+            if (group != dump->groups.end())
+            {
+                group->second.reset(copy);
+            }
+            else
+            {
+                dump->groups.emplace(nla_get_u32(id), NetlinkMsg(copy, nlmsg_free));
+            }
+            return NL_OK;
+        }
+    }
+    NetDispatcher::getInstance().onNetlinkMessage(msg);
+    return NL_OK;
 }
 
 }
@@ -220,18 +346,10 @@ int readFdbDumpDone(struct nl_msg *msg, void *arg)
  */
 void FdbSync::dumpBridgeFdb()
 {
-    std::unique_ptr<struct nl_sock, decltype(&nl_socket_free)> sock(nl_socket_alloc(), nl_socket_free);
+    DumpSocket sock = openDumpSocket("bridge FDB");
     if (!sock)
     {
-        SWSS_LOG_ERROR("Unable to allocate a netlink socket for the bridge FDB dump");
-        throw runtime_error("fdbsyncd: unable to allocate a netlink socket for the bridge FDB dump");
-    }
-
-    int err = nl_connect(sock.get(), NETLINK_ROUTE);
-    if (err < 0)
-    {
-        SWSS_LOG_ERROR("Unable to connect the bridge FDB dump socket: %s", nl_geterror(err));
-        throw runtime_error("fdbsyncd: unable to connect the bridge FDB dump socket");
+        throw runtime_error("fdbsyncd: unable to open the bridge FDB dump socket");
     }
 
     dumpBridgeFdb(sock.get());
@@ -239,59 +357,26 @@ void FdbSync::dumpBridgeFdb()
 
 /*
  * Sends the dump request on sock and hands every reply to NetDispatcher, as the
- * main netlink socket does, until the kernel ends the dump. A dump that the kernel
- * flags inconsistent or ends with an errno can skip entries that did not change, and
- * no event replays those, so it is run again, up to BRIDGE_FDB_DUMP_ATTEMPTS times.
+ * main netlink socket does, until the kernel ends the dump.
  */
 void FdbSync::dumpBridgeFdb(struct nl_sock *sock)
 {
     int doneErr = 0;
 
-    nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, dispatchFdbDumpReply, nullptr);
-    nl_socket_modify_cb(sock, NL_CB_FINISH, NL_CB_CUSTOM, readFdbDumpDone, &doneErr);
-
     struct ndmsg ndm;
     memset(&ndm, 0, sizeof(ndm));
     ndm.ndm_family = AF_BRIDGE;
 
-    for (int attempt = 1; attempt <= BRIDGE_FDB_DUMP_ATTEMPTS; attempt++)
+    int err = runDump(sock, "bridge FDB", RTM_GETNEIGH, &ndm, sizeof(ndm), dispatchFdbDumpReply, nullptr, doneErr);
+    if (err < 0 && err != -NLE_DUMP_INTR)
     {
-        doneErr = 0;
-        int err = nl_send_simple(sock, RTM_GETNEIGH, NLM_F_DUMP, &ndm, sizeof(ndm));
-        if (err < 0)
-        {
-            SWSS_LOG_ERROR("Unable to request the bridge FDB dump: %s", nl_geterror(err));
-            throw runtime_error("fdbsyncd: unable to request the bridge FDB dump");
-        }
+        throw runtime_error("fdbsyncd: unable to dump the bridge FDB");
+    }
 
-        do
-        {
-            err = nl_recvmsgs_default(sock);
-        }
-        while (err == -NLE_INTR);
-
-        if (err < 0 && err != -NLE_DUMP_INTR)
-        {
-            SWSS_LOG_ERROR("Unable to read the bridge FDB dump: %s", nl_geterror(err));
-            throw runtime_error("fdbsyncd: unable to read the bridge FDB dump");
-        }
-
-        if (err == 0 && doneErr == 0)
-        {
-            SWSS_LOG_NOTICE("Bridge FDB dump complete");
-            return;
-        }
-
-        if (err == -NLE_DUMP_INTR)
-        {
-            SWSS_LOG_WARN("Bridge FDB dump %d of %d was inconsistent: the FDB changed while it ran",
-                          attempt, BRIDGE_FDB_DUMP_ATTEMPTS);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Kernel failed bridge FDB dump %d of %d: %s (errno %d)",
-                           attempt, BRIDGE_FDB_DUMP_ATTEMPTS, strerror(-doneErr), -doneErr);
-        }
+    if (err == 0 && doneErr == 0)
+    {
+        SWSS_LOG_NOTICE("Bridge FDB dump complete");
+        return;
     }
 
     /*
@@ -392,15 +477,72 @@ void FdbSync::trackKeptEntry(const string &tableName, const string &key, const v
     m_mac[key] = info;
 }
 
-void FdbSync::processCfgEvpnNvo()
+/*
+ * L2 next hop groups exist in the kernel as fdb next hops and their groups, which no
+ * event announces again once fdbsyncd restarts. The kernel refuses a next hop dump whose
+ * request is shorter than struct nhmsg (a bare rtgenmsg) with EINVAL; a zeroed nhmsg
+ * dumps every next hop, and onMsgNhg() keeps the L2 ones. NHA_FDB cannot narrow the dump:
+ * the kernel accepts that filter but does not apply it.
+ */
+void FdbSync::dumpL2Nhg()
+{
+    DumpSocket sock = openDumpSocket("next hop");
+    if (sock)
+    {
+        dumpL2Nhg(sock.get());
+    }
+}
+
+/*
+ * Sends the dump request on sock and hands every reply to NetDispatcher, groups last.
+ * A failed dump is logged only: it replays fewer groups, and removes none.
+ */
+void FdbSync::dumpL2Nhg(struct nl_sock *sock)
+{
+    int doneErr = 0;
+    NhgDump dump;
+
+    struct nhmsg nhm;
+    memset(&nhm, 0, sizeof(nhm));
+    nhm.nh_family = AF_UNSPEC;
+
+    int err = runDump(sock, "next hop", RTM_GETNEXTHOP, &nhm, sizeof(nhm), deferNhgGroupReply, &dump, doneErr);
+
+    for (auto &group : dump.groups)
+    {
+        NetDispatcher::getInstance().onNetlinkMessage(group.second.get());
+    }
+
+    if (err < 0 && err != -NLE_DUMP_INTR)
+    {
+        return;
+    }
+
+    if (err < 0 || doneErr < 0)
+    {
+        SWSS_LOG_WARN("Next hop dump incomplete after %d attempts: a group it skipped stays unknown until it changes",
+                      DUMP_ATTEMPTS);
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Next hop dump complete: %zu replies, %zu groups", dump.replies, dump.groups.size());
+}
+
+/*
+ * Returns true when EVPN NVO ends up configured after being not configured at some
+ * point of this batch: one pop can hold a delete and a re-add, and the delete has
+ * already removed the L2 next hop groups.
+ */
+bool FdbSync::processCfgEvpnNvo()
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     m_cfgEvpnNvoTable.pops(entries);
-    bool lastNvoState = m_isEvpnNvoExist;
+    bool configured = false;
 
     for (auto entry: entries)
     {
         std::string op = kfvOp(entry);
+        bool lastNvoState = m_isEvpnNvoExist;
 
         if (op == SET_COMMAND)
         {
@@ -415,9 +557,10 @@ void FdbSync::processCfgEvpnNvo()
         if (lastNvoState != m_isEvpnNvoExist)
         {
             updateAllLocalMac();
+            configured = m_isEvpnNvoExist;
         }
     }
-    return;
+    return configured;
 }
 
 void FdbSync::clearL2Nhg()
