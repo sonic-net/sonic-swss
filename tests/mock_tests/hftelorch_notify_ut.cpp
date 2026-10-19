@@ -482,44 +482,15 @@ namespace hftelorch_notify_test
         EXPECT_EQ(*stub.p->m_group_delete_blocked.begin(), "profile|");
     }
 
-    /* The staleness bug this closes: a group blocked on delete, then
-     * re-set (CONFIG_DB/Consumer collapses to one desired op per key, so a
-     * SET supersedes an earlier blocked DEL) instead of actually being
-     * deleted, must not leave its old m_group_delete_blocked entry behind -
-     * otherwise a later, unrelated delete block of the same key would find
-     * the stale entry and silently skip its own WARN. */
-    TEST_F(GroupTableSetLiveReconfigTest, GroupSetClearsStaleDeleteBlockedKey)
-    {
-        GroupTableSetProfileStub profile;
-        profile.init(SAI_TAM_TEL_TYPE_STATE_START_STREAM);
-        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
-        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
-        stub.p->m_group_delete_blocked.insert("profile|PORT");
-
-        // Still streaming, so this SET blocks too - the stale delete-block
-        // key must be cleared regardless of whether the SET itself applies.
-        auto status = stub.p->groupTableSet("profile", "PORT", {});
-
-        EXPECT_EQ(status, task_process_status::task_need_retry);
-        EXPECT_TRUE(stub.p->m_group_delete_blocked.empty());
-    }
-
-    /* Same staleness fix at the profile level: profileTableSet() must clear
-     * a stale "profile|" entry left behind by an earlier blocked
-     * profileTableDel() that a later SET has superseded. */
-    TEST_F(GroupTableSetLiveReconfigTest, ProfileSetClearsStaleDeleteBlockedKey)
-    {
-        GroupTableSetProfileStub profile;
-        profile.init(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
-        auto profile_ptr = shared_ptr<HFTelProfile>(profile.p, [](HFTelProfile *) {});
-        stub.p->m_name_profile_mapping.emplace("profile", profile_ptr);
-        stub.p->m_group_delete_blocked.insert("profile|");
-
-        auto status = stub.p->profileTableSet("profile", {});
-
-        EXPECT_EQ(status, task_process_status::task_success);
-        EXPECT_TRUE(stub.p->m_group_delete_blocked.empty());
-    }
+    // No "SET clears a stale delete-blocked key" test here: a SET never
+    // supersedes a pending DEL for the same key. ConsumerBase::addToSyncInternal()
+    // (orch.cpp) only lets a later DEL evict an earlier queued SET from the
+    // retry cache, not the reverse - a SET queued behind an already-pending
+    // DEL is retried alongside it, not instead of it. groupTableDel() erases
+    // its own m_group_delete_blocked entry once the DEL actually applies, so
+    // there is no stale entry for a SET to clear; unconditionally erasing it
+    // from groupTableSet()/profileTableSet() only reintroduces the
+    // once-per-block WARN on every retry pass instead of once.
 
     /* profileTableSet()'s poll_interval is a configuration field, so it's
      * subject to the same stopped-only rule as group configuration, applied

@@ -473,12 +473,6 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
     SWSS_LOG_ENTER();
     auto profile = getProfile(profile_name);
 
-    // This call's desired op for the profile-level key is a SET, so any
-    // stale "profile|" entry in m_group_delete_blocked - left behind by a
-    // DEL this SET supersedes - must not keep suppressing the next delete's
-    // once-per-block WARN. See the identical reasoning in groupTableSet().
-    m_group_delete_blocked.erase(profile_name + "|");
-
     // Parse stream_state (if present) up front without applying it yet, so
     // the poll_interval gate below can see where this same call is already
     // headed.
@@ -659,16 +653,6 @@ task_process_status HFTelOrch::groupTableSet(const std::string &profile_name, co
     // only writes CONFIG_DB deltas, so resubmitting an identical desired
     // config produces no new write and so no new notification either.
     const string blocked_key = profile_name + "|" + group_name;
-
-    // This call's desired op for the key is a SET, so any m_group_delete_blocked
-    // entry for it is now stale - it tracked a DEL that this SET has
-    // superseded (CONFIG_DB/Consumer only ever has one desired op per key).
-    // Clear it unconditionally, even if this SET itself blocks below: the
-    // old "delete is pending" state no longer applies either way, so a
-    // later delete of this same key must be free to warn again instead of
-    // silently losing its .insert().second dedup to this stale leftover.
-    m_group_delete_blocked.erase(blocked_key);
-
     if (!profile->canBeUpdated(type))
     {
         if (m_group_update_blocked.insert(blocked_key).second)
