@@ -30,6 +30,7 @@ class StpOrch : public Orch
 public:
     StpOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames);
     bool stpVlanFdbFlush(string vlan_alias);
+    bool stpInstancePortFdbFlush(string port_alias, sai_uint16_t instance);
     bool updateMaxStpInstance(uint32_t max_stp_instance);
     bool removeStpPorts(Port &port);
     bool removeVlanFromStpInstance(string vlan, sai_uint16_t stp_instance);
