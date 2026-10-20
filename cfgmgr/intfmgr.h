@@ -44,8 +44,6 @@ private:
     std::string mySwitchType;
 
     bool setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
-    bool getKernelAddressState(const std::string &alias, const IpPrefix &ipPrefix,
-                               int &ifindex, bool &present);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);

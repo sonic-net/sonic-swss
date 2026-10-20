@@ -1,12 +1,8 @@
 #include "gtest/gtest.h"
 #include <iostream>
 #include <fstream>
-#include <map>
-#include <regex>
-#include <set>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <nlohmann/json.hpp>
 #include "../mock_table.h"
 #include "warm_restart.h"
 #include "macaddress.h"
@@ -22,67 +18,12 @@ extern swss::MacAddress gSagMacAddress;
 bool Ethernet0IPv6Set = false;
 bool FailBridgeFdbCommand = false;
 bool FailAddressAdd = false;
-bool FailAddressAddAfterProgramming = false;
-bool ChangeIfindexAfterAdd = false;
-bool PreserveAddressOnIfindexChange = false;
-bool RemoveInterfaceOnFailedAdd = false;
-bool FailAddressQuery = false;
-bool MalformedAddressQuery = false;
-bool SkipAddressProgramming = false;
 bool FailIpv6Enable = false;
-std::map<std::string, int> KernelIfindexes;
-std::map<std::string, std::set<std::string>> KernelAddresses;
-std::set<std::string> MissingKernelInterfaces;
 
 int cb(const std::string &cmd, std::string &stdout){
     mockCallArgs.push_back(cmd);
-
-    std::smatch match;
-    static const std::regex addressStateCommand(
-        R"regex(^/sbin/ip -j address show dev "([^"]+)"$)regex");
-    static const std::regex addressCommand(
-        R"regex(^/sbin/ip(?: -6)? address "(add|del)" "([^"]+)"(?: broadcast "[^"]+")? dev "([^"]+)".*$)regex");
-
-    if (std::regex_match(cmd, match, addressStateCommand))
-    {
-        const std::string alias = match[1].str();
-        if (FailAddressQuery || MissingKernelInterfaces.count(alias) != 0)
-        {
-            return 1;
-        }
-        if (MalformedAddressQuery)
-        {
-            stdout = "{";
-            return 0;
-        }
-
-        int &ifindex = KernelIfindexes[alias];
-        if (ifindex == 0)
-        {
-            ifindex = 7;
-        }
-
-        auto addresses = nlohmann::json::array();
-        for (const auto &prefix : KernelAddresses[alias])
-        {
-            swss::IpPrefix ipPrefix(prefix);
-            addresses.push_back({
-                {"family", ipPrefix.isV4() ? "inet" : "inet6"},
-                {"local", ipPrefix.getIp().to_string()},
-                {"prefixlen", ipPrefix.getMaskLength()}
-            });
-        }
-        stdout = nlohmann::json::array({
-            {
-                {"ifindex", ifindex},
-                {"ifname", alias},
-                {"addr_info", addresses}
-            }
-        }).dump();
-        return 0;
-    }
-    else if (cmd.find("sysctl -w net.ipv6.conf.") == 0 &&
-             cmd.find(".disable_ipv6=0") != std::string::npos)
+    if (cmd == "sysctl -w net.ipv6.conf.\"Ethernet0\".disable_ipv6=0" ||
+        cmd == "sysctl -w net.ipv6.conf.\"PortChannel1\".disable_ipv6=0")
     {
         if (FailIpv6Enable)
         {
@@ -91,49 +32,11 @@ int cb(const std::string &cmd, std::string &stdout){
         Ethernet0IPv6Set = true;
         return 0;
     }
-    else if (std::regex_match(cmd, match, addressCommand))
-    {
-        const std::string op = match[1].str();
-        const std::string prefix = match[2].str();
-        const std::string alias = match[3].str();
-
-        if (op == "add" && prefix.find(':') != std::string::npos && !Ethernet0IPv6Set)
-        {
-            return 2;
-        }
-
-        if (op == "add" && RemoveInterfaceOnFailedAdd)
-        {
-            MissingKernelInterfaces.insert(alias);
-            KernelAddresses[alias].clear();
-            return 1;
-        }
-
-        if (op == "add" && FailAddressAdd)
-        {
-            return 1;
-        }
-
-        if (op == "add")
-        {
-            if (SkipAddressProgramming)
-            {
-                return 0;
-            }
-            KernelAddresses[alias].insert(prefix);
-            if (ChangeIfindexAfterAdd)
-            {
-                ++KernelIfindexes[alias];
-                if (!PreserveAddressOnIfindexChange)
-                {
-                    KernelAddresses[alias].clear();
-                }
-            }
-            return FailAddressAddAfterProgramming ? 2 : 0;
-        }
-
-        KernelAddresses[alias].erase(prefix);
-        return 0;
+    else if (cmd.find("/sbin/ip -6 address \"add\"") == 0) {
+        return Ethernet0IPv6Set && !FailAddressAdd ? 0 : 2;
+    }
+    else if (cmd.find("/sbin/ip address \"add\"") == 0) {
+        return FailAddressAdd ? 2 : 0;
     }
     else if (cmd == "/sbin/ip link set \"Ethernet64.10\" \"up\""){
         return 1;
@@ -184,20 +87,11 @@ namespace intfmgr_ut
             Ethernet0IPv6Set = false;
             FailBridgeFdbCommand = false;
             FailAddressAdd = false;
-            FailAddressAddAfterProgramming = false;
-            ChangeIfindexAfterAdd = false;
-            PreserveAddressOnIfindexChange = false;
-            RemoveInterfaceOnFailedAdd = false;
-            FailAddressQuery = false;
-            MalformedAddressQuery = false;
-            SkipAddressProgramming = false;
             FailIpv6Enable = false;
-            KernelIfindexes.clear();
-            KernelAddresses.clear();
-            MissingKernelInterfaces.clear();
         }
 
-        void verifyFailedAddressProgrammingRemainsPending(const std::string &prefix)
+        void verifyFailedAddressProgrammingRemainsPending(const std::string &prefix,
+                                                          bool failIpv6Enable = false)
         {
             swss::IntfMgr intfmgr(
                 m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
@@ -214,7 +108,9 @@ namespace intfmgr_ut
             consumer->m_toSync.emplace(
                 key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
 
-            RemoveInterfaceOnFailedAdd = true;
+            testing_db::resetOperationCounters();
+            FailAddressAdd = true;
+            FailIpv6Enable = failIpv6Enable;
             intfmgr.doTask(*consumer);
 
             swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
@@ -222,10 +118,10 @@ namespace intfmgr_ut
             EXPECT_EQ(consumer->m_toSync.count(key), 1u);
             EXPECT_FALSE(appIntfTable.get(appKey, values));
             EXPECT_FALSE(intfmgr.m_stateIntfTable.get(key, values));
+            EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 0u);
 
-            RemoveInterfaceOnFailedAdd = false;
-            MissingKernelInterfaces.erase(alias);
-            KernelIfindexes[alias] = 29;
+            FailAddressAdd = false;
+            FailIpv6Enable = false;
             intfmgr.doTask(*consumer);
 
             EXPECT_TRUE(consumer->m_toSync.empty());
@@ -233,6 +129,12 @@ namespace intfmgr_ut
             std::string state;
             ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(key, "state", state));
             EXPECT_EQ(state, "ok");
+            EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
+
+            const auto commandCount = mockCallArgs.size();
+            intfmgr.doTask(*consumer);
+            EXPECT_EQ(mockCallArgs.size(), commandCount);
+            EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
         }
     };
 
@@ -277,7 +179,7 @@ namespace intfmgr_ut
         /* Set Ipv6 prefix */
         const std::vector<std::string>& keys = {"Ethernet0", "2001::8/64"};
         const std::vector<swss::FieldValueTuple> data;
-        intfmgr.doIntfAddrTask(keys, data, "SET");
+        ASSERT_TRUE(intfmgr.doIntfAddrTask(keys, data, "SET"));
         int ip_cmd_called = 0;
         for (auto cmd : mockCallArgs){
             if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
@@ -301,7 +203,7 @@ namespace intfmgr_ut
         /* Set Ipv6 prefix */
         const std::vector<std::string>& keys = {"Ethernet0", "2001::8/64"};
         const std::vector<swss::FieldValueTuple> data;
-        intfmgr.doIntfAddrTask(keys, data, "SET");
+        ASSERT_TRUE(intfmgr.doIntfAddrTask(keys, data, "SET"));
         int ip_cmd_called = 0;
         for (auto cmd : mockCallArgs){
             if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
@@ -354,7 +256,6 @@ namespace intfmgr_ut
         const std::vector<std::string> ipv4Keys = {"Ethernet0", "10.0.0.1/31"};
         intfmgr.doIntfAddrTask(ipv4Keys, emptyData, "SET");
 
-        KernelAddresses["Ethernet0"].erase("fe80::1/64");
         mockCallArgs.clear();
 
         /* Simulate admin up by calling doPortTableTask */
@@ -452,105 +353,9 @@ namespace intfmgr_ut
         verifyFailedAddressProgrammingRemainsPending("2001:db8::1/128");
     }
 
-    TEST_F(IntfMgrTest, testFailedAddSucceedsWhenExactAddressIsPresent)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        FailAddressAddAfterProgramming = true;
-
-        EXPECT_TRUE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-
-        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
-        EXPECT_TRUE(appIntfTable.get(alias + ":" + prefix, values));
-        std::string state;
-        ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(alias + "|" + prefix, "state", state));
-        EXPECT_EQ(state, "ok");
-    }
-
-    TEST_F(IntfMgrTest, testInterfaceReplacementRetainsAddressTask)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        ChangeIfindexAfterAdd = true;
-
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-
-        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
-        EXPECT_FALSE(appIntfTable.get(alias + ":" + prefix, values));
-        EXPECT_FALSE(intfmgr.m_stateIntfTable.get(alias + "|" + prefix, values));
-    }
-
-    TEST_F(IntfMgrTest, testAlreadyPresentAddressReplacementRetainsTask)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        KernelAddresses[alias].insert(prefix);
-        ChangeIfindexAfterAdd = true;
-        PreserveAddressOnIfindexChange = true;
-
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-
-        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
-        EXPECT_FALSE(appIntfTable.get(alias + ":" + prefix, values));
-        EXPECT_FALSE(intfmgr.m_stateIntfTable.get(alias + "|" + prefix, values));
-    }
-
-    TEST_F(IntfMgrTest, testSuccessfulCommandWithoutAddressRetainsTask)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        SkipAddressProgramming = true;
-
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-    }
-
-    TEST_F(IntfMgrTest, testAddressQueryFailureRetainsTask)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        FailAddressQuery = true;
-
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-
-        FailAddressQuery = false;
-        MalformedAddressQuery = true;
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
-    }
-
     TEST_F(IntfMgrTest, testIpv6EnableFailureRetainsTask)
     {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "2001:db8::1/128";
-
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-        FailIpv6Enable = true;
-
-        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
+        verifyFailedAddressProgrammingRemainsPending("2001:db8::1/128", true);
     }
 
     TEST_F(IntfMgrTest, testSetSagFdbEntryValidationAndBridgeCommand){
