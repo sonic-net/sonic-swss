@@ -114,6 +114,8 @@ private:
         sai_macsec_cipher_suite_t           m_cipher_suite;
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
+        bool                                m_enable_replay_protect;
+        uint32_t                            m_replay_window;
         bool                                m_enable;
         uint32_t                            m_original_ipg;
     };
@@ -193,7 +195,9 @@ private:
         sai_uint64_t sci,
         bool encryption_enable,
         bool send_sci,
-        sai_macsec_cipher_suite_t cipher_suite);
+        sai_macsec_cipher_suite_t cipher_suite,
+        bool enable_replay_protect,
+        uint32_t replay_window);
     task_process_status deleteMACsecSC(
         const std::string &port_sci,
         sai_macsec_direction_t direction);
