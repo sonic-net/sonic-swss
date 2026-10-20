@@ -838,6 +838,27 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
     return true;
 }
 
+void PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr_enable;
+    attr_enable.id = SAI_QUEUE_ATTR_ENABLE_PFC_DLDR;
+    attr_enable.value.booldata = false;
+
+    sai_status_t status = sai_queue_api->set_queue_attribute(queueId, &attr_enable);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to disable PFC DLDR on port %s queue %d (0x%" PRIx64 "): %d",
+                      port.m_alias.c_str(), tc, queueId, status);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
+                     port.m_alias.c_str(), tc, queueId);
+    }
+}
+
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 {
     SWSS_LOG_ENTER();
@@ -868,21 +889,7 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 
         sai_object_id_t queueId = port.m_queue_ids[tc];
 
-        sai_attribute_t attr_enable;
-        attr_enable.id = SAI_QUEUE_ATTR_ENABLE_PFC_DLDR;
-        attr_enable.value.booldata = false;
-
-        sai_status_t status = sai_queue_api->set_queue_attribute(queueId, &attr_enable);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to disable PFC DLDR on port %s queue %d (0x%" PRIx64 "): %d",
-                          port.m_alias.c_str(), tc, queueId, status);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
-                         port.m_alias.c_str(), tc, queueId);
-        }
+        disableQueueDldr(port, tc, queueId);
 
         // Remove from queue→port mapping
         m_queueToPortMap.erase(queueId);
@@ -896,6 +903,8 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
     {
         if (it->second.port_alias == port.m_alias)
         {
+            disableQueueDldr(port, it->second.queue_index, it->first);
+
             m_stormedQueues.erase(it->first);
             it = m_queueToPortMap.erase(it);
         }

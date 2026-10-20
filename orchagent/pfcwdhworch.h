@@ -106,6 +106,7 @@ private:
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
     void mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc);
+    void disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId);
 
 
     // Port and queue information
