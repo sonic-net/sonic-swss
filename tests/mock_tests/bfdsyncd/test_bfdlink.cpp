@@ -579,3 +579,200 @@ TEST_F(BfdSyncdReadDataTest, ReadDataInvalidHeaderDropped)
     ASSERT_EQ(keys.size(), 0u);
 }
 
+TEST_F(BfdSyncdTest, ExecRunsRealShellCommand)
+{
+    /* Constructs a plain (unmocked) BfdLink so the real exec()/PipeDeleter
+     * implementation runs, instead of the gmock stub used by MockBfdLink. */
+    BfdLink realBfd(&m_appl_db, &m_state_db, BFD_TEST_PORT, 0);
+    ASSERT_EQ(realBfd.exec("echo hello"), "hello\n");
+}
+
+TEST_F(BfdSyncdTest, StateUpdateKeyMissingSeparator)
+{
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+
+    std::vector<FieldValueTuple> fieldValues = {{"state", "Up"}};
+    ASSERT_FALSE(m_bfd.handleBfdStateUpdate("nosepartorhere", fieldValues));
+}
+
+TEST_F(BfdSyncdTest, UnsupportedMessageTypeEchoReply)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = ECHO_REPLY;
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdTest, UnsupportedMessageTypeStateChange)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = BFD_STATE_CHANGE;
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdTest, UnsupportedMessageTypeSessionCounters)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = BFD_SESSION_COUNTERS;
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdTest, UnsupportedMessageTypeUnknown)
+{
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    buf[2] = 0;
+    buf[3] = 99;
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdReadDataTest, GetFdReturnsConnectedDescriptor)
+{
+    ASSERT_GE(m_bfd.getFd(), 0);
+}
+
+TEST_F(BfdSyncdTest, DuplicateAddWithShutdownFlagReportsDown)
+{
+    addDefaultIpv6Session(m_bfd);
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    const size_t flagsOffset = sizeof(bfddp_message_header) + offsetof(bfddp_session, flags);
+    uint32_t flags = htonl(SESSION_IPV6 | SESSION_SHUTDOWN);
+    memcpy(buf + flagsOffset, &flags, sizeof(flags));
+
+    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1).WillOnce(Return(true));
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+}
+
+TEST_F(BfdSyncdTest, DuplicateAddRecreateOnMinTxChange)
+{
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    const size_t minTxOffset = sizeof(bfddp_message_header) + offsetof(bfddp_session, min_tx);
+    uint32_t minTx = htonl(350000);
+    memcpy(buf + minTxOffset, &minTx, sizeof(minTx));
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 1u);
+}
+
+TEST_F(BfdSyncdTest, DuplicateAddRecreateOnDetectMultChange)
+{
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    const size_t detectMultOffset = sizeof(bfddp_message_header) + offsetof(bfddp_session, detect_mult);
+    buf[detectMultOffset] = 5;
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    shared_ptr<swss::DBConnector> app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_bfd_session_table(app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+    vector<string> keys;
+    app_bfd_session_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 1u);
+}
+
+TEST_F(BfdSyncdTest, StateUpdateIpv4KeyDirectAssignment)
+{
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("00:22:33:44:55:66"));
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    buildIpv4SessionWire(buf, sizeof(buf), DP_ADD_SESSION,
+                         "10.0.0.1", "10.0.0.2", 5, "Ethernet0",
+                         300000, 300000, 3);
+    memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    m_bfd.handleBfdDpMessage(0);
+
+    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1);
+
+    std::vector<FieldValueTuple> fieldValues = {{"state", "Up"}};
+    auto key = string("default|default|10.0.0.2");
+    ASSERT_TRUE(m_bfd.handleBfdStateUpdate(key, fieldValues));
+}
+
+TEST_F(BfdSyncdTest, StateUpdateInvalidRemoteMinTx)
+{
+    ON_CALL(m_bfd, exec(_)).WillByDefault(Return("78:12:83:58:08:01"));
+    addDefaultIpv6Session(m_bfd);
+
+    EXPECT_CALL(m_bfd, sendmsg(_)).Times(0);
+
+    std::vector<FieldValueTuple> fieldValues = {
+        {"state", "Up"},
+        {"remote_min_tx", "bad-value"},
+    };
+    auto key = string("default|default|2000::2");
+    ASSERT_FALSE(m_bfd.handleBfdStateUpdate(key, fieldValues));
+}
+
+TEST_F(BfdSyncdTest, SendMsgRealSocketDeliversStateUpdate)
+{
+    /* Uses a plain (unmocked) BfdLink with a real connected loopback socket so
+     * the real sendmsg() implementation runs, instead of the gmock stub used
+     * by MockBfdLink. */
+    BfdLink realBfd(&m_appl_db, &m_state_db, BFD_TEST_PORT, 0);
+
+    unsigned short port = realBfd.getServerPort();
+    ASSERT_NE(port, 0u);
+
+    int clientFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    ASSERT_GE(clientFd, 0);
+
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(connect(clientFd, (struct sockaddr *)&addr, sizeof(addr)), 0);
+
+    realBfd.accept();
+
+    unsigned char buf[BFD_WIRE_MSG_LEN];
+    copyDefaultIpv6AddBuffer(buf, sizeof(buf));
+    memcpy(realBfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
+    realBfd.handleBfdDpMessage(0);
+
+    std::vector<FieldValueTuple> fieldValues = {{"state", "Up"}};
+    auto key = string("default|default|2000::2");
+    ASSERT_TRUE(realBfd.handleBfdStateUpdate(key, fieldValues));
+
+    unsigned char recvBuf[STATE_UPDATE_MSG_LEN];
+    ASSERT_EQ(read(clientFd, recvBuf, sizeof(recvBuf)), (ssize_t)sizeof(recvBuf));
+
+    close(clientFd);
+}
+
+
