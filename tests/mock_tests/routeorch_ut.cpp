@@ -1904,6 +1904,15 @@ namespace routeorch_test
                                                      {"ifname", "Vlan3000,Ethernet0"},
                                                      {"vni_label", "686,"},
                                                      {"router_mac", "02:11:22:33:44:55,"}}});
+        /* More VIPs behind the same gateways share the first group */
+        vector<string> more_vips = {"10.250.0.11/32", "10.250.0.12/32", "10.250.0.13/32", "10.250.0.14/32"};
+        for (const auto &vip : more_vips)
+        {
+            entries.push_back({vip, "SET", { {"nexthop", "10.0.0.2,10.1.0.2"},
+                                             {"ifname", "Ethernet0,Vlan3000"},
+                                             {"vni_label", ",686"},
+                                             {"router_mac", ",02:11:22:33:44:55"}}});
+        }
         consumer->addToSync(entries);
         static_cast<Orch *>(gRouteOrch)->doTask();
 
@@ -1926,6 +1935,15 @@ namespace routeorch_test
         EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh), local_ref_before + 1);
         EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh2), local2_ref_before + 1);
 
+        const auto shared_nhg = routes.at(IpPrefix("10.250.0.5/32")).nhg_key;
+        for (const auto &vip : more_vips)
+        {
+            auto it = routes.find(IpPrefix(vip));
+            ASSERT_NE(it, routes.end()) << vip << " not programmed";
+            EXPECT_EQ(it->second.nhg_key, shared_nhg) << vip;
+        }
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.at(shared_nhg).ref_count, 1 + (int)more_vips.size());
+
         /* An empty VNI with a router MAC is malformed */
         entries.clear();
         entries.push_back({"10.250.0.7/32", "SET", { {"nexthop", "10.0.0.2,10.1.0.2"},
@@ -1939,11 +1957,16 @@ namespace routeorch_test
         entries.clear();
         entries.push_back({"10.250.0.5/32", "DEL", {}});
         entries.push_back({"10.250.0.6/32", "DEL", {}});
+        for (const auto &vip : more_vips)
+        {
+            entries.push_back({vip, "DEL", {}});
+        }
         consumer->addToSync(entries);
         static_cast<Orch *>(gRouteOrch)->doTask();
 
         EXPECT_EQ(routes.find(IpPrefix("10.250.0.5/32")), routes.end());
         EXPECT_EQ(routes.find(IpPrefix("10.250.0.6/32")), routes.end());
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.find(shared_nhg), gRouteOrch->m_syncdNextHopGroups.end());
         /* The local members are neighbor next hops: they stay, with their references released */
         EXPECT_TRUE(gNeighOrch->hasNextHop(local_nh));
         EXPECT_TRUE(gNeighOrch->hasNextHop(local_nh2));

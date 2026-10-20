@@ -258,7 +258,29 @@ bool RouteSync::coalescerActive() const
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
+    auto *rfvw = dynamic_cast<RouteTableFieldValueTupleWrapper *>(&fvw);
+    if (rfvw)
+    {
+        updateEvpnRouteFields(*rfvw);
+    }
     setTableWithWarmRestart(fvw, table, APP_ROUTE_TABLE_NAME);
+}
+
+void RouteSync::updateEvpnRouteFields(RouteTableFieldValueTupleWrapper &fvw)
+{
+    /*
+     * A SET only adds or overwrites hash fields, so vni_label and router_mac
+     * from an earlier EVPN write would survive a plain route update. Write
+     * them empty once when the route leaves the EVPN path.
+     */
+    if (!fvw.vni_label.empty())
+    {
+        m_evpnRouteKeys.insert(fvw.key);
+    }
+    else if (m_evpnRouteKeys.erase(fvw.key))
+    {
+        fvw.clearEvpnFields = true;
+    }
 }
 
 void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
@@ -310,6 +332,7 @@ void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
 void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
                                    ProducerStateTable & table)
 {
+    m_evpnRouteKeys.erase(fvw.key);
     delTableWithWarmRestart(std::move(fvw), table, APP_ROUTE_TABLE_NAME);
 }
 
@@ -1284,10 +1307,10 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     if (nbZmqEnabled || includeEmptyFields || weight != string()) {
         fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
     }
-    if (nbZmqEnabled || includeEmptyFields || vni_label != string()) {
+    if (nbZmqEnabled || includeEmptyFields || clearEvpnFields || vni_label != string()) {
         fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
     }
-    if (nbZmqEnabled || includeEmptyFields || router_mac != string()) {
+    if (nbZmqEnabled || includeEmptyFields || clearEvpnFields || router_mac != string()) {
         fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
     }
     if (nbZmqEnabled || includeEmptyFields || segment != string()) {
