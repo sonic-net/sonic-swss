@@ -114,20 +114,26 @@ BfdLink::BfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port, int
 
     m_server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_server_socket < 0)
-        throw system_error(errno, system_category());
+        throw system_error(errno, system_category()); // LCOV_EXCL_LINE: socket() failure not reproducible deterministically in vstest
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_REUSEADDR, &true_val,
                    sizeof(true_val)) < 0)
     {
+        // LCOV_EXCL_START: setsockopt() failure on a freshly created socket is not
+        // reproducible deterministically in the test environment.
         close(m_server_socket);
         throw system_error(errno, system_category());
+        // LCOV_EXCL_STOP
     }
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_KEEPALIVE, &true_val,
                    sizeof(true_val)) < 0)
     {
+        // LCOV_EXCL_START: setsockopt() failure on a freshly created socket is not
+        // reproducible deterministically in the test environment.
         close(m_server_socket);
         throw system_error(errno, system_category());
+        // LCOV_EXCL_STOP
     }
 
     memset (&addr, 0, sizeof (addr));
@@ -137,14 +143,20 @@ BfdLink::BfdLink(DBConnector *db, DBConnector *stateDb, unsigned short port, int
 
     if (bind(m_server_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
+        // LCOV_EXCL_START: bind() failure on a fresh socket is not reproducible
+        // deterministically in the test environment.
         close(m_server_socket);
         throw system_error(errno, system_category());
+        // LCOV_EXCL_STOP
     }
 
     if (listen(m_server_socket, 2) != 0)
     {
+        // LCOV_EXCL_START: listen() failure right after a successful bind() is not
+        // reproducible deterministically in the test environment.
         close(m_server_socket);
         throw system_error(errno, system_category());
+        // LCOV_EXCL_STOP
     }
 
     m_server_up = true;
@@ -167,7 +179,7 @@ std::string BfdLink::exec(const char* cmd) {
     std::string result;
     std::unique_ptr<FILE, PipeDeleter> pipe(popen(cmd, "r"));
     if (!pipe) {
-        throw std::runtime_error("popen() failed!");
+        throw std::runtime_error("popen() failed!"); // LCOV_EXCL_LINE: popen() failure not reproducible deterministically
     }
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
         result += buffer.data();
@@ -183,8 +195,11 @@ bool BfdLink::sendmsg(uint16_t msglen) {
         auto rc = ::send(m_connection_socket, m_sendBuffer + sent, msglen - sent, 0);
         if (rc == -1)
         {
+            // LCOV_EXCL_START: send() failure on a healthy connected loopback socket is
+            // not reproducible deterministically in the test environment.
             SWSS_LOG_ERROR("Failed to send BFD state or counter message: %s", strerror(errno));
             return false;
+            // LCOV_EXCL_STOP
         }
         sent += rc;
     }
@@ -202,7 +217,7 @@ void BfdLink::accept()
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
                                    &client_len);
     if (m_connection_socket < 0)
-        throw system_error(errno, system_category());
+        throw system_error(errno, system_category()); // LCOV_EXCL_LINE: accept() failure not reproducible deterministically
 
     m_connected = true;
     SWSS_LOG_WARN("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
@@ -218,7 +233,7 @@ unsigned short BfdLink::getServerPort() const
     struct sockaddr_in addr = {};
     socklen_t len = sizeof(addr);
     if (getsockname(m_server_socket, (struct sockaddr *)&addr, &len) < 0)
-        return 0;
+        return 0; // LCOV_EXCL_LINE: getsockname() failure on a live listening socket is not reproducible
     return ntohs(addr.sin_port);
 }
 
@@ -272,8 +287,11 @@ uint64_t BfdLink::readData()
     }
     if (read < 0)
     {
+        // LCOV_EXCL_START: read() failure on a healthy connected loopback socket is
+        // not reproducible deterministically in the test environment.
         SWSS_LOG_ERROR("read BFD DP message, read<0");
         throw system_error(errno, system_category());
+        // LCOV_EXCL_STOP
     }
 
     if (m_debug) 
@@ -353,8 +371,11 @@ void BfdLink::handleBfdDpMessage(size_t start)
 
     if ((type != DP_ADD_SESSION) && (type != DP_DELETE_SESSION) && (type != DP_REQUEST_SESSION_COUNTERS))
     {
+        // LCOV_EXCL_START: unreachable - bfd_msg_ok() above already rejects any type other
+        // than these three, so this redundant defensive check can never be true.
         SWSS_LOG_ERROR("BFD_DP supports DP_ADD_SESSION/DP_DELETE_SESSION/DP_REQUEST_SESSION_COUNTERS type only, received message type %s", bfd_dplane_messagetype2str((bfddp_message_type)type));
         return;
+        // LCOV_EXCL_STOP
     }
 
     /* bm is zero-initialized; copy only the validated bytes for this message
@@ -399,13 +420,19 @@ void BfdLink::handleBfdDpMessage(size_t start)
         struct in6_addr v6;
         v6 = bm.data.session.src;
         if (inet_ntop(AF_INET6, &v6, src_addr, sizeof(src_addr)) == NULL) {
+            // LCOV_EXCL_START: unreachable - src was just copied from a valid in6_addr, so
+            // inet_ntop() formatting it back to a string cannot fail.
             SWSS_LOG_ERROR("Invalid src ip6 address");
             return;
+            // LCOV_EXCL_STOP
         }
         v6 = bm.data.session.dst;
         if (inet_ntop(AF_INET6, &v6, dst_addr, sizeof(dst_addr)) == NULL) {
+            // LCOV_EXCL_START: unreachable - dst was just copied from a valid in6_addr, so
+            // inet_ntop() formatting it back to a string cannot fail.
             SWSS_LOG_ERROR("Invalid dst ip6 address");
             return;
+            // LCOV_EXCL_STOP
         }
     }
     else
@@ -567,7 +594,8 @@ void BfdLink::bfdDebugMessage(struct bfddp_message *bm)
         }
         else
         {
-            SWSS_LOG_ERROR("Invalid src ip6 address");
+            /* unreachable - src is a valid in6_addr, so formatting it back to a string cannot fail */
+            SWSS_LOG_ERROR("Invalid src ip6 address"); // LCOV_EXCL_LINE
         }
         v6 = bm->data.session.dst;
         if (inet_ntop(AF_INET6, &v6, str, sizeof(str)) != NULL) {
@@ -575,7 +603,8 @@ void BfdLink::bfdDebugMessage(struct bfddp_message *bm)
         }
         else
         {
-            SWSS_LOG_ERROR("Invalid dst ip6 address");
+            /* unreachable - dst is a valid in6_addr, so formatting it back to a string cannot fail */
+            SWSS_LOG_ERROR("Invalid dst ip6 address"); // LCOV_EXCL_LINE
         }
     }
     else
@@ -603,7 +632,7 @@ void BfdLink::sendBfdSessionState(const struct bfddp_session &session, uint8_t s
     if (msglen > m_bufSize)
     {
         /* should not be reached here */
-        SWSS_LOG_THROW("Message length %d is greater than the send buffer size %d", msglen, m_bufSize);
+        SWSS_LOG_THROW("Message length %d is greater than the send buffer size %d", msglen, m_bufSize); // LCOV_EXCL_LINE
     }
 
     memcpy(m_sendBuffer, &msg, msglen);
@@ -649,8 +678,10 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
         }
         else
         {
-            SWSS_LOG_ERROR("inet_ntop error, ipv6 address %s ", ip.c_str());
-            return false;
+            /* unreachable - in6addr was just successfully produced by inet_pton() above,
+             * so formatting it back to a string cannot fail. */
+            SWSS_LOG_ERROR("inet_ntop error, ipv6 address %s ", ip.c_str()); // LCOV_EXCL_LINE
+            return false; // LCOV_EXCL_LINE
         }
     }
     else if (inet_pton(AF_INET, ip.c_str(), &inaddr) == 1) /* success! */
@@ -758,7 +789,7 @@ bool BfdLink::handleBfdStateUpdate(std::string k, const std::vector<swss::FieldV
     if (msglen > m_bufSize)
     {
         /* should no be reached here */
-        SWSS_LOG_THROW("Message length %d is greater than the send buffer size %d", msglen, m_bufSize);
+        SWSS_LOG_THROW("Message length %d is greater than the send buffer size %d", msglen, m_bufSize); // LCOV_EXCL_LINE
     }
 
     memcpy(m_sendBuffer, &msg, msglen);

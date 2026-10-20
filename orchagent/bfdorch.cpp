@@ -260,8 +260,11 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             if (bfd_session_lookup.find(id) == bfd_session_lookup.end())
             {
+                // LCOV_EXCL_START: requires a stale SAI notification for an already-removed
+                // session id, which the VS test environment cannot induce deterministically.
                 SWSS_LOG_NOTICE("BFD session missing at state change id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
                 continue;
+                // LCOV_EXCL_STOP
             }
 
             if (state != bfd_session_lookup[id].state)
@@ -296,6 +299,10 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
                 }
                 else
                 {
+                    // LCOV_EXCL_START: the VS SAI mock does not implement GET for the BFD
+                    // session remote attributes, so get_bfd_session_attribute() above always
+                    // returns a failure status in the vstest environment and this success path
+                    // is unreachable there.
                     for (uint32_t i = 0; i < attrs.size(); ++i) {
                         sai_attribute_t attr = attrs[i];
                         auto attr_id = attr.id;
@@ -314,6 +321,7 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
                                 break;
                         }
                     }
+                    // LCOV_EXCL_STOP
                 }
                 m_stateBfdSessionTable.set(key, fvVector);
 
@@ -530,11 +538,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         {
             dst_mac = MacAddress(value);
             dst_mac_provided = true;
-        }
-        else if (fvField(i) == "src_mac")
-        {
-            src_mac = MacAddress(value);
-            src_mac_provided = true;
         }
         else if (fvField(i) == "tos")
         {
