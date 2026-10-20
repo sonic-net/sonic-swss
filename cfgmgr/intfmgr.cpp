@@ -12,6 +12,7 @@
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
 #include "subintf.h"
+#include <nlohmann/json.hpp>
 
 using namespace std;
 using namespace swss;
@@ -80,7 +81,61 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     }
 }
 
-void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
+bool IntfMgr::getKernelAddressState(const string &alias, const IpPrefix &ipPrefix,
+                                   int &ifindex, bool &present)
+{
+    string output;
+    stringstream cmd;
+
+    ifindex = 0;
+    present = false;
+    cmd << IP_CMD << " -j address show dev " << shellquote(alias);
+
+    if (swss::exec(cmd.str(), output))
+    {
+        SWSS_LOG_NOTICE("Cannot inspect kernel addresses on interface %s", alias.c_str());
+        return false;
+    }
+
+    try
+    {
+        const auto links = nlohmann::json::parse(output);
+        if (!links.is_array() || links.size() != 1)
+        {
+            return false;
+        }
+
+        const auto &link = links.at(0);
+        const auto &addresses = link.at("addr_info");
+        ifindex = link.at("ifindex").get<int>();
+
+        if (ifindex <= 0 || link.at("ifname").get<string>() != alias || !addresses.is_array())
+        {
+            return false;
+        }
+
+        const string family = ipPrefix.isV4() ? "inet" : "inet6";
+        for (const auto &address : addresses)
+        {
+            if (address.at("family").get<string>() == family &&
+                address.at("prefixlen").get<int>() == ipPrefix.getMaskLength() &&
+                IpAddress(address.at("local").get<string>()) == ipPrefix.getIp())
+            {
+                present = true;
+                break;
+            }
+        }
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_WARN("Cannot parse kernel addresses on interface %s: %s", alias.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
+bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
                         const IpPrefix &ipPrefix)
 {
     stringstream    cmd;
@@ -116,25 +171,73 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
     }
 
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
+    int expectedIfindex = 0;
+    bool present = false;
+    if (opCmd == "add")
     {
-        if (!ipPrefix.isV4() && opCmd == "add")
+        if (!getKernelAddressState(alias, ipPrefix, expectedIfindex, present))
         {
-            SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
-            if (!enableIpv6Flag(alias))
-            {
-                SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
-                return;
-            }
-            ret = swss::exec(cmd.str(), res);
+            return false;
         }
 
-        if (ret)
+        if (present)
         {
-            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+            return true;
         }
     }
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret && !ipPrefix.isV4() && opCmd == "add")
+    {
+        int currentIfindex = 0;
+        if (!getKernelAddressState(alias, ipPrefix, currentIfindex, present) ||
+            currentIfindex != expectedIfindex)
+        {
+            return false;
+        }
+
+        if (present)
+        {
+            return true;
+        }
+
+        SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
+        if (!enableIpv6Flag(alias))
+        {
+            SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
+            return false;
+        }
+        ret = swss::exec(cmd.str(), res);
+    }
+
+    if (opCmd == "add")
+    {
+        int currentIfindex = 0;
+        if (!getKernelAddressState(alias, ipPrefix, currentIfindex, present) ||
+            currentIfindex != expectedIfindex)
+        {
+            SWSS_LOG_NOTICE("Interface %s changed while assigning address %s",
+                    alias.c_str(), ipPrefixStr.c_str());
+            return false;
+        }
+
+        if (present)
+        {
+            return true;
+        }
+    }
+
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+    else if (opCmd == "add")
+    {
+        SWSS_LOG_ERROR("Address %s is absent after command '%s' succeeded",
+                ipPrefixStr.c_str(), cmd.str().c_str());
+    }
+
+    return ret == 0 && opCmd != "add";
 }
 
 void IntfMgr::setSagFdbEntry(const string &op, const string &alias, const string &mac_str)
@@ -1250,7 +1353,10 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             return false;
         }
 
-        setIntfIp(alias, "add", ip_prefix);
+        if (!setIntfIp(alias, "add", ip_prefix))
+        {
+            return false;
+        }
 
         if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
         {
@@ -1272,7 +1378,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
     else if (op == DEL_COMMAND)
     {
-        setIntfIp(alias, "del", ip_prefix);
+        (void)setIntfIp(alias, "del", ip_prefix);
 
         if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
         {
@@ -1534,8 +1640,15 @@ void IntfMgr::replayLLIntfAddresses(const string &alias)
     for (const auto &addr : it->second)
     {
         IpPrefix ipPrefix(addr);
-        setIntfIp(alias, "add", ipPrefix);
-        SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
-            addr.c_str(), alias.c_str());
+        if (setIntfIp(alias, "add", ipPrefix))
+        {
+            SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
+                addr.c_str(), alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to replay IPv6 link-local address %s on interface %s",
+                addr.c_str(), alias.c_str());
+        }
     }
 }

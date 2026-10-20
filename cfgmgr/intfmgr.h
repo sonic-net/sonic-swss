@@ -43,7 +43,9 @@ private:
     std::map<std::string, std::set<std::string>> m_intfLLAddresses;
     std::string mySwitchType;
 
-    void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
+    bool setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
+    bool getKernelAddressState(const std::string &alias, const IpPrefix &ipPrefix,
+                               int &ifindex, bool &present);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
