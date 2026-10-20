@@ -847,8 +847,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             struct rtattr *subtb[RTA_MAX + 1];
             struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
             len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
+            uint32_t evpn_count = 0;
 
-            for (;;) 
+            for (;;)
             {
                 uint16_t encap = 0;
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
@@ -857,8 +858,17 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 }
 
                 gate = 0;
-                if (rtnh->rtnh_len > sizeof(*rtnh)) 
+                if (rtnh->rtnh_len > sizeof(*rtnh))
                 {
+                    /*
+                     * Each next hop carries its own encap. A group may mix
+                     * EVPN next hops with local ones (no encap), so nothing
+                     * may carry over from the previous next hop.
+                     */
+                    encap_value = 0;
+                    rmac.clear();
+                    vlan.clear();
+
                     memset(subtb, 0, sizeof(subtb));
 
                     netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
@@ -952,7 +962,18 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (vlan.empty() || !(vlan.compare(ifname_unknown)))
+                    {
+                        return false;
+                    }
+
+                    /*
+                     * A next hop without encap is a local member of a mixed
+                     * group. It goes out with an empty VNI and router MAC.
+                     * Any other encap must be a valid EVPN one.
+                     */
+                    bool local_nh = !subtb[RTA_ENCAP_TYPE];
+                    if (!local_nh && (encap_value == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00")))
                     {
                         return false;
                     }
@@ -964,7 +985,16 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                             getEvpnNextHopSep(nexthops, vni_list, mac_list, intf_list);
                         }
 
-                        getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
+                        if (local_nh)
+                        {
+                            nexthops += nexthopaddr;
+                            intf_list += vlan;
+                        }
+                        else
+                        {
+                            getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
+                            evpn_count++;
+                        }
                         ecmp_count++;
                     }
                 }
@@ -976,7 +1006,13 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 
                 len -= NLMSG_ALIGN(rtnh->rtnh_len);
                 rtnh = RTNH_NEXT(rtnh);
-            }			
+            }
+
+            /* Without an EVPN member this is not an EVPN route */
+            if (evpn_count == 0)
+            {
+                return false;
+            }
         }
     }
     return true;

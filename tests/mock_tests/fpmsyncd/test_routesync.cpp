@@ -5165,3 +5165,121 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     EXPECT_EQ(kfvOp(redisKfvs[0]), DEL_COMMAND);
     EXPECT_EQ(kfvOp(redisKfvs[1]), SET_COMMAND);
 }
+
+/*
+ * EVPN routes whose ECMP group mixes a VXLAN next hop with a local one, e.g. a
+ * VIP learned from a local host and, via a type-5, from a remote VTEP.
+ */
+static void appendMixedMultipathNexthop(char *multipath, int &multipathLen, const char *gateway,
+                                        int ifindex, bool evpn, uint32_t vni, const uint8_t (&rmac)[6])
+{
+    auto *rtnh = reinterpret_cast<rtnexthop *>(static_cast<void *>(multipath + multipathLen));
+    memset(rtnh, 0, sizeof(*rtnh));
+    rtnh->rtnh_ifindex = ifindex;
+
+    struct in_addr gw;
+    EXPECT_EQ(inet_pton(AF_INET, gateway, &gw), 1);
+    int attrOffset = appendRtAttr(multipath, multipathLen + static_cast<int>(sizeof(*rtnh)), RTA_GATEWAY,
+                                  &gw, static_cast<unsigned int>(sizeof(gw)));
+    if (evpn)
+    {
+        attrOffset = appendVxlanEncapAttrs(multipath, attrOffset, vni, rmac);
+    }
+    rtnh->rtnh_len = static_cast<uint16_t>(attrOffset - multipathLen);
+    multipathLen += static_cast<int>(NLMSG_ALIGN(rtnh->rtnh_len));
+}
+
+static const uint8_t mixedRmac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+static const uint8_t noRmac[6] = {0};
+
+static bool parseMixedMultipath(RouteSync &routeSync, const char *multipath, int multipathLen,
+                                string &nexthops, string &vniList, string &macList, string &intfList)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+    EXPECT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_MULTIPATH, multipath,
+                                         static_cast<unsigned int>(multipathLen)));
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+    return routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList);
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMixedLocalFirst)
+{
+    char multipath[512] = {0};
+    int multipathLen = 0;
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.10", 21, false, 0, noRmac);
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.1.0.2", 10, true, 686, mixedRmac);
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_TRUE(parseMixedMultipath(m_routeSync, multipath, multipathLen, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(nexthops, "10.20.0.10,10.1.0.2");
+    EXPECT_EQ(vniList, ",686");
+    EXPECT_EQ(macList, ",02:11:22:33:44:55");
+    EXPECT_EQ(intfList, "Ethernet0,Vrf10");
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMixedEvpnFirst)
+{
+    char multipath[512] = {0};
+    int multipathLen = 0;
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.1.0.2", 10, true, 686, mixedRmac);
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.10", 21, false, 0, noRmac);
+
+    /* The local next hop must not inherit the VNI or router MAC of the one before it */
+    string nexthops, vniList, macList, intfList;
+    EXPECT_TRUE(parseMixedMultipath(m_routeSync, multipath, multipathLen, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(nexthops, "10.1.0.2,10.20.0.10");
+    EXPECT_EQ(vniList, "686,");
+    EXPECT_EQ(macList, "02:11:22:33:44:55,");
+    EXPECT_EQ(intfList, "Vrf10,Ethernet0");
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipathWithoutEvpnMember)
+{
+    char multipath[512] = {0};
+    int multipathLen = 0;
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.10", 21, false, 0, noRmac);
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.11", 21, false, 0, noRmac);
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_FALSE(parseMixedMultipath(m_routeSync, multipath, multipathLen, nexthops, vniList, macList, intfList));
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMixedInvalidEvpnMember)
+{
+    char multipath[512] = {0};
+    int multipathLen = 0;
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.10", 21, false, 0, noRmac);
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.1.0.2", 10, true, 686, noRmac);
+
+    /* An EVPN next hop with a zero router MAC still rejects the route */
+    string nexthops, vniList, macList, intfList;
+    EXPECT_FALSE(parseMixedMultipath(m_routeSync, multipath, multipathLen, nexthops, vniList, macList, intfList));
+}
+
+TEST_F(FpmSyncdResponseTest, TestEvpnRouteMixedGroupToApplDb)
+{
+    char multipath[512] = {0};
+    int multipathLen = 0;
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.1.0.2", 10, true, 686, mixedRmac);
+    appendMixedMultipathNexthop(multipath, multipathLen, "10.20.0.10", 21, false, 0, noRmac);
+
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_UNICAST, "10.250.0.5", 32, 186);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_MULTIPATH, multipath,
+                                         static_cast<unsigned int>(multipathLen)));
+
+    m_routeSync.onMsgRaw(nlh);
+    m_pipeline->flush();
+    free(nlh);
+
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(routeTable.get("10.250.0.5", fvs));
+    EXPECT_EQ(fvsGetValue(fvs, "nexthop", true).get(), "10.1.0.2,10.20.0.10");
+    EXPECT_EQ(fvsGetValue(fvs, "ifname", true).get(), "Vrf10,Ethernet0");
+    EXPECT_EQ(fvsGetValue(fvs, "vni_label", true).get(), "686,");
+    EXPECT_EQ(fvsGetValue(fvs, "router_mac", true).get(), "02:11:22:33:44:55,");
+}
