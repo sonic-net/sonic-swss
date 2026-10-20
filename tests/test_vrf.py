@@ -318,16 +318,14 @@ class TestVrf(object):
         assert self.entries(
             self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
 
-        # The CLI removes only the VNI association by writing vni=0. The
-        # logical default VRF remains live while its VXLAN mapping is removed.
-        self.create_entry_tbl(
-            self.cdb, "VRF", "default", [("vni", "0")])
-        app_db.wait_for_field_match("VRF_TABLE", "default", {"vni": "0"})
+        # The default-VRF row exists only to carry the logical L3VNI mapping.
+        # Deleting it must remove the APP_DB logical state and mapping without
+        # deleting the switch-owned default virtual router or a Linux device.
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", old_map_key)
-        state_db.wait_for_field_match(
-            "VRF_TABLE", "default", {"state": "ok"})
-        state_db.wait_for_field_match(
-            "VRF_OBJECT_TABLE", "default", {"state": "ok"})
+        state_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        state_db.wait_for_deleted_entry("VRF_OBJECT_TABLE", "default")
         assert self.entries(
             self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
         (status, _) = dvs.runcmd("ip link show dev default")
@@ -471,8 +469,8 @@ class TestVrf(object):
             {"vni": vni, "vrf": "default"})
 
         self.delete_entry_tbl(self.cdb, "VXLAN_TUNNEL_MAP", "malformed-key")
-        self.create_entry_tbl(
-            self.cdb, "VRF", "default", [("vni", "0")])
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
         vxlan.remove_vxlan_tunnel_map(
             dvs, tunnel_name, map_name, vni, vlan)
@@ -503,10 +501,8 @@ class TestVrf(object):
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
 
         # Cancel the association before the missing dependencies arrive.
-        self.create_entry_tbl(
-            self.cdb, "VRF", "default", [("vni", "0")])
-        app_db.wait_for_field_match(
-            "VRF_TABLE", "default", {"vni": "0"})
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
 
         # A late tunnel/NVO/map event must not replay the stale VNI.
