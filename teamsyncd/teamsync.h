@@ -40,6 +40,7 @@ public:
 
         int getFd() override;
         uint64_t readData() override;
+        void retire() { m_active = false; }
 
         /* member_name -> enabled|disabled */
         std::map<std::string, bool> m_lagMembers;
@@ -56,12 +57,13 @@ public:
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
+        bool m_active = true;
     };
 
 protected:
     void addLag(const std::string &lagName, int ifindex, bool admin_state,
                 bool oper_state, unsigned int mtu);
-    void removeLag(const std::string &lagName);
+    void removeLag(const std::string &lagName, int ifindex);
 
     /* valid only in WR mode */
     void applyState();
@@ -80,9 +82,11 @@ private:
     uint32_t m_pending_timeout;
 
     /* Store selectables needed to be updated in doSelectableTask function */
-    std::set<std::string> m_selectablesToAdd;
-    std::set<std::string> m_selectablesToRemove;
+    std::set<std::shared_ptr<TeamPortSync>> m_selectablesToAdd;
+    std::set<std::shared_ptr<TeamPortSync>> m_selectablesToRemove;
     std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamSelectables;
+    /* Keep the generation even when TeamPortSync initialization fails. */
+    std::map<std::string, int> m_teamIfindexes;
 };
 
 }
