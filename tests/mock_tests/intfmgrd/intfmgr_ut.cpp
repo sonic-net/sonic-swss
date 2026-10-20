@@ -24,6 +24,8 @@ bool FailBridgeFdbCommand = false;
 bool FailAddressAdd = false;
 bool FailAddressAddAfterProgramming = false;
 bool ChangeIfindexAfterAdd = false;
+bool PreserveAddressOnIfindexChange = false;
+bool RemoveInterfaceOnFailedAdd = false;
 bool FailAddressQuery = false;
 bool MalformedAddressQuery = false;
 bool SkipAddressProgramming = false;
@@ -100,6 +102,13 @@ int cb(const std::string &cmd, std::string &stdout){
             return 2;
         }
 
+        if (op == "add" && RemoveInterfaceOnFailedAdd)
+        {
+            MissingKernelInterfaces.insert(alias);
+            KernelAddresses[alias].clear();
+            return 1;
+        }
+
         if (op == "add" && FailAddressAdd)
         {
             return 1;
@@ -115,7 +124,10 @@ int cb(const std::string &cmd, std::string &stdout){
             if (ChangeIfindexAfterAdd)
             {
                 ++KernelIfindexes[alias];
-                KernelAddresses[alias].clear();
+                if (!PreserveAddressOnIfindexChange)
+                {
+                    KernelAddresses[alias].clear();
+                }
             }
             return FailAddressAddAfterProgramming ? 2 : 0;
         }
@@ -174,6 +186,8 @@ namespace intfmgr_ut
             FailAddressAdd = false;
             FailAddressAddAfterProgramming = false;
             ChangeIfindexAfterAdd = false;
+            PreserveAddressOnIfindexChange = false;
+            RemoveInterfaceOnFailedAdd = false;
             FailAddressQuery = false;
             MalformedAddressQuery = false;
             SkipAddressProgramming = false;
@@ -200,7 +214,7 @@ namespace intfmgr_ut
             consumer->m_toSync.emplace(
                 key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
 
-            FailAddressAdd = true;
+            RemoveInterfaceOnFailedAdd = true;
             intfmgr.doTask(*consumer);
 
             swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
@@ -209,7 +223,9 @@ namespace intfmgr_ut
             EXPECT_FALSE(appIntfTable.get(appKey, values));
             EXPECT_FALSE(intfmgr.m_stateIntfTable.get(key, values));
 
-            FailAddressAdd = false;
+            RemoveInterfaceOnFailedAdd = false;
+            MissingKernelInterfaces.erase(alias);
+            KernelIfindexes[alias] = 29;
             intfmgr.doTask(*consumer);
 
             EXPECT_TRUE(consumer->m_toSync.empty());
@@ -484,6 +500,7 @@ namespace intfmgr_ut
         intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
         KernelAddresses[alias].insert(prefix);
         ChangeIfindexAfterAdd = true;
+        PreserveAddressOnIfindexChange = true;
 
         EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
 
