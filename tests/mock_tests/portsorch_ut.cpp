@@ -6398,6 +6398,60 @@ TEST_F(PfcWdHwOrchTest, ActionMismatchRejected)
     ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet8"), 0u);
 }
 
+TEST_F(PfcWdHwOrchTest, DeleteAfterLosslessSetShrinksClearsDroppedQueue)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    sai_queue_deadlock_notification_data_t data;
+    memset(&data, 0, sizeof(data));
+    data.queue_id = queueId;
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    ASSERT_EQ(gPfcWdHwOrch->m_stormedQueues.count(queueId), 1u);
+
+    // TC 3 leaves the lossless set while it is stormed, then the watchdog is deleted.
+    // The queue is dropped by the sweep, which must still clear DLDR in the ASIC.
+    ASSERT_TRUE(_sai_queue_dldr_enabled[queueId]);
+    ASSERT_TRUE(gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, 1 << 4));
+    deleteHwWdEntry("Ethernet0");
+
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(queueId), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_stormedQueues.count(queueId), 0u);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
+}
+
+TEST_F(PfcWdHwOrchTest, DeleteWithEmptyLosslessSetClearsPort)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    ASSERT_TRUE(_sai_queue_dldr_enabled[port.m_queue_ids[3]]);
+    ASSERT_TRUE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
+
+    // The PFC mask is cleared before the delete, so every queue leaves through the sweep.
+    ASSERT_TRUE(gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, 0));
+    deleteHwWdEntry("Ethernet0");
+
+    for (const auto &kv : gPfcWdHwOrch->m_queueToPortMap)
+    {
+        ASSERT_NE(kv.second.port_alias, "Ethernet0");
+    }
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[3]]);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
+}
+
 TEST_F(PfcWdHwOrchTest, ActionResetOnLastDelete)
 {
     bringUpPorts();
