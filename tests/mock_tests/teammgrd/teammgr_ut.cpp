@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include "../mock_table.h"
 #include "teammgr.h"
+#include "teamd_start.h"
 #include <dlfcn.h>
 #include <net/if.h>
 #include <netlink/addr.h>
@@ -189,21 +190,15 @@ FILE* fopen64(const char *pathname, const char *mode)
 int cb(const std::string &cmd, std::string &stdout)
 {
     mockCallArgs.push_back(cmd);
-    if (cmd.find("/usr/bin/teamd -r -t PortChannel382") != std::string::npos)
+    if (cmd.find("/usr/bin/teammgrd-start \"PortChannel382\" -r -t PortChannel382") != std::string::npos)
     {
-        mkdir("/var/run/teamd", 0755);
-        std::FILE* pidFile = std::tmpfile();
-        std::fputs("1234", pidFile);
-        std::rewind(pidFile);
-        pidFiles["/var/run/teamd/PortChannel382.pid"] = pidFile;
-        return 1;
+        return static_cast<int>(swss::TeamdStartResult::retry);
     }
-    else if (cmd.find("/usr/bin/teamd -r -t PortChannel812") != std::string::npos)
+    else if (cmd.find("/usr/bin/teammgrd-start \"PortChannel812\" -r -t PortChannel812") != std::string::npos)
     {
-        pidFiles["/var/run/teamd/PortChannel812.pid"] = NULL;
-        return 1;
+        return static_cast<int>(swss::TeamdStartResult::blocked);
     }
-    else if (cmd.find("/usr/bin/teamd -r -t PortChannel495") != std::string::npos)
+    else if (cmd.find("/usr/bin/teammgrd-start \"PortChannel495\" -r -t PortChannel495") != std::string::npos)
     {
         mkdir("/var/run/teamd", 0755);
         std::FILE* pidFile = std::tmpfile();
@@ -212,7 +207,7 @@ int cb(const std::string &cmd, std::string &stdout)
         pidFiles["/var/run/teamd/PortChannel495.pid"] = pidFile;
         return 0;
     }
-    else if (cmd.find("/usr/bin/teamd -r -t PortChannel198") != std::string::npos)
+    else if (cmd.find("/usr/bin/teammgrd-start \"PortChannel198\" -r -t PortChannel198") != std::string::npos)
     {
         pidFiles["/var/run/teamd/PortChannel198.pid"] = NULL;
     }
@@ -220,7 +215,8 @@ int cb(const std::string &cmd, std::string &stdout)
     {
         for (int i = 600; i < 620; i++)
         {
-            if (cmd.find(std::string("/usr/bin/teamd -r -t PortChannel") + std::to_string(i)) != std::string::npos)
+            if (cmd.find(std::string("/usr/bin/teammgrd-start \"PortChannel") + std::to_string(i) + "\"")
+                != std::string::npos)
             {
                 pidFiles[std::string("/var/run/teamd/PortChannel") + std::to_string(i) + std::string(".pid")] = NULL;
             }
@@ -285,7 +281,7 @@ namespace teammgr_ut
         }
     };
 
-    TEST_F(TeamMgrTest, testProcessKilledAfterAddLagFailure)
+    TEST_F(TeamMgrTest, testFailedStartRetriesOnlyAfterConfirmedCleanup)
     {
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
         swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
@@ -296,14 +292,20 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
         ASSERT_NE(mockCallArgs.size(), 0);
-        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel382"), std::string::npos);
+        EXPECT_NE(mockCallArgs.front().find("-r -t PortChannel382"), std::string::npos);
         EXPECT_EQ(mockCallArgs.size(), 1);
-        EXPECT_EQ(mockKillCommands.size(), 1);
-        EXPECT_EQ(mockKillCommands.front().first, 1234);
-        EXPECT_EQ(mockKillCommands.front().second, SIGTERM);
+        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teammgrd-start \"PortChannel382\""),
+                  std::string::npos);
+        EXPECT_EQ(mockCallArgs.front().find("/usr/bin/teamd"), std::string::npos);
+        EXPECT_TRUE(mockKillCommands.empty());
+        auto *consumer = teammgr.getConsumerBase(CFG_LAG_TABLE_NAME);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel382"), 1u);
+        teammgr.doTask();
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel382"), 1u);
     }
 
-    TEST_F(TeamMgrTest, testProcessPidFileMissingAfterAddLagFailure)
+    TEST_F(TeamMgrTest, testUnconfirmedCleanupKeepsTaskAndBlocksRetry)
     {
         swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
         swss::Table cfg_lag_table = swss::Table(m_config_db.get(), CFG_LAG_TABLE_NAME);
@@ -315,9 +317,92 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
         ASSERT_NE(mockCallArgs.size(), 0);
-        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel812"), std::string::npos);
+        EXPECT_NE(mockCallArgs.front().find("-r -t PortChannel812"), std::string::npos);
         EXPECT_EQ(mockCallArgs.size(), 1);
         EXPECT_EQ(mockKillCommands.size(), 0);
+        auto *consumer = teammgr.getConsumerBase(CFG_LAG_TABLE_NAME);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel812"), 1u);
+        teammgr.doTask();
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel812"), 1u);
+
+        swss::KeyOpFieldsValuesTuple deletion("PortChannel812", DEL_COMMAND, {});
+        consumer->addToSync(deletion);
+        teammgr.doTask();
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel812"), 1u);
+    }
+
+    TEST_F(TeamMgrTest, testUnconfirmedStartupBlocksBothMemberPaths)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table config(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        config.set("PortChannel812", {{"admin_status", "up"}});
+        teammgr.addExistingData(&config);
+        teammgr.doTask();
+
+        swss::Table statePort(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        swss::Table stateLag(m_state_db.get(), STATE_LAG_TABLE_NAME);
+        statePort.set("Ethernet0", {{"state", "ok"}});
+        stateLag.set("PortChannel812", {{"state", "ok"}});
+        swss::Table members(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        members.set("PortChannel812|Ethernet0", {{"NULL", "NULL"}});
+        teammgr.addExistingData(&members);
+        auto *ports = teammgr.getConsumerBase(STATE_PORT_TABLE_NAME);
+        ports->addToSync({"Ethernet0", SET_COMMAND, {{"state", "ok"}}});
+        teammgr.doTask();
+
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(teammgr.getConsumerBase(CFG_LAG_MEMBER_TABLE_NAME)
+                      ->m_toSync.count("PortChannel812|Ethernet0"), 1u);
+        EXPECT_EQ(ports->m_toSync.count("Ethernet0"), 1u);
+    }
+
+    TEST_F(TeamMgrTest, testLaunchExceptionCannotBecomeAnUnfencedRetry)
+    {
+        callback = [](const std::string &cmd, std::string &) -> int {
+            mockCallArgs.push_back(cmd);
+            throw std::runtime_error("launcher status unavailable");
+        };
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table config(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        config.set("PortChannel99", {{"admin_status", "up"}});
+        teammgr.addExistingData(&config);
+        teammgr.doTask();
+        teammgr.doTask();
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(teammgr.getConsumerBase(CFG_LAG_TABLE_NAME)
+                      ->m_toSync.count("PortChannel99"), 1u);
+    }
+
+    TEST_F(TeamMgrTest, testDeleteSetWaitsForPriorRuntimeCleanup)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table config(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        config.set("PortChannel495", {{"admin_status", "up"}});
+        teammgr.addExistingData(&config);
+        teammgr.doTask();
+        auto *consumer = teammgr.getConsumerBase(CFG_LAG_TABLE_NAME);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        consumer->addToSync({"PortChannel495", DEL_COMMAND, {}});
+        consumer->addToSync({"PortChannel495", SET_COMMAND, {{"admin_status", "up"}}});
+        callback = [](const std::string &cmd, std::string &) {
+            mockCallArgs.push_back(cmd);
+            return static_cast<int>(swss::TeamdStartResult::retry);
+        };
+        mockCallArgs.clear();
+        teammgr.doTask();
+        EXPECT_EQ(mockKillCommands.size(), 1u);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel495"), 1u);
+        teammgr.doTask();
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(consumer->m_toSync.count("PortChannel495"), 1u);
+
+        callback = cb;
+        teammgr.doTask();
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(mockKillCommands.size(), 1u);
     }
 
     TEST_F(TeamMgrTest, testProcessCleanupAfterAddLag)
@@ -331,7 +416,7 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
         ASSERT_EQ(mockCallArgs.size(), 3);
-        ASSERT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel495"), std::string::npos);
+        ASSERT_NE(mockCallArgs.front().find("-r -t PortChannel495"), std::string::npos);
         teammgr.cleanTeamProcesses();
         EXPECT_EQ(mockKillCommands.size(), 2);
         EXPECT_EQ(mockKillCommands.front().first, 5678);
@@ -350,7 +435,7 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
         ASSERT_NE(mockCallArgs.size(), 0);
-        EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel198"), std::string::npos);
+        EXPECT_NE(mockCallArgs.front().find("-r -t PortChannel198"), std::string::npos);
         EXPECT_EQ(mockCallArgs.size(), 3);
         teammgr.cleanTeamProcesses();
         EXPECT_EQ(mockKillCommands.size(), 0);

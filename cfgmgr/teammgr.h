@@ -34,6 +34,7 @@ private:
     ProducerStateTable m_appLagTable;
 
     std::set<std::string> m_lagList;
+    std::set<std::string> m_blockedLagStarts;
 
     MacAddress m_mac;
 

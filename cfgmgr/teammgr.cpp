@@ -1,5 +1,6 @@
 #include "exec.h"
 #include "teammgr.h"
+#include "teamd_start.h"
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
@@ -243,6 +244,12 @@ void TeamMgr::doLagTask(Consumer &consumer)
         string alias = kfvKey(t);
         string op = kfvOp(t);
 
+        if (m_blockedLagStarts.count(alias))
+        {
+            ++it;
+            continue;
+        }
+
         if (op == SET_COMMAND)
         {
             int min_links = 0;
@@ -308,8 +315,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
-                    // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
-                    removeLag(alias);
                     it++;
                     continue;
                 }
@@ -759,17 +764,38 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
     string warmstart_flag = WarmStart::isWarmStart() ? " -w -o" : " -r";
 
-    cmd << TEAMD_CMD
+    cmd << TEAMD_START_CMD << " " << shellquote(alias)
         << warmstart_flag
         << " -t " << alias
         << " -c " << conf.str()
         << " -L " << dump_path
         << " -g -d";
 
-    if (exec(cmd.str(), res) != 0)
+    int result;
+    try
     {
-        SWSS_LOG_INFO("Failed to start port channel %s with teamd, retry...",
-                alias.c_str());
+        result = exec(cmd.str(), res);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Port channel %s launch status is unknown: %s",
+                       alias.c_str(), e.what());
+        result = static_cast<int>(TeamdStartResult::blocked);
+    }
+    if (result != static_cast<int>(TeamdStartResult::success))
+    {
+        if (result != static_cast<int>(TeamdStartResult::retry))
+        {
+            m_blockedLagStarts.insert(alias);
+            SWSS_LOG_ERROR("Port channel %s startup cleanup is unconfirmed (rc=%d); "
+                           "preserving configuration and blocking retries",
+                           alias.c_str(), result);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Port channel %s startup deferred; retry pending",
+                          alias.c_str());
+        }
         return task_need_retry;
     }
 
@@ -861,6 +887,9 @@ uint16_t TeamMgr::generateLacpKey(const string& lag)
 task_process_status TeamMgr::addLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
+
+    if (m_lagList.count(lag) == 0 || m_blockedLagStarts.count(lag))
+        return task_need_retry;
 
     stringstream cmd;
     string res;
