@@ -180,10 +180,6 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
             return false;
         }
 
-        if (present)
-        {
-            return true;
-        }
     }
 
     int ret = swss::exec(cmd.str(), res);

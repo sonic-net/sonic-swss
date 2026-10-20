@@ -24,8 +24,13 @@ bool FailBridgeFdbCommand = false;
 bool FailAddressAdd = false;
 bool FailAddressAddAfterProgramming = false;
 bool ChangeIfindexAfterAdd = false;
+bool FailAddressQuery = false;
+bool MalformedAddressQuery = false;
+bool SkipAddressProgramming = false;
+bool FailIpv6Enable = false;
 std::map<std::string, int> KernelIfindexes;
 std::map<std::string, std::set<std::string>> KernelAddresses;
+std::set<std::string> MissingKernelInterfaces;
 
 int cb(const std::string &cmd, std::string &stdout){
     mockCallArgs.push_back(cmd);
@@ -39,6 +44,16 @@ int cb(const std::string &cmd, std::string &stdout){
     if (std::regex_match(cmd, match, addressStateCommand))
     {
         const std::string alias = match[1].str();
+        if (FailAddressQuery || MissingKernelInterfaces.count(alias) != 0)
+        {
+            return 1;
+        }
+        if (MalformedAddressQuery)
+        {
+            stdout = "{";
+            return 0;
+        }
+
         int &ifindex = KernelIfindexes[alias];
         if (ifindex == 0)
         {
@@ -64,8 +79,13 @@ int cb(const std::string &cmd, std::string &stdout){
         }).dump();
         return 0;
     }
-    else if (cmd == "sysctl -w net.ipv6.conf.\"Ethernet0\".disable_ipv6=0")
+    else if (cmd.find("sysctl -w net.ipv6.conf.") == 0 &&
+             cmd.find(".disable_ipv6=0") != std::string::npos)
     {
+        if (FailIpv6Enable)
+        {
+            return 1;
+        }
         Ethernet0IPv6Set = true;
         return 0;
     }
@@ -87,10 +107,15 @@ int cb(const std::string &cmd, std::string &stdout){
 
         if (op == "add")
         {
+            if (SkipAddressProgramming)
+            {
+                return 0;
+            }
             KernelAddresses[alias].insert(prefix);
             if (ChangeIfindexAfterAdd)
             {
                 ++KernelIfindexes[alias];
+                KernelAddresses[alias].clear();
             }
             return FailAddressAddAfterProgramming ? 2 : 0;
         }
@@ -149,8 +174,49 @@ namespace intfmgr_ut
             FailAddressAdd = false;
             FailAddressAddAfterProgramming = false;
             ChangeIfindexAfterAdd = false;
+            FailAddressQuery = false;
+            MalformedAddressQuery = false;
+            SkipAddressProgramming = false;
+            FailIpv6Enable = false;
             KernelIfindexes.clear();
             KernelAddresses.clear();
+            MissingKernelInterfaces.clear();
+        }
+
+        void verifyFailedAddressProgrammingRemainsPending(const std::string &prefix)
+        {
+            swss::IntfMgr intfmgr(
+                m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+            const std::string alias = "PortChannel1";
+            const std::string key = alias + "|" + prefix;
+            const std::string appKey = alias + ":" + prefix;
+
+            intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
+            intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
+
+            auto *consumer = dynamic_cast<Consumer *>(
+                intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            consumer->m_toSync.emplace(
+                key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
+
+            FailAddressAdd = true;
+            intfmgr.doTask(*consumer);
+
+            swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+            std::vector<swss::FieldValueTuple> values;
+            EXPECT_EQ(consumer->m_toSync.count(key), 1u);
+            EXPECT_FALSE(appIntfTable.get(appKey, values));
+            EXPECT_FALSE(intfmgr.m_stateIntfTable.get(key, values));
+
+            FailAddressAdd = false;
+            intfmgr.doTask(*consumer);
+
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_TRUE(appIntfTable.get(appKey, values));
+            std::string state;
+            ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(key, "state", state));
+            EXPECT_EQ(state, "ok");
         }
     };
 
@@ -362,38 +428,12 @@ namespace intfmgr_ut
 
     TEST_F(IntfMgrTest, testFailedAddressProgrammingRemainsPending)
     {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string alias = "PortChannel1";
-        const std::string prefix = "10.10.192.33/31";
-        const std::string key = alias + "|" + prefix;
-        const std::string appKey = alias + ":" + prefix;
+        verifyFailedAddressProgrammingRemainsPending("10.10.192.33/31");
+    }
 
-        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
-        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
-
-        auto *consumer = dynamic_cast<Consumer *>(
-            intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-        consumer->m_toSync.emplace(
-            key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
-
-        FailAddressAdd = true;
-        intfmgr.doTask(*consumer);
-
-        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
-        EXPECT_EQ(consumer->m_toSync.count(key), 1u);
-        EXPECT_FALSE(appIntfTable.get(appKey, values));
-        EXPECT_FALSE(intfmgr.m_stateIntfTable.get(key, values));
-
-        FailAddressAdd = false;
-        intfmgr.doTask(*consumer);
-
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_TRUE(appIntfTable.get(appKey, values));
-        std::string state;
-        ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(key, "state", state));
-        EXPECT_EQ(state, "ok");
+    TEST_F(IntfMgrTest, testFailedIpv6AddressProgrammingRemainsPending)
+    {
+        verifyFailedAddressProgrammingRemainsPending("2001:db8::1/128");
     }
 
     TEST_F(IntfMgrTest, testFailedAddSucceedsWhenExactAddressIsPresent)
@@ -432,6 +472,68 @@ namespace intfmgr_ut
         std::vector<swss::FieldValueTuple> values;
         EXPECT_FALSE(appIntfTable.get(alias + ":" + prefix, values));
         EXPECT_FALSE(intfmgr.m_stateIntfTable.get(alias + "|" + prefix, values));
+    }
+
+    TEST_F(IntfMgrTest, testAlreadyPresentAddressReplacementRetainsTask)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1";
+        const std::string prefix = "10.10.192.33/31";
+
+        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
+        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
+        KernelAddresses[alias].insert(prefix);
+        ChangeIfindexAfterAdd = true;
+
+        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
+
+        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_FALSE(appIntfTable.get(alias + ":" + prefix, values));
+        EXPECT_FALSE(intfmgr.m_stateIntfTable.get(alias + "|" + prefix, values));
+    }
+
+    TEST_F(IntfMgrTest, testSuccessfulCommandWithoutAddressRetainsTask)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1";
+        const std::string prefix = "10.10.192.33/31";
+
+        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
+        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
+        SkipAddressProgramming = true;
+
+        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
+    }
+
+    TEST_F(IntfMgrTest, testAddressQueryFailureRetainsTask)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1";
+        const std::string prefix = "10.10.192.33/31";
+
+        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
+        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
+        FailAddressQuery = true;
+
+        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
+
+        FailAddressQuery = false;
+        MalformedAddressQuery = true;
+        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
+    }
+
+    TEST_F(IntfMgrTest, testIpv6EnableFailureRetainsTask)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1";
+        const std::string prefix = "2001:db8::1/128";
+
+        intfmgr.m_stateLagTable.set(alias, {{"state", "ok"}}, "SET", "");
+        intfmgr.m_stateIntfTable.set(alias, {{"vrf", ""}}, "SET", "");
+        FailIpv6Enable = true;
+
+        EXPECT_FALSE(intfmgr.doIntfAddrTask({alias, prefix}, {}, SET_COMMAND));
     }
 
     TEST_F(IntfMgrTest, testSetSagFdbEntryValidationAndBridgeCommand){
