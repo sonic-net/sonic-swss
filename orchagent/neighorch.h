@@ -155,6 +155,8 @@ private:
     std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
 
     std::set<NextHopKey> m_neighborToResolve;
+    /* Existing neighbors re-resolved by processFDBResolve(), awaiting a kernel update */
+    std::set<NeighborEntry> m_neighborToRefresh;
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
     ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
@@ -189,6 +191,7 @@ private:
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
+    void clearNeighborRefresh(const NeighborEntry &);
 
     bool addZeroMacTunnelRoute(const NeighborEntry &, const MacAddress &);
 };
