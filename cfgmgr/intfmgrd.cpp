@@ -6,6 +6,8 @@
 #include "exec.h"
 #include "schema.h"
 #include "intfmgr.h"
+#include "notificationconsumer.h"
+#include "selectabletimer.h"
 #include <fstream>
 #include <iostream>
 #include "warm_restart.h"
@@ -54,6 +56,15 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        // Retry retained work periodically even while other tables stay busy.
+        SelectableTimer retryTimer(timespec{SELECT_TIMEOUT / 1000, 0});
+        s.addSelectable(&retryTimer);
+        retryTimer.start();
+
+        // An acknowledgement wakes the pending binding without a full timer interval.
+        NotificationConsumer guardAck(&stateDb, "INTF_GUARD_ACK");
+        s.addSelectable(&guardAck);
+
         Table table(&cfgDb, "DEVICE_METADATA");
         string mac = "";
         if (!table.hget("localhost", "mac", mac))
@@ -76,8 +87,17 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
-            if (ret == Select::TIMEOUT)
+            if (ret == Select::TIMEOUT || sel == &retryTimer)
             {
+                intfmgr.doTask();
+                continue;
+            }
+
+            if (sel == &guardAck)
+            {
+                string op, data;
+                vector<FieldValueTuple> values;
+                guardAck.pop(op, data, values);
                 intfmgr.doTask();
                 continue;
             }

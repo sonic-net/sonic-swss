@@ -5,6 +5,7 @@
 #include "portsorch.h"
 #include "vrforch.h"
 #include "timer.h"
+#include "intfguard.h"
 
 #include "ipaddresses.h"
 #include "ipprefix.h"
@@ -78,6 +79,7 @@ public:
     void voqSyncIntfState(string &alias, bool);
 
     bool isIntfChangeInProgress(const string &alias);
+    bool isIntfBindingGuarded(const string &alias) const { return m_intfGuard.isHeld(alias); }
 
 private:
 
@@ -101,6 +103,15 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    std::set<std::string> m_retainedRoots;
+    IntfGuard m_intfGuard;
+    shared_ptr<DBConnector> m_guardStateDb;
+    unique_ptr<Table> m_guardStateTable;
+
+    void doGuardTask(Consumer &consumer);
+    void reportGuard(const string &alias);
+    void retireGuard(const string &alias);
+    bool retireBinding(const string &alias);
 
     std::string getRifFlexCounterTableKey(std::string s);
 

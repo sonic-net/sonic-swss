@@ -88,6 +88,7 @@ public:
     inline void setRecursive(bool is_recursive) { m_is_recursive = is_recursive; }
 
     NextHopGroupKey getNhgKey() const override { return m_key; }
+    std::set<std::string> getRifAliases() const override;
 
     /* Convert NHG's details to a string. */
     std::string to_string() const override
@@ -122,6 +123,8 @@ public:
      */
     NhgOrch(DBConnector *db, string tableName);
 
+    void doTask() override;
+
     /* Add a temporary next hop group when resources are exhausted. */
     NextHopGroup createTempNhg(const NextHopGroupKey& nhg_key);
 
@@ -130,5 +133,6 @@ public:
     bool invalidateNextHop(const NextHopKey& nh_key);
 
 private:
+    std::set<NextHopKey> m_pendingValidations;
     void doTask(Consumer& consumer) override;
 };

@@ -108,10 +108,12 @@ public:
     bool disableNeighbor(const NeighborEntry&);
     bool enableNeighbors(std::list<NeighborContext>&);
     bool disableNeighbors(std::list<NeighborContext>&);
+    bool retireInterfaceNeighbors(const string &alias);
     bool isHwConfigured(const NeighborEntry&);
     void processFDBDelete(const FdbEntry &entry);
     void processFDBAdd(const FdbEntry &entry);
     void processFDBResolve(const FdbEntry &entry);
+    void doTask() override;
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
@@ -147,8 +149,10 @@ private:
     IntfsOrch *m_intfsOrch;
     FdbOrch *m_fdbOrch;
     ProducerStateTable m_appNeighResolveProducer;
+    Table m_appNeighTable;
 
     NeighborTable m_syncdNeighbors;
+    std::map<NeighborEntry, MacAddress> m_pendingEnables;
     NextHopTable m_syncdNextHops;
 
     /* Registrant count per IPinIP tunnel NextHopKey (e.g. MuxOrch, TunnelDecapOrch) */

@@ -16,6 +16,7 @@
 #include "orch.h"
 #include "request_parser.h"
 #include "muxorch.h"
+#include "intfsorch.h"
 #include "directory.h"
 #include "swssnet.h"
 #include "crmorch.h"
@@ -30,6 +31,7 @@
 /* Global variables */
 extern Directory<Orch*> gDirectory;
 extern CrmOrch *gCrmOrch;
+extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern AclOrch *gAclOrch;
@@ -2913,6 +2915,11 @@ void MuxCableOrch::removeTunnelRoute(const NextHopKey &nhKey)
     app_tunnel_route_table_.del(key);
 }
 
+bool MuxCable::hasBindingGuard() const
+{
+    return gIntfsOrch->isIntfBindingGuarded(nbr_handler_->getAlias());
+}
+
 bool MuxCableOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -2928,6 +2935,12 @@ bool MuxCableOrch::addOperation(const Request& request)
 
     auto state = request.getAttrString("state");
     auto mux_obj = mux_orch->getMuxCable(port_name);
+
+    // Retain guarded activation before changing state.
+    if (state == "active" && mux_obj->hasBindingGuard())
+    {
+        return false;
+    }
 
     try
     {
