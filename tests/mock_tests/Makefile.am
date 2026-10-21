@@ -297,7 +297,9 @@ tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 ## teammgrd unit tests
 
 tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
+                         teammgrd/teamd_start_ut.cpp \
                          $(top_srcdir)/cfgmgr/teammgr.cpp \
+                         $(top_srcdir)/cfgmgr/teamd_start.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \

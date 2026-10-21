@@ -6,6 +6,7 @@ SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
 bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+bin_PROGRAMS += teammgrd-start
 
 cfgmgrdir = $(datadir)/swss
 
@@ -40,6 +41,11 @@ teammgrd_SOURCES = teammgrd.cpp teammgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 teammgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+
+teammgrd_start_SOURCES = teamd_start_main.cpp teamd_start.cpp teamd_start.h
+teammgrd_start_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
+teammgrd_start_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
+teammgrd_start_LDADD = $(LDFLAGS_ASAN) -lpthread
 
 portmgrd_SOURCES = portmgrd.cpp portmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 portmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
@@ -143,4 +149,3 @@ macsecmgrd_SOURCES += $(ASAN_SOURCES)
 fabricmgrd_SOURCES += $(ASAN_SOURCES)
 stpmgrd_SOURCES += $(ASAN_SOURCES)
 endif
-
