@@ -2454,3 +2454,46 @@ TEST_F(FdbSyncdEvpnMhTest, LocalMacDeleteFailureIsAnError)
 
     EXPECT_NE(errors.find("Failed cmd:"), std::string::npos);
 }
+
+/* Learns a MAC locally that is known as a remote VTEP MAC, while "bridge fdb del" of its VXLAN entry fails
+   with the given output */
+static std::string learnRemoteMacLocallyWithBridgeOutput(MockFdbSyncEvpnMh &fdbSync, const std::string &output)
+{
+    const std::string mac = "00:aa:bb:cc:dd:ef";
+    const std::string key = "Vlan200:" + mac;
+    fdbSync.m_mac[key].type = "dynamic";
+    fdbSync.m_mac[key].vni = 10200;
+    fdbSync.m_mac[key].ifname = "Vxlan-200";
+    fdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
+    fdbSync.m_mac[key].nhtype = FdbDest::VTEP;
+    fdbSync.m_mac[key].nexthop_value = "10.0.0.2";
+
+    struct m_fdb_info info;
+    info.mac = mac;
+    info.vid = "Vlan200";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    g_bridgeDelOutput = output;
+    callback = failBridgeDelete;
+    return errorLogsOf([&]() { fdbSync.updateLocalMac(&info); });
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteOfAbsentKernelEntryIsNotAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: No such file or directory\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan200:00:aa:bb:cc:dd:ef"), 0u);
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back(), "LC_ALL=C bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self 2>&1");
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteFailureIsAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self"),
+              std::string::npos);
+}
