@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iostream>
 #include <string>
+#include <set>
 #include <climits>
 #include <boost/algorithm/string.hpp>
 
@@ -581,12 +582,14 @@ void WredMapHandler::appendThresholdToAttributeList(sai_attr_id_t type,
 }
 
 WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
+WredMapHandler::qos_wred_modes_store_t WredMapHandler::m_wredModes;
 
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
     vector<sai_attribute_t> deferred_attributes;
+    vector<sai_attribute_t> mode_attributes;
     auto &key = kfvKey(tuple);
     auto &storedProfile = WredMapHandler::m_wredProfiles[key];
     qos_wred_thresholds_t currentProfile = storedProfile;
@@ -631,8 +634,60 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
      *  => min = 3M, max = 4M
      */
 
+    /*
+     * SAI accepts a colour's thresholds only while its WRED dropping or its ECN marking is enabled
+     * (@validonly in saiwred.h), and every field of the profile is sent again on any change.
+     * The enables and the ECN mark mode are therefore sent first, and the thresholds of a colour
+     * with neither are left out; they are sent with the change that enables the colour.
+     */
+    auto &wredProfiles = *QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME];
+    qos_wred_modes_t modes = wredProfiles.count(key) ? m_wredModes[key] : qos_wred_modes_t{};
+    for (const auto &fv : kfvFieldsValues(tuple))
+    {
+        if (fvField(fv) == wred_green_enable_field_name)
+        {
+            modes.green_enable = fvValue(fv) == "true";
+        }
+        else if (fvField(fv) == wred_yellow_enable_field_name)
+        {
+            modes.yellow_enable = fvValue(fv) == "true";
+        }
+        else if (fvField(fv) == wred_red_enable_field_name)
+        {
+            modes.red_enable = fvValue(fv) == "true";
+        }
+        else if (fvField(fv) == ecn_field_name && ecn_map.count(fvValue(fv)))
+        {
+            modes.ecn_mark_mode = ecn_map.at(fvValue(fv));
+        }
+    }
+    auto mark_mode = modes.ecn_mark_mode;
+    bool green_on = modes.green_enable || mark_mode == SAI_ECN_MARK_MODE_GREEN || mark_mode == SAI_ECN_MARK_MODE_GREEN_YELLOW
+                    || mark_mode == SAI_ECN_MARK_MODE_GREEN_RED || mark_mode == SAI_ECN_MARK_MODE_ALL;
+    bool yellow_on = modes.yellow_enable || mark_mode == SAI_ECN_MARK_MODE_YELLOW || mark_mode == SAI_ECN_MARK_MODE_GREEN_YELLOW
+                     || mark_mode == SAI_ECN_MARK_MODE_YELLOW_RED || mark_mode == SAI_ECN_MARK_MODE_ALL;
+    bool red_on = modes.red_enable || mark_mode == SAI_ECN_MARK_MODE_RED || mark_mode == SAI_ECN_MARK_MODE_GREEN_RED
+                  || mark_mode == SAI_ECN_MARK_MODE_YELLOW_RED || mark_mode == SAI_ECN_MARK_MODE_ALL;
+    set<string> left_out_thresholds;
+    if (!green_on)
+    {
+        left_out_thresholds.insert({green_min_threshold_field_name, green_max_threshold_field_name});
+    }
+    if (!yellow_on)
+    {
+        left_out_thresholds.insert({yellow_min_threshold_field_name, yellow_max_threshold_field_name});
+    }
+    if (!red_on)
+    {
+        left_out_thresholds.insert({red_min_threshold_field_name, red_max_threshold_field_name});
+    }
+
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
+        if (left_out_thresholds.count(fvField(*i)))
+        {
+            continue;
+        }
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
             threshold = stoi(fvValue(*i));
@@ -718,7 +773,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             {
                 return false;
             }
-            attribs.push_back(attr);
+            mode_attributes.push_back(attr);
         }
         else if (fvField(*i) == wred_yellow_enable_field_name)
         {
@@ -727,7 +782,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             {
                 return false;
             }
-            attribs.push_back(attr);
+            mode_attributes.push_back(attr);
         }
         else if (fvField(*i) == wred_red_enable_field_name)
         {
@@ -736,14 +791,14 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             {
                 return false;
             }
-            attribs.push_back(attr);
+            mode_attributes.push_back(attr);
         }
         else if (fvField(*i) == ecn_field_name)
         {
             attr.id = SAI_WRED_ATTR_ECN_MARK_MODE;
             sai_ecn_mark_mode_t ecn = ecn_map.at(fvValue(*i));
             attr.value.s32 = ecn;
-            attribs.push_back(attr);
+            mode_attributes.push_back(attr);
         }
         else {
             SWSS_LOG_ERROR("Unknown wred profile field:%s", fvField(*i).c_str());
@@ -759,8 +814,10 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
         return false;
     }
 
+    attribs.insert(attribs.begin(), mode_attributes.begin(), mode_attributes.end());
     attribs.insert(attribs.end(), deferred_attributes.begin(), deferred_attributes.end());
     storedProfile = currentProfile;
+    m_wredModes[key] = modes;
 
     return true;
 }
