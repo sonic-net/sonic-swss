@@ -24,6 +24,8 @@ namespace qosorch_test
     int sai_remove_wred_profile_count;
     int sai_remove_scheduler_count;
     int sai_set_wred_attribute_count;
+    vector<sai_attribute_t> wred_created_attributes;
+    vector<sai_attribute_t> wred_set_attributes;
     sai_object_id_t switch_dscp_to_tc_map_id;
     TunnelDecapOrch *tunnel_decap_orch;
 
@@ -177,6 +179,7 @@ namespace qosorch_test
         auto rc = old_create_wred(wred_id, switch_id, attr_count, attr_list);
         if (rc == SAI_STATUS_SUCCESS)
         {
+            wred_created_attributes.assign(attr_list, attr_list + attr_count);
             for (uint32_t i = 0; i < attr_count; i++)
             {
                 _ut_stub_sai_check_wred_attributes(attr_list[i]);
@@ -200,6 +203,7 @@ namespace qosorch_test
         auto rc = old_set_wred_attribute(wred_id, attr);
         if (rc == SAI_STATUS_SUCCESS)
         {
+            wred_set_attributes.push_back(*attr);
             _ut_stub_sai_check_wred_attributes(*attr);
         }
         sai_set_wred_attribute_count++;
@@ -1523,6 +1527,123 @@ namespace qosorch_test
         updateMaxDropProbabilityAndCheck("red", redProfile, redProbabilities);
 
         testing_wred_thresholds = false;
+    }
+
+    /*
+     * A colour's thresholds are sent only while its WRED dropping or its ECN marking is enabled,
+     * after the enables and the ECN mark mode
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredDisabledColourThresholds)
+    {
+        vector<FieldValueTuple> profile = {
+            {"ecn", "ecn_none"},
+            {"green_min_threshold", "1048576"},
+            {"green_max_threshold", "5242880"},
+            {"green_drop_probability", "10"},
+            {"wred_green_enable", "true"},
+            {"yellow_min_threshold", "2097152"},
+            {"yellow_max_threshold", "8388608"},
+            {"yellow_drop_probability", "30"},
+            {"wred_yellow_enable", "true"},
+            {"red_min_threshold", "3145728"},
+            {"red_max_threshold", "12582912"},
+            {"red_drop_probability", "60"},
+            {"wred_red_enable", "true"}
+        };
+        auto setField = [&profile](const string &field, const string &value) {
+            for (auto &fv : profile)
+            {
+                if (fv.first == field)
+                {
+                    fv.second = value;
+                }
+            }
+        };
+        auto apply = [this](const string &name, const vector<FieldValueTuple> &fvs) {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            vector<string> ts;
+            entries.push_back({name, "SET", fvs});
+            auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+            consumer->addToSync(entries);
+            wred_set_attributes.clear();
+            static_cast<Orch *>(gQosOrch)->doTask();
+            static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty());
+        };
+        auto position = [](const vector<sai_attribute_t> &attrs, sai_attr_id_t id) {
+            for (size_t i = 0; i < attrs.size(); i++)
+            {
+                if (attrs[i].id == id)
+                {
+                    return (int)i;
+                }
+            }
+            return -1;
+        };
+        auto checkModesFirst = [](const vector<sai_attribute_t> &attrs) {
+            bool threshold_seen = false;
+            for (auto &attr : attrs)
+            {
+                bool mode = attr.id == SAI_WRED_ATTR_GREEN_ENABLE || attr.id == SAI_WRED_ATTR_YELLOW_ENABLE
+                            || attr.id == SAI_WRED_ATTR_RED_ENABLE || attr.id == SAI_WRED_ATTR_ECN_MARK_MODE;
+                ASSERT_FALSE(mode && threshold_seen);
+                threshold_seen = threshold_seen || !mode;
+            }
+        };
+        auto &stored = WredMapHandler::m_wredProfiles["WRED_COLOUR"];
+
+        apply("WRED_COLOUR", profile);
+        ASSERT_NE(position(wred_created_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+
+        // Red disabled: its thresholds are left out
+        setField("wred_red_enable", "false");
+        apply("WRED_COLOUR", profile);
+        checkModesFirst(wred_set_attributes);
+        ASSERT_NE(position(wred_set_attributes, SAI_WRED_ATTR_RED_ENABLE), -1);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_RED_MAX_THRESHOLD), -1);
+        ASSERT_NE(position(wred_set_attributes, SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD), -1);
+
+        // Yellow disabled as well
+        setField("wred_yellow_enable", "false");
+        apply("WRED_COLOUR", profile);
+        checkModesFirst(wred_set_attributes);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD), -1);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+        ASSERT_NE(position(wred_set_attributes, SAI_WRED_ATTR_GREEN_MIN_THRESHOLD), -1);
+
+        // A threshold changed while red is disabled is held back, also in an update that carries only it
+        setField("red_min_threshold", "2621440");
+        apply("WRED_COLOUR", profile);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+        apply("WRED_COLOUR", {{"red_max_threshold", "12582912"}});
+        ASSERT_TRUE(wred_set_attributes.empty());
+        ASSERT_EQ(stored.red_min_threshold, 3145728u);
+
+        // Red enabled again: the enable goes first, then the thresholds configured meanwhile
+        setField("wred_red_enable", "true");
+        apply("WRED_COLOUR", profile);
+        checkModesFirst(wred_set_attributes);
+        auto red_min = position(wred_set_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD);
+        ASSERT_NE(red_min, -1);
+        ASSERT_LT(position(wred_set_attributes, SAI_WRED_ATTR_RED_ENABLE), red_min);
+        ASSERT_EQ(wred_set_attributes[red_min].value.u32, 2621440u);
+        ASSERT_EQ(stored.red_min_threshold, 2621440u);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD), -1);
+
+        // A colour disabled for dropping but ECN-marked keeps its thresholds
+        setField("wred_red_enable", "false");
+        setField("ecn", "ecn_red");
+        apply("WRED_COLOUR", profile);
+        ASSERT_NE(position(wred_set_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+        ASSERT_EQ(position(wred_set_attributes, SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD), -1);
+
+        // A profile created with a colour disabled is created without that colour's thresholds
+        setField("ecn", "ecn_none");
+        apply("WRED_COLOUR_CREATE", profile);
+        ASSERT_EQ(position(wred_created_attributes, SAI_WRED_ATTR_RED_MIN_THRESHOLD), -1);
+        ASSERT_EQ(position(wred_created_attributes, SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD), -1);
+        ASSERT_NE(position(wred_created_attributes, SAI_WRED_ATTR_GREEN_MIN_THRESHOLD), -1);
     }
 
 
