@@ -2434,13 +2434,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         return false;
     }
 
-    // Ensure VRF exists in m_syncdRoutes
+    /* addRoute() created the VRF route table, but a removal of the last
+     * route of the VRF in the same bulk drops it again in removeRoutePost().
+     * This route was sent to SAI, so restore the table to record the result. */
     auto routeTableIter = m_syncdRoutes.find(vrf_id);
     if (routeTableIter == m_syncdRoutes.end())
     {
-        SWSS_LOG_INFO("VRF 0x%" PRIx64 " doesn't exist in syncd routes for route %s, will retry later",
-                      vrf_id, ipPrefix.to_string().c_str());
-        return false;
+        routeTableIter = m_syncdRoutes.emplace(vrf_id, RouteTable()).first;
+        m_vrfOrch->increaseVrfRefCount(vrf_id);
     }
 
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
