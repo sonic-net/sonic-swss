@@ -30,6 +30,10 @@ using namespace ut_fpmsyncd;
 using ::testing::_;
 
 extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
 
 int rt_build_ret = 0;
 bool nlmsg_alloc_ret = true;
@@ -90,10 +94,12 @@ public:
                    << " exists; failed to load route protocol names required for tests.";
         }
         m_routeSync.setSuppressionEnabled(true);
+        resetMockWarmStartHelper();
     }
 
     void TearDown() override
     {
+        resetMockWarmStartHelper();
         testing_db::reset();
     }
 
@@ -3856,6 +3862,48 @@ TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlMissingOptions)
     Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
     vector<FieldValueTuple> values;
     EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlDeferredToOwnTableDuringWarmRestart)
+{
+    m_routeSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    ASSERT_TRUE(m_routeSync.getWarmStartHelper().inProgress());
+
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWTFILTER, static_cast<unsigned int>(sizeof(tcmsg)));
+    auto *tcm = reinterpret_cast<tcmsg *>(NLMSG_DATA(nlh));
+    tcm->tcm_ifindex = 10;
+
+    char kind[] = "shl";
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_KIND, kind, static_cast<unsigned int>(sizeof(kind))));
+    struct rtattr *options = ut_fpmsyncd::nl_attr_nest(nlh, MAX_PAYLOAD, TCA_OPTIONS);
+    ASSERT_NE(options, nullptr);
+    struct in_addr vtep4;
+    ASSERT_EQ(inet_pton(AF_INET, "10.20.30.40", &vtep4), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_FLOWER_KEY_IPV4_SRC, &vtep4,
+                                         static_cast<unsigned int>(sizeof(vtep4))));
+    ut_fpmsyncd::nl_attr_nest_end(nlh, options);
+
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+    m_pipeline->flush();
+
+    KeyOpFieldsValuesTuple kfv;
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_EVPN_SPLIT_HORIZON_TABLE_NAME, "Vlan0000:Vrf10", kfv));
+    EXPECT_EQ(kfvOp(kfv), SET_COMMAND);
+    EXPECT_EQ(kfvFieldsValues(kfv), vector<FieldValueTuple>({{"vteps", "10.20.30.40"}}));
+    Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
+
+    nlh->nlmsg_type = RTM_DELTFILTER;
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_EVPN_SPLIT_HORIZON_TABLE_NAME, "Vlan0000:Vrf10", kfv));
+    EXPECT_EQ(kfvOp(kfv), DEL_COMMAND);
+    EXPECT_TRUE(kfvFieldsValues(kfv).empty());
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_EVPN_SPLIT_HORIZON_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_EVPN_SPLIT_HORIZON_TABLE_NAME), 0u);
 }
 
 // Helper to create a VNET route with nexthop

@@ -13,6 +13,7 @@
 
 #include "redisutility.h"
 #include "table.h"
+#include "mock_table.h"
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -31,6 +32,12 @@
 using namespace swss;
 using ::testing::_;
 
+extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
+
 /**
  * @brief Test fixture for EVPN Multihoming fpmsyncd tests
  */
@@ -42,10 +49,12 @@ public:
         m_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
         m_pipeline = std::make_shared<RedisPipeline>(m_db.get());
         m_routeSync = std::make_unique<RouteSync>(m_pipeline.get());
+        resetMockWarmStartHelper();
     }
 
     void TearDown() override
     {
+        resetMockWarmStartHelper();
         m_routeSync.reset();
         m_pipeline.reset();
         m_db.reset();
@@ -729,12 +738,6 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnDfRoleChange)
     }
 }
 
-extern void resetMockWarmStartHelper();
-extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
-                                               const std::string &key,
-                                               swss::KeyOpFieldsValuesTuple &kfv);
-extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
-
 /**
  * @brief EVPN MH entries received during a bgp warm restart
  *
@@ -790,4 +793,57 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEntriesDeferredToOwnTablesDuringWarmRestart)
     EXPECT_EQ(kfvFieldsValues(kfv), std::vector<FieldValueTuple>({{"nexthop_group", "5000"}}));
 
     resetMockWarmStartHelper();
+}
+
+/**
+ * @brief EVPN MH deletes received during a bgp warm restart
+ *
+ * Like the adds, they are held as DEL entries of their own tables until
+ * reconciliation, and nothing goes to ROUTE_TABLE.
+ */
+TEST_F(FpmsyncdEvpnMhTest, EvpnDeletesDeferredToOwnTablesDuringWarmRestart)
+{
+    testing_db::resetOperationCounters();
+    m_routeSync->getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    ASSERT_TRUE(m_routeSync->getWarmStartHelper().inProgress());
+
+    unsigned char shlBuf[4096] = {0};
+    fpm_msg_hdr_t* fpm_hdr = buildFpmHeader(shlBuf);
+    nlmsghdr* nl_hdr = addNlmsgHeader(fpm_hdr, shlBuf + FPM_MSG_HDR_LEN, RTM_FPM_DEL_EVPN_SHL, 0, sizeof(evpn_shl_msg));
+    evpn_shl_msg* shl_msg = reinterpret_cast<evpn_shl_msg*>(NLMSG_DATA(nl_hdr));
+    shl_msg->esm_ifindex = 0;
+    shl_msg->esm_vid = 10;
+    m_routeSync->onEvpnShlMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_shl_msg))));
+
+    unsigned char dfBuf[4096] = {0};
+    fpm_hdr = buildFpmHeader(dfBuf);
+    nl_hdr = addNlmsgHeader(fpm_hdr, dfBuf + FPM_MSG_HDR_LEN, RTM_FPM_DEL_EVPN_DF, 0, sizeof(evpn_df_msg));
+    evpn_df_msg* df_msg = reinterpret_cast<evpn_df_msg*>(NLMSG_DATA(nl_hdr));
+    df_msg->edm_ifindex = 0;
+    df_msg->edm_vid = 10;
+    m_routeSync->onEvpnDfMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_df_msg))));
+
+    unsigned char nhgBuf[4096] = {0};
+    fpm_hdr = buildFpmHeader(nhgBuf);
+    nl_hdr = addNlmsgHeader(fpm_hdr, nhgBuf + FPM_MSG_HDR_LEN, RTM_FPM_DEL_EVPN_ES_BACKUP_NHG, 0,
+                            sizeof(evpn_backup_nhg_msg));
+    evpn_backup_nhg_msg* nhg_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
+    nhg_msg->ebnm_ifindex = 0;
+    m_routeSync->onEvpnEsBackupNhgMsg(nl_hdr, static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg))));
+    m_pipeline->flush();
+
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
+    const std::vector<std::pair<std::string, std::string>> deferred = {
+        {"EVPN_SPLIT_HORIZON_TABLE", "Vlan10:unknown"},
+        {"EVPN_DF_TABLE", "Vlan10:unknown"},
+        {"EVPN_ES_BACKUP_NHG_TABLE", "unknown"},
+    };
+    for (const auto &entry : deferred)
+    {
+        KeyOpFieldsValuesTuple kfv;
+        EXPECT_TRUE(getMockWarmStartHelperRefreshEntry(entry.first, entry.second, kfv)) << entry.first;
+        EXPECT_EQ(kfvOp(kfv), DEL_COMMAND) << entry.first;
+        EXPECT_TRUE(kfvFieldsValues(kfv).empty()) << entry.first;
+        EXPECT_EQ(testing_db::getProducerDelCount(entry.first), 0u) << entry.first;
+    }
 }
