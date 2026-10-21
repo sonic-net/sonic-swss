@@ -31,10 +31,26 @@ namespace macsecorch_test
         std::vector<sai_attribute_t>    attrs;        // recorded attribute list (create only)
     };
 
+    struct SaiScCreateCall
+    {
+        sai_object_id_t              oid;
+        std::vector<sai_attribute_t> attrs;
+    };
+
+    struct SaiScSetCall
+    {
+        sai_object_id_t oid;
+        sai_attribute_t attr;
+    };
+
     static std::vector<SaiSaCall>       g_created_sas;
     static std::vector<sai_object_id_t> g_removed_sas;
     static sai_object_id_t              g_next_sa_oid;
     static bool                         g_remove_should_fail;
+
+    static std::vector<SaiScCreateCall> g_created_scs;
+    static std::vector<SaiScSetCall>    g_sc_set_attrs;
+    static sai_object_id_t              g_next_sc_oid;
 
     static void reset_sai_recorder()
     {
@@ -42,6 +58,56 @@ namespace macsecorch_test
         g_removed_sas.clear();
         g_next_sa_oid        = 0x5c00000000010000ULL;   // mimic real OID prefix range
         g_remove_should_fail = false;
+        g_created_scs.clear();
+        g_sc_set_attrs.clear();
+        g_next_sc_oid        = 0x5b00000000010000ULL;
+    }
+
+    static const sai_attribute_t *find_sc_attr(const std::vector<sai_attribute_t> &attrs,
+                                               sai_attr_id_t id)
+    {
+        for (const auto &attr : attrs)
+        {
+            if (attr.id == id)
+            {
+                return &attr;
+            }
+        }
+        return nullptr;
+    }
+
+    static const SaiScSetCall *find_sc_set_attr(sai_object_id_t sc_oid,
+                                                sai_attr_id_t   id)
+    {
+        for (const auto &call : g_sc_set_attrs)
+        {
+            if (call.oid == sc_oid && call.attr.id == id)
+            {
+                return &call;
+            }
+        }
+        return nullptr;
+    }
+
+    static sai_status_t fake_create_macsec_sc(sai_object_id_t        *sc_id,
+                                             sai_object_id_t         switch_id,
+                                             uint32_t                attr_count,
+                                             const sai_attribute_t  *attr_list)
+    {
+        (void)switch_id;
+        SaiScCreateCall call;
+        call.oid = ++g_next_sc_oid;
+        call.attrs.assign(attr_list, attr_list + attr_count);
+        *sc_id = call.oid;
+        g_created_scs.push_back(std::move(call));
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t fake_set_macsec_sc_attribute(sai_object_id_t        sc_id,
+                                                     const sai_attribute_t *attr)
+    {
+        g_sc_set_attrs.push_back({ sc_id, *attr });
+        return SAI_STATUS_SUCCESS;
     }
 
     // Helper: pull the SAK bytes out of a recorded SAI attribute list.
@@ -104,6 +170,11 @@ namespace macsecorch_test
         static constexpr sai_object_id_t kStaleSaOid =
             0x5c00000000005a5aULL;
 
+        static constexpr sai_object_id_t kIngressScOid =
+            0x5b0000000000aa01ULL;
+        static constexpr sai_object_id_t kFlowOid =
+            0x5a0000000000bb01ULL;
+
     protected:
         void SetUp() override
         {
@@ -127,8 +198,12 @@ namespace macsecorch_test
             ASSERT_NE(sai_macsec_api, nullptr);
             saved_create_macsec_sa = sai_macsec_api->create_macsec_sa;
             saved_remove_macsec_sa = sai_macsec_api->remove_macsec_sa;
+            saved_create_macsec_sc = sai_macsec_api->create_macsec_sc;
+            saved_set_macsec_sc_attribute = sai_macsec_api->set_macsec_sc_attribute;
             sai_macsec_api->create_macsec_sa = fake_create_macsec_sa;
             sai_macsec_api->remove_macsec_sa = fake_remove_macsec_sa;
+            sai_macsec_api->create_macsec_sc = fake_create_macsec_sc;
+            sai_macsec_api->set_macsec_sc_attribute = fake_set_macsec_sc_attribute;
             reset_sai_recorder();
 
             app_db   = std::make_shared<DBConnector>("APPL_DB",  0);
@@ -169,6 +244,8 @@ namespace macsecorch_test
 
             sai_macsec_api->create_macsec_sa = saved_create_macsec_sa;
             sai_macsec_api->remove_macsec_sa = saved_remove_macsec_sa;
+            sai_macsec_api->create_macsec_sc = saved_create_macsec_sc;
+            sai_macsec_api->set_macsec_sc_attribute = saved_set_macsec_sc_attribute;
 
             if (fake_ports_orch_buf != nullptr)
             {
@@ -248,6 +325,26 @@ namespace macsecorch_test
             orch->m_macsec_ports[kPortName] = port;
         }
 
+        std::shared_ptr<MACsecOrch::MACsecPort> seedIngressPortForReplay()
+        {
+            auto port = std::make_shared<MACsecOrch::MACsecPort>();
+            port->m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
+            port->m_enable_encrypt = true;
+            port->m_sci_in_sectag = true;
+            port->m_enable_replay_protect = false;
+            port->m_replay_window = 0;
+            port->m_enable = false;
+
+            const sai_uint64_t sci = parseSciHex(kIngressSciHex);
+            MACsecOrch::MACsecSC sc{};
+            sc.m_sc_id = kIngressScOid;
+            sc.m_flow_id = kFlowOid;
+            port->m_ingress_scs[sci] = sc;
+
+            orch->m_macsec_ports[kPortName] = port;
+            return port;
+        }
+
         std::shared_ptr<DBConnector>  app_db;
         std::shared_ptr<DBConnector>  state_db;
         std::shared_ptr<MACsecOrch>   orch;
@@ -257,6 +354,12 @@ namespace macsecorch_test
                                                uint32_t,
                                                const sai_attribute_t*) = nullptr;
         sai_status_t (*saved_remove_macsec_sa)(sai_object_id_t)        = nullptr;
+        sai_status_t (*saved_create_macsec_sc)(sai_object_id_t*,
+                                               sai_object_id_t,
+                                               uint32_t,
+                                               const sai_attribute_t*) = nullptr;
+        sai_status_t (*saved_set_macsec_sc_attribute)(sai_object_id_t,
+                                                      const sai_attribute_t*) = nullptr;
 
         // Raw buffer holding a placement-new'd m_portList (see SetUp).
         void       *fake_ports_orch_buf = nullptr;
@@ -268,6 +371,8 @@ namespace macsecorch_test
     constexpr const char    *MacsecOrchStaleSakTest::kEgressSciHex;
     constexpr macsec_an_t    MacsecOrchStaleSakTest::kAN;
     constexpr sai_object_id_t MacsecOrchStaleSakTest::kStaleSaOid;
+    constexpr sai_object_id_t MacsecOrchStaleSakTest::kIngressScOid;
+    constexpr sai_object_id_t MacsecOrchStaleSakTest::kFlowOid;
 
     // Convenience: the macsec_sonic driver writes SAKs as upper-case
     // hex strings; pick two distinguishable values for "old" vs "new".
@@ -678,5 +783,66 @@ namespace macsecorch_test
         EXPECT_EQ(g_removed_sas.size(), 0u);
         EXPECT_EQ(g_created_sas.size(), 0u);
         EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(0));
+    }
+
+    // ------------------------------------------------------------------
+    // Replay protection (MACsec profile -> ingress SC SAI attrs)
+    // ------------------------------------------------------------------
+    TEST_F(MacsecOrchStaleSakTest,
+           ingress_replay_protect_on_sc_create_and_port_update)
+    {
+        const sai_uint64_t sci = parseSciHex(kIngressSciHex);
+        const uint32_t create_replay_window = 128;
+        const uint32_t update_replay_window = 256;
+
+        sai_object_id_t sc_id = SAI_NULL_OBJECT_ID;
+        EXPECT_TRUE(orch->createMACsecSC(
+                sc_id,
+                gSwitchId,
+                SAI_MACSEC_DIRECTION_INGRESS,
+                kFlowOid,
+                sci,
+                true,
+                true,
+                SAI_MACSEC_CIPHER_SUITE_GCM_AES_128,
+                true,
+                create_replay_window));
+
+        ASSERT_EQ(g_created_scs.size(), 1u);
+        EXPECT_NE(sc_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(sc_id, g_created_scs[0].oid);
+        const auto &attrs = g_created_scs[0].attrs;
+
+        const auto *enable_attr = find_sc_attr(attrs,
+                SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE);
+        ASSERT_NE(enable_attr, nullptr);
+        EXPECT_TRUE(enable_attr->value.booldata);
+
+        const auto *window_attr = find_sc_attr(attrs,
+                SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
+        ASSERT_NE(window_attr, nullptr);
+        EXPECT_EQ(window_attr->value.u32, create_replay_window);
+
+        auto port = seedIngressPortForReplay();
+        MACsecOrch::TaskArgs port_attrs = {
+            { "enable_replay_protect", "true" },
+            { "replay_window", std::to_string(update_replay_window) },
+        };
+
+        EXPECT_TRUE(orch->updateMACsecPort(*port, port_attrs));
+        EXPECT_TRUE(port->m_enable_replay_protect);
+        EXPECT_EQ(port->m_replay_window, update_replay_window);
+
+        ASSERT_EQ(g_sc_set_attrs.size(), 2u);
+
+        const auto *enable_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE);
+        ASSERT_NE(enable_set, nullptr);
+        EXPECT_TRUE(enable_set->attr.value.booldata);
+
+        const auto *window_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
+        ASSERT_NE(window_set, nullptr);
+        EXPECT_EQ(window_set->attr.value.u32, update_replay_window);
     }
 }
