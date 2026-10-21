@@ -6,34 +6,36 @@ use tokio::runtime::Builder;
 use tokio::sync::mpsc;
 
 use countersyncd::actor::counter_db::{CounterDBActor, CounterDBConfig};
-use countersyncd::message::saistats::{SAIStat, SAIStats, SAIStatsMessage};
+use countersyncd::message::saistats::{SAIStat, SAIStatsBatch, SAIStatsBatchMessage};
 use countersyncd::sai::saitypes::SaiObjectType;
 use swss_common::{CxxString, DbConnector};
 
 mod ipfix_bench_data;
-use ipfix_bench_data::{PreparedDataset, datasets};
+use ipfix_bench_data::{datasets, PreparedDataset};
 
 const COUNTERS_DB_ID: i32 = 2;
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 
-fn build_stats_message(count: usize, seq: u64) -> SAIStatsMessage {
+fn build_stats_batch(count: usize, start_seq: usize, records: usize) -> SAIStatsBatchMessage {
     let type_id = SaiObjectType::Port.to_u32();
-
-    let stats = (0..count)
-        .map(|idx| SAIStat {
-            object_name: format!("Ethernet{}", idx % 16),
-            type_id,
-            stat_id: (idx % 4) as u32, // Small, valid port stat IDs
-            counter: seq.wrapping_add(idx as u64),
-        })
-        .collect();
-
-    std::sync::Arc::new(SAIStats::new(seq, stats))
+    let mut batch = SAIStatsBatch::with_capacity(records, count * records);
+    for seq in start_seq..start_seq + records {
+        batch.push_record(
+            seq as u64,
+            (0..count).map(|idx| SAIStat {
+                object_name: format!("Ethernet{}", idx % 16).into(),
+                type_id,
+                stat_id: (idx % 4) as u32, // Small, valid port stat IDs
+                counter: (seq as u64).wrapping_add(idx as u64),
+            }),
+        );
+    }
+    std::sync::Arc::new(batch)
 }
 
 fn seed_port_name_map(port_count: usize) {
-    let db = DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
-        .expect("connect counter db for seed");
+    let db =
+        DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0).expect("connect counter db for seed");
 
     let table = "COUNTERS_PORT_NAME_MAP";
     for idx in 0..port_count {
@@ -58,10 +60,7 @@ fn flush_counters_db() {
         .expect("spawn redis-cli for flush");
 
     if !output.status.success() {
-        panic!(
-            "redis-cli FLUSHDB failed with status {}",
-            output.status
-        );
+        panic!("redis-cli FLUSHDB failed with status {}", output.status);
     }
 }
 
@@ -79,14 +78,31 @@ async fn run_stream(prepared: PreparedDataset) -> (Duration, usize) {
     let start = std::time::Instant::now();
 
     for tmpl in prepared.templates.iter() {
-        for msg_idx in 0..tmpl.records {
-            let msg = build_stats_message(tmpl.spec.counters, msg_idx as u64);
-            let _ = tx.send(msg).await;
+        const RECORDS_PER_BATCH: usize = 64;
+        let full_batches = tmpl.records / RECORDS_PER_BATCH;
+        for batch_idx in 0..full_batches {
+            tx.send(build_stats_batch(
+                tmpl.spec.counters,
+                batch_idx * RECORDS_PER_BATCH,
+                RECORDS_PER_BATCH,
+            ))
+            .await
+            .expect("send stats batch");
+        }
+        let remaining = tmpl.records % RECORDS_PER_BATCH;
+        if remaining > 0 {
+            tx.send(build_stats_batch(
+                tmpl.spec.counters,
+                full_batches * RECORDS_PER_BATCH,
+                remaining,
+            ))
+            .await
+            .expect("send final stats batch");
         }
     }
 
     drop(tx);
-    let _ = handle.await;
+    handle.await.expect("CounterDB actor should join");
 
     (start.elapsed(), total_counters)
 }
@@ -106,7 +122,7 @@ fn bench_counter_db_actor(c: &mut Criterion) {
 
     for spec in datasets() {
         group.throughput(Throughput::Elements(
-            spec.total_counters_per_iteration() as u64,
+            spec.total_counters_per_iteration() as u64
         ));
 
         let bench_id = BenchmarkId::from_parameter(spec.name);

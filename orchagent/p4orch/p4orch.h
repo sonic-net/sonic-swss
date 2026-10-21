@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "copporch.h"
 #include "notificationconsumer.h"
 #include "notifier.h"
 #include "orch.h"
@@ -29,6 +28,7 @@
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
 #include "return_code.h"
+#include "selectableevent.h"
 #include "vrforch.h"
 #include "zmqorch.h"
 
@@ -47,7 +47,7 @@ class P4Orch : public ZmqOrch
 {
   public:
     P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames,
-        swss::ZmqServer* zmqServer, VRFOrch *vrfOrch, CoppOrch *coppOrch);
+        swss::ZmqServer* zmqServer, VRFOrch *vrfOrch);
     // Add ACL table to ACLRuleManager mapping in P4Orch.
     bool addAclTableToManagerMapping(const std::string &acl_table_name);
     // Remove the ACL table name to AclRuleManager mapping in P4Orch
@@ -60,6 +60,9 @@ class P4Orch : public ZmqOrch
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
     bool bake() override;
+    void handlePortStatusUpdate(const std::string& alias,
+                                const sai_port_oper_status_t& status);
+    void setEnableNotify(bool enable) override;
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
@@ -71,15 +74,16 @@ class P4Orch : public ZmqOrch
     void doTask(swss::NotificationConsumer &consumer);
     ObjectManagerInterface* findManager(const std::string key,
                                         std::string& table_name);
+    void doTask(swss::SelectableEvent& event);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
     ReturnCode drain();
-    void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
     // P4 object manager request processing order.
     std::vector<ObjectManagerInterface*> m_p4ManagerAddPrecedence;
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
+    swss::SelectableEvent* m_watchportEvent;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
@@ -100,8 +104,7 @@ class P4Orch : public ZmqOrch
     // DBConnector backing the port-state notification consumer.
     std::shared_ptr<swss::DBConnector> m_notificationsDb;
 
-    // Notification consumer for port state change
-    swss::NotificationConsumer *m_portStatusNotificationConsumer;
+    // Notification consumer
 
     swss::ZmqServer* m_zmqServer;
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.

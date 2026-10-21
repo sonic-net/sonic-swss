@@ -45,6 +45,17 @@ struct NeighborUpdate
     bool add;
 };
 
+/* IPinIP tunnel next hop add/remove result */
+enum class TunnelNhOpStatus
+{
+    CREATED,                  // SAI object newly created
+    REUSED,                   // existing SAI object reused
+    REMOVED,                  // SAI object removed
+    STILL_REFERENCED,         // still in use, retry later
+    OTHER_REGISTRANTS_REMAIN, // deregistered, SAI object kept
+    SAI_FAILED                // SAI call failed, safe to retry
+};
+
 /*
  * Keeps track of neighbor entry information primarily for bulk operations
  */
@@ -73,6 +84,7 @@ class NeighOrch : public Orch, public Subject, public Observer
 public:
     NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
     ~NeighOrch();
+    void detachObservers() override;
 
     bool hasNextHop(const NextHopKey&);
     bool isNeighborResolved(const NextHopKey&);
@@ -103,6 +115,10 @@ public:
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
+
+    TunnelNhOpStatus addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t tunnel_id,
+                                             sai_object_id_t& next_hop_id);
+    TunnelNhOpStatus removeIpinipTunnelNextHop(const NextHopKey& nh);
 
     bool ifChangeInformNextHop(const string &, bool);
     
@@ -135,7 +151,12 @@ private:
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
 
+    /* Registrant count per IPinIP tunnel NextHopKey (e.g. MuxOrch, TunnelDecapOrch) */
+    std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
+
     std::set<NextHopKey> m_neighborToResolve;
+    /* Existing neighbors re-resolved by processFDBResolve(), awaiting a kernel update */
+    std::set<NeighborEntry> m_neighborToRefresh;
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
     ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
@@ -170,6 +191,7 @@ private:
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
+    void clearNeighborRefresh(const NeighborEntry &);
 
     bool addZeroMacTunnelRoute(const NeighborEntry &, const MacAddress &);
 };

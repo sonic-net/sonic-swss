@@ -2,6 +2,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "common/mock_test_helpers.h"
 
 #include <gtest/gtest.h>
 
@@ -55,15 +56,7 @@ namespace policerorch_test
 
         bool findCreateAttr(sai_attr_id_t id, sai_attribute_value_t &out) const
         {
-            for (const auto &attr : create_attrs)
-            {
-                if (attr.id == id)
-                {
-                    out = attr.value;
-                    return true;
-                }
-            }
-            return false;
+            return mock_test_helpers::findAttr(create_attrs, id, out);
         }
     };
 

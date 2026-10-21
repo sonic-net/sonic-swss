@@ -58,7 +58,7 @@ TEST(ZmqOrchTest, CreateZmqRouteOrchWithTableNames)
 TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
 {
     string zmq_server_address = "tcp://127.0.0.1:18100";
-    auto zmq_server = swss::create_zmq_server(zmq_server_address);
+    auto zmq_server = swss::create_zmq_route_server(zmq_server_address);
 
     auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
 
@@ -68,11 +68,11 @@ TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
     vector<table_name_with_pri_t> empty_tables;
     auto host_orch = make_shared<ZmqRouteOrch>(app_db.get(), empty_tables, nullptr);
 
-    // Construct ZmqConsumerStateTable with dbPersistence=false so no
+    // Construct ZmqRouteConsumerStateTable with dbPersistence=false so no
     // AsyncDBUpdater / Redis activity happens.
-    auto* cst = new swss::ZmqConsumerStateTable(
+    auto* cst = new swss::ZmqRouteConsumerStateTable(
         app_db.get(), "ROUTE_TABLE_E", *zmq_server,
-        /*popBatchSize=*/128, /*pri=*/1, /*dbPersistence=*/false);
+        /*pri=*/1, /*dbPersistence=*/false);
     auto* consumer = new ZmqRouteConsumer(cst, host_orch.get(), "ROUTE_TABLE_E");
 
     // With no messages received, pops() returns empty, addToSync returns 0,
