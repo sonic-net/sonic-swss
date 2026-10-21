@@ -36,6 +36,18 @@ static std::string getVlanFromEsKey(const std::string &key)
     return (pos != std::string::npos) ? key.substr(0, pos) : "Unknown";
 }
 
+/* zebra sends the DF role of a whole port on VLAN 0, which has no VLAN member to program. */
+static bool isPortLevelEsKey(const std::string &vlan_id)
+{
+    return vlan_id == VLAN_PREFIX "0";
+}
+
+/* The platform cannot program the DF role, and retrying does not change that. */
+static bool isDfUnsupported(sai_status_t status)
+{
+    return status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED;
+}
+
 bool EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
 {
     bool is_df = false;
@@ -83,6 +95,11 @@ bool EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
 
     SWSS_LOG_NOTICE("updateEsCache: SET oper: %s, vlan: %s, port_name: %s, is_df: %d", key.c_str(), vlan_id.c_str(), port_name.c_str(), existing_entry->is_df);
 
+    if (isPortLevelEsKey(vlan_id))
+    {
+        return true;
+    }
+
     if (!gPortsOrch->getPort(vlan_id, port))
     {
         SWSS_LOG_ERROR("updateEsCache: interface: %s, Vlan is not not yet created, returning", key.c_str());
@@ -106,7 +123,12 @@ bool EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
         attr.value.booldata = existing_entry->is_df;
 
         auto status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (isDfUnsupported(status))
+        {
+            SWSS_LOG_WARN("updateEsCache: SAI attribute not supported for %s, "
+                          "Non-DF BUM suppression unavailable on this platform", key.c_str());
+        }
+        else if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("updateEsCache: Failed to set VLAN member attribute for %s, SAI status: %d. "
                           "BUM traffic forwarding state may be incorrect. Will retry.", key.c_str(), status);
@@ -137,6 +159,12 @@ bool EvpnMhOrch::deleteEsCache(string &key)
     Port port;
     sai_object_id_t vlan_member_id;
 
+    if (isPortLevelEsKey(vlan_id))
+    {
+        m_esDataMap.erase(key);
+        return true;
+    }
+
     if (!gPortsOrch->getPort(vlan_id, port))
     {
         SWSS_LOG_ERROR("deleteEsCache: interface: %s, Vlan is not not yet created, returning", key.c_str());
@@ -157,7 +185,12 @@ bool EvpnMhOrch::deleteEsCache(string &key)
         attr.value.booldata = false;
 
         auto status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (isDfUnsupported(status))
+        {
+            SWSS_LOG_WARN("deleteEsCache: SAI attribute not supported for %s, "
+                          "Non-DF BUM suppression unavailable on this platform", key.c_str());
+        }
+        else if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("deleteEsCache: Failed to reset VLAN member attribute for %s, SAI status: %d. "
                           "BUM traffic forwarding state may be incorrect. Will retry.", key.c_str(), status);
