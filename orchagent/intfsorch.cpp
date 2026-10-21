@@ -485,7 +485,8 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 }
 
 bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
-                        const bool adminUp, const uint32_t mtu, string loopbackAction)
+                        const bool adminUp, const uint32_t mtu, string loopbackAction, bool appl_intf_tbl,
+                        bool vrf_name_specified)
 
 {
     SWSS_LOG_ENTER();
@@ -499,6 +500,73 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     gPortsOrch->getPort(alias, port);
 
     auto it_intfs = m_syncdIntfses.find(alias);
+
+    bool restore_proxy_arp = false;
+    bool restore_sag = false;
+
+    /*
+     * VRF change on an existing non-loopback router interface issues a DEL then SET
+     * on the same INTF_TABLE key; the ProducerStateTable coalesces these into a single SET,
+     * so the DEL that would tear down the RIF is lost. The RIF is then left in the old VRF
+     * and a later route insert into the new VRF fails with SAI_STATUS_ITEM_NOT_FOUND.
+     *
+     * Gate this on vrf_name_specified so that partial INTF_TABLE producers (e.g. mclagsyncd
+     * writing only mac_addr, or IntfMgr publishing only mtu/admin_status) are not misread as
+     * a request to move the RIF to the default VRF. IntfMgr always emits vrf_name (empty for
+     * the default VRF) on a full interface SET, so genuine VRF changes still carry the field.
+     */
+    if (it_intfs != m_syncdIntfses.end() && !ip_prefix && appl_intf_tbl && vrf_name_specified && it_intfs->second.vrf_id != vrf_id)
+    {
+        if (!it_intfs->second.ip_addresses.empty())
+        {
+            SWSS_LOG_WARN("Cannot remove RIF on %s for VRF change (0x%" PRIx64 " -> 0x%" PRIx64 "): "
+                          "%zu IP address(es) still present",
+                          alias.c_str(), it_intfs->second.vrf_id, vrf_id, it_intfs->second.ip_addresses.size());
+            return false;
+        }
+
+        if (it_intfs->second.ref_count > 0)
+        {
+            SWSS_LOG_WARN("Cannot remove RIF on %s for VRF change (0x%" PRIx64 " -> 0x%" PRIx64 "): "
+                          "ref_count=%d still non-zero",
+                          alias.c_str(), it_intfs->second.vrf_id, vrf_id, it_intfs->second.ref_count);
+            return false;
+        }
+
+        sai_object_id_t old_vrf_id = it_intfs->second.vrf_id;
+
+        /*
+         * Proxy ARP and SAG are interface settings rather than RIF attributes, and the
+         * coalesced SET that moves the VRF need not carry either field. Carry them across
+         * to the entry recreated below so the VRF change does not silently clear them.
+         * Proxy ARP maps to a VLAN attribute that the RIF teardown leaves alone, so only
+         * the bookkeeping has to follow; the SAG link local route is per VRF and has to be
+         * moved.
+         */
+        restore_proxy_arp = it_intfs->second.proxy_arp;
+        restore_sag = it_intfs->second.sag_enabled;
+
+        if (!removeRouterIntfs(port))
+        {
+            SWSS_LOG_WARN("Failed to remove RIF on %s for VRF change (0x%" PRIx64 " -> 0x%" PRIx64 ")",
+                          alias.c_str(), old_vrf_id, vrf_id);
+            return false;
+        }
+
+        gPortsOrch->decreasePortRefCount(alias);
+
+        if (restore_sag)
+        {
+            removeLinkLocalRouteToMeSag(old_vrf_id);
+        }
+
+        m_syncdIntfses.erase(it_intfs);
+        m_vrfOrch->decreaseVrfRefCount(old_vrf_id);
+
+        // Fall through to the creation path below to recreate the RIF in the new VRF.
+        it_intfs = m_syncdIntfses.end();
+    }
+
     if (it_intfs == m_syncdIntfses.end())
     {
         if (!ip_prefix && addRouterIntfs(vrf_id, port, loopbackAction))
@@ -555,6 +623,17 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
                 gPortsOrch->setPort(alias, port);
             }
         }
+    }
+
+    if (restore_proxy_arp)
+    {
+        m_syncdIntfses[alias].proxy_arp = true;
+    }
+
+    if (restore_sag)
+    {
+        m_syncdIntfses[alias].sag_enabled = true;
+        addLinkLocalRouteToMeSag(vrf_id);
     }
 
     if (!ip_prefix || m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
@@ -758,6 +837,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         bool sag_enabled = false;
         bool sagChanged = false;
+        bool vrfNameSpecified = false;
 
         for (auto idx : data)
         {
@@ -777,6 +857,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (field == "vrf_name")
             {
                 vrf_name = value;
+                vrfNameSpecified = true;
             }
             else if (field == "vnet_name")
             {
@@ -1018,7 +1099,9 @@ void IntfsOrch::doTask(Consumer &consumer)
                     adminUp = port.m_admin_state_up;
                 }
 
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction))
+                bool appl_intf_tbl = (table_name == APP_INTF_TABLE_NAME);
+
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction, appl_intf_tbl, vrfNameSpecified))
                 {
                     it++;
                     continue;
@@ -1339,6 +1422,7 @@ void IntfsOrch::removeLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
             gRouteOrch->delLinkLocalRouteToMe(vrf_id, linklocal_prefix);
 
             m_sagVrfRefTable.erase(vrf_id);
+            return;
         }
         else
         {
