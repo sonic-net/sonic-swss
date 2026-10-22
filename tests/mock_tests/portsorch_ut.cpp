@@ -940,9 +940,23 @@ namespace portsorch_test
         auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
         auto consumer = exec->getNotificationConsumer();
 
+        auto orig_port_api = sai_port_api;
+        sai_port_api = new sai_port_api_t(*orig_port_api);
+        sai_port_oper_status_t hardware_oper_status = port.m_oper_status;
+        auto portSpy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_port_attribute);
+        portSpy->callFake([&](sai_object_id_t oid, uint32_t count, sai_attribute_t *attrs) -> sai_status_t {
+            if (count == 1 && attrs[0].id == SAI_PORT_ATTR_OPER_STATUS)
+            {
+                attrs[0].value.u32 = static_cast<uint32_t>(hardware_oper_status);
+                return SAI_STATUS_SUCCESS;
+            }
+            return orig_port_api->get_port_attribute(oid, count, attrs);
+        });
+
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
         for (uint32_t count=0; count < 5; count++) {
             sai_port_oper_status_t oper_status = (count % 2 == 0) ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+            hardware_oper_status = oper_status;
             mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
@@ -977,7 +991,169 @@ namespace portsorch_test
             ASSERT_TRUE(port.m_flap_count == count+1);
         }
 
+        sai_port_api = orig_port_api;
         cleanupPorts(gPortsOrch);
+    }
+
+    TEST_F(PortsOrchTest, PortOperNotificationValidation)
+    {
+        Table portTable(m_app_db.get(), APP_PORT_TABLE_NAME);
+        // Earlier flap coverage removes the live SAI ports. Reuse the fixture
+        // snapshot so this test can recreate Ethernet0 in the full suite.
+        const auto &ports = defaultPortList;
+        ASSERT_FALSE(ports.empty());
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        const auto initial_status = port.m_oper_status;
+        const auto initial_flap_count = port.m_flap_count;
+        ASSERT_NE(initial_status, SAI_PORT_OPER_STATUS_UP);
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+        auto sendNotification = [&](sai_object_id_t port_id, sai_port_oper_status_t status,
+                                    sai_port_error_status_t error_status = SAI_PORT_ERROR_STATUS_CLEAR) {
+            mockReply = static_cast<redisReply *>(calloc(1, sizeof(redisReply)));
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3;
+            mockReply->element = static_cast<redisReply **>(calloc(mockReply->elements, sizeof(redisReply *)));
+            mockReply->element[2] = static_cast<redisReply *>(calloc(1, sizeof(redisReply)));
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+
+            sai_port_oper_status_notification_t notification = {};
+            notification.port_id = port_id;
+            notification.port_state = status;
+            notification.port_error_status = error_status;
+            const string data = sai_serialize_port_oper_status_ntf(1, &notification);
+            vector<FieldValueTuple> notification_values = { FieldValueTuple("port_state_change", data) };
+            const string message = swss::JSon::buildJson(notification_values);
+            mockReply->element[2]->str = static_cast<char *>(calloc(1, message.length() + 1));
+            memcpy(mockReply->element[2]->str, message.c_str(), message.length());
+
+            consumer->readData();
+            gPortsOrch->doTask(*consumer);
+            mockReply = nullptr;
+        };
+
+        auto orig_port_api = sai_port_api;
+        sai_port_api = new sai_port_api_t(*orig_port_api);
+        sai_port_oper_status_t hardware_status = initial_status;
+        sai_port_error_status_t hardware_error_status = SAI_PORT_ERROR_STATUS_CLEAR;
+        sai_status_t query_status = SAI_STATUS_SUCCESS;
+        sai_status_t error_query_status = SAI_STATUS_SUCCESS;
+        sai_status_t speed_query_status = SAI_STATUS_FAILURE;
+        uint32_t oper_status_queries = 0;
+        uint32_t error_status_queries = 0;
+        uint32_t speed_queries = 0;
+        auto portSpy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_port_attribute);
+        portSpy->callFake([&](sai_object_id_t oid, uint32_t count, sai_attribute_t *attrs) -> sai_status_t {
+            if (count == 1 && attrs[0].id == SAI_PORT_ATTR_OPER_STATUS)
+            {
+                oper_status_queries++;
+                if (query_status == SAI_STATUS_SUCCESS)
+                {
+                    attrs[0].value.u32 = static_cast<uint32_t>(hardware_status);
+                }
+                return query_status;
+            }
+            if (count == 1 && attrs[0].id == SAI_PORT_ATTR_ERROR_STATUS)
+            {
+                error_status_queries++;
+                if (error_query_status == SAI_STATUS_SUCCESS)
+                {
+                    attrs[0].value.s32 = static_cast<int32_t>(hardware_error_status);
+                }
+                return error_query_status;
+            }
+            if (count == 1 && attrs[0].id == SAI_PORT_ATTR_OPER_SPEED)
+            {
+                speed_queries++;
+                if (speed_query_status == SAI_STATUS_SUCCESS)
+                {
+                    attrs[0].value.u32 = 100000;
+                }
+                return speed_query_status;
+            }
+            return orig_port_api->get_port_attribute(oid, count, attrs);
+        });
+
+        // Side-effect-free duplicates do not add a synchronous SAI read.
+        sendNotification(port.m_port_id, initial_status);
+        EXPECT_EQ(oper_status_queries, 0u);
+
+        // A mismatched transition uses the current hardware state.
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_oper_status, initial_status);
+        EXPECT_EQ(port.m_flap_count, initial_flap_count);
+        EXPECT_EQ(oper_status_queries, 1u);
+
+        // A matching transition is accepted.
+        hardware_status = SAI_PORT_OPER_STATUS_UP;
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_oper_status, SAI_PORT_OPER_STATUS_UP);
+        EXPECT_EQ(port.m_flap_count, initial_flap_count + 1);
+        EXPECT_EQ(oper_status_queries, 2u);
+        EXPECT_EQ(speed_queries, 1u);
+
+        // A duplicate UP retries speed/FEC refresh after a failed speed read
+        // without counting another link flap.
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        string oper_speed;
+        ASSERT_TRUE(state_port_table.hget("Ethernet0", "speed", oper_speed));
+        EXPECT_EQ(oper_speed, "N/A");
+        speed_query_status = SAI_STATUS_SUCCESS;
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_flap_count, initial_flap_count + 1);
+        EXPECT_EQ(oper_status_queries, 3u);
+        EXPECT_EQ(speed_queries, 2u);
+        ASSERT_TRUE(state_port_table.hget("Ethernet0", "speed", oper_speed));
+        EXPECT_EQ(oper_speed, "100000");
+
+        // Query failure leaves the last validated state unchanged.
+        query_status = SAI_STATUS_FAILURE;
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_oper_status, SAI_PORT_OPER_STATUS_UP);
+        EXPECT_EQ(port.m_flap_count, initial_flap_count + 1);
+        EXPECT_EQ(oper_status_queries, 4u);
+
+        // Error status is read independently from SAI.
+        query_status = SAI_STATUS_SUCCESS;
+        hardware_status = SAI_PORT_OPER_STATUS_DOWN;
+        hardware_error_status = SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT;
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_DOWN, SAI_PORT_ERROR_STATUS_HIGH_BER);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_oper_error_status, SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT);
+        EXPECT_EQ(error_status_queries, 1u);
+
+        // A failed error-status read leaves the last validated value unchanged.
+        error_query_status = SAI_STATUS_FAILURE;
+        sendNotification(port.m_port_id, SAI_PORT_OPER_STATUS_DOWN, SAI_PORT_ERROR_STATUS_HIGH_BER);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        EXPECT_EQ(port.m_oper_error_status, SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT);
+        EXPECT_EQ(error_status_queries, 2u);
+
+        // A notification after port removal is ignored before any SAI query.
+        const auto removed_port_id = port.m_port_id;
+        query_status = SAI_STATUS_SUCCESS;
+        cleanupPorts(gPortsOrch);
+        const auto queries_after_removal = oper_status_queries;
+        sendNotification(removed_port_id, SAI_PORT_OPER_STATUS_DOWN);
+        EXPECT_EQ(oper_status_queries, queries_after_removal);
+
+        sai_port_api = orig_port_api;
     }
 
    /*
