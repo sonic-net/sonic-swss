@@ -1031,6 +1031,11 @@ namespace teammgr_ut
         swss::Table mp(m_state_db.get(), STATE_MACSEC_PORT_TABLE_NAME);
         mp.set("Ethernet2", { { "state", "ok" } });
         mockEnslavedPorts.insert("Ethernet2");
+        // Ethernet2 was enslaved without an event, so its gate is unknown.
+        // Take its one-time push now.
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet2", 0), SET_COMMAND, { { "state", "ok" } });
+        ASSERT_TRUE(findCommandWith({"PortChannel126", "ports.Ethernet2.runner.macsec_gate", "true"}));
         mockCallArgs.clear();
 
         // Close Ethernet1's gate.
@@ -1138,7 +1143,14 @@ namespace teammgr_ut
         teammgr.doTask();
         EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
 
+        // A new MACsec event resets the budget. The SA is still absent, so the
+        // gate is still closed and the false push goes through this time.
         failMacsecGatePush = false;
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 1), DEL_COMMAND, {});
+        EXPECT_TRUE(findCommandWith({"PortChannel134", "ports.Ethernet1.runner.macsec_gate", "false"}));
+
+        mockCallArgs.clear();
         pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
                 saKey("Ethernet1", 1), SET_COMMAND, { { "state", "ok" } });
         EXPECT_TRUE(findCommandWith({"PortChannel134", "ports.Ethernet1.runner.macsec_gate", "true"}));
