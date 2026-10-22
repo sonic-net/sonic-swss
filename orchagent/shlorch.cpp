@@ -54,9 +54,11 @@ long unsigned int ShlOrch::getVtepsListCount()
 }
 
 /*
- * The isolation group is per bridge port, but the table is keyed per vlan and port, so
- * a port can be asked for the same vtep by several vlans. A vtep's reference is taken
- * only once its member is programmed; the vteps that fail are returned in failed.
+ * Adds the port to the isolation group of each vtep in vteps, for one vlan. Membership is
+ * per port and vtep, but the table is keyed per vlan and port, so several vlans on the
+ * port can ask for the same vtep. m_vtep_refs counts those vlans: the port is added when
+ * the first vlan asks, and the count is taken only once the add succeeds. The vteps whose
+ * add fails are returned in failed.
  */
 shl_isolation_group_status_t
 ShlOrch::acquireVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
@@ -99,8 +101,10 @@ ShlOrch::acquireVtepRefs(const string &ifname, const vector<string> &vteps, Port
 }
 
 /*
- * A vtep's reference is dropped only once no vlan on the port needs it and its member is
- * removed; the vteps whose removal fails keep their reference and are returned in failed.
+ * Releases one vlan's vtep references on the port. The port is removed from a vtep's
+ * isolation group only when the last vlan that needs the vtep releases it, and that
+ * reference is dropped only once the removal succeeds. The vteps whose removal fails
+ * keep their reference and are returned in failed.
  */
 shl_isolation_group_status_t
 ShlOrch::releaseVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
@@ -199,6 +203,7 @@ ShlOrch::doShlTblTask(Consumer &consumer)
         }
 
         string ifname(keys[1]);
+        /* The whole key, <VLAN_name>:<Ifname>, so each vlan on the port has its own entry. */
         string shl_key(kfvKey(t));
 
         if (op == SET_COMMAND)
