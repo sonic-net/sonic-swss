@@ -287,6 +287,7 @@ namespace intfmgr_ut
         intfmgr.setSagFdbEntry("update", "Vlan100", "02:03:04:05:06:07");
         intfmgr.setSagFdbEntry("replace", "Ethernet0", "02:03:04:05:06:07");
         intfmgr.setSagFdbEntry("replace", "VlanABC", "02:03:04:05:06:07");
+        intfmgr.setSagFdbEntry("replace", "Vlan100", "invalid-mac");
         intfmgr.setSagFdbEntry("replace", "Vlan100", gMacAddress.to_string());
         EXPECT_TRUE(mockCallArgs.empty());
 
@@ -313,10 +314,14 @@ namespace intfmgr_ut
         });
 
         mockCallArgs.clear();
+        intfmgr.updateSagMac("invalid-mac");
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_EQ(gSagMacAddress.to_string(), "00:aa:bb:cc:dd:ee");
+
         intfmgr.updateSagMac("02:03:04:05:06:07");
 
         EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" down"));
-        EXPECT_TRUE(commandWasIssued("/sbin/ip link set Vlan100 address 02:03:04:05:06:07"));
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" address \"02:03:04:05:06:07\""));
         EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" up"));
         EXPECT_TRUE(commandWasIssued("bridge fdb del 00:aa:bb:cc:dd:ee dev Bridge vlan 100 permanent"));
         EXPECT_TRUE(commandWasIssued("bridge fdb replace 02:03:04:05:06:07 dev Bridge vlan 100 permanent"));
@@ -341,15 +346,20 @@ namespace intfmgr_ut
         });
 
         const std::vector<std::string> keys = {"GLOBAL"};
+        swss::Table appSagTable(m_app_db.get(), APP_SAG_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
         mockCallArgs.clear();
         intfmgr.doSagTask(keys, {}, SET_COMMAND);
         EXPECT_TRUE(mockCallArgs.empty());
 
+        intfmgr.doSagTask(keys, {{"gateway_mac", "invalid-mac"}}, SET_COMMAND);
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_EQ(gSagMacAddress.to_string(), "00:00:00:00:00:00");
+        EXPECT_FALSE(appSagTable.get("GLOBAL", values));
+
         intfmgr.doSagTask(keys, {{"gateway_mac", "02:03:04:05:06:07"}}, SET_COMMAND);
         EXPECT_TRUE(commandWasIssued("bridge fdb replace 02:03:04:05:06:07 dev Bridge vlan 100 permanent"));
 
-        swss::Table appSagTable(m_app_db.get(), APP_SAG_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
         ASSERT_TRUE(appSagTable.get("GLOBAL", values));
         std::string mac;
         ASSERT_TRUE(getFieldValue(values, "gateway_mac", mac));
@@ -357,7 +367,7 @@ namespace intfmgr_ut
 
         mockCallArgs.clear();
         intfmgr.doSagTask(keys, {}, DEL_COMMAND);
-        EXPECT_TRUE(commandWasIssued("/sbin/ip link set Vlan100 address 00:11:22:33:44:55"));
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" address \"00:11:22:33:44:55\""));
         EXPECT_TRUE(commandWasIssued("bridge fdb del 02:03:04:05:06:07 dev Bridge vlan 100 permanent"));
         EXPECT_FALSE(commandWasIssued("bridge fdb replace 00:11:22:33:44:55"));
         EXPECT_FALSE(appSagTable.get("GLOBAL", values));
@@ -373,18 +383,27 @@ namespace intfmgr_ut
 
         intfmgr.m_stateVlanTable.set("Vlan100", {{"state", "ok"}}, "SET", "");
         intfmgr.m_stateVlanTable.set("Vlan200", {{"state", "ok"}}, "SET", "");
+        intfmgr.m_cfgSagTable.set("GLOBAL", {{"gateway_mac", "invalid-mac"}});
+        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+
+        mockCallArgs.clear();
+        EXPECT_FALSE(intfmgr.doIntfGeneralTask({"Vlan100"}, {{"static_anycast_gateway", "true"}}, SET_COMMAND));
+        EXPECT_FALSE(commandWasIssued(" address "));
+        EXPECT_FALSE(commandWasIssued("bridge fdb"));
+        EXPECT_EQ(intfmgr.m_sagIntfList.count("Vlan100"), 0u);
+        EXPECT_FALSE(appIntfTable.get("Vlan100", values));
+
         intfmgr.m_cfgSagTable.set("GLOBAL", {{"gateway_mac", "02:03:04:05:06:07"}});
 
         mockCallArgs.clear();
         EXPECT_TRUE(intfmgr.doIntfGeneralTask({"Vlan100"}, {{"static_anycast_gateway", "true"}}, SET_COMMAND));
         EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" down"));
-        EXPECT_TRUE(commandWasIssued("/sbin/ip link set Vlan100 address 02:03:04:05:06:07"));
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" address \"02:03:04:05:06:07\""));
         EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" up"));
         EXPECT_TRUE(commandWasIssued("bridge fdb replace 02:03:04:05:06:07 dev Bridge vlan 100 permanent"));
         EXPECT_TRUE(intfmgr.m_sagIntfList.at("Vlan100"));
 
-        swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::vector<swss::FieldValueTuple> values;
         ASSERT_TRUE(appIntfTable.get("Vlan100", values));
         std::string mac;
         ASSERT_TRUE(getFieldValue(values, "mac_addr", mac));
@@ -393,13 +412,13 @@ namespace intfmgr_ut
         mockCallArgs.clear();
         EXPECT_TRUE(intfmgr.doIntfGeneralTask({"Vlan100"}, {}, DEL_COMMAND));
         EXPECT_TRUE(commandWasIssued("bridge fdb del 00:aa:bb:cc:dd:ee dev Bridge vlan 100 permanent"));
-        EXPECT_TRUE(commandWasIssued("/sbin/ip link set Vlan100 address 00:11:22:33:44:55"));
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan100\" address \"00:11:22:33:44:55\""));
         EXPECT_EQ(intfmgr.m_sagIntfList.count("Vlan100"), 0u);
 
         mockCallArgs.clear();
         EXPECT_TRUE(intfmgr.doIntfGeneralTask({"Vlan200"}, {{"static_anycast_gateway", "false"}}, SET_COMMAND));
         EXPECT_TRUE(commandWasIssued("bridge fdb del 00:aa:bb:cc:dd:ee dev Bridge vlan 200 permanent"));
-        EXPECT_TRUE(commandWasIssued("/sbin/ip link set Vlan200 address 00:11:22:33:44:55"));
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Vlan200\" address \"00:11:22:33:44:55\""));
         ASSERT_TRUE(appIntfTable.get("Vlan200", values));
         ASSERT_TRUE(getFieldValue(values, "mac_addr", mac));
         EXPECT_EQ(mac, swss::MacAddress().to_string());

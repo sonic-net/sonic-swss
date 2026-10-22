@@ -148,7 +148,16 @@ void IntfMgr::setSagFdbEntry(const string &op, const string &alias, const string
         return;
     }
 
-    if (mac_str == gMacAddress.to_string())
+    uint8_t mac_bin[ETHER_ADDR_LEN];
+    if (!MacAddress::parseMacString(mac_str, mac_bin))
+    {
+        SWSS_LOG_ERROR("Invalid SAG MAC '%s' for %s on %s",
+                       mac_str.c_str(), op.c_str(), alias.c_str());
+        return;
+    }
+    string canonical_mac = MacAddress(mac_bin).to_string();
+
+    if (canonical_mac == gMacAddress.to_string())
     {
         // Don't add or del for global system MAC address
         return;
@@ -169,7 +178,7 @@ void IntfMgr::setSagFdbEntry(const string &op, const string &alias, const string
         }
 
         // cmd format: bridge fdb add 00:11:22:33:44:55 dev Bridge vlan 3 permanent
-        cmd << "bridge fdb " << op << " " << mac_str << " dev Bridge vlan " << vlan_id << " permanent";
+        cmd << "bridge fdb " << op << " " << canonical_mac << " dev Bridge vlan " << vlan_id << " permanent";
 
         int ret = swss::exec(cmd.str(), res);
         if (ret)
@@ -184,7 +193,7 @@ void IntfMgr::setIntfMac(const string &alias, const string &mac_str)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link set " << alias << " address " << mac_str;
+    cmd << IP_CMD << " link set " << shellquote(alias) << " address " << shellquote(mac_str);
 
     int ret = swss::exec(cmd.str(), res);
     if (ret)
@@ -1100,15 +1109,23 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                         // before change interface MAC, set interface down and up to regenerate IPv6 LL by MAC
                         if (sag == "true")
                         {
+                            uint8_t gwmac_bin[ETHER_ADDR_LEN];
+                            if (!MacAddress::parseMacString(gwmac, gwmac_bin))
+                            {
+                                SWSS_LOG_ERROR("Invalid SAG gateway_mac, deferring enable");
+                                return false;
+                            }
+                            string canonical_gwmac = MacAddress(gwmac_bin).to_string();
+
                             m_sagIntfList[alias] = true;
 
                             setIntfState(alias, false);
-                            setIntfMac(alias, gwmac);
+                            setIntfMac(alias, canonical_gwmac);
                             setIntfState(alias, true);
                             // add this MAC fdb into bridge
-                            setSagFdbEntry("replace", alias, gwmac);
+                            setSagFdbEntry("replace", alias, canonical_gwmac);
 
-                            FieldValueTuple fvTuple("mac_addr", gwmac);
+                            FieldValueTuple fvTuple("mac_addr", canonical_gwmac);
                             data.push_back(fvTuple);
                         }
                         else if (sag == "false")
@@ -1328,11 +1345,20 @@ void IntfMgr::doSagTask(const vector<string>& keys,
             SWSS_LOG_ERROR("gateway_mac field is missing in SAG configuration");
             return;
         }
-        FieldValueTuple gwmac("gateway_mac", MacAddress(mac).to_string());
+
+        uint8_t mac_bin[ETHER_ADDR_LEN];
+        if (!MacAddress::parseMacString(mac, mac_bin))
+        {
+            SWSS_LOG_ERROR("Invalid gateway_mac in SAG configuration");
+            return;
+        }
+        string canonical_mac = MacAddress(mac_bin).to_string();
+
+        FieldValueTuple gwmac("gateway_mac", canonical_mac);
         fvAppSag.push_back(gwmac);
         m_appSagTableProducer.set("GLOBAL", fvAppSag);
 
-        updateSagMac(mac);
+        updateSagMac(canonical_mac);
     }
     else if (op == DEL_COMMAND)
     {
@@ -1456,6 +1482,15 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
 
 void IntfMgr::updateSagMac(const std::string &macAddr)
 {
+    uint8_t mac_bin[ETHER_ADDR_LEN];
+    if (!MacAddress::parseMacString(macAddr, mac_bin))
+    {
+        SWSS_LOG_ERROR("Invalid SAG MAC update");
+        return;
+    }
+    const MacAddress parsed_mac(mac_bin);
+    const string canonical_mac = parsed_mac.to_string();
+
     vector<string> keys;
     m_cfgVlanIntfTable.getKeys(keys);
     for (auto &key: keys)
@@ -1478,17 +1513,17 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
         {
             if (value == "true")
             {
-                SWSS_LOG_NOTICE("set %s mac address to %s", key.c_str(), macAddr.c_str());
+                SWSS_LOG_NOTICE("set %s mac address to %s", key.c_str(), canonical_mac.c_str());
 
                 // enable SAG, set device down and up to regenerate IPv6 LL by MAC
                 setIntfState(key, false);
-                setIntfMac(key, macAddr);
+                setIntfMac(key, canonical_mac);
                 setIntfState(key, true);
 
                 // remove the previous sag MAC fdb from bridge
                 setSagFdbEntry("del", key, gSagMacAddress.to_string());
                 // add this new MAC fdb into bridge, the "replace" could cover both "add" and "replace" cases.
-                setSagFdbEntry("replace", key, macAddr);
+                setSagFdbEntry("replace", key, canonical_mac);
 
                 vector<FieldValueTuple> vlanIntFv;
 
@@ -1497,9 +1532,9 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
 
                 // keep consistent with default MAC 00:00:00:00:00:00
                 string entryMac = MacAddress().to_string();
-                if (macAddr != gMacAddress.to_string())
+                if (canonical_mac != gMacAddress.to_string())
                 {
-                    entryMac = macAddr;
+                    entryMac = canonical_mac;
                 }
 
                 FieldValueTuple fvTuple("mac_addr", entryMac);
@@ -1510,7 +1545,7 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
             SWSS_LOG_INFO("can't get %s in VLAN_INTERFACE table", key.c_str());
         }
     }
-    gSagMacAddress = MacAddress(macAddr);
+    gSagMacAddress = parsed_mac;
 }
 
 bool IntfMgr::enableIpv6Flag(const string &alias)
