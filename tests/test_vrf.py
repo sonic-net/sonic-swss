@@ -12,6 +12,7 @@ class TestVrf(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
     def create_entry(self, tbl, key, pairs):
         fvs = swsscommon.FieldValuePairs(pairs)
@@ -215,6 +216,17 @@ class TestVrf(object):
             }
         )
         self.vrf_remove(dvs, "Vrf1", state)
+
+    def test_VRFMgr_RejectsInvalidName(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        invalid_name = "Vrf;invalid"
+        self.create_entry_tbl(self.cdb, "VRF", invalid_name, [("empty", "empty")])
+
+        assert invalid_name not in self.entries(self.pdb, "VRF_TABLE")
+        assert invalid_name not in self.entries(self.sdb, "VRF_TABLE")
+
+        self.delete_entry_tbl(self.cdb, "VRF", invalid_name)
 
     def test_VRFMgr_Update(self, dvs, testlog):
         self.setup_db(dvs)
