@@ -71,6 +71,10 @@ upstream:
     scopes: [build]
     cascade_optional: false
     result_filter: [succeeded]
+    apt_fix_broken: false
+    dpkg_args: ["--force-depends"]
+    install_env:
+      DEBIAN_FRONTEND: noninteractive
     artifact_name:
       - { when: { arch: amd64 },          value: 'sonic-stp' }
       - { when: { arch: { not: amd64 } }, value: 'sonic-stp.{arch}' }
