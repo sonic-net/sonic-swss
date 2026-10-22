@@ -1,4 +1,7 @@
 #include <string.h>
+#include <arpa/inet.h>
+#include <algorithm>
+#include <cctype>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -11,6 +14,7 @@
 #include "warm_restart.h"
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
+#include "interface.h"
 #include "subintf.h"
 
 using namespace std;
@@ -29,6 +33,53 @@ using namespace swss;
 #define DEFAULT_MTU_STR 9100
 extern MacAddress gMacAddress;
 extern MacAddress gSagMacAddress;
+
+namespace
+{
+
+bool isStrictIpPrefix(const string &prefix)
+{
+    const auto separator = prefix.find('/');
+    if (separator == string::npos || separator == 0 ||
+        separator == prefix.size() - 1 ||
+        prefix.find('/', separator + 1) != string::npos)
+    {
+        return false;
+    }
+
+    const string address = prefix.substr(0, separator);
+    const string length = prefix.substr(separator + 1);
+    if (!all_of(length.begin(), length.end(), [](unsigned char c) { return isdigit(c); }))
+    {
+        return false;
+    }
+
+    unsigned int maxLength;
+    struct in6_addr addressBuffer;
+    if (inet_pton(AF_INET, address.c_str(), &addressBuffer) == 1)
+    {
+        maxLength = 32;
+    }
+    else if (inet_pton(AF_INET6, address.c_str(), &addressBuffer) == 1)
+    {
+        maxLength = 128;
+    }
+    else
+    {
+        return false;
+    }
+
+    try
+    {
+        return stoul(length) <= maxLength;
+    }
+    catch (const exception &)
+    {
+        return false;
+    }
+}
+
+}
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -266,7 +317,7 @@ void IntfMgr::addLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy";
+    cmd << IP_CMD << " link add " << shellquote(alias) << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy";
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -279,7 +330,7 @@ void IntfMgr::delLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link del " << alias;
+    cmd << IP_CMD << " link del " << shellquote(alias);
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -784,24 +835,30 @@ void IntfMgr::delIpv6LinkLocalNeigh(const string &alias)
     SWSS_LOG_INFO("Deleting ipv6 link local neighbors for %s", alias.c_str());
 
     m_neighTable.getKeys(neighEntries);
-    for (auto neighKey : neighEntries)
+    for (const auto &neighKey : neighEntries)
     {
-        if (!neighKey.compare(0, alias.size(), alias.c_str()))
+        vector<string> keys = tokenize(neighKey, ':', 1);
+        if (keys.size() != 2 || keys[0] != alias)
         {
-            vector<string> keys = tokenize(neighKey, ':', 1);
-            if (keys.size() == 2)
-            {
-                IpAddress ipAddress(keys[1]);
-                if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
-                {
-                    stringstream cmd;
-                    string res;
+            continue;
+        }
 
-                    cmd << IP_CMD << " neigh del dev " << keys[0] << " " << keys[1] ;
-                    swss::exec(cmd.str(), res);
-                    SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
-                }
+        try
+        {
+            IpAddress ipAddress(keys[1]);
+            if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+            {
+                stringstream cmd;
+                string res;
+
+                cmd << IP_CMD << " neigh del dev " << shellquote(alias) << " " << shellquote(ipAddress.to_string());
+                swss::exec(cmd.str(), res);
+                SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", ipAddress.to_string().c_str());
             }
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid neighbor address for interface %s: %s", alias.c_str(), e.what());
         }
     }
 }
@@ -813,6 +870,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     SWSS_LOG_ENTER();
 
     string alias(keys[0]);
+
+    if (!swss::isInterfaceNameValid(alias))
+    {
+        SWSS_LOG_ERROR("Invalid interface name in table key, skipping entry");
+        return true;
+    }
+
     string vlanId;
     string parentAlias;
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
@@ -1235,7 +1299,28 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     SWSS_LOG_ENTER();
 
     string alias(keys[0]);
-    IpPrefix ip_prefix(keys[1]);
+    if (!swss::isInterfaceNameValid(alias))
+    {
+        SWSS_LOG_ERROR("Invalid interface name in table key, skipping entry");
+        return true;
+    }
+
+    IpPrefix ip_prefix;
+    if (!isStrictIpPrefix(keys[1]))
+    {
+        SWSS_LOG_ERROR("Invalid interface prefix for %s: %s", alias.c_str(), keys[1].c_str());
+        return true;
+    }
+
+    try
+    {
+        ip_prefix = IpPrefix(keys[1]);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Invalid interface prefix for %s: %s", alias.c_str(), e.what());
+        return true;
+    }
     string appKey = keys[0] + ":" + keys[1];
 
     if (op == SET_COMMAND)
