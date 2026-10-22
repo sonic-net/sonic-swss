@@ -51,6 +51,55 @@ namespace evpnmhorch_test
             sai_vlan_api = org_sai_vlan_api;
         }
 
+        sai_bridge_api_t ut_sai_bridge_api;
+        sai_bridge_api_t *org_sai_bridge_api = nullptr;
+
+        void _hook_sai_bridge_api()
+        {
+            ut_sai_bridge_api = *sai_bridge_api;
+            org_sai_bridge_api = sai_bridge_api;
+            sai_bridge_api = &ut_sai_bridge_api;
+        }
+
+        void _unhook_sai_bridge_api()
+        {
+            sai_bridge_api = org_sai_bridge_api;
+        }
+
+        /* Check in the SAI that the port has a bridge port and exactly one member in the VLAN. */
+        void CheckBridgePortAndVlanMember(const string &port_alias, const string &vlan_alias)
+        {
+            Port port, vlan;
+            ASSERT_TRUE(gPortsOrch->getPort(port_alias, port));
+            ASSERT_TRUE(gPortsOrch->getPort(vlan_alias, vlan));
+            ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            ASSERT_EQ(vlan.m_members.count(port_alias), 1u);
+
+            sai_attribute_t attr;
+            attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+            ASSERT_EQ(sai_bridge_api->get_bridge_port_attribute(port.m_bridge_port_id, 1, &attr), SAI_STATUS_SUCCESS);
+            ASSERT_EQ(attr.value.oid, port.m_port_id);
+
+            vector<sai_object_id_t> members(16);
+            attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
+            attr.value.objlist.count = (uint32_t)members.size();
+            attr.value.objlist.list = members.data();
+            ASSERT_EQ(sai_vlan_api->get_vlan_attribute(vlan.m_vlan_info.vlan_oid, 1, &attr), SAI_STATUS_SUCCESS);
+
+            uint32_t found = 0;
+            for (uint32_t i = 0; i < attr.value.objlist.count; i++)
+            {
+                sai_attribute_t member_attr;
+                member_attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
+                ASSERT_EQ(sai_vlan_api->get_vlan_member_attribute(members[i], 1, &member_attr), SAI_STATUS_SUCCESS);
+                if (member_attr.value.oid == port.m_bridge_port_id)
+                {
+                    found++;
+                }
+            }
+            ASSERT_EQ(found, 1u);
+        }
+
         EvpnMhOrchTest()
         {
         }
@@ -434,7 +483,7 @@ namespace evpnmhorch_test
             return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
         });
 
-        auto vlanMemberAttrSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        auto vlanMemberAttrSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->set_vlan_member_attribute);
         vlanMemberAttrSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
             // TODO: Use the correct attribute once its available in SAI
             if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
@@ -469,6 +518,162 @@ namespace evpnmhorch_test
         ASSERT_EQ(df_attr_received, SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP);
         ASSERT_EQ(df_attr_value, gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
 
+        _unhook_sai_vlan_api();
+    }
+
+    TEST_F(EvpnMhOrchTest, ESDfAttrUnsupported)
+    {
+        /* A SAI that implements neither DF attribute still gets the ES port's bridge port and
+         * VLAN member. The attributes are rejected in a create too, where they used to be. */
+        _hook_sai_vlan_api();
+        _hook_sai_bridge_api();
+
+        Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+        evpnEsIntfTable.set(TEST_INTERFACE_1, { { "df_pref", "32767" },
+                                                { "esi", "AUTO" },
+                                                { "type", "TYPE_3_MAC_BASED" } });
+        gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        uint32_t bp_df_sets = 0;
+        uint32_t vm_df_sets = 0;
+
+        auto bpCreateSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->create_bridge_port);
+        bpCreateSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (attrs[i].id == SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING)
+                {
+                    /* SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 offset by the attribute index */
+                    return static_cast<sai_status_t>(SAI_STATUS_CODE(0x00030000L + i));
+                }
+            }
+            return org_sai_bridge_api->create_bridge_port(oid, swoid, count, attrs);
+        });
+        auto bpSetSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->set_bridge_port_attribute);
+        bpSetSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING)
+            {
+                bp_df_sets++;
+                return SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
+            }
+            return org_sai_bridge_api->set_bridge_port_attribute(oid, attr);
+        });
+        auto vmCreateSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
+        vmCreateSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (attrs[i].id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+                {
+                    return static_cast<sai_status_t>(SAI_STATUS_CODE(0x00030000L + i));
+                }
+            }
+            return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
+        });
+        auto vmSetSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->set_vlan_member_attribute);
+        vmSetSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP)
+            {
+                vm_df_sets++;
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+
+        ApplyDualTorConfigsForSingleVlan();
+
+        ASSERT_NO_FATAL_FAILURE(CheckBridgePortAndVlanMember(TEST_INTERFACE_1, VLAN_NAME_1));
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME));
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        /* Both DF roles were requested by a set, and rejected. */
+        ASSERT_EQ(bp_df_sets, 1u);
+        ASSERT_EQ(vm_df_sets, 1u);
+
+        _unhook_sai_bridge_api();
+        _unhook_sai_vlan_api();
+    }
+
+    TEST_F(EvpnMhOrchTest, ESDfAttrSetRetry)
+    {
+        /* A retryable status from a DF set removes the object just created, so the next pass
+         * creates it again rather than a second one. */
+        _hook_sai_vlan_api();
+        _hook_sai_bridge_api();
+
+        Table evpnEsIntfTable = Table(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+        evpnEsIntfTable.set(TEST_INTERFACE_1, { { "df_pref", "32767" },
+                                                { "esi", "AUTO" },
+                                                { "type", "TYPE_3_MAC_BASED" } });
+        gEvpnMhOrch->addExistingData(&evpnEsIntfTable);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        uint32_t bp_creates = 0, bp_removes = 0, bp_df_sets = 0;
+        uint32_t vm_creates = 0, vm_removes = 0, vm_df_sets = 0;
+
+        auto bpCreateSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->create_bridge_port);
+        bpCreateSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
+            bp_creates++;
+            return org_sai_bridge_api->create_bridge_port(oid, swoid, count, attrs);
+        });
+        auto bpRemoveSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->remove_bridge_port);
+        bpRemoveSpy->callFake([&](sai_object_id_t oid) -> sai_status_t {
+            bp_removes++;
+            return org_sai_bridge_api->remove_bridge_port(oid);
+        });
+        auto bpSetSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->set_bridge_port_attribute);
+        bpSetSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING && bp_df_sets++ == 0)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+            return org_sai_bridge_api->set_bridge_port_attribute(oid, attr);
+        });
+        auto vmCreateSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->create_vlan_member);
+        vmCreateSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t *attrs) -> sai_status_t {
+            vm_creates++;
+            return org_sai_vlan_api->create_vlan_member(oid, swoid, count, attrs);
+        });
+        auto vmRemoveSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->remove_vlan_member);
+        vmRemoveSpy->callFake([&](sai_object_id_t oid) -> sai_status_t {
+            vm_removes++;
+            return org_sai_vlan_api->remove_vlan_member(oid);
+        });
+        auto vmSetSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->set_vlan_member_attribute);
+        vmSetSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP && vm_df_sets++ == 0)
+            {
+                return SAI_STATUS_TABLE_FULL;
+            }
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME));
+
+        /* Pass 1: the bridge port DF set asks for a retry, so the bridge port is removed. */
+        ApplyDualTorConfigsForSingleVlan();
+        ASSERT_EQ(bp_creates, 1u);
+        ASSERT_EQ(bp_removes, 1u);
+        ASSERT_EQ(vm_creates, 0u);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        /* Pass 2: the bridge port is created again and kept; the VLAN member DF set asks
+         * for a retry, so the member is removed. */
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(bp_creates, 2u);
+        ASSERT_EQ(bp_removes, 1u);
+        ASSERT_EQ(vm_creates, 1u);
+        ASSERT_EQ(vm_removes, 1u);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        /* Pass 3: the VLAN member is created again and kept. */
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(bp_creates, 2u);
+        ASSERT_EQ(vm_creates, 2u);
+        ASSERT_EQ(vm_removes, 1u);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_NO_FATAL_FAILURE(CheckBridgePortAndVlanMember(TEST_INTERFACE_1, VLAN_NAME_1));
+
+        _unhook_sai_bridge_api();
         _unhook_sai_vlan_api();
     }
 }

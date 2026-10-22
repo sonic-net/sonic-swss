@@ -489,6 +489,13 @@ static bool isValidPortTypeForLagMember(const Port& port)
     return (port.m_type == Port::Type::PHY || port.m_type == Port::Type::SYSTEM);
 }
 
+/* The DF role attributes are optional: a platform may implement neither. */
+static bool isDfAttrUnsupported(sai_status_t status)
+{
+    return status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+           SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status);
+}
+
 // Generic helper function to extract serdes attributes from any serdes instance
 static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfig::serdes) &serdes)
 {
@@ -7475,8 +7482,7 @@ bool PortsOrch::addBridgePort(Port &port)
         df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
 
         sai_status_t df_status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &df_attr);
-        if (df_status == SAI_STATUS_NOT_SUPPORTED || df_status == SAI_STATUS_NOT_IMPLEMENTED ||
-            SAI_STATUS_IS_ATTR_NOT_SUPPORTED(df_status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(df_status))
+        if (isDfAttrUnsupported(df_status))
         {
             SWSS_LOG_WARN("Bridge port %s: DF role attribute unavailable on this platform, "
                           "non-DF BUM suppression not applied", port.m_alias.c_str());
@@ -7485,6 +7491,19 @@ bool PortsOrch::addBridgePort(Port &port)
         {
             SWSS_LOG_ERROR("Bridge port %s: failed to set DF role, rv:%d",
                            port.m_alias.c_str(), df_status);
+            /* On a retryable status, remove the bridge port so the retry creates it and sets
+             * the role again; otherwise keep it, as a port without its DF role still forwards. */
+            if (handleSaiSetStatus(SAI_API_BRIDGE, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+                    return false;
+                }
+                SWSS_LOG_ERROR("Bridge port %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), rm_status);
+            }
         }
     }
 
@@ -7770,7 +7789,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 
-    sai_object_id_t vlan_member_id;
+    sai_object_id_t vlan_member_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7783,16 +7802,17 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         }
     }
 
-    /* Set after create, for the same reason as the bridge port DF role above. */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+    /* Set after create, for the same reason as the bridge port DF role above, and only on a
+     * member this call created. */
+    if (status == SAI_STATUS_SUCCESS && gEvpnMhOrch &&
+        gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
         /* TODO: Use proper attribute once its available in SAI */
         sai_attribute_t df_attr;
         df_attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
         df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
 
         sai_status_t df_status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &df_attr);
-        if (df_status == SAI_STATUS_NOT_SUPPORTED || df_status == SAI_STATUS_NOT_IMPLEMENTED ||
-            SAI_STATUS_IS_ATTR_NOT_SUPPORTED(df_status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(df_status))
+        if (isDfAttrUnsupported(df_status))
         {
             SWSS_LOG_WARN("VLAN member %s on %s: DF role attribute unavailable on this platform, "
                           "non-DF BUM suppression not applied", port.m_alias.c_str(), vlan.m_alias.c_str());
@@ -7801,6 +7821,18 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         {
             SWSS_LOG_ERROR("VLAN member %s on %s: failed to set DF role, rv:%d",
                            port.m_alias.c_str(), vlan.m_alias.c_str(), df_status);
+            /* As for the bridge port: remove the member on a retryable status so the retry
+             * creates it again, and keep it otherwise. */
+            if (handleSaiSetStatus(SAI_API_VLAN, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_vlan_api->remove_vlan_member(vlan_member_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    return false;
+                }
+                SWSS_LOG_ERROR("VLAN member %s on %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), vlan.m_alias.c_str(), rm_status);
+            }
         }
     }
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
