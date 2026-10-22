@@ -33,9 +33,13 @@
 #define MIRROR_SESSION_TYPE                 "type"
 #define MIRROR_SESSION_SAMPLE_RATE          "sample_rate"
 #define MIRROR_SESSION_TRUNCATE_SIZE        "truncate_size"
+#define MIRROR_SESSION_UDP_DST_PORT         "udp_dst_port"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
+#define MIRROR_SESSION_SFLOW_UDP_SRC_PORT 6343
+#define MIRROR_SESSION_SFLOW_UDP_DST_PORT 6343
+
 #define MIRROR_SESSION_IP_HDR_VER_4     4
 #define MIRROR_SESSION_IP_HDR_VER_6     6
 #define MIRROR_SESSION_DSCP_SHIFT       2
@@ -57,6 +61,15 @@ extern string           gMySwitchType;
 
 using namespace std::rel_ops;
 
+static bool isSaiConfigRejection(sai_status_t status)
+{
+    return status == SAI_STATUS_INVALID_PARAMETER ||
+           status == SAI_STATUS_NOT_SUPPORTED ||
+           SAI_STATUS_IS_INVALID_ATTR_VALUE(status) ||
+           SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+           SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status);
+}
+
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
         dscp(8),
@@ -64,6 +77,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
         queue(0),
         sample_rate(0),
         truncate_size(0),
+        udpDstPort(MIRROR_SESSION_SFLOW_UDP_DST_PORT),
         samplepacketId(SAI_NULL_OBJECT_ID),
         sessionId(0),
         refCount(0)
@@ -397,6 +411,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 
     bool src_ip_initialized = false;
     bool dst_ip_initialized = false;
+    bool gre_type_initialized = false;
 
     string platform = getenv("platform") ? getenv("platform") : "";
     MirrorEntry entry(platform);
@@ -417,6 +432,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
             {
                 entry.greType = to_uint<uint16_t>(fvValue(i));
+                gre_type_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_DSCP)
             {
@@ -497,6 +513,10 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                     return task_process_status::task_invalid_entry;
                 }
             }
+            else if (fvField(i) == MIRROR_SESSION_UDP_DST_PORT)
+            {
+                entry.udpDstPort = to_uint<uint16_t>(fvValue(i));
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
@@ -519,6 +539,44 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     {
         SWSS_LOG_ERROR("Address family of source and destination IPs is different");
         return task_process_status::task_invalid_entry;
+    }
+
+    if (entry.type == MIRROR_SESSION_SFLOW)
+    {
+        if (!m_switchOrch->isMirrorSessionSflowCapable())
+        {
+            SWSS_LOG_ERROR("SFLOW mirror session type not reported by SAI, rejecting session %s",
+                           key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (!src_ip_initialized || !dst_ip_initialized)
+        {
+            SWSS_LOG_ERROR("src_ip and dst_ip are required for SFLOW session %s",
+                           key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (entry.sample_rate == 0)
+        {
+            SWSS_LOG_ERROR("Non-zero sample_rate is required for SFLOW session %s",
+                           key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (!entry.dst_port.empty() || gre_type_initialized)
+        {
+            SWSS_LOG_ERROR("dst_port and gre_type are ERSPAN-only, not allowed for SFLOW session %s",
+                           key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (entry.src_port.empty())
+        {
+            SWSS_LOG_ERROR("src_port is required for SFLOW session %s",
+                           key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
     }
 
     // If a truncate size is configured, without an explicit sample rate,
@@ -562,7 +620,8 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     }
 
     // Platform capability: reject early if samplepacket truncation is not supported
-    if (entry.truncate_size > 0 && !m_switchOrch->isSamplepacketTruncationSupported())
+    if (entry.truncate_size > 0 && entry.type != MIRROR_SESSION_SFLOW &&
+        !m_switchOrch->isSamplepacketTruncationSupported())
     {
         SWSS_LOG_ERROR("Samplepacket truncation not supported on this platform, "
                        "rejecting session %s", key.c_str());
@@ -661,7 +720,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     if (attr.empty() || attr == MIRROR_SESSION_MONITOR_PORT)
     {
         Port port;
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_SFLOW))
         {
              if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
              {
@@ -678,7 +737,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
 
     if (attr.empty() || attr == MIRROR_SESSION_DST_MAC_ADDRESS)
     {
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_SFLOW))
         {
              value = gMacAddress.to_string();
         } else
@@ -1114,12 +1173,15 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
         attrs.push_back(attr);
 
+        const bool sflow = session.type == MIRROR_SESSION_SFLOW;
+
         attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-        attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+        attr.value.s32 = sflow ? SAI_MIRROR_SESSION_TYPE_SFLOW : SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
         attrs.push_back(attr);
 
         // Add the VLAN header when the packet is sent out from a VLAN
-        if (session.neighborInfo.port.m_type == Port::VLAN)
+        // (SAI allows the VLAN header attributes only on ENHANCED_REMOTE)
+        if (!sflow && session.neighborInfo.port.m_type == Port::VLAN)
         {
             attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
             attr.value.booldata = true;
@@ -1142,9 +1204,12 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
             attrs.push_back(attr);
         }
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-        attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-        attrs.push_back(attr);
+        if (!sflow)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+            attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+            attrs.push_back(attr);
+        }
 
         attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
         attr.value.u8 = session.dstIp.isV4() ? MIRROR_SESSION_IP_HDR_VER_4 : MIRROR_SESSION_IP_HDR_VER_6;
@@ -1174,7 +1239,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
         attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
         // Use router mac as mirror dst mac in voq switch.
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || sflow))
         {
              memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
         }
@@ -1184,9 +1249,33 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
         attrs.push_back(attr);
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-        attr.value.u16 = session.greType;
-        attrs.push_back(attr);
+        if (sflow)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT;
+            attr.value.u16 = MIRROR_SESSION_SFLOW_UDP_SRC_PORT;
+            attrs.push_back(attr);
+
+            attr.id = SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT;
+            attr.value.u16 = session.udpDstPort;
+            attrs.push_back(attr);
+
+            attr.id = SAI_MIRROR_SESSION_ATTR_SAMPLE_RATE;
+            attr.value.u32 = session.sample_rate;
+            attrs.push_back(attr);
+
+            if (session.truncate_size > 0)
+            {
+                attr.id = SAI_MIRROR_SESSION_ATTR_TRUNCATE_SIZE;
+                attr.value.u16 = (uint16_t)session.truncate_size;
+                attrs.push_back(attr);
+            }
+        }
+        else
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+            attr.value.u16 = session.greType;
+            attrs.push_back(attr);
+        }
     }
 
     if (!session.policer.empty())
@@ -1209,6 +1298,13 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
+
+        if (session.type == MIRROR_SESSION_SFLOW && isSaiConfigRejection(status))
+        {
+            SWSS_LOG_ERROR("SAI rejected SFLOW session %s config: %s",
+                           name.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
 
         task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status);
         if (handle_status != task_success)
@@ -1318,7 +1414,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_SFLOW))
     {
          memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
     } else
@@ -1456,7 +1552,7 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
     attr_count++;
 
     // Truncation capability already verified in createEntry
-    if (session.truncate_size > 0)
+    if (session.truncate_size > 0 && session.type != MIRROR_SESSION_SFLOW)
     {
         attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
         attrs[attr_count].value.booldata = true;
@@ -1529,7 +1625,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     // Set monitor port to recirc port in voq switch.
-    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_SFLOW))
     {
          if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
          {
