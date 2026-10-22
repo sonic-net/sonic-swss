@@ -58,6 +58,10 @@ public:
 
     bool isIntfRestoreDone();
 
+    void dumpBridgeFdb();
+
+    void dumpL2Nhg();
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
@@ -82,13 +86,18 @@ public:
 
     void processStateMclagRemoteFdb();
 
-    void processCfgEvpnNvo();
+    bool processCfgEvpnNvo();
 
     bool m_reconcileDone = false;
 
     bool m_isEvpnNvoExist = false;
 
 private:
+    void dumpBridgeFdb(struct nl_sock *sock);
+    void dumpL2Nhg(struct nl_sock *sock);
+    void trackKeptEntry(const std::string &tableName, const std::string &key,
+                        const std::vector<FieldValueTuple> &fvVector);
+
     bool m_isFdbProtoSupported = false;
     bool checkFdbProtoSupport();
     static bool parseFdbStateKey(
