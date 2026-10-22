@@ -17,6 +17,8 @@ enum MuxState
     MUX_STATE_INIT,
     MUX_STATE_ACTIVE,
     MUX_STATE_STANDBY,
+    MUX_STATE_ADMIN_ACTIVE,
+    MUX_STATE_ADMIN_STANDBY,
     MUX_STATE_PENDING,
     MUX_STATE_FAILED,
 };
@@ -27,6 +29,7 @@ enum MuxStateChange
     MUX_STATE_INIT_STANDBY,
     MUX_STATE_ACTIVE_STANDBY,
     MUX_STATE_STANDBY_ACTIVE,
+    MUX_STATE_ADMIN_ROLE_CHANGE,
     MUX_STATE_UNKNOWN_STATE
 };
 
@@ -136,7 +139,8 @@ public:
 
     bool isActive() const
     {
-        return (state_ == MuxState::MUX_STATE_ACTIVE);
+        return (state_ == MuxState::MUX_STATE_ACTIVE ||
+                state_ == MuxState::MUX_STATE_ADMIN_ACTIVE);
     }
 
     using handler_pair = pair<MuxStateChange, bool (MuxCable::*)()>;
@@ -179,6 +183,7 @@ private:
     bool stateActive();
     bool stateInitActive();
     bool stateStandby();
+    bool stateAdminRoleChange();
 
     bool aclHandler(sai_object_id_t port, string alias, bool add = true);
     bool nbrHandler(bool enable, bool update_routes = true);
