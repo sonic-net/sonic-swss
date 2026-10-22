@@ -33,6 +33,23 @@ class TestWatermark(object):
     NEW_INTERVAL = 5
     DEFAULT_POLL_INTERVAL = 10
 
+    @pytest.mark.parametrize("interval", ["not-a-number", "0"])
+    def test_invalid_telemetry_interval_does_not_restart_orchagent(self, dvs, interval):
+        config_db = dvs.get_config_db()
+        previous = config_db.get_entry("WATERMARK_TABLE", "TELEMETRY_INTERVAL")
+        rc, original_pid = dvs.runcmd("pgrep -x orchagent")
+        assert rc == 0 and original_pid.strip()
+        try:
+            config_db.create_entry("WATERMARK_TABLE", "TELEMETRY_INTERVAL", {"interval": interval})
+            time.sleep(2)
+            rc, current_pid = dvs.runcmd("pgrep -x orchagent")
+            assert rc == 0 and current_pid.strip() == original_pid.strip()
+        finally:
+            if previous:
+                config_db.update_entry("WATERMARK_TABLE", "TELEMETRY_INTERVAL", previous)
+            else:
+                config_db.delete_entry("WATERMARK_TABLE", "TELEMETRY_INTERVAL")
+
     def setup_dbs(self, dvs):
         self.asic_db = dvs.get_asic_db()
         self.counters_db = dvs.get_counters_db()
