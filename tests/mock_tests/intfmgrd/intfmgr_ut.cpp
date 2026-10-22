@@ -1,15 +1,19 @@
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <set>
+#include <sstream>
 #include <iostream>
 #include <fstream>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include "../mock_table.h"
-#include "warm_restart.h"
+#include "shellcmd.h"
 #include "macaddress.h"
 #define private public
+#include "warm_restart.h"
 #include "intfmgr.h"
 #undef private
 
@@ -55,6 +59,64 @@ static std::string subIntfLine(const std::string &alias, const std::string &pare
            "link/ether 02:03:04:05:06:07\\    vlan protocol 802.1Q id " + vlan + " <REORDER_HDR>\n";
 }
 
+static int runQueryPredicate(const std::string &cmd, const std::string &output, int queryResult)
+{
+    if (const auto path = std::getenv("INTFMGR_QUERY_COMMAND_LOG"))
+        std::ofstream(path, std::ios::app) << cmd << '\n';
+    auto fixture = cmd;
+    const std::string start = "output=$(";
+    const auto end = fixture.find(") || exit 2;");
+    if (fixture.find(start) != 0 || end == std::string::npos)
+        throw std::runtime_error("Unexpected predicate command");
+    // Preserve query record boundaries instead of shellquote's escaped-newline continuation.
+    auto quoted = shellquote(output);
+    for (std::size_t pos = 0; (pos = quoted.find("\\\n", pos)) != std::string::npos; ++pos)
+        quoted.erase(pos, 1);
+    fixture.replace(start.size(), end - start.size(),
+                    "printf '%s' " + quoted + "; exit " + std::to_string(queryResult));
+    const auto status = system(fixture.c_str());
+    return status != -1 && WIFEXITED(status) ? WEXITSTATUS(status) : 2;
+}
+
+static std::string filteredAddressOutput(const std::string &cmd)
+{
+    const swss::IpPrefix selected(quotedArgument(cmd, "to "));
+    std::istringstream input(AddressQueryOutput);
+    std::string line, output;
+    while (std::getline(input, line))
+    {
+        std::istringstream row(line);
+        std::string index, name, family, local, marker, peer;
+        row >> index >> name >> family >> local;
+        try
+        {
+            const bool pointToPoint = local.find('/') == std::string::npos;
+            auto prefix = local;
+            if (pointToPoint)
+            {
+                row >> marker >> peer;
+                if (marker != "peer" || peer.find('/') == std::string::npos)
+                    throw std::invalid_argument("Invalid peer fixture");
+                prefix += "/" + std::to_string(swss::IpPrefix(peer).getMaskLength());
+            }
+            const swss::IpPrefix address(prefix);
+            if (family == (address.isV4() ? "inet" : "inet6"))
+            {
+                if (address.isV4() != selected.isV4() || address.getIp() != selected.getIp())
+                    continue;
+                line.replace(line.find(local), local.size(),
+                             pointToPoint ? address.getIp().to_string() : address.to_string());
+            }
+        }
+        catch (const std::exception &)
+        {
+            // Keep malformed fixtures intact so the real predicate must reject them.
+        }
+        output += line + "\n";
+    }
+    return output;
+}
+
 extern "C" unsigned int __wrap_if_nametoindex(const char *ifname)
 {
     interfaceLookups.push_back(ifname);
@@ -87,24 +149,32 @@ int cb(const std::string &cmd, std::string &stdout){
         MissingSubInterfaces.insert(alias);
         return 0;
     }
-    if (cmd.find("/sbin/ip -d -o link show dev ") == 0)
+    if (cmd.find("output=$(/sbin/ip -d -o link show dev ") == 0)
     {
         auto alias = quotedArgument(cmd, "dev ");
         if (ThrowSubIntfQuery)
             throw std::runtime_error("link query unavailable");
         if (SubIntfQueryResult)
-            return SubIntfQueryResult;
+            return runQueryPredicate(cmd, "", SubIntfQueryResult);
         if (MissingSubInterfaces.count(alias))
-            return 1;
+            return runQueryPredicate(cmd, "", 1);
         if (SubIntfQueryOverrides.count(alias))
         {
             stdout = SubIntfQueryOverrides.at(alias);
-            return 0;
+            return runQueryPredicate(cmd, stdout, 0);
         }
         if (!KernelSubIntfs.count(alias))
-            return 1;
+            return runQueryPredicate(cmd, "", 1);
         stdout = subIntfLine(alias, KernelSubIntfs.at(alias).first, KernelSubIntfs.at(alias).second);
-        return 0;
+        return runQueryPredicate(cmd, stdout, 0);
+    }
+    if (cmd.find("output=$(/sbin/ip -o ") == 0)
+    {
+        if (ThrowAddressQuery)
+            throw std::runtime_error("address query unavailable");
+        const auto alias = quotedArgument(cmd, "dev ");
+        const auto result = MissingSubInterfaces.count(alias) ? 1 : AddressQueryResult;
+        return runQueryPredicate(cmd, result ? AddressQueryOutput : filteredAddressOutput(cmd), result);
     }
     for (const auto &entry : KernelSubIntfs)
     {
@@ -140,12 +210,6 @@ int cb(const std::string &cmd, std::string &stdout){
              cmd.find("/sbin/ip -6 address \"del\"") == 0) {
         return FailAddressDelete ? 2 : 0;
     }
-    else if (cmd.find("/sbin/ip -o ") == 0) {
-        if (ThrowAddressQuery)
-            throw std::runtime_error("address query unavailable");
-        stdout = AddressQueryOutput;
-        return AddressQueryResult;
-    }
     else if (cmd == "/sbin/ip link set \"Ethernet64.10\" \"up\""){
         return 1;
     }
@@ -180,6 +244,7 @@ namespace intfmgr_ut
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
 
             swss::WarmStart::initialize("intfmgrd", "swss");
+            swss::WarmStart::checkWarmStart("intfmgrd", "swss");
 
             std::vector<std::string> tables = {
                 CFG_INTF_TABLE_NAME,
@@ -211,6 +276,34 @@ namespace intfmgr_ut
             ThrowSubIntfQuery = false;
             FailSubIntfMtu = FailSubIntfAdmin = false;
             IntfIpCount = 0;
+        }
+
+        void TearDown() override
+        {
+            swss::Table enable(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+            enable.hset("swss", "enable", "false");
+            // Production checks once per process; isolate its latched flags between test cases.
+            swss::WarmStart::getInstance().m_enabled = false;
+            swss::WarmStart::getInstance().m_systemWarmRebootEnabled = false;
+            EXPECT_FALSE(swss::WarmStart::isWarmStart());
+        }
+
+        void enableWarmStart()
+        {
+            swss::Table enable(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+            enable.hset("swss", "enable", "true");
+            swss::Table state(m_state_db.get(), STATE_WARM_RESTART_TABLE_NAME);
+            state.hset("intfmgrd", "restore_count", "0");
+            swss::WarmStart::checkWarmStart("intfmgrd", "swss");
+            swss::WarmStart::setWarmStartState("intfmgrd", swss::WarmStart::INITIALIZED);
+            ASSERT_TRUE(swss::WarmStart::isWarmStart());
+        }
+
+        swss::WarmStart::WarmStartState warmState()
+        {
+            swss::WarmStart::WarmStartState state;
+            swss::WarmStart::getWarmStartState("intfmgrd", state);
+            return state;
         }
 
         void verifyFailedAddressProgrammingRemainsPending(const std::string &prefix,
@@ -373,6 +466,7 @@ namespace intfmgr_ut
             {"192.0.2.1/31", "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0/31 scope global\n", true},
             {"192.0.2.1/31", "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0/32 scope global\n", false},
             {"2001:db8::1/64", addressLine("2001:0db8:0000:0000:0000:0000:0000:0001/64"), true},
+            {"2001:0db8:0000:0000:0000:0000:0000:0001/64", addressLine("2001:db8::1/64"), true},
             {"2001:db8::1/64", addressLine("2001:db8::1/128"), false},
             {"2001:db8::1/64", addressLine("2001:db8::2/64"), false},
             {"2001:db8::1/64", addressLine("192.0.2.1/31"), false},
@@ -387,9 +481,13 @@ namespace intfmgr_ut
             mockCallArgs.clear();
             EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(test.desired)), test.present);
             EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(test.desired)), !test.present);
-            const std::string query = std::string("/sbin/ip -o ") +
-                (swss::IpPrefix(test.desired).isV4() ? "-4" : "-6") + " address show dev \"PortChannel1\"";
-            EXPECT_EQ(std::count(mockCallArgs.begin(), mockCallArgs.end(), query), 2);
+            const swss::IpPrefix desired(test.desired);
+            const std::string query = std::string("output=$(/sbin/ip -o ") +
+                (desired.isV4() ? "-4" : "-6") + " address show dev \"PortChannel1\" to \"" +
+                desired.getIp().to_string() + (desired.isV4() ? "/32" : "/128") + "\") || exit 2;";
+            EXPECT_EQ(std::count_if(mockCallArgs.begin(), mockCallArgs.end(), [&](const std::string &cmd) {
+                return cmd.find(query) == 0;
+            }), 2);
         }
         EXPECT_TRUE(interfaceLookups.empty());
     }
@@ -515,7 +613,7 @@ namespace intfmgr_ut
                 EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix("2001:db8::1/64")), present);
                 ASSERT_EQ(mockCallArgs.size(), enableFails ? 3u : 4u);
                 EXPECT_EQ(mockCallArgs[1], "sysctl -w net.ipv6.conf.\"PortChannel1\".disable_ipv6=0");
-                EXPECT_EQ(mockCallArgs.back(), "/sbin/ip -o -6 address show dev \"PortChannel1\"");
+                EXPECT_EQ(mockCallArgs.back().find("output=$(/sbin/ip -o -6 address show dev \"PortChannel1\""), 0u);
             }
         }
         FailAddressAdd = FailIpv6Enable = Ethernet0IPv6Set = false;
@@ -547,7 +645,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         ASSERT_EQ(mockCallArgs.size(), 3u);
         EXPECT_EQ(mockCallArgs[0], "/sbin/ip address \"del\" \"192.0.2.1/31\" dev \"PortChannel1\"");
-        EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o -4 address show dev \"PortChannel1\"");
+        EXPECT_EQ(mockCallArgs[1].find("output=$(/sbin/ip -o -4 address show dev \"PortChannel1\""), 0u);
         EXPECT_EQ(mockCallArgs[2], "/sbin/ip address \"add\" \"192.0.2.1/31\" dev \"PortChannel1\"");
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 1u);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
@@ -655,8 +753,8 @@ namespace intfmgr_ut
         ASSERT_EQ(consumer->m_toSync.count("PortChannel1"), 1u);
         EXPECT_EQ(consumer->m_toSync.count("PortChannel1|10.0.0.1/31"), 1u);
         EXPECT_EQ(kfvOp(consumer->m_toSync.find("PortChannel1")->second), DEL_COMMAND);
-        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count("PortChannel1"), 0u);
-        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count("PortChannel1|10.0.0.1/31"), 0u);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count("PortChannel1"), 1u);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count("PortChannel1|10.0.0.1/31"), 1u);
         EXPECT_EQ(intfmgr.m_intfLLAddresses.count("PortChannel1"), 1u);
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count("PortChannel1"), 1u);
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
@@ -686,6 +784,186 @@ namespace intfmgr_ut
         EXPECT_EQ(configKeys.size(), 4u);
         EXPECT_TRUE(intfmgr.m_cfgLagIntfTable.get("PortChannel1", values));
         EXPECT_TRUE(intfmgr.m_cfgLagIntfTable.get("PortChannel1|10.0.0.1/31", values));
+    }
+
+    TEST_F(IntfMgrTest, testWarmInitialNotReadyRetainsObligationsUntilSuccess)
+    {
+        swss::Table config(m_config_db.get(), CFG_LAG_INTF_TABLE_NAME);
+        config.set("PortChannel1", {{"NULL", "NULL"}});
+        config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->refillToSync(&config);
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.size(), 2u);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::INITIALIZED);
+
+        FailAddressAdd = true;
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}});
+        intfmgr.doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.size(), 1u);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_NE(warmState(), swss::WarmStart::RECONCILED);
+        std::string value;
+        EXPECT_FALSE(intfmgr.m_stateIntfTable.hget("PortChannel1|192.0.2.1/31", "state", value));
+
+        FailAddressAdd = false;
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_TRUE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmLagDelRetainsObligationsAcrossFailedReplay)
+    {
+        swss::Table config(m_config_db.get(), CFG_LAG_INTF_TABLE_NAME);
+        swss::Table subConfig(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+        config.set("PortChannel1", {{"NULL", "NULL"}});
+        config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
+        subConfig.set("PortChannel1.20", {{"mtu", "1500"}});
+        subConfig.set("PortChannel1.20|198.51.100.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *parent = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        auto *child = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
+        ASSERT_NE(parent, nullptr);
+        ASSERT_NE(child, nullptr);
+        FailAddressAdd = true;
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        intfmgr.doTask(*parent);
+        intfmgr.doTask(*child);
+        ASSERT_EQ(intfmgr.m_pendingReplayIntfList.size(), 3u);
+        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+        EXPECT_TRUE(parent->m_toSync.empty());
+        EXPECT_TRUE(child->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.size(), 3u);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_NE(warmState(), swss::WarmStart::RECONCILED);
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        intfmgr.doTask(*parent);
+        intfmgr.doTask(*child);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.size(), 3u);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_NE(warmState(), swss::WarmStart::RECONCILED);
+        FailAddressAdd = false;
+        intfmgr.doTask(*parent);
+        intfmgr.doTask(*child);
+        EXPECT_TRUE(parent->m_toSync.empty());
+        EXPECT_TRUE(child->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_TRUE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmReplayObligationsOnlyAddLagChildren)
+    {
+        swss::Table config(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+        for (const std::string key : {"Ethernet0.20", "Po1.20", "PortChannel1.30"})
+            config.set(key, {{"vlan", "20"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList, (std::set<std::string>{"Po1.20", "PortChannel1.30"}));
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::INITIALIZED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmConfiguredChildWithL2ParentWaitsForReady)
+    {
+        swss::Table config(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+        config.set("PortChannel1.20", {{"mtu", "1500"}});
+        config.set("PortChannel1.20|192.0.2.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *child = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
+        ASSERT_NE(child, nullptr);
+        child->refillToSync(&config);
+        intfmgr.doTask(*child);
+        EXPECT_TRUE(child->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList.size(), 2u);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_NE(warmState(), swss::WarmStart::RECONCILED);
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        intfmgr.doTask(*child);
+        EXPECT_TRUE(child->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmConfirmedConfigDeletionRetiresCancelledObligations)
+    {
+        swss::Table config(m_config_db.get(), CFG_LAG_INTF_TABLE_NAME);
+        config.set("PortChannel1", {{"NULL", "NULL"}});
+        config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->refillToSync(&config);
+        intfmgr.doTask(*consumer);
+        ASSERT_EQ(intfmgr.m_pendingReplayIntfList.size(), 2u);
+        config.del("PortChannel1|192.0.2.1/31");
+        config.del("PortChannel1");
+        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_TRUE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmDeletedConfigBeforeNotReadySetDoesNotBlock)
+    {
+        swss::Table config(m_config_db.get(), CFG_LAG_INTF_TABLE_NAME);
+        config.set("PortChannel1", {{"NULL", "NULL"}});
+        config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->refillToSync(&config);
+        ASSERT_EQ(intfmgr.m_pendingReplayIntfList.size(), 2u);
+        config.del("PortChannel1|192.0.2.1/31");
+        config.del("PortChannel1");
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    TEST_F(IntfMgrTest, testWarmConfigDelDrainsWhileParentClosed)
+    {
+        swss::Table config(m_config_db.get(), CFG_LAG_INTF_TABLE_NAME);
+        config.set("PortChannel1", {{"NULL", "NULL"}});
+        config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        FailAddressAdd = true;
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}});
+        intfmgr.doTask(*consumer);
+        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        for (const std::string key : {"PortChannel1|192.0.2.1/31", "PortChannel1"})
+        {
+            config.del(key);
+            consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
+        }
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_TRUE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 2u);
     }
 
     TEST_F(IntfMgrTest, testLagReopenReadsCurrentConfigOnce)
@@ -894,7 +1172,7 @@ namespace intfmgr_ut
                 const bool related = row.first.find("PortChannel1|") == 0 ||
                     row.first.find("PortChannel1.") == 0 || row.first == "PortChannel1";
                 EXPECT_EQ(consumer->m_toSync.count(row.first), related ? 1u : 2u);
-                EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count(row.first), related ? 0u : 1u);
+                EXPECT_EQ(intfmgr.m_pendingReplayIntfList.count(row.first), 1u);
                 EXPECT_EQ(intfmgr.m_stateIntfTable.get(row.first, values),
                           !related || row.first.find('|') == std::string::npos);
                 auto appKey = row.first;
@@ -1389,7 +1667,7 @@ namespace intfmgr_ut
             }
             ASSERT_GE(mockCallArgs.size(), 2u);
             EXPECT_EQ(mockCallArgs.front(), "/sbin/ip link add link \"PortChannel1\" name \"PortChannel1.20\" type vlan id \"20\"");
-            EXPECT_EQ(mockCallArgs[1], "/sbin/ip -d -o link show dev \"PortChannel1.20\"");
+            EXPECT_EQ(mockCallArgs[1].find("output=$(/sbin/ip -d -o link show dev \"PortChannel1.20\""), 0u);
         }
         SubIntfQueryResult = 1;
         EXPECT_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"), std::runtime_error);

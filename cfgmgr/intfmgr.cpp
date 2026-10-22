@@ -365,74 +365,36 @@ int IntfMgr::getIntfIpCount(const string &alias)
 
 bool IntfMgr::getIntfIpState(const string &alias, const IpPrefix &ipPrefix, bool &present)
 {
-    stringstream cmd;
     string res;
     present = false;
-    cmd << IP_CMD << " -o " << (ipPrefix.isV4() ? "-4" : "-6")
-        << " address show dev " << shellquote(alias);
-
-    int ret = -1;
+    const string address = ipPrefix.getIp().to_string();
+    // Filter the exact local IP in iproute2; the predicate checks its mask, including peer notation.
+    const string cmd = "output=$(" + string(IP_CMD) + " -o " + (ipPrefix.isV4() ? "-4" : "-6") +
+        " address show dev " + shellquote(alias) + " to " +
+        shellquote(address + (ipPrefix.isV4() ? "/32" : "/128")) + ") || exit 2; "
+        "printf '%s\\n' \"$output\" | awk -v address=" + shellquote(address) +
+        " -v mask=" + to_string(ipPrefix.getMaskLength()) +
+        " -v family=" + (ipPrefix.isV4() ? "inet" : "inet6") + " " +
+        shellquote("NF { peer=($5==\"peer\"); n=split(peer?$6:$4,p,\"/\"); "
+                   "if ($3!=family || n!=2 || p[2]!~/^[0-9]+$/ || "
+                   "(peer ? ($4!=address || p[1]!~/^[[:xdigit:].:]+$/) : p[1]!=address)) bad=1; "
+                   "else if (p[2]==mask) found=1 } END { exit bad?2:!found }");
     try
     {
-        ret = swss::exec(cmd.str(), res);
+        const int ret = swss::exec(cmd, res);
+        if (ret == 0 || ret == 1)
+        {
+            present = ret == 0;
+            return true;
+        }
     }
     catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query addresses on interface %s: %s", alias.c_str(), e.what());
     }
-    if (ret)
-    {
-        // A failed query alone does not prove that the address or interface is absent.
-        errno = 0;
-        if (if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO))
-        {
-            return true;
-        }
-        SWSS_LOG_WARN("Cannot query addresses on interface %s, rc %d", alias.c_str(), ret);
-        return false;
-    }
-
-    try
-    {
-        istringstream output(res);
-        string line;
-        while (getline(output, line))
-        {
-            istringstream row(line);
-            string index, name, family, prefix;
-            if (!(row >> index >> name >> family >> prefix))
-            {
-                return false;
-            }
-            // On point-to-point addresses ip prints the prefix length after the peer.
-            if (prefix.find('/') == string::npos)
-            {
-                string peer, peerPrefix;
-                if (!(row >> peer >> peerPrefix) || peer != "peer" || peerPrefix.find('/') == string::npos)
-                {
-                    return false;
-                }
-                prefix += "/" + to_string(IpPrefix(peerPrefix).getMaskLength());
-            }
-            IpPrefix address(prefix);
-            if (family != (address.isV4() ? "inet" : "inet6"))
-            {
-                return false;
-            }
-            if (address.isV4() == ipPrefix.isV4() &&
-                address.getIp() == ipPrefix.getIp() &&
-                address.getMaskLength() == ipPrefix.getMaskLength())
-            {
-                present = true;
-            }
-        }
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_WARN("Cannot parse addresses on interface %s: %s", alias.c_str(), e.what());
-        return false;
-    }
-    return true;
+    // A query/predicate error is not absence unless the interface lookup confirms it.
+    errno = 0;
+    return if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO);
 }
 
 void IntfMgr::buildIntfReplayList(void)
@@ -450,6 +412,14 @@ void IntfMgr::buildIntfReplayList(void)
 
     m_cfgLagIntfTable.getKeys(intfList);
     std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgSubIntfTable.getKeys(intfList);
+    for (const auto &key : intfList)
+    {
+        subIntf subIf(key.substr(0, key.find(config_db_key_delimiter)));
+        if (subIf.isValid() && !subIf.parentIntf().compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+            m_pendingReplayIntfList.insert(key);
+    }
 
     SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
 }
@@ -502,55 +472,33 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
 IntfMgr::SubIntfState IntfMgr::getSubIntfState(const string &parent, const string &alias, const string &vlan)
 {
     string res;
-    int ret = -1;
     try
     {
-        ret = swss::exec(string(IP_CMD) + " -d -o link show dev " + shellquote(alias), res);
+        size_t length;
+        const auto vid = stoul(vlan, &length);
+        if (length != vlan.size())
+            return SubIntfState::Unknown;
+        const string cmd = "output=$(" + string(IP_CMD) + " -d -o link show dev " + shellquote(alias) +
+            ") || exit 2; printf '%s\\n' \"$output\" | awk -v name=" + shellquote(alias + "@" + parent + ":") +
+            " -v vlan=" + to_string(vid) + " " +
+            shellquote("NF { rows++; if ($2==name) for(i=3;i+4<=NF;i++) "
+                       "if ($i==\"vlan\" && $(i+1)==\"protocol\" && $(i+2)==\"802.1Q\" && "
+                       "$(i+3)==\"id\" && $(i+4)~/^[0-9]+$/ && $(i+4)+0==vlan) found=1 } "
+                       "END { exit !(rows==1 && found) }");
+        const int ret = swss::exec(cmd, res);
+        if (ret == 0)
+            return SubIntfState::Ready;
+        if (ret == 1)
+            return SubIntfState::Unknown;
     }
     catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query subinterface %s: %s", alias.c_str(), e.what());
-    }
-    if (ret)
-    {
-        errno = 0;
-        if (if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO))
-            return SubIntfState::Missing;
         return SubIntfState::Unknown;
     }
-
-    try
-    {
-        istringstream output(res);
-        string line, extra;
-        if (!getline(output, line))
-            return SubIntfState::Unknown;
-        while (getline(output, extra))
-            if (!extra.empty())
-                return SubIntfState::Unknown;
-        istringstream row(line);
-        string index, name, field;
-        if (!(row >> index >> name) || name != alias + "@" + parent + ":")
-            return SubIntfState::Unknown;
-        while (row >> field)
-        {
-            if (field != "vlan")
-                continue;
-            string protocol, protocolValue, id, value;
-            if (!(row >> protocol >> protocolValue >> id >> value) ||
-                protocol != "protocol" || protocolValue != "802.1Q" || id != "id")
-                return SubIntfState::Unknown;
-            size_t actualLength, desiredLength;
-            auto actual = stoul(value, &actualLength);
-            auto desired = stoul(vlan, &desiredLength);
-            return actualLength == value.size() && desiredLength == vlan.size() && actual == desired
-                ? SubIntfState::Ready : SubIntfState::Unknown;
-        }
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_WARN("Cannot parse subinterface %s: %s", alias.c_str(), e.what());
-    }
+    errno = 0;
+    if (if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO))
+        return SubIntfState::Missing;
     return SubIntfState::Unknown;
 }
 
@@ -1614,7 +1562,9 @@ void IntfMgr::doTask(Consumer &consumer)
                 // Reopening re-reads CONFIG_DB, including any changed/deleted child rows.
                 if (op == SET_COMMAND && (m_readyLagIntfs.count(lag) == 0 || !isIntfStateOk(lag)))
                 {
-                    m_pendingReplayIntfList.erase(kfvKey(t));
+                    vector<FieldValueTuple> desired;
+                    if (!m_cfgLagIntfTable.get(kfvKey(t), desired) && !m_cfgSubIntfTable.get(kfvKey(t), desired))
+                        m_pendingReplayIntfList.erase(kfvKey(t));
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -1719,7 +1669,10 @@ void IntfMgr::clearLagIntfTasks(const string &alias)
 
     for (auto it = m_pendingReplayIntfList.begin(); it != m_pendingReplayIntfList.end();)
     {
-        if (isLagIntfKey(*it, alias, config_db_key_delimiter))
+        // Cancelling executable SETs does not complete still-configured startup obligations.
+        vector<FieldValueTuple> desired;
+        if (isLagIntfKey(*it, alias, config_db_key_delimiter) &&
+            !m_cfgLagIntfTable.get(*it, desired) && !m_cfgSubIntfTable.get(*it, desired))
             it = m_pendingReplayIntfList.erase(it);
         else
             ++it;
