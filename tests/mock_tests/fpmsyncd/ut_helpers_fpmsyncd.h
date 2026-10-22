@@ -2,6 +2,7 @@
 #include "ipprefix.h"
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include "fpmsyncd/nhgmgr.h"
 
 using namespace swss;
 
@@ -113,4 +114,26 @@ namespace ut_fpmsyncd
     {
         free(msg);
     }
+
+    /* Create ipv4 singleton NextHopGroupFull */
+    NextHopGroupFull createSingleIPv4NextHopNHGFull(
+        const char *gateway, const char *src_addr, uint32_t id_in);
+
+    /* Create ipv4 multi NextHopGroupFull */
+    NextHopGroupFull createMultiNextHopNHGFull(
+        const std::map<uint32_t, NextHopGroupFull> nhGrpFullListIn,
+        const std::map<uint32_t, uint32_t> weights,
+        const std::map<uint32_t, uint32_t> numDirects,
+        const std::vector<uint32_t> depends,
+        const std::vector<uint32_t> dependents,
+        uint32_t id_in);
+
+    /* Create ipv6 singleton NextHopGroupFull */
+    NextHopGroupFull createSingleIPv6NextHopNHGFull(
+        const char *gateway, const char *src_addr, uint32_t id_in = 0);
+
+    NextHopGroupFull createSingleSRv6VPNNextHopNHGFull(
+        const char *vpnSid, const char *src_addr, const char *nexthop, std::uint32_t id);
+
+    vector<string> splitResults(string result, string delimiter);
 }
