@@ -65,6 +65,22 @@ upstream:
     debs:
       - 'libdashapi*.deb'
 
+  - name: sonic-stp
+    project: build
+    pipeline: Azure.sonic-stp
+    scopes: [build]
+    cascade_optional: false
+    result_filter: [succeeded]
+    apt_fix_broken: false
+    dpkg_args: ["--force-depends"]
+    install_env:
+      DEBIAN_FRONTEND: noninteractive
+    artifact_name:
+      - { when: { arch: amd64 },          value: 'sonic-stp' }
+      - { when: { arch: { not: amd64 } }, value: 'sonic-stp.{arch}' }
+    debs:
+      - 'stp_1.0.0_{arch}.deb'
+
   # ------------------------------- Test ---------------------------------- #
   - name: sonic-swss-common-test-host
     project: build
