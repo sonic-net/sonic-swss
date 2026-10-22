@@ -128,26 +128,38 @@ FdbSync::~FdbSync()
 
 bool FdbSync::checkFdbProtoSupport()
 {
-    /* Test whether the local bridge command and kernel both support the
-     * exact proto syntax used below. Some iproute2 versions advertise a
-     * protocol field but still reject the "proto hw" spelling/name. */
+    /* Detect whether iproute2 carries SONiC's bridge FDB protocol patch
+     * (src/iproute2/patch/0001-bridge-fdb-Add-protocol-field-support.patch in
+     * sonic-buildimage). The patch adds an optional protocol field to bridge FDB
+     * entries, so that MACs learned by the data plane ("proto hw") can be told apart
+     * from those installed by the control plane (zebra) in EVPN multihoming. It is
+     * detected by the two things it adds:
+     *   - "bridge fdb help" lists a "[ proto PROTO ]" option;
+     *   - the protocol name "hw" (RTPROT_HW, 193), which "ip route" then accepts.
+     * "hw" is not an upstream iproute2 protocol name; only the patch defines it, in the
+     * name table that "ip" and "bridge" share. A trial FDB add cannot be used instead:
+     * the kernel refuses one on lo, and one on a real port changes that port's address list. */
     std::string res;
     int ret = swss::exec("bridge fdb help 2>&1 | grep -q proto", res);
     if (ret != 0)
     {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
+        SWSS_LOG_NOTICE("iproute2 bridge FDB protocol patch not detected: \"bridge fdb help\" has no proto option; "
+                        "FDB entries are installed without \"proto hw\"");
         return false;
     }
 
-    ret = swss::exec("bridge fdb add 00:00:00:00:00:00 dev lo proto hw 2>/dev/null", res);
-    swss::exec("bridge fdb del 00:00:00:00:00:00 dev lo 2>/dev/null", res);
+    const std::string nameCheck = "ip route show table local proto hw";
+    ret = swss::exec(nameCheck + " 2>&1 >/dev/null", res);
     if (ret != 0)
     {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
+        res.erase(res.find_last_not_of(" \n") + 1);
+        SWSS_LOG_NOTICE("iproute2 bridge FDB protocol patch not detected: protocol name \"hw\" unknown "
+                        "('%s' failed, rc %d: %s); FDB entries are installed without \"proto hw\"",
+                        nameCheck.c_str(), ret, res.c_str());
         return false;
     }
 
-    SWSS_LOG_NOTICE("bridge fdb proto support detected");
+    SWSS_LOG_NOTICE("iproute2 bridge FDB protocol patch detected; FDB entries are installed with \"proto hw\"");
     return true;
 }
 

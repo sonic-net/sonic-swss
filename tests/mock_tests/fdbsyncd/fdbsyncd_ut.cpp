@@ -232,6 +232,68 @@ struct nlmsghdr *del_nhg_msg(int nhid)
  * ************************
  */
 
+static int probeHwUnknown(const std::string &cmd, std::string &)
+{
+    mockCallArgs.push_back(cmd);
+    return cmd.rfind("ip route", 0) == 0 ? 255 : 0;
+}
+
+TEST_F(FdbSyncdTest, testFdbProtoProbeAddsNoFdbEntry)
+{
+    mockCallArgs.clear();
+    callback = captureCommand;
+    MockFdbSync probe(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    callback = nullptr;
+
+    EXPECT_TRUE(probe.m_isFdbProtoSupported);
+    for (const auto &cmd : mockCallArgs)
+    {
+        EXPECT_EQ(cmd.find("fdb add"), std::string::npos) << cmd;
+        EXPECT_EQ(cmd.find("fdb del"), std::string::npos) << cmd;
+    }
+}
+
+TEST_F(FdbSyncdTest, testFdbProtoProbeUnknownName)
+{
+    mockCallArgs.clear();
+    callback = probeHwUnknown;
+    MockFdbSync probe(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    callback = nullptr;
+
+    EXPECT_FALSE(probe.m_isFdbProtoSupported);
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back().rfind("ip route show table local proto hw", 0), 0u) << mockCallArgs.back();
+}
+
+TEST_F(FdbSyncdTest, testLocalLearnOfRemoteMacSendsProtoHw)
+{
+    /* The bridge entry of a remote MAC carries zebra's protocol; the local replace must set hw,
+     * or zebra drops the move as its own entry */
+    std::string key = "Vlan10:00:11:22:33:44:55";
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+    m_mockFdbSync.m_isFdbProtoSupported = true;
+    m_mockFdbSync.m_mac[key].vni = 1000;
+    m_mockFdbSync.m_mac[key].ifname = "Vxlan-10";
+    m_mockFdbSync.m_mac[key].nhtype = FdbDest::VTEP;
+    m_mockFdbSync.m_mac[key].nexthop_value = "10.0.0.2";
+
+    struct m_fdb_info info;
+    info.mac = "00:11:22:33:44:55";
+    info.vid = "Vlan10";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    mockCallArgs.clear();
+    callback = captureCommand;
+    m_mockFdbSync.updateLocalMac(&info);
+    callback = nullptr;
+
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb replace 00:11:22:33:44:55 dev Ethernet0 master dynamic extern_learn "
+                                   "vlan 10 proto hw"), std::string::npos) << mockCallArgs[0];
+}
+
 TEST_F(FdbSyncdTest, testaddNhgMacRoute)
 {
     std::shared_ptr<swss::DBConnector> m_app_db;
