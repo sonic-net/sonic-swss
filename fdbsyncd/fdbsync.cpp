@@ -3,11 +3,15 @@
 
 #include <string>
 #include <algorithm>
+#include <memory>
+#include <cstring>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
 #include <netlink/route/link/vxlan.h>
+#include <netlink/msg.h>
+#include <netlink/socket.h>
 #include <arpa/inet.h>
 
 #include "logger.h"
@@ -15,6 +19,7 @@
 #include "producerstatetable.h"
 #include "ipaddress.h"
 #include "netmsg.h"
+#include "netdispatcher.h"
 #include "macaddress.h"
 #include "exec.h"
 #include "fdbsync.h"
@@ -112,7 +117,8 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
-        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        /* macAddVxlan() replaces a MAC whose set of fields changes; the reconcile does the same. */
+        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable, true);
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
     m_isFdbProtoSupported = checkFdbProtoSupport();
@@ -178,6 +184,212 @@ bool FdbSync::isIntfRestoreDone()
     }
     
     return true;
+}
+
+namespace
+{
+
+const int BRIDGE_FDB_DUMP_ATTEMPTS = 3;
+
+int dispatchFdbDumpReply(struct nl_msg *msg, void *)
+{
+    NetDispatcher::getInstance().onNetlinkMessage(msg);
+    return NL_OK;
+}
+
+int readFdbDumpDone(struct nl_msg *msg, void *arg)
+{
+    struct nlmsghdr *hdr = nlmsg_hdr(msg);
+
+    if (nlmsg_datalen(hdr) >= static_cast<int>(sizeof(int)))
+    {
+        memcpy(arg, nlmsg_data(hdr), sizeof(int));
+    }
+    return NL_STOP;
+}
+
+}
+
+/*
+ * Remote MACs and IMET routes exist in the kernel as bridge FDB entries, which are
+ * AF_BRIDGE neighbours served by rtnl_fdb_dump(). A neighbour dump of AF_UNSPEC walks
+ * only the ARP/ND tables, and the kernel rejects an AF_BRIDGE request that carries a
+ * bare rtgenmsg with EINVAL, so the request carries a full ndmsg. After a warm restart
+ * this dump is the only replay of those entries into the reconcile cache: the kernel
+ * keeps them, so no event announces them again.
+ */
+void FdbSync::dumpBridgeFdb()
+{
+    std::unique_ptr<struct nl_sock, decltype(&nl_socket_free)> sock(nl_socket_alloc(), nl_socket_free);
+    if (!sock)
+    {
+        SWSS_LOG_ERROR("Unable to allocate a netlink socket for the bridge FDB dump");
+        throw runtime_error("fdbsyncd: unable to allocate a netlink socket for the bridge FDB dump");
+    }
+
+    int err = nl_connect(sock.get(), NETLINK_ROUTE);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect the bridge FDB dump socket: %s", nl_geterror(err));
+        throw runtime_error("fdbsyncd: unable to connect the bridge FDB dump socket");
+    }
+
+    dumpBridgeFdb(sock.get());
+}
+
+/*
+ * Sends the dump request on sock and hands every reply to NetDispatcher, as the
+ * main netlink socket does, until the kernel ends the dump. A dump that the kernel
+ * flags inconsistent or ends with an errno can skip entries that did not change, and
+ * no event replays those, so it is run again, up to BRIDGE_FDB_DUMP_ATTEMPTS times.
+ */
+void FdbSync::dumpBridgeFdb(struct nl_sock *sock)
+{
+    int doneErr = 0;
+
+    nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM, dispatchFdbDumpReply, nullptr);
+    nl_socket_modify_cb(sock, NL_CB_FINISH, NL_CB_CUSTOM, readFdbDumpDone, &doneErr);
+
+    struct ndmsg ndm;
+    memset(&ndm, 0, sizeof(ndm));
+    ndm.ndm_family = AF_BRIDGE;
+
+    for (int attempt = 1; attempt <= BRIDGE_FDB_DUMP_ATTEMPTS; attempt++)
+    {
+        doneErr = 0;
+        int err = nl_send_simple(sock, RTM_GETNEIGH, NLM_F_DUMP, &ndm, sizeof(ndm));
+        if (err < 0)
+        {
+            SWSS_LOG_ERROR("Unable to request the bridge FDB dump: %s", nl_geterror(err));
+            throw runtime_error("fdbsyncd: unable to request the bridge FDB dump");
+        }
+
+        do
+        {
+            err = nl_recvmsgs_default(sock);
+        }
+        while (err == -NLE_INTR);
+
+        if (err < 0 && err != -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_ERROR("Unable to read the bridge FDB dump: %s", nl_geterror(err));
+            throw runtime_error("fdbsyncd: unable to read the bridge FDB dump");
+        }
+
+        if (err == 0 && doneErr == 0)
+        {
+            SWSS_LOG_NOTICE("Bridge FDB dump complete");
+            return;
+        }
+
+        if (err == -NLE_DUMP_INTR)
+        {
+            SWSS_LOG_WARN("Bridge FDB dump %d of %d was inconsistent: the FDB changed while it ran",
+                          attempt, BRIDGE_FDB_DUMP_ATTEMPTS);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Kernel failed bridge FDB dump %d of %d: %s (errno %d)",
+                           attempt, BRIDGE_FDB_DUMP_ATTEMPTS, strerror(-doneErr), -doneErr);
+        }
+    }
+
+    /*
+     * Some entries may not have been replayed. In a warm restart keep them rather than
+     * let the reconcile delete them, and track them so that later events for them apply.
+     */
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_AppRestartAssist->keepStaleEntries(
+            [this](const string &tableName, const string &key, const vector<FieldValueTuple> &fvVector)
+            {
+                trackKeptEntry(tableName, key, fvVector);
+            });
+    }
+}
+
+/*
+ * Records an entry that a warm restart keeps without a replay, so that a later delete
+ * of it, or a change of its destination, is handled as for a replayed entry.
+ */
+void FdbSync::trackKeptEntry(const string &tableName, const string &key, const vector<FieldValueTuple> &fvVector)
+{
+    unsigned int vni = 0;
+    for (auto const &fv : fvVector)
+    {
+        if (fvField(fv) == "vni")
+        {
+            vni = static_cast<unsigned int>(strtoul(fvValue(fv).c_str(), nullptr, 10));
+        }
+    }
+
+    if (tableName == APP_VXLAN_REMOTE_VNI_TABLE_NAME)
+    {
+        m_imet_route.emplace(key, m_imet_info{vni});
+        return;
+    }
+
+    if (tableName != APP_VXLAN_FDB_TABLE_NAME || m_mac.find(key) != m_mac.end())
+    {
+        return;
+    }
+
+    m_mac_info info = {};
+    info.nhtype = FdbDest::UNKNOWN;
+    info.vni = vni;
+    info.protocol = RTPROT_UNSPEC;
+    for (auto const &fv : fvVector)
+    {
+        if (fvField(fv) == "remote_vtep")
+        {
+            info.nhtype = FdbDest::VTEP;
+            info.nexthop_value = fvValue(fv);
+        }
+        else if (fvField(fv) == "nexthop_group")
+        {
+            info.nhtype = FdbDest::NEXTHOPGROUP;
+            info.nexthop_value = fvValue(fv);
+        }
+        else if (fvField(fv) == "ifname")
+        {
+            info.nhtype = FdbDest::IFNAME;
+            info.nexthop_value = fvValue(fv);
+            info.ifname = fvValue(fv);
+        }
+        else if (fvField(fv) == "type")
+        {
+            info.type = fvValue(fv);
+        }
+        else if (fvField(fv) == "protocol")
+        {
+            info.protocol = static_cast<uint8_t>(strtoul(fvValue(fv).c_str(), nullptr, 10));
+        }
+    }
+
+    if (info.nhtype == FdbDest::UNKNOWN)
+    {
+        SWSS_LOG_WARN("Kept VXLAN_FDB_TABLE entry %s has no destination, not tracked", key.c_str());
+        return;
+    }
+
+    /* APPL_DB does not hold the VXLAN device, which onMsgNbr() names <name>-<vlan id>. */
+    if (info.ifname.empty())
+    {
+        size_t sep = key.find(':');
+        string suffix = "-" + (sep == string::npos ? string() : key.substr(4, sep - 4));
+        for (auto const &intf : m_intf_info)
+        {
+            const string &ifname = intf.second.ifname;
+            if (intf.second.vni == vni && ifname.size() > suffix.size() &&
+                ifname.compare(ifname.size() - suffix.size(), suffix.size(), suffix) == 0)
+            {
+                info.ifname = ifname;
+                break;
+            }
+        }
+    }
+
+    m_mac[key] = info;
 }
 
 void FdbSync::processCfgEvpnNvo()
@@ -887,6 +1099,19 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     std::vector<FieldValueTuple> fvVector;
     string svni = to_string(vni);
 
+    /*
+     * A MAC whose set of fields changes (its destination type, or whether it has a
+     * protocol) is deleted first, so a field of the old value does not linger; a set of
+     * the same fields overwrites them. During a warm restart every change goes through
+     * the reconcile cache instead: a direct delete there removes an entry that the cache
+     * then finds unchanged and never sets again.
+     */
+    auto existing = m_mac.find(key);
+    bool replace = existing != m_mac.end() &&
+                   (existing->second.nhtype != dest_type ||
+                    (existing->second.protocol == RTPROT_UNSPEC) != (protocol == RTPROT_UNSPEC)) &&
+                   !(m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress());
+
     /* Update the DB with Vxlan MAC */
     m_mac[key].type = type;
     m_mac[key].vni = vni;
@@ -899,7 +1124,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
 
     if (dest_type == FdbDest::NEXTHOPGROUP)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
         m_mac[key].nexthop_value = nexthop_group;
@@ -910,7 +1135,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     }
     else if (dest_type == FdbDest::VTEP)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         char buf[MAX_ADDR_SIZE + 1] = {0};
         m_mac[key].nhtype = FdbDest::VTEP;
@@ -923,7 +1148,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     }
     else if (dest_type == FdbDest::IFNAME)
     {
-        if (m_mac.find(key) != m_mac.end())
+        if (replace)
             m_fdbTable.del(key);
         m_mac[key].nhtype = FdbDest::IFNAME;
         m_mac[key].nexthop_value = intf_name;
