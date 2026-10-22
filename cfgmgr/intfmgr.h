@@ -30,8 +30,8 @@ public:
 
 private:
     ProducerStateTable m_appIntfTableProducer, m_appSagTableProducer;
-    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSagTable;
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable;
+    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSagTable, m_cfgSubIntfTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable, m_appIntfTable;
 
     Table m_neighTable;
 
@@ -39,6 +39,7 @@ private:
     SagIntfMap m_sagIntfList;
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
+    std::set<std::string> m_readyLagIntfs;
     std::set<std::string> m_ipv6LinkLocalModeList;
     std::map<std::string, std::set<std::string>> m_intfLLAddresses;
     std::string mySwitchType;
@@ -54,12 +55,17 @@ private:
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doSagTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
-    void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op);
+    void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op, bool replayLinkLocal = true);
+    void doLagTableTask(const std::string& key, const std::vector<FieldValueTuple>& data, const std::string& op);
+    void clearLagIntfTasks(const std::string& alias);
+    void replayLagIntfTasks(const std::string& alias);
+    void withdrawLagIntf(const std::string& alias);
 
     bool isIntfStateOk(const std::string &alias);
     bool isIntfCreated(const std::string &alias);
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
+    bool getIntfIpState(const std::string &alias, const IpPrefix &ipPrefix, bool &present);
     void buildIntfReplayList(void);
     void setWarmReplayDoneState();
 
@@ -69,6 +75,8 @@ private:
 
     std::string getIntfAdminStatus(const std::string &alias);
     std::string getIntfMtu(const std::string &alias);
+    enum class SubIntfState { Missing, Ready, Unknown };
+    SubIntfState getSubIntfState(const std::string &parent, const std::string &alias, const std::string &vlan);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
     bool setIntfAdminStatus(const std::string &alias, const std::string &admin_status);

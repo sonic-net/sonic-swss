@@ -373,6 +373,40 @@ namespace intfsorch_test
         ASSERT_EQ(current_remove_count + 1, remove_rif_count);
     };
 
+    TEST_F(IntfsOrchTest, ExistingSubPortMtuUsesEffectiveUpdate)
+    {
+        const string alias = "Ethernet0.20";
+        auto *consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        deque<KeyOpFieldsValuesTuple> entries = {
+            {alias, SET_COMMAND, {{"vlan", "20"}, {"admin_status", "up"}, {"mtu", "1500"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+        ASSERT_EQ(port.m_type, Port::SUBPORT);
+        const auto rif = port.m_rif_id;
+        ASSERT_NE(rif, SAI_NULL_OBJECT_ID);
+        const auto creates = create_rif_count;
+
+        for (const auto &update : vector<pair<string, uint32_t>>{{"0", 1500}, {"9100", 9100}, {"8500", 8500}})
+        {
+            SCOPED_TRACE(update.first);
+            entries = {{alias, SET_COMMAND, {{"vlan", "20"}, {"admin_status", "up"}, {"mtu", update.first}}}};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            EXPECT_EQ(port.m_rif_id, rif);
+            EXPECT_EQ(port.m_mtu, update.second);
+            EXPECT_EQ(create_rif_count, creates);
+            sai_attribute_t attr;
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+            ASSERT_EQ(sai_router_intfs_api->get_router_interface_attribute(rif, 1, &attr), SAI_STATUS_SUCCESS);
+            EXPECT_EQ(attr.value.u32, update.second);
+        }
+    }
+
     TEST_F(IntfsOrchTest, IntfsOrchVrfUpdate)
     {
         //create a new vrf
