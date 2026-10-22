@@ -1860,4 +1860,117 @@ namespace routeorch_test
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
     }
+
+    /*
+     * An EVPN route whose ECMP group mixes a VXLAN next hop with a local one:
+     * the local member carries an empty VNI and router MAC and must resolve to
+     * the neighbor next hop, in either position of the group.
+     */
+    TEST_F(RouteOrchTest, RouteOrchTestEvpnMixedLocalAndVxlanNextHops)
+    {
+        const uint32_t l3vni = 686;
+        gVrfOrch->markVniAsL3(l3vni);
+
+        /* Stand in for the VXLAN tunnel next hop with a real SAI next hop */
+        Table neighborTable = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4", { {"neigh", "00:00:0a:00:00:04"},
+                                                  {"family", "IPv4" }});
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        NextHopKey fake_tunnel_nh(IpAddress("10.0.0.4"), "Ethernet0");
+        ASSERT_TRUE(gNeighOrch->hasNextHop(fake_tunnel_nh));
+
+        NextHopKey vxlan_nh(IpAddress("10.1.0.2"), "vniVlan3000", MacAddress("02:11:22:33:44:55"), l3vni, true);
+        NextHopEntry tunnel_entry;
+        tunnel_entry.next_hop_id = gNeighOrch->getNextHopId(fake_tunnel_nh);
+        tunnel_entry.ref_count = 0;
+        tunnel_entry.nh_flags = 0;
+        gNeighOrch->m_syncdNextHops[vxlan_nh] = tunnel_entry;
+
+        NextHopKey local_nh(IpAddress("10.0.0.2"), "Ethernet0");
+        NextHopKey local_nh2(IpAddress("10.0.0.3"), "Ethernet0");
+        auto local_ref_before = gNeighOrch->getNextHopRefCount(local_nh);
+        auto local2_ref_before = gNeighOrch->getNextHopRefCount(local_nh2);
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        /* Local next hop first */
+        entries.push_back({"10.250.0.5/32", "SET", { {"nexthop", "10.0.0.2,10.1.0.2"},
+                                                     {"ifname", "Ethernet0,Vlan3000"},
+                                                     {"vni_label", ",686"},
+                                                     {"router_mac", ",02:11:22:33:44:55"}}});
+        /* Local next hop last: the trailing empty fields must survive */
+        entries.push_back({"10.250.0.6/32", "SET", { {"nexthop", "10.1.0.2,10.0.0.3"},
+                                                     {"ifname", "Vlan3000,Ethernet0"},
+                                                     {"vni_label", "686,"},
+                                                     {"router_mac", "02:11:22:33:44:55,"}}});
+        /* More VIPs behind the same gateways share the first group */
+        vector<string> more_vips = {"10.250.0.11/32", "10.250.0.12/32", "10.250.0.13/32", "10.250.0.14/32"};
+        for (const auto &vip : more_vips)
+        {
+            entries.push_back({vip, "SET", { {"nexthop", "10.0.0.2,10.1.0.2"},
+                                             {"ifname", "Ethernet0,Vlan3000"},
+                                             {"vni_label", ",686"},
+                                             {"router_mac", ",02:11:22:33:44:55"}}});
+        }
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        auto &routes = gRouteOrch->m_syncdRoutes[gVirtualRouterId];
+        for (const auto &rc : vector<pair<string, NextHopKey>>{ {"10.250.0.5/32", local_nh},
+                                                                  {"10.250.0.6/32", local_nh2} })
+        {
+            auto it = routes.find(IpPrefix(rc.first));
+            ASSERT_NE(it, routes.end()) << rc.first << " not programmed";
+            const auto &nhg = it->second.nhg_key;
+            EXPECT_EQ(nhg.getSize(), 2u) << rc.first;
+            EXPECT_TRUE(nhg.is_overlay_nexthop()) << rc.first;
+            EXPECT_TRUE(nhg.contains(rc.second)) << rc.first << " lost its local next hop";
+            EXPECT_TRUE(nhg.contains(vxlan_nh)) << rc.first << " lost its VXLAN next hop";
+
+            auto nhg_it = gRouteOrch->m_syncdNextHopGroups.find(nhg);
+            ASSERT_NE(nhg_it, gRouteOrch->m_syncdNextHopGroups.end()) << rc.first;
+            EXPECT_EQ(nhg_it->second.nhopgroup_members.size(), 2u) << rc.first;
+        }
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh), local_ref_before + 1);
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh2), local2_ref_before + 1);
+
+        const auto shared_nhg = routes.at(IpPrefix("10.250.0.5/32")).nhg_key;
+        for (const auto &vip : more_vips)
+        {
+            auto it = routes.find(IpPrefix(vip));
+            ASSERT_NE(it, routes.end()) << vip << " not programmed";
+            EXPECT_EQ(it->second.nhg_key, shared_nhg) << vip;
+        }
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.at(shared_nhg).ref_count, 1 + (int)more_vips.size());
+
+        /* An empty VNI with a router MAC is malformed */
+        entries.clear();
+        entries.push_back({"10.250.0.7/32", "SET", { {"nexthop", "10.0.0.2,10.1.0.2"},
+                                                     {"ifname", "Ethernet0,Vlan3000"},
+                                                     {"vni_label", ",686"},
+                                                     {"router_mac", "02:11:22:33:44:66,02:11:22:33:44:55"}}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(routes.find(IpPrefix("10.250.0.7/32")), routes.end());
+
+        entries.clear();
+        entries.push_back({"10.250.0.5/32", "DEL", {}});
+        entries.push_back({"10.250.0.6/32", "DEL", {}});
+        for (const auto &vip : more_vips)
+        {
+            entries.push_back({vip, "DEL", {}});
+        }
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(routes.find(IpPrefix("10.250.0.5/32")), routes.end());
+        EXPECT_EQ(routes.find(IpPrefix("10.250.0.6/32")), routes.end());
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.find(shared_nhg), gRouteOrch->m_syncdNextHopGroups.end());
+        /* The local members are neighbor next hops: they stay, with their references released */
+        EXPECT_TRUE(gNeighOrch->hasNextHop(local_nh));
+        EXPECT_TRUE(gNeighOrch->hasNextHop(local_nh2));
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh), local_ref_before);
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(local_nh2), local2_ref_before);
+    }
 }

@@ -40,6 +40,30 @@ extern bool gEnableFibSuppress;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
+/*
+ * Split a per next hop field list. Unlike tokenize(), a trailing empty field
+ * is kept: "686," has two fields. EVPN routes whose group mixes VXLAN and
+ * local next hops leave vni_label and router_mac empty for the local ones.
+ */
+static vector<string> tokenizeNhFields(const string &str)
+{
+    vector<string> fields;
+    if (str.empty())
+    {
+        return fields;
+    }
+
+    size_t start = 0;
+    size_t pos;
+    while ((pos = str.find(NHG_DELIMITER, start)) != string::npos)
+    {
+        fields.push_back(str.substr(start, pos - start));
+        start = pos + 1;
+    }
+    fields.push_back(str.substr(start));
+    return fields;
+}
+
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
@@ -845,8 +869,8 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     ipv = tokenize(ips, ',');
                     alsv = tokenize(aliases, ',');
                     mpls_nhv = tokenize(mpls_nhs, ',');
-                    vni_labelv = tokenize(vni_labels, ',');
-                    rmacv = tokenize(remote_macs, ',');
+                    vni_labelv = tokenizeNhFields(vni_labels);
+                    rmacv = tokenizeNhFields(remote_macs);
                     srv6_segv = tokenize(srv6_segments, ',');
                     srv6_src = tokenize(srv6_source, ',');
                     srv6_vpn_sidv = tokenize(srv6_vpn_sids, ',');
@@ -870,8 +894,19 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         ipv.resize(alsv.size());
                     }
 
+                    /*
+                     * An empty VNI marks a local next hop in a group that
+                     * mixes VXLAN and local next hops. The route is an
+                     * overlay route only if some next hop has a VNI.
+                     */
+                    overlay_nh = false;
                     for (auto &vni_str: vni_labelv)
                     {
+                        if (vni_str.empty())
+                        {
+                            continue;
+                        }
+                        overlay_nh = true;
                         vni = static_cast<uint32_t>(std::stoul(vni_str));
                         if (!m_vrfOrch->isL3VniVlan(vni))
                         {
@@ -994,10 +1029,33 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                             continue;
                         }
 
+                        bool invalid_local_nh = false;
                         for (uint32_t i = 0; i < ipv.size(); i++)
                         {
                             if (i) nhg_str += NHG_DELIMITER;
+                            if (vni_labelv[i].empty())
+                            {
+                                /*
+                                 * Local next hop: VNI 0 and a zero MAC make
+                                 * it the same key as the neighbor next hop.
+                                 */
+                                if (!rmacv[i].empty())
+                                {
+                                    invalid_local_nh = true;
+                                    break;
+                                }
+                                nhg_str += ipv[i] + NH_DELIMITER + alsv[i] + NH_DELIMITER + "0" + NH_DELIMITER + MacAddress().to_string();
+                                continue;
+                            }
                             nhg_str += ipv[i] + NH_DELIMITER + "vni" + alsv[i] + NH_DELIMITER + vni_labelv[i] + NH_DELIMITER + rmacv[i];
+                        }
+
+                        if (invalid_local_nh)
+                        {
+                            SWSS_LOG_ERROR("Skip route %s, it has a router mac %s for a next hop without a vni label %s",
+                                           key.c_str(), remote_macs.c_str(), vni_labels.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
                         }
 
                         nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
@@ -1804,7 +1862,8 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     for (auto it : next_hop_set)
     {
 
-        if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
+        /* A local member of a mixed overlay group is a neighbor next hop */
+        if (overlay_nh && !srv6_nh && it.vni != 0 && !m_neighOrch->getNextHopRefCount(it))
         {
             if(!m_neighOrch->removeTunnelNextHop(it))
             {
@@ -2235,7 +2294,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                     const NextHopKey& nextHop = *it;
                     if(!m_neighOrch->hasNextHop(nextHop))
                     {
-                        if(overlay_nh)
+                        /* Local members of a mixed overlay group resolve as neighbors */
+                        if(overlay_nh && nextHop.vni != 0)
                         {
                             SWSS_LOG_INFO("create remote vtep %s ecmp", nextHop.to_string(overlay_nh, srv6_nh).c_str());
                             status = createRemoteVtep(vrf_id, nextHop);
