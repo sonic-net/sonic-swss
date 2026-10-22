@@ -6,6 +6,7 @@
 #include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include <set>
 
 // The timeout value (in seconds) for neighsyncd reconcilation logic
 #define DEFAULT_NEIGHSYNC_WARMSTART_TIMER 5
@@ -31,6 +32,8 @@ public:
 
     bool isNeighRestoreDone();
 
+    bool resyncLinkLocalNeighbors(const std::string &interface);
+
     /* Get interface name based on interface index */
     bool getIfName(int if_index, char *if_name, size_t name_len);
 
@@ -55,7 +58,7 @@ private:
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
     AppRestartAssist  *m_AppRestartAssist;
-    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable, m_cfgSubInterfaceTable;
     bool m_isEvpnNvoExist = false;
 
     bool isLinkLocalEnabled(const std::string &port);
