@@ -367,7 +367,7 @@ public:
     unordered_set<string> generateTunnelCounterStats();
     void generateTunnelCounterMap();
     void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
-    void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
+    virtual void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
     bool isDipTunnelsSupported(void)
     {
         return is_dip_tunnel_supported;
