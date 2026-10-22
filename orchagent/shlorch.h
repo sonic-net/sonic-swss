@@ -42,6 +42,7 @@ public:
 
     // Remove the Isolation group from bind port
     shl_isolation_group_status_t unbind(string vtep, bool do_fwd_ref=false);
+    shl_isolation_group_status_t unbind(Port &port, bool do_fwd_ref=false);
 
     long unsigned int getNumOfMembers();
     long unsigned int getNumOfPendingMembers();
@@ -117,8 +118,15 @@ private:
     void
     doShlTblTask(Consumer &consumer);
 
+    vector<string>
+    acquireVtepRefs(const string &ifname, const vector<string> &vteps);
+
+    vector<string>
+    releaseVtepRefs(const string &ifname, const vector<string> &vteps);
+
     map<string, shared_ptr<ShlIsolationGroup>> m_isolationGrps;  // {vtep_ip_addr, Isolation group}
-    map<string, vector<string>> m_vtep_list;  // {ifname, vtep_list}
+    map<string, vector<string>> m_vtep_list;  // {vlan:ifname, vtep_list}
+    map<string, map<string, unsigned int>> m_vtep_refs;  // {ifname, {vtep, vlans needing it}}
 };
 
 #endif /* __SHLORCH_H__ */
