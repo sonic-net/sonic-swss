@@ -2831,6 +2831,96 @@ namespace vnetorch_test
         EXPECT_EQ(m_tun.removedTerms.size(), 1U);
     }
 
+    // VNETs bound to different VXLAN tunnels share one set of VR<->VNI tunnel
+    // maps: the first tunnel owns the DEDICATED maps and serves as the template,
+    // later tunnels reuse them (COMMON). The maps outlive any single tunnel and
+    // are removed only when the last tracked tunnel releases them; deleting the
+    // template tunnel re-homes the template to another tunnel still using them.
+    TEST_F(VNetOrchTest, VnetTunnelsShareVrTunnelMaps)
+    {
+        setVxlanTunnel("tunnel_a", "10.1.0.32");
+        setVxlanTunnel("tunnel_b", "10.1.0.33");
+
+        setVnet("Vnet1", "tunnel_a", "10001", "");
+        ASSERT_EQ(m_tun.maps.size(), 4U);
+        ASSERT_EQ(m_tun.tunnels.size(), 1U);
+
+        // The second tunnel reuses the template's maps instead of creating new ones.
+        setVnet("Vnet2", "tunnel_b", "10002", "");
+        ASSERT_EQ(m_tun.maps.size(), 4U);
+        ASSERT_EQ(m_tun.tunnels.size(), 2U);
+        EXPECT_EQ(m_tun.tunnels[1].decap_mappers, m_tun.tunnels[0].decap_mappers);
+        EXPECT_EQ(m_tun.tunnels[1].encap_mappers, m_tun.tunnels[0].encap_mappers);
+        EXPECT_EQ(m_tun.mapEntries.size(), 4U);
+
+        // Releasing the template tunnel's VNET keeps the shared maps alive.
+        delVnet("Vnet1");
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 2U);
+        EXPECT_EQ(m_tun.removedTunnels.size(), 1U);
+        EXPECT_EQ(m_tun.removedMaps.size(), 0U);
+
+        // Deleting the template tunnel re-homes the template to tunnel_b, so a
+        // new tunnel still binds to the same shared maps. setVnet/setVxlanTunnel
+        // replay their whole APP_DB table, so drop the deleted rows first.
+        delVxlanTunnel("tunnel_a");
+        Table(m_app_db.get(), APP_VNET_TABLE_NAME).del("Vnet1");
+        Table(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME).del("tunnel_a");
+        setVxlanTunnel("tunnel_c", "10.1.0.34");
+        setVnet("Vnet3", "tunnel_c", "10003", "");
+        ASSERT_EQ(m_tun.maps.size(), 4U);
+        ASSERT_EQ(m_tun.tunnels.size(), 3U);
+        EXPECT_EQ(m_tun.tunnels[2].decap_mappers, m_tun.tunnels[0].decap_mappers);
+        EXPECT_EQ(m_tun.tunnels[2].encap_mappers, m_tun.tunnels[0].encap_mappers);
+
+        delVnet("Vnet2");
+        EXPECT_EQ(m_tun.removedTunnels.size(), 2U);
+        EXPECT_EQ(m_tun.removedMaps.size(), 0U);
+
+        // The last tracked tunnel removes the shared maps.
+        delVnet("Vnet3");
+        EXPECT_EQ(m_tun.removedTunnels.size(), 3U);
+        EXPECT_EQ(m_tun.removedMaps.size(), 4U);
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 6U);
+
+        delVxlanTunnel("tunnel_b");
+        delVxlanTunnel("tunnel_c");
+    }
+
+    // VNETs with the same VNI on the shared VR->VNI encap map reuse one pair of
+    // tunnel-map entries, refcounted so SAI removal happens only on the last
+    // release -- whether the VNETs sit on the same tunnel or on tunnels sharing
+    // the maps.
+    TEST_F(VNetOrchTest, VnetsSameVniShareTunnelMapEntries)
+    {
+        setVxlanTunnel("tunnel_a", "10.1.0.32");
+        setVxlanTunnel("tunnel_b", "10.1.0.33");
+
+        setVnet("Vnet1", "tunnel_a", "10001", "");
+        ASSERT_EQ(m_tun.mapEntries.size(), 2U);
+
+        // Same tunnel, same VNI: entries reused.
+        setVnet("Vnet2", "tunnel_a", "10001", "");
+        EXPECT_EQ(m_tun.mapEntries.size(), 2U);
+
+        // Different tunnel sharing the maps, same VNI: entries reused.
+        setVnet("Vnet3", "tunnel_b", "10001", "");
+        EXPECT_EQ(m_tun.mapEntries.size(), 2U);
+        ASSERT_EQ(m_tun.maps.size(), 4U);
+
+        delVnet("Vnet2");
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 0U);
+        delVnet("Vnet3");
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 0U);
+
+        // Last reference removes the entries from SAI.
+        delVnet("Vnet1");
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 2U);
+        EXPECT_EQ(m_tun.removedMaps.size(), 4U);
+
+        delVxlanTunnel("tunnel_a");
+        delVxlanTunnel("tunnel_b");
+    }
+
     // A single-endpoint VNET tunnel route programs one SAI tunnel encap next hop
     // (TUNNEL_ENCAP over the VNET's tunnel to the endpoint) and one route entry
     // in the VNET's virtual router pointing straight at it -- the mock
