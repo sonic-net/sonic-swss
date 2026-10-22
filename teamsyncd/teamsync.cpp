@@ -63,22 +63,21 @@ void TeamSync::periodic()
 
 void TeamSync::doSelectableTask()
 {
-    /* Start to track the new team instances */
-    for (auto s : m_selectablesToAdd)
+    /* Retire the exact old objects, not whichever generation now has the name. */
+    for (const auto &sync : m_selectablesToRemove)
     {
-        m_select->addSelectable(m_teamSelectables[s].get());
-    }
-
-    m_selectablesToAdd.clear();
-
-    /* No longer track the deprecated team instances */
-    for (auto s : m_selectablesToRemove)
-    {
-        m_select->removeSelectable(m_teamSelectables[s].get());
-        m_teamSelectables.erase(s);
+        m_select->removeSelectable(sync.get());
     }
 
     m_selectablesToRemove.clear();
+
+    /* Start to track the new team instances */
+    for (const auto &sync : m_selectablesToAdd)
+    {
+        m_select->addSelectable(sync.get());
+    }
+
+    m_selectablesToAdd.clear();
 }
 
 void TeamSync::applyState()
@@ -120,9 +119,7 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELLINK)
     {
-        /* Always remove APP_LAG (and STATE_LAG if tracked), even when
-         * TeamPortSync was never created because teamdctl failed on add. */
-        removeLag(lagName);
+        removeLag(lagName, ifindex);
         return;
     }
 
@@ -135,6 +132,13 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
                       bool oper_state, unsigned int mtu)
 {
+    auto generation = m_teamIfindexes.find(lagName);
+    if (generation != m_teamIfindexes.end() && generation->second != ifindex)
+    {
+        removeLag(lagName, generation->second);
+    }
+    m_teamIfindexes[lagName] = ifindex;
+
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
@@ -180,9 +184,12 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         try
         {
             auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+            sync->admin_state = admin_state;
+            sync->oper_state = oper_state;
+            sync->mtu = mtu;
             m_stateLagTable.set(lagName, fvVector);
             m_teamSelectables[lagName] = sync;
-            m_selectablesToAdd.insert(lagName);
+            m_selectablesToAdd.insert(sync);
 
             SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
                            lagName.c_str(), admin_state ? "up" : "down",
@@ -201,11 +208,21 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     }
 }
 
-void TeamSync::removeLag(const string &lagName)
+void TeamSync::removeLag(const string &lagName, int ifindex)
 {
+    auto generation = m_teamIfindexes.find(lagName);
+    if (generation != m_teamIfindexes.end() && generation->second != ifindex)
+    {
+        SWSS_LOG_INFO("Ignore delete for old LAG %s ifindex %d (current %d)",
+                      lagName.c_str(), ifindex, generation->second);
+        return;
+    }
+
     auto it = m_teamSelectables.find(lagName);
     if (it != m_teamSelectables.end())
     {
+        /* Select may still dispatch this object in the current poll batch. */
+        it->second->retire();
         for (auto member : it->second->m_lagMembers)
         {
             m_lagMemberTable.del(lagName + ":" + member.first);
@@ -213,21 +230,20 @@ void TeamSync::removeLag(const string &lagName)
             SWSS_LOG_INFO("Remove member %s before removing LAG %s",
                     member.first.c_str(), lagName.c_str());
         }
+
+        if (m_selectablesToAdd.erase(it->second) == 0)
+        {
+            m_selectablesToRemove.insert(it->second);
+        }
+        m_teamSelectables.erase(it);
     }
 
-    /* Delete the LAG */
+    /* A preserved readiness row must also be invalidated if registration failed. */
     m_lagTable.del(lagName);
+    m_stateLagTable.del(lagName);
+    m_teamIfindexes.erase(lagName);
 
     SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
-
-    if (it == m_teamSelectables.end())
-    {
-        return;
-    }
-
-    m_stateLagTable.del(lagName);
-
-    m_selectablesToRemove.insert(lagName);
 }
 
 void TeamSync::cleanTeamSync()
@@ -235,10 +251,10 @@ void TeamSync::cleanTeamSync()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAG teamd resources ...");
 
-    for (const auto& it: m_teamSelectables)
+    while (!m_teamIfindexes.empty())
     {
-        /* Cleanup LAG */
-        removeLag(it.first);
+        auto generation = *m_teamIfindexes.begin();
+        removeLag(generation.first, generation.second);
     }
     return;
 }
@@ -426,6 +442,9 @@ int TeamSync::TeamPortSync::getFd()
 
 uint64_t TeamSync::TeamPortSync::readData()
 {
-    team_handle_events(m_team);
+    if (m_active)
+    {
+        team_handle_events(m_team);
+    }
     return 0;
 }

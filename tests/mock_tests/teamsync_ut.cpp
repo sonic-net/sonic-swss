@@ -315,7 +315,7 @@ namespace teamsync_test
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
         ts.addLag("testLag", 4, true, true, 1500);
-        ts.removeLag("testLag");
+        ts.removeLag("testLag", 4);
 
         swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
         std::vector<std::string> keys;
@@ -345,7 +345,8 @@ namespace teamsync_test
         ts.m_lagMemberTable.set("testLag:Ethernet0", memberFv);
         ts.m_lagMemberTable.set("testLag:Ethernet4", memberFv);
 
-        ts.removeLag("testLag");
+        auto retired = ts.m_teamSelectables.at("testLag");
+        ts.removeLag("testLag", 4);
 
         swss::Table appLagMemberTable(&db, APP_LAG_MEMBER_TABLE_NAME);
         std::vector<std::string> memberKeys;
@@ -362,10 +363,11 @@ namespace teamsync_test
         stateLagTable.getKeys(stateKeys);
         EXPECT_TRUE(stateKeys.empty());
 
-        /* removeLag() defers erasing TeamPortSync until doSelectableTask().
-         * Do not call doSelectableTask() here: mocked team_init does not yield
-         * a valid team event fd, so epoll registration would fail in unit tests. */
-        EXPECT_EQ(ts.m_selectablesToRemove.count("testLag"), 1u);
-        EXPECT_NE(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
+        /* An instance deleted before registration must never reach Select. */
+        EXPECT_TRUE(ts.m_selectablesToRemove.empty());
+        EXPECT_FALSE(retired->m_active);
+        EXPECT_EQ(ts.m_teamSelectables.count("testLag"), 0u);
+        EXPECT_EQ(ts.m_teamIfindexes.count("testLag"), 0u);
+        EXPECT_TRUE(ts.m_selectablesToAdd.empty());
     }
 }
