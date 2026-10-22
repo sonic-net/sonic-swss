@@ -2,6 +2,18 @@
 #include "directory.h"
 #undef private
 
+// Parse orch.h first under "protected public" (exactly as mock_orch_test.h does)
+// so Orch::getExecutor() is accessible before any later include sets the guard.
+#define protected public
+#include "orch.h"
+#undef protected
+
+// Expose TunnelDecapOrch flex-counter internals (tunnelTable, m_FlexCounterUpdTimer)
+// for the UT. orch.h is already included above, so only TunnelDecapOrch is affected.
+#define private public
+#include "tunneldecaporch.h"
+#undef private
+
 #include "json.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
@@ -500,6 +512,50 @@ namespace flexcounter_test
         }
 
     };
+
+    TEST_P(FlexCounterTest, TunnelDecapCounterTest)
+    {
+        // TunnelDecapOrch must register IPINIP decap tunnels for the TUNNEL_STAT_COUNTER group
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME, APP_TUNNEL_DECAP_TERM_TABLE_NAME };
+        auto tunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        gDirectory.set(tunnelDecapOrch);
+
+        // Create an IPINIP decap tunnel
+        Table tunnelDecapTable = Table(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+        tunnelDecapTable.set("IPINIP_TUNNEL_UT", {
+                                                     { "tunnel_type", "IPINIP" },
+                                                     { "dscp_mode",   "uniform" },
+                                                     { "ecn_mode",    "standard" },
+                                                     { "ttl_mode",    "pipe" }
+                                                 });
+        tunnelDecapOrch->addExistingData(&tunnelDecapTable);
+        static_cast<Orch *>(tunnelDecapOrch)->doTask();
+
+        ASSERT_NE(tunnelDecapOrch->tunnelTable.find("IPINIP_TUNNEL_UT"), tunnelDecapOrch->tunnelTable.end());
+        auto tunnelOid = tunnelDecapOrch->tunnelTable["IPINIP_TUNNEL_UT"].tunnel_id;
+
+        // Enable the TUNNEL flex counter group (equivalent to "counterpoll tunnel enable")
+        auto *flexCounterOrch = gDirectory.get<FlexCounterOrch *>();
+        Table flexCounterCfg = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        flexCounterCfg.set("TUNNEL", { { FLEX_COUNTER_STATUS_FIELD, "enable" } });
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+        flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        // Traditional flex counter needs the VID->RID mapping before the counter is registered
+        if (gTraditionalFlexCounter)
+        {
+            Table vid2rid = Table(m_asic_db.get(), "VIDTORID");
+            vid2rid.set("", { { sai_serialize_object_id(tunnelOid), "" } });
+        }
+
+        // Drain the decap tunnel flex-counter update timer and verify the tunnel got registered
+        tunnelDecapOrch->doTask(*tunnelDecapOrch->m_FlexCounterUpdTimer);
+        ASSERT_TRUE(checkFlexCounter("TUNNEL_STAT_COUNTER", tunnelOid, TUNNEL_COUNTER_ID_LIST));
+
+        delete tunnelDecapOrch;
+    }
 
     TEST_P(FlexCounterTest, CounterTest)
     {
