@@ -117,8 +117,17 @@ private:
     void
     doShlTblTask(Consumer &consumer);
 
+    shl_isolation_group_status_t
+    acquireVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
+                    vector<string> &failed);
+
+    shl_isolation_group_status_t
+    releaseVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
+                    vector<string> &failed);
+
     map<string, shared_ptr<ShlIsolationGroup>> m_isolationGrps;  // {vtep_ip_addr, Isolation group}
-    map<string, vector<string>> m_vtep_list;  // {ifname, vtep_list}
+    map<string, vector<string>> m_vtep_list;  // {vlan:ifname, vtep_list}
+    map<string, map<string, unsigned int>> m_vtep_refs;  // {ifname, {vtep, vlans needing it}}
 };
 
 #endif /* __SHLORCH_H__ */
