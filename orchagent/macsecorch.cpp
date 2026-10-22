@@ -38,7 +38,9 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
+constexpr bool DEFAULT_ENABLE_REPLAY_PROTECT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
+constexpr uint32_t DEFAULT_REPLAY_WINDOW = 0;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 bool saiAclFieldSciMatchSupported = true;
 
@@ -1423,8 +1425,8 @@ bool MACsecOrch::createMACsecPort(
 
     macsec_port.m_enable_encrypt = DEFAULT_ENABLE_ENCRYPT;
     macsec_port.m_sci_in_sectag = DEFAULT_SCI_IN_SECTAG;
-    macsec_port.m_enable_replay_protect = false;
-    macsec_port.m_replay_window = 0;
+    macsec_port.m_enable_replay_protect = DEFAULT_ENABLE_REPLAY_PROTECT;
+    macsec_port.m_replay_window = DEFAULT_REPLAY_WINDOW;
     macsec_port.m_cipher_suite = DEFAULT_CIPHER_SUITE;
     macsec_port.m_enable = false;
 
@@ -1623,12 +1625,16 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             attr.value.booldata = macsec_port.m_enable_replay_protect;
             if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
             {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection enable",
+                              sc->second.m_sc_id);
                 return false;
             }
             attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW;
             attr.value.u32 = macsec_port.m_replay_window;
             if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
             {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection window",
+                              sc->second.m_sc_id);
                 return false;
             }
         }
