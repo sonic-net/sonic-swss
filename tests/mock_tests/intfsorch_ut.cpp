@@ -4,8 +4,10 @@
 #include "gtest/gtest.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "mock_sai_capability_wrap.h"
 #include "mock_table.h"
 #include <memory>
+#include <tuple>
 #include <vector>
 
 
@@ -18,6 +20,7 @@ namespace intfsorch_test
     int remove_rif_count = 0;
     bool saw_loopback_action = false;
     bool fail_next_rif_set = false;
+    int loopback_action_create_count = 0;
     int loopback_action_set_count = 0;
     sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
@@ -30,8 +33,22 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
-        return pold_sai_rif_api->create_router_interface(
+        auto action = SAI_PACKET_ACTION_FORWARD;
+        for (uint32_t i = 0; i < attr_count; ++i)
+        {
+            if (attr_list[i].id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+            {
+                ++loopback_action_create_count;
+                action = static_cast<sai_packet_action_t>(attr_list[i].value.s32);
+            }
+        }
+        auto status = pold_sai_rif_api->create_router_interface(
             router_interface_id, switch_id, attr_count, attr_list);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            last_loopback_action = action;
+        }
+        return status;
     }
 
     sai_status_t _ut_remove_router_interface(
@@ -48,12 +65,12 @@ namespace intfsorch_test
         if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
         {
             ++loopback_action_set_count;
-            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
             if (fail_next_rif_set)
             {
                 fail_next_rif_set = false;
                 return SAI_STATUS_INSUFFICIENT_RESOURCES;
             }
+            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
             saw_loopback_action = true;
             return SAI_STATUS_SUCCESS;
         }
@@ -89,6 +106,7 @@ namespace intfsorch_test
             sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
             saw_loopback_action = false;
             fail_next_rif_set = false;
+            loopback_action_create_count = 0;
             loopback_action_set_count = 0;
             last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
@@ -518,6 +536,126 @@ namespace intfsorch_test
         syncd = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
+    struct IntfsOrchLoopbackCapabilityTest : public IntfsOrchTest,
+        public ::testing::WithParamInterface<std::tuple<bool, bool>>
+    {
+    };
+
+    TEST_P(IntfsOrchLoopbackCapabilityTest, GatesCreateAndSubsequentSets)
+    {
+        const bool createSupported = std::get<0>(GetParam());
+        const bool setSupported = std::get<1>(GetParam());
+        int queryCount = 0;
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [&](sai_object_type_t objectType, sai_attr_id_t attrId,
+                sai_attr_capability_t *cap, sai_status_t *status)
+            {
+                if (objectType != SAI_OBJECT_TYPE_ROUTER_INTERFACE ||
+                    attrId != SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+                {
+                    return false;
+                }
+                ++queryCount;
+                *cap = {createSupported, setSupported, true};
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_rif_id, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(loopback_action_create_count, createSupported ? 1 : 0);
+        EXPECT_EQ(loopback_action_set_count, setSupported ? 1 : 0);
+        const auto initialAction = (createSupported || setSupported) ?
+            SAI_PACKET_ACTION_DROP : SAI_PACKET_ACTION_FORWARD;
+        EXPECT_EQ(last_loopback_action, initialAction);
+        EXPECT_EQ(queryCount, 1);
+
+        entries = {{"Ethernet0", "SET", {{"loopback_action", "forward"}}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(loopback_action_create_count, createSupported ? 1 : 0);
+        EXPECT_EQ(loopback_action_set_count, setSupported ? 2 : 0);
+        EXPECT_EQ(last_loopback_action, setSupported ? SAI_PACKET_ACTION_FORWARD : initialAction);
+        EXPECT_EQ(queryCount, 1);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(CreateAndSetFlags, IntfsOrchLoopbackCapabilityTest,
+        ::testing::Combine(::testing::Bool(), ::testing::Bool()));
+
+    TEST_F(IntfsOrchTest, IntfsOrchDoesNotCacheFailedLoopbackCapabilityQueries)
+    {
+        int queryCount = 0;
+        sai_status_t queryStatus = SAI_STATUS_NOT_SUPPORTED;
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [&](sai_object_type_t objectType, sai_attr_id_t attrId,
+                sai_attr_capability_t *cap, sai_status_t *status)
+            {
+                if (objectType != SAI_OBJECT_TYPE_ROUTER_INTERFACE ||
+                    attrId != SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+                {
+                    return false;
+                }
+                ++queryCount;
+                *cap = {};
+                *status = queryStatus;
+                return true;
+            });
+
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_rif_id, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(loopback_action_create_count, 1);
+        EXPECT_EQ(loopback_action_set_count, 1);
+        EXPECT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+        EXPECT_EQ(queryCount, 2);
+
+        const sai_status_t failures[] = {SAI_STATUS_NOT_IMPLEMENTED, SAI_STATUS_FAILURE};
+        for (auto status : failures)
+        {
+            queryStatus = status;
+            const auto previousSetCount = loopback_action_set_count;
+            const auto previousQueryCount = queryCount;
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_EQ(loopback_action_set_count, previousSetCount + 1);
+            EXPECT_EQ(queryCount, previousQueryCount + 1);
+        }
+
+        queryStatus = SAI_STATUS_SUCCESS;
+        entries = {{"Ethernet0", "SET", {{"loopback_action", "forward"}}}};
+        for (int i = 0; i < 2; ++i)
+        {
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gIntfsOrch)->doTask();
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_EQ(loopback_action_set_count, 3);
+            EXPECT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+            EXPECT_EQ(queryCount, 5);
+        }
     }
 
     TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)

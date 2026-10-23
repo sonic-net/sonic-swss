@@ -101,9 +101,12 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    bool m_loopbackActionCapabilityValid = false;
+    sai_attr_capability_t m_loopbackActionCapability = {};
 
     std::string getRifFlexCounterTableKey(std::string s);
 
+    bool queryLoopbackActionCapability();
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);
     bool removeRouterIntfs(Port &port);
 

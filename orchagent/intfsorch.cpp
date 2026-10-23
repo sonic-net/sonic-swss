@@ -436,6 +436,31 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfsOrch::queryLoopbackActionCapability()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_loopbackActionCapabilityValid)
+    {
+        return true;
+    }
+
+    sai_attr_capability_t capability = {};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+        SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("RIF loopback action capability query failed, rc [%d]; retaining normal SAI programming",
+                      status);
+        return false;
+    }
+
+    m_loopbackActionCapability = capability;
+    m_loopbackActionCapabilityValid = true;
+    return true;
+}
+
 bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 {
     sai_attribute_t attr;
@@ -443,6 +468,13 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (!getSaiLoopbackAction(actionStr, action))
     {
+        return true;
+    }
+
+    if (queryLoopbackActionCapability() && !m_loopbackActionCapability.set_implemented)
+    {
+        SWSS_LOG_WARN("Loopback action [%s] not applied, interface [%s]: SET unsupported; existing action unchanged",
+                      actionStr.c_str(), port.m_alias.c_str());
         return true;
     }
 
@@ -1399,9 +1431,17 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         sai_packet_action_t loopbackAction;
         if (getSaiLoopbackAction(loopbackActionStr, loopbackAction))
         {
-            attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
-            attr.value.s32 = loopbackAction;
-            attrs.push_back(attr);
+            if (queryLoopbackActionCapability() && !m_loopbackActionCapability.create_implemented)
+            {
+                SWSS_LOG_WARN("Loopback action [%s] omitted from CREATE, interface [%s]: CREATE unsupported; default FORWARD",
+                              loopbackActionStr.c_str(), port.m_alias.c_str());
+            }
+            else
+            {
+                attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+                attr.value.s32 = loopbackAction;
+                attrs.push_back(attr);
+            }
         }
     }
 
