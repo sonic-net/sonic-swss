@@ -74,6 +74,7 @@ private:
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
+    Table m_stateWarmRestartEnableTable;
 
     bool m_warmstart;
     steady_clock::time_point m_start_time;
