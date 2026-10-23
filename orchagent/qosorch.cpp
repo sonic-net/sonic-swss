@@ -1087,6 +1087,12 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             delete[] list_attr.value.qosmap.list;
             return false;
         }
+        catch(const out_of_range& e)
+        {
+            SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
+            return false;
+        }
     }
     attributes.push_back(list_attr);
     return true;
@@ -1181,6 +1187,12 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             delete[] list_attr.value.qosmap.list;
             return false;
         }
+        catch(const out_of_range& e)
+        {
+            SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
+            return false;
+        }
     }
     attributes.push_back(list_attr);
     return true;
@@ -1249,6 +1261,12 @@ bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
                             list_attr.value.qosmap.list[ind].value.dscp);
         }
         catch(const invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
+            return false;
+        }
+        catch(const out_of_range& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
             delete[] list_attr.value.qosmap.list;
