@@ -6018,4 +6018,265 @@ namespace portsorch_test
         dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
         static_cast<Orch *>(gPortsOrch)->doTask();
     }
+
+    // Regression (gap 1): proxy ARP owns only BC/UMC, so a per-VLAN unknown-unicast
+    // flood config must still be applied while proxy ARP is enabled.
+    TEST_F(PortsOrchTest, VlanBumFloodControlProxyArpUucApplied)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan10", { {"admin_status", "up"}, {"mtu", "9100"} });
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, true));
+
+        // A per-VLAN config carrying unknown-unicast now arrives; capture flood writes.
+        _vlan_flood_seen_uuc = _vlan_flood_seen_umc = _vlan_flood_seen_bc = false;
+        _vlan_flood_uuc = _vlan_flood_umc = _vlan_flood_bc = -1;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_flood = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_flood;
+        sai_vlan_api = &ut_vlan_api;
+
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"unknown_unicast_flood", "disabled"},
+                {"broadcast_flood", "enabled"},
+                {"unknown_multicast_flood", "enabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_vlan_api = _org_vlan_api_for_flood;
+
+        // UUC must be programmed (proxy ARP does not own it); BC/UMC stay suppressed.
+        ASSERT_TRUE(_vlan_flood_seen_uuc);
+        ASSERT_EQ(_vlan_flood_uuc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+        ASSERT_FALSE(_vlan_flood_seen_bc);
+        ASSERT_FALSE(_vlan_flood_seen_umc);
+
+        Port vlanFinal;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlanFinal));
+        ASSERT_TRUE(vlanFinal.m_vlan_info.proxy_arp_flood);
+        ASSERT_EQ(vlanFinal.m_vlan_info.uuc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlanFinal.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlanFinal.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+    }
+
+    // Regression (gap 2): disabling proxy ARP must restore the configured BC/UMC flood
+    // types, not reset them to ALL.
+    TEST_F(PortsOrchTest, VlanBumFloodControlProxyArpRestoreOnDisable)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Configure BC=disabled (NONE), UMC=enabled (ALL) while proxy ARP is off.
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"broadcast_flood", "disabled"},
+                {"unknown_multicast_flood", "enabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        ASSERT_EQ(vlan.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlan.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_ALL);
+
+        // Proxy ARP on -> both suppressed to NONE.
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, true));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        ASSERT_EQ(vlan.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlan.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+
+        // Capture the writes performed when proxy ARP is disabled.
+        _vlan_flood_seen_uuc = _vlan_flood_seen_umc = _vlan_flood_seen_bc = false;
+        _vlan_flood_uuc = _vlan_flood_umc = _vlan_flood_bc = -1;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_flood = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_flood;
+        sai_vlan_api = &ut_vlan_api;
+
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, false));
+
+        sai_vlan_api = _org_vlan_api_for_flood;
+
+        // Disabling restores the configured values: BC=NONE, UMC=ALL (not ALL/ALL).
+        ASSERT_TRUE(_vlan_flood_seen_bc);
+        ASSERT_EQ(_vlan_flood_bc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+        ASSERT_TRUE(_vlan_flood_seen_umc);
+        ASSERT_EQ(_vlan_flood_umc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_ALL));
+
+        Port vlanFinal;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlanFinal));
+        ASSERT_FALSE(vlanFinal.m_vlan_info.proxy_arp_flood);
+        ASSERT_EQ(vlanFinal.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlanFinal.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_ALL);
+
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+    }
+
+    // Regression (gap 2, variant): a BC/UMC config that arrives WHILE proxy ARP is on must be
+    // remembered and applied when proxy ARP is disabled.
+    TEST_F(PortsOrchTest, VlanBumFloodControlProxyArpConfigDuringSuppression)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan10", { {"admin_status", "up"}, {"mtu", "9100"} });
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, true));
+
+        // Config arrives while proxy ARP suppresses BC/UMC: BC=disabled, UMC=enabled.
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"broadcast_flood", "disabled"},
+                {"unknown_multicast_flood", "enabled"}
+            }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Still suppressed while proxy ARP is on.
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        ASSERT_EQ(vlan.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlan.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+
+        // Disable proxy ARP -> apply the config captured during suppression.
+        _vlan_flood_seen_uuc = _vlan_flood_seen_umc = _vlan_flood_seen_bc = false;
+        _vlan_flood_uuc = _vlan_flood_umc = _vlan_flood_bc = -1;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_flood = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_flood;
+        sai_vlan_api = &ut_vlan_api;
+
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, false));
+
+        sai_vlan_api = _org_vlan_api_for_flood;
+
+        ASSERT_TRUE(_vlan_flood_seen_bc);
+        ASSERT_EQ(_vlan_flood_bc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+        ASSERT_TRUE(_vlan_flood_seen_umc);
+        ASSERT_EQ(_vlan_flood_umc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_ALL));
+
+        Port vlanFinal;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlanFinal));
+        ASSERT_FALSE(vlanFinal.m_vlan_info.proxy_arp_flood);
+        ASSERT_EQ(vlanFinal.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+        ASSERT_EQ(vlanFinal.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_ALL);
+
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+    }
+
+    // Big picture: a VXLAN/EVPN flood group (COMBINED) owns the attribute; proxy ARP must not
+    // overwrite it (would orphan the L2MC group). UMC is not VXLAN-owned, so it is still suppressed.
+    TEST_F(PortsOrchTest, VlanBumFloodControlProxyArpSkipsVxlanCombined)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan10", { {"admin_status", "up"}, {"mtu", "9100"} });
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlan));
+        // Fabricate a VXLAN/EVPN flood group owning BC (COMBINED); UMC stays ALL.
+        vlan.m_vlan_info.bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED;
+
+        _vlan_flood_seen_uuc = _vlan_flood_seen_umc = _vlan_flood_seen_bc = false;
+        _vlan_flood_uuc = _vlan_flood_umc = _vlan_flood_bc = -1;
+        sai_vlan_api_t ut_vlan_api = *sai_vlan_api;
+        _org_vlan_api_for_flood = sai_vlan_api;
+        ut_vlan_api.set_vlan_attribute = _ut_stub_set_vlan_attr_capture_flood;
+        sai_vlan_api = &ut_vlan_api;
+
+        ASSERT_TRUE(gPortsOrch->setVlanProxyArpFloodType(vlan, true));
+
+        sai_vlan_api = _org_vlan_api_for_flood;
+
+        // BC (COMBINED) left intact; UMC suppressed to NONE.
+        ASSERT_FALSE(_vlan_flood_seen_bc);
+        ASSERT_TRUE(_vlan_flood_seen_umc);
+        ASSERT_EQ(_vlan_flood_umc, static_cast<sai_int32_t>(SAI_VLAN_FLOOD_CONTROL_TYPE_NONE));
+
+        Port vlanFinal;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan10", vlanFinal));
+        ASSERT_EQ(vlanFinal.m_vlan_info.bc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED);
+        ASSERT_EQ(vlanFinal.m_vlan_info.umc_flood_type, SAI_VLAN_FLOOD_CONTROL_TYPE_NONE);
+
+        std::deque<KeyOpFieldsValuesTuple> vlanDel = {{"Vlan10", DEL_COMMAND, {}}};
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME))->addToSync(vlanDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // The fabricated COMBINED state is cache-only; confirm cleanup fully removed the VLAN
+        // so this (last) test leaves the shared saivs mock clean.
+        Port vlanGone;
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan10", vlanGone));
+    }
 }
