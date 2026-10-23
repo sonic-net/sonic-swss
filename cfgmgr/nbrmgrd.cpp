@@ -36,6 +36,7 @@ int main(int argc, char **argv)
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
+        SelectableTimer neighRefreshTimer(timespec{.tv_sec = NEIGH_REFRESH_TIMER_TICK, .tv_nsec = 0});
 
         NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
 
@@ -68,6 +69,9 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        neighRefreshTimer.start();
+        s.addSelectable(&neighRefreshTimer);
+
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
         {
@@ -83,6 +87,12 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 nbrmgr.doTask();
+                continue;
+            }
+            if (sel == &neighRefreshTimer)
+            {
+                nbrmgr.refreshTimer();
+                neighRefreshTimer.reset();
                 continue;
             }
 
