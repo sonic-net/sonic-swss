@@ -913,4 +913,67 @@ namespace mux_rollback_test
 
         gNeighOrch->m_syncdNextHops[nh_key] = saved_next_hop;
     }
+
+    static const string SLB_ROUTE = "10.10.100.0/27";
+
+    static void SetRouteViaServer(const string &prefix, bool add)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        if (add)
+        {
+            entries.push_back({ prefix, SET_COMMAND, { { "nexthop", SERVER_IP1 }, { "ifname", VLAN_1000 } } });
+        }
+        else
+        {
+            entries.push_back({ prefix, DEL_COMMAND, {} });
+        }
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+    }
+
+    // A route learned while the mux is active is released by the standby
+    // transition, so deleting it while standby must not release it again.
+    TEST_F(MuxRollbackPrefixRouteTest, RouteAddedActiveRemovedStandbyKeepsNextHopRefCount)
+    {
+        NextHopKey nh(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        // Hold an extra reference so an over-release is not hidden by the clamp at 0.
+        gNeighOrch->increaseNextHopRefCount(nh);
+        int base = gNeighOrch->getNextHopRefCount(nh);
+
+        SetRouteViaServer(SLB_ROUTE, true);
+        EXPECT_EQ(base + 1, gNeighOrch->getNextHopRefCount(nh));
+
+        SetAndAssertMuxState(STANDBY_STATE);
+        EXPECT_EQ(base, gNeighOrch->getNextHopRefCount(nh));
+
+        SetRouteViaServer(SLB_ROUTE, false);
+        EXPECT_EQ(base, gNeighOrch->getNextHopRefCount(nh));
+
+        gNeighOrch->decreaseNextHopRefCount(nh);
+    }
+
+    // A route learned while the mux is standby gets its reference from the
+    // active transition, so it must not also take one when it is added.
+    TEST_F(MuxRollbackPrefixRouteTest, RouteAddedStandbyRemovedActiveKeepsNextHopRefCount)
+    {
+        NextHopKey nh(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+        ASSERT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        int base = gNeighOrch->getNextHopRefCount(nh);
+
+        SetRouteViaServer(SLB_ROUTE, true);
+        EXPECT_EQ(base, gNeighOrch->getNextHopRefCount(nh));
+
+        SetAndAssertMuxState(ACTIVE_STATE);
+        EXPECT_EQ(base + 1, gNeighOrch->getNextHopRefCount(nh));
+
+        SetRouteViaServer(SLB_ROUTE, false);
+        EXPECT_EQ(base, gNeighOrch->getNextHopRefCount(nh));
+    }
 }

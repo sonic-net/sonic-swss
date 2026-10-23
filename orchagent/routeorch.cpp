@@ -1408,6 +1408,50 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
 }
 
+bool RouteOrch::isStandbyMuxNextHop(const NextHopGroupKey &nexthops)
+{
+    if (nexthops.getSize() != 1)
+    {
+        return false;
+    }
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t tunnel_nh_id = mux_orch->getTunnelNextHopId();
+    if (tunnel_nh_id == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    return mux_orch->getNextHopId(*nexthops.getNextHops().begin()) == tunnel_nh_id;
+}
+
+/*
+ * A single next hop route via a mux neighbor holds a reference on the neighbor
+ * next hop only while the neighbor is active. MuxOrch takes and releases these
+ * references for all such routes on mux state change (enable()/disable() of the
+ * mux neighbor handlers), so a route added or removed while the neighbor is
+ * standby must not change the neighbor next hop ref count here.
+ */
+void RouteOrch::increaseRouteNextHopRefCount(const NextHopGroupKey &nexthops)
+{
+    if (isStandbyMuxNextHop(nexthops))
+    {
+        SWSS_LOG_INFO("Skip ref count increase for standby mux next hop %s", nexthops.to_string().c_str());
+        return;
+    }
+    increaseNextHopRefCount(nexthops);
+}
+
+void RouteOrch::decreaseRouteNextHopRefCount(const NextHopGroupKey &nexthops)
+{
+    if (isStandbyMuxNextHop(nexthops))
+    {
+        SWSS_LOG_INFO("Skip ref count decrease for standby mux next hop %s", nexthops.to_string().c_str());
+        return;
+    }
+    decreaseNextHopRefCount(nexthops);
+}
+
 bool RouteOrch::isRefCounterZero(const NextHopGroupKey &nexthops) const
 {
     if (!hasNextHopGroup(nexthops))
@@ -2624,7 +2668,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         /* Increase the ref_count for the next hop group. */
         if (ctx.nhg_index.empty())
         {
-            increaseNextHopRefCount(nextHops);
+            increaseRouteNextHopRefCount(nextHops);
         }
         else
         {
@@ -2682,7 +2726,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         /* Decrease the ref count for the previous next hop group. */
         else if (it_route->second.nhg_index.empty())
         {
-            decreaseNextHopRefCount(it_route->second.nhg_key);
+            decreaseRouteNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
             if (ol_nextHops.is_srv6_nexthop())
             {
@@ -2750,7 +2794,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         if (ctx.nhg_index.empty())
         {
             /* Increase the ref_count for the next hop (group) entry */
-            increaseNextHopRefCount(nextHops);
+            increaseRouteNextHopRefCount(nextHops);
         }
         else
         {
@@ -2997,7 +3041,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          */
-        decreaseNextHopRefCount(it_route->second.nhg_key);
+        decreaseRouteNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
 
