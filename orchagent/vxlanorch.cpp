@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -286,6 +287,28 @@ static sai_status_t create_nexthop_tunnel(
     return status;
 }
 
+/*
+ * Decap TTL mode for a VXLAN tunnel that has no ttl_mode configured.
+ *
+ * The cisco-8000 SAI supports a single decap TTL mode per device: the first
+ * tunnel sets it, and a tunnel that requests the other mode is rejected. The
+ * IP-in-IP, mux and SRv6 decap tunnels request pipe, so VXLAN tunnels request
+ * pipe on cisco-8000 as well. Other platforms omit the attribute and get the
+ * SAI default.
+ */
+static VxlanTunnelTTLMode
+get_default_decap_ttl_mode()
+{
+    const char *platform = getenv("platform");
+
+    if (platform != nullptr && std::string(platform) == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        return VxlanTunnelTTLMode::PIPE;
+    }
+
+    return VxlanTunnelTTLMode::NOT_SET;
+}
+
 // Create Tunnel
 static sai_object_id_t
 create_tunnel(
@@ -367,6 +390,11 @@ create_tunnel(
         attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
         attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2MP;
         tunnel_attrs.push_back(attr);
+    }
+
+    if (decap_ttl_mode == VxlanTunnelTTLMode::NOT_SET)
+    {
+        decap_ttl_mode = get_default_decap_ttl_mode();
     }
 
     if (decap_ttl_mode == VxlanTunnelTTLMode::PIPE)

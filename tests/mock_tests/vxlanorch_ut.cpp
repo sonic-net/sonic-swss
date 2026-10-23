@@ -1,6 +1,7 @@
 #include "table.h"
 #include "producerstatetable.h"
 #include "consumerstatetable.h"
+#include <cstdlib>
 #include <memory>
 
 #define private public
@@ -33,6 +34,7 @@ namespace vxlanorch_test
     using ::testing::_;
     using ::testing::Return;
     using ::testing::DoAll;
+    using ::testing::Invoke;
     using ::testing::SetArgPointee;
     using ::testing::Throw;
     using ::testing::StrictMock;
@@ -41,6 +43,59 @@ namespace vxlanorch_test
     constexpr sai_object_id_t vxlan_tunnel_map_oid = 0x1240;
     constexpr sai_object_id_t vxlan_tunnel_term_table_entry_oid = 0x1248;
     constexpr sai_object_id_t vxlan_tunnel_map_entry_oid = 0x1256;
+
+    // Returns the SAI_TUNNEL_ATTR_DECAP_TTL_MODE value in a create_tunnel()
+    // attribute list, or -1 if the attribute is absent.
+    static int32_t getDecapTtlMode(uint32_t attr_count, const sai_attribute_t *attr_list)
+    {
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            if (attr_list[i].id == SAI_TUNNEL_ATTR_DECAP_TTL_MODE)
+            {
+                return attr_list[i].value.s32;
+            }
+        }
+
+        return -1;
+    }
+
+    // Sets the "platform" environment variable read by orchagent (nullptr
+    // unsets it) and restores the previous value when it goes out of scope.
+    class ScopedPlatformEnv
+    {
+        public:
+            explicit ScopedPlatformEnv(const char *platform)
+            {
+                const char *saved = getenv("platform");
+                m_wasSet = (saved != nullptr);
+                m_saved = m_wasSet ? saved : "";
+
+                if (platform != nullptr)
+                {
+                    setenv("platform", platform, 1);
+                }
+                else
+                {
+                    unsetenv("platform");
+                }
+            }
+
+            ~ScopedPlatformEnv()
+            {
+                if (m_wasSet)
+                {
+                    setenv("platform", m_saved.c_str(), 1);
+                }
+                else
+                {
+                    unsetenv("platform");
+                }
+            }
+
+        private:
+            bool m_wasSet = false;
+            string m_saved;
+    };
 
     class VxlanOrchTest : public ::testing::Test
     {
@@ -548,6 +603,104 @@ namespace vxlanorch_test
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
+    // Decap TTL mode that create_tunnel() sends to the SAI for a VXLAN tunnel
+    class VxlanDecapTtlModeTest : public VxlanOrchTest
+    {
+        protected:
+            // Creates the SAI objects of a VXLAN tunnel with the given ttl_mode while
+            // the "platform" environment variable is set to the given value (nullptr:
+            // unset), removes them again, and returns the decap TTL mode sent to
+            // create_tunnel(), or -1 if the attribute was absent.
+            int32_t createTunnelAndGetDecapTtlMode(const char *platform, VxlanTunnelTTLMode ttl_mode)
+            {
+                initSwitchOrch();
+                initVxlanOrch();
+                VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+                auto src_ip = IpAddress("10.1.0.1");
+                auto dst_ip = IpAddress("20.1.0.1");
+                auto tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI, ttl_mode);
+                vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+                int32_t decap_ttl_mode = -1;
+
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+                    .Times(4)
+                    .WillRepeatedly(DoAll(
+                                SetArgPointee<0>(vxlan_tunnel_map_oid),
+                                Return(SAI_STATUS_SUCCESS)
+                                ));
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+                    .WillOnce(Invoke([&decap_ttl_mode](sai_object_id_t *tunnel_id, sai_object_id_t,
+                                                       uint32_t attr_count, const sai_attribute_t *attr_list)
+                                {
+                                    decap_ttl_mode = getDecapTtlMode(attr_count, attr_list);
+                                    *tunnel_id = vxlan_tunnel_oid;
+                                    return SAI_STATUS_SUCCESS;
+                                }));
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+                    .WillOnce(DoAll(
+                                SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
+                                Return(SAI_STATUS_SUCCESS)
+                                ));
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map_entry(_, _, _, _))
+                    .Times(2)
+                    .WillRepeatedly(DoAll(
+                                SetArgPointee<0>(vxlan_tunnel_map_entry_oid),
+                                Return(SAI_STATUS_SUCCESS)
+                                ));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map_entry(_))
+                    .Times(2)
+                    .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(_))
+                    .WillOnce(Return(SAI_STATUS_SUCCESS));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
+                    .WillOnce(Return(SAI_STATUS_SUCCESS));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+                    .Times(4)
+                    .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+                EXPECT_NO_THROW({
+                        ScopedPlatformEnv platform_env(platform);
+                        bool created = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                        EXPECT_TRUE(created);
+                        });
+                EXPECT_NO_THROW({
+                        bool removed = vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
+                        EXPECT_TRUE(removed);
+                        });
+                vxlan_orch->delTunnel("vxlan_tunnel_1");
+
+                return decap_ttl_mode;
+            }
+    };
+
+    // On cisco-8000, a tunnel without ttl_mode requests the pipe decap TTL mode
+    TEST_F(VxlanDecapTtlModeTest, DefaultIsPipeOnCisco8000)
+    {
+        EXPECT_EQ(createTunnelAndGetDecapTtlMode(CISCO_8000_PLATFORM_SUBSTRING, VxlanTunnelTTLMode::NOT_SET),
+                  SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+    }
+
+    // On cisco-8000, an explicitly configured ttl_mode is still honored
+    TEST_F(VxlanDecapTtlModeTest, ExplicitUniformIsKeptOnCisco8000)
+    {
+        EXPECT_EQ(createTunnelAndGetDecapTtlMode(CISCO_8000_PLATFORM_SUBSTRING, VxlanTunnelTTLMode::UNIFORM),
+                  SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL);
+    }
+
+    // Without the platform variable, a tunnel without ttl_mode omits the attribute
+    TEST_F(VxlanDecapTtlModeTest, DefaultIsNotSentWithoutPlatform)
+    {
+        EXPECT_EQ(createTunnelAndGetDecapTtlMode(nullptr, VxlanTunnelTTLMode::NOT_SET), -1);
+    }
+
+    // On other platforms, a tunnel without ttl_mode omits the attribute
+    TEST_F(VxlanDecapTtlModeTest, DefaultIsNotSentOnOtherPlatforms)
+    {
+        EXPECT_EQ(createTunnelAndGetDecapTtlMode(BRCM_PLATFORM_SUBSTRING, VxlanTunnelTTLMode::NOT_SET), -1);
+    }
+
     // Test basic VXLAN tunnel creation
     TEST_F(VxlanOrchTest, BasicTunnelCreation)
     {
@@ -874,6 +1027,7 @@ namespace vxlanorch_test
     static sai_status_t g_tunnelVlanMemberFailStatus = SAI_STATUS_INSUFFICIENT_RESOURCES;
     static int g_tunnelVlanMemberCreates = 0;
     static bool g_failP2pTunnel = false;
+    static int32_t g_lastTunnelDecapTtlMode = -1;
     static bool g_failL2mcGroupMember = false;
     static int g_l2mcGroupMemberCreates = 0;
     static decltype(sai_vlan_api->create_vlan_member) g_savedCreateVlanMember = nullptr;
@@ -905,6 +1059,7 @@ namespace vxlanorch_test
     static sai_status_t stubCreateTunnel(sai_object_id_t *id, sai_object_id_t sw,
                                          uint32_t n, const sai_attribute_t *attrs)
     {
+        g_lastTunnelDecapTtlMode = getDecapTtlMode(n, attrs);
         for (uint32_t i = 0; i < n; i++)
         {
             if (g_failP2pTunnel && attrs[i].id == SAI_TUNNEL_ATTR_PEER_MODE &&
@@ -946,6 +1101,7 @@ namespace vxlanorch_test
             g_tunnelVlanMemberFailStatus = SAI_STATUS_INSUFFICIENT_RESOURCES;
             g_tunnelVlanMemberCreates = 0;
             g_failP2pTunnel = false;
+            g_lastTunnelDecapTtlMode = -1;
             g_failL2mcGroupMember = false;
             g_l2mcGroupMemberCreates = 0;
             g_savedCreateVlanMember = sai_vlan_api->create_vlan_member;
@@ -1325,6 +1481,21 @@ namespace vxlanorch_test
         EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
         EXPECT_TRUE(isFloodMember());
         EXPECT_EQ(imrRefCount(), 1);
+    }
+
+    // On cisco-8000, the P2P tunnel to the remote VTEP, created without
+    // ttl_mode, also requests the pipe decap TTL mode.
+    TEST_F(EvpnRemoteVniTest, DipTunnelDecapTtlModeIsPipeOnCisco8000)
+    {
+        g_lastTunnelDecapTtlMode = -1;
+        {
+            ScopedPlatformEnv platform_env(CISCO_8000_PLATFORM_SUBSTRING);
+            setRemoteVni();
+        }
+
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_TRUE(dipTunnelExists());
+        EXPECT_EQ(g_lastTunnelDecapTtlMode, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
     }
 
 } // namespace vxlanorch_test
