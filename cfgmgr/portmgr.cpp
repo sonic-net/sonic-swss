@@ -17,6 +17,7 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgSendToIngressPortTable(cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_appLagMemberTable(appDb, APP_LAG_MEMBER_TABLE_NAME),
         m_appSendToIngressPortTable(appDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
@@ -240,6 +241,17 @@ void PortMgr::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            /* if the port is still a member of a LAG in APPDB, defer the port deletion to avoid a race
+             * condition where portmgrd deletes the port from APPDB, but teammgrd's removeLagMember()
+             * subsequently re-creates the port entry by writing admin_status/mtu. This re-creation
+             * prevents orchagent from deleting the port from ASIC-DB, causing port breakout failure.
+             */
+            if (isPortPartOfLag(alias))
+            {
+                SWSS_LOG_NOTICE("Port %s is still part of a LAG in APPDB, deferring deletion", alias.c_str());
+                it++;
+                continue;
+            }
             SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
             m_portList.erase(alias);
@@ -247,6 +259,25 @@ void PortMgr::doTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
+}
+
+bool PortMgr::isPortPartOfLag(const string &alias)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if the port is a member of any LAG in APPDB LAG_MEMBER_TABLE.  */
+    vector<string> keys;
+    m_appLagMemberTable.getKeys(keys);
+    for (const auto &key : keys)
+    {
+        auto tokens = tokenize(key, delimiter);
+        if (tokens.size() == 2 && tokens[1] == alias)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value)
