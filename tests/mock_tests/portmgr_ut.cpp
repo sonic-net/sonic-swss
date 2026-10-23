@@ -124,6 +124,46 @@ namespace portmgr_ut
         ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
     }
 
+    TEST_F(PortMgrTest, FirstNotificationUsesCompleteConfig)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        Table notification_table(m_app_db.get(), CFG_PORT_TABLE_NAME);
+
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"},
+            {"mtu", "1518"},
+            {"admin_status", "up"}
+        });
+        notification_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"}
+        });
+
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&notification_table);
+        m_portMgr->doTask();
+
+        std::vector<FieldValueTuple> values;
+        ASSERT_TRUE(app_port_table.get("Ethernet0", values));
+        auto value_opt = swss::fvsGetValue(values, "mtu", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("1518", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("up", value_opt.get());
+
+        state_port_table.set("Ethernet0", {
+            {"state", "ok"}
+        });
+        m_portMgr->doTask();
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
+    }
+
     TEST_F(PortMgrTest, ConfigurePortPTDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);

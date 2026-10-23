@@ -3,6 +3,8 @@
 #include "teammgr.h"
 #include <dlfcn.h>
 
+#include <algorithm>
+
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
 static std::vector< std::pair<pid_t, int> > mockKillCommands;
@@ -195,6 +197,39 @@ namespace teammgr_ut
         EXPECT_EQ(mockKillCommands.size(), 1);
         EXPECT_EQ(mockKillCommands.front().first, 1234);
         EXPECT_EQ(mockKillCommands.front().second, SIGTERM);
+    }
+
+    TEST_F(TeamMgrTest, testFirstNotificationUsesCompleteConfig)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        swss::Table notification_table(m_app_db.get(), CFG_LAG_TABLE_NAME);
+
+        cfg_lag_table.set("PortChannel100", {
+            {"admin_status", "up"},
+            {"mtu", "9216"},
+            {"lacp_key", "auto"},
+            {"min_links", "2"}
+        });
+        notification_table.set("PortChannel100", {
+            {"min_links", "2"}
+        });
+
+        teammgr.addExistingData(&notification_table);
+        teammgr.doTask();
+
+        EXPECT_NE(
+            std::find(
+                mockCallArgs.begin(),
+                mockCallArgs.end(),
+                "/sbin/ip link set dev \"PortChannel100\" \"up\""),
+            mockCallArgs.end());
+        EXPECT_NE(
+            std::find(
+                mockCallArgs.begin(),
+                mockCallArgs.end(),
+                "/sbin/ip link set dev \"PortChannel100\" mtu \"9216\""),
+            mockCallArgs.end());
     }
 
     TEST_F(TeamMgrTest, testProcessPidFileMissingAfterAddLagFailure)
