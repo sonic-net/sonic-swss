@@ -58,7 +58,7 @@ private:
     void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op, bool replayLinkLocal = true);
     void doLagTableTask(const std::string& key, const std::vector<FieldValueTuple>& data, const std::string& op);
     void clearLagIntfTasks(const std::string& alias);
-    void replayLagIntfTasks(const std::string& alias);
+    void enqueueLagIntfConfig(const std::string& alias);
     void withdrawLagIntf(const std::string& alias);
 
     bool isIntfStateOk(const std::string &alias);

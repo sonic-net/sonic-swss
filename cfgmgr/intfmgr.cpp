@@ -1096,10 +1096,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("mpls", mpls);
                 data.push_back(fvTuple);
             }
-
-            if (ipv6_link_local_mode.empty() && !isIntfCreated(alias) &&
-                m_ipv6LinkLocalModeList.count(alias))
-                ipv6_link_local_mode = "disable";
         }
 
         if (!parentAlias.empty())
@@ -1134,50 +1130,29 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 m_subIntfList[alias].vlanId = vlanId;
             }
 
+            string subintfMtu;
+            try
+            {
+                auto parentMtu = getIntfMtu(parentAlias);
+                if (parentMtu == MTU_INHERITANCE || parentMtu.empty())
+                    return false;
+                subintfMtu = setHostSubIntfMtu(alias,
+                    mtu.empty() ? to_string(DEFAULT_MTU_STR) : mtu, parentMtu);
+                if (subintfMtu.empty())
+                    return false;
+            }
+            catch (const runtime_error &e)
+            {
+                SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
+                return false;
+            }
             if (!mtu.empty())
             {
-                string subintf_mtu;
-                try
-                {
-                    string parentMtu = getIntfMtu(subIf.parentIntf());
-                    if (parentMtu == MTU_INHERITANCE || parentMtu.empty())
-                        return false;
-                    subintf_mtu = setHostSubIntfMtu(alias, mtu, parentMtu);
-                    if (subintf_mtu.empty())
-                        return false;
-                    FieldValueTuple fvTuple("mtu", mtu);
-                    std::remove(data.begin(), data.end(), fvTuple);
-                    FieldValueTuple newMtuFvTuple("mtu", subintf_mtu);
-                    data.push_back(newMtuFvTuple);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                    return false;
-                }
-                m_subIntfList[alias].mtu = mtu;
+                FieldValueTuple fvTuple("mtu", mtu);
+                std::remove(data.begin(), data.end(), fvTuple);
             }
-            else
-            {
-                string subintfMtu;
-                try
-                {
-                    auto parentMtu = getIntfMtu(parentAlias);
-                    if (parentMtu == MTU_INHERITANCE || parentMtu.empty())
-                        return false;
-                    subintfMtu = setHostSubIntfMtu(alias, to_string(DEFAULT_MTU_STR), parentMtu);
-                    if (subintfMtu.empty())
-                        return false;
-                }
-                catch (const runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                    return false;
-                }
-                FieldValueTuple fvTuple("mtu", subintfMtu);
-                data.push_back(fvTuple);
-                m_subIntfList[alias].mtu = MTU_INHERITANCE;
-            }
+            data.emplace_back("mtu", subintfMtu);
+            m_subIntfList[alias].mtu = mtu.empty() ? MTU_INHERITANCE : mtu;
 
             if (adminStatus.empty())
             {
@@ -1571,7 +1546,7 @@ void IntfMgr::doTask(Consumer &consumer)
 
                 if (!doIntfGeneralTask(keys, data, op))
                 {
-                    // A retained CONFIG DEL must finish before the replayed SET for this key.
+                    // A retained CONFIG DEL must finish before the replacement SET for this key.
                     if (op == DEL_COMMAND && !lag.empty())
                         it = consumer.m_toSync.upper_bound(kfvKey(t));
                     else
@@ -1580,7 +1555,7 @@ void IntfMgr::doTask(Consumer &consumer)
                 }
                 else
                 {
-                    // A replacement SET may have been cancelled while CONFIG still requires replay.
+                    // A replacement SET may have been cancelled while CONFIG still requires this entry.
                     if (op == SET_COMMAND ||
                         (consumer.m_toSync.count(kfvKey(t)) == 1 &&
                          (lag.empty() || !isLagIntfConfigRequired(kfvKey(t)))))
@@ -1589,7 +1564,7 @@ void IntfMgr::doTask(Consumer &consumer)
             }
             else if (keys.size() == 2)
             {
-                // Retained base STATE metadata does not imply that its replay succeeded.
+                // Retained base STATE metadata does not imply that its pending configuration was applied.
                 if (op == SET_COMMAND && !lag.empty() && consumer.m_toSync.count(keys[0]))
                 {
                     ++it;
@@ -1652,7 +1627,7 @@ void IntfMgr::clearLagIntfTasks(const string &alias)
     }
 }
 
-void IntfMgr::replayLagIntfTasks(const string &alias)
+void IntfMgr::enqueueLagIntfConfig(const string &alias)
 {
     clearLagIntfTasks(alias);
     // Successful normal address tasks rebuild the link-local replay cache.
@@ -1678,7 +1653,7 @@ void IntfMgr::replayLagIntfTasks(const string &alias)
             vector<FieldValueTuple> data;
             if (isLagIntfKey(key, alias, config_db_key_delimiter) && table->get(key, data))
             {
-                // Replay is a full CONFIG snapshot, not a partial field update.
+                // Queue a full CONFIG snapshot, not a partial field update.
                 if (m_ipv6LinkLocalModeList.count(key) &&
                     none_of(data.begin(), data.end(), [](const auto &field) {
                         return fvField(field) == "ipv6_use_link_local_only";
@@ -1706,7 +1681,7 @@ void IntfMgr::replayLagIntfTasks(const string &alias)
                 if (isLagIntfKey(entry.first, alias, config_db_key_delimiter) && desired.count(entry.first) == 0)
                     consumer->addToSync(KeyOpFieldsValuesTuple(entry.first, DEL_COMMAND, {}));
         }
-        // Parent work precedes child work; each general key precedes its addresses.
+        // Queue parent work before child work, and each general key before its addresses.
         for (const auto &entry : desired)
         {
             consumer->addToSync(KeyOpFieldsValuesTuple(entry.first, SET_COMMAND, entry.second));
@@ -1761,7 +1736,7 @@ void IntfMgr::doLagTableTask(const string &key, const vector<FieldValueTuple> &d
     {
         reopened = m_readyLagIntfs.insert(key).second;
         if (reopened)
-            replayLagIntfTasks(key);
+            enqueueLagIntfConfig(key);
     }
     else if (op == SET_COMMAND && !ready)
     {

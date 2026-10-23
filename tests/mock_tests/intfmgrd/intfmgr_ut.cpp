@@ -1881,6 +1881,35 @@ namespace intfmgr_ut
         EXPECT_EQ(testing_db::getTableSetCount(STATE_LAG_TABLE_NAME, alias), 1u);
     }
 
+    TEST_F(IntfMgrTest, testPartialSetPreservesLinkLocalModeWithoutBaseMetadata)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1";
+        intfmgr.m_cfgLagIntfTable.set(alias, {{"ipv6_use_link_local_only", "enable"}});
+        notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "ok"}});
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        intfmgr.doTask(*consumer);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 1u);
+
+        intfmgr.m_stateIntfTable.del(alias);
+        intfmgr.m_cfgLagIntfTable.hset(alias, "nat_zone", "2");
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(alias, SET_COMMAND, {{"nat_zone", "2"}}));
+        intfmgr.doTask(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 1u);
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        ASSERT_TRUE(app.get(alias, values));
+        std::string value;
+        ASSERT_TRUE(getFieldValue(values, "ipv6_use_link_local_only", value));
+        EXPECT_EQ(value, "enable");
+        ASSERT_TRUE(getFieldValue(values, "nat_zone", value));
+        EXPECT_EQ(value, "2");
+    }
+
     TEST_F(IntfMgrTest, testHybridReopenResetsRemovedMtuAndLinkLocalMode)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
