@@ -818,6 +818,13 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfMgr::isLagIntfConfigRequired(const string &key)
+{
+    vector<FieldValueTuple> temp;
+    return m_cfgLagIntfTable.get(key, temp) ||
+           m_cfgSubIntfTable.get(key, temp);
+}
+
 bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -1526,8 +1533,7 @@ void IntfMgr::doTask(Consumer &consumer)
                 // Reopening re-reads CONFIG_DB, including any changed/deleted child rows.
                 if (op == SET_COMMAND && (m_readyLagIntfs.count(lag) == 0 || !isIntfStateOk(lag)))
                 {
-                    vector<FieldValueTuple> desired;
-                    if (!m_cfgLagIntfTable.get(kfvKey(t), desired) && !m_cfgSubIntfTable.get(kfvKey(t), desired))
+                    if (!isLagIntfConfigRequired(kfvKey(t)))
                         m_pendingReplayIntfList.erase(kfvKey(t));
                     it = consumer.m_toSync.erase(it);
                     continue;
@@ -1575,11 +1581,9 @@ void IntfMgr::doTask(Consumer &consumer)
                 else
                 {
                     // A replacement SET may have been cancelled while CONFIG still requires replay.
-                    vector<FieldValueTuple> desired;
                     if (op == SET_COMMAND ||
                         (consumer.m_toSync.count(kfvKey(t)) == 1 &&
-                         (lag.empty() || (!m_cfgLagIntfTable.get(kfvKey(t), desired) &&
-                                          !m_cfgSubIntfTable.get(kfvKey(t), desired)))))
+                         (lag.empty() || !isLagIntfConfigRequired(kfvKey(t)))))
                         m_pendingReplayIntfList.erase(keys[0]);
                 }
             }
@@ -1598,11 +1602,9 @@ void IntfMgr::doTask(Consumer &consumer)
                 }
                 else
                 {
-                    vector<FieldValueTuple> desired;
                     if (op == SET_COMMAND ||
                         (consumer.m_toSync.count(kfvKey(t)) == 1 &&
-                         (lag.empty() || (!m_cfgLagIntfTable.get(kfvKey(t), desired) &&
-                                          !m_cfgSubIntfTable.get(kfvKey(t), desired)))))
+                         (lag.empty() || !isLagIntfConfigRequired(kfvKey(t)))))
                         m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
                 }
             }
@@ -1642,9 +1644,8 @@ void IntfMgr::clearLagIntfTasks(const string &alias)
     for (auto it = m_pendingReplayIntfList.begin(); it != m_pendingReplayIntfList.end();)
     {
         // Cancelling executable SETs does not complete still-configured startup obligations.
-        vector<FieldValueTuple> desired;
         if (isLagIntfKey(*it, alias, config_db_key_delimiter) &&
-            !m_cfgLagIntfTable.get(*it, desired) && !m_cfgSubIntfTable.get(*it, desired))
+            !isLagIntfConfigRequired(*it))
             it = m_pendingReplayIntfList.erase(it);
         else
             ++it;

@@ -62,6 +62,7 @@ private:
     void withdrawLagIntf(const std::string& alias);
 
     bool isIntfStateOk(const std::string &alias);
+    bool isLagIntfConfigRequired(const std::string &key);
     bool isIntfCreated(const std::string &alias);
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);

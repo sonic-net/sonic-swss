@@ -598,6 +598,26 @@ namespace intfmgr_ut
         }
     }
 
+    TEST_F(IntfMgrTest, testLagIntfConfigRequiredUsesCurrentConfig)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.m_stateIntfTable.set("PortChannel1", {{"vrf", ""}});
+        EXPECT_FALSE(intfmgr.isLagIntfConfigRequired("PortChannel1"));
+        for (auto *table : {&intfmgr.m_cfgLagIntfTable, &intfmgr.m_cfgSubIntfTable})
+        {
+            const std::string alias = table == &intfmgr.m_cfgLagIntfTable ?
+                "PortChannel1" : "PortChannel1.20";
+            for (const auto &key : {alias, alias + "|192.0.2.1/31"})
+            {
+                EXPECT_FALSE(intfmgr.isLagIntfConfigRequired(key));
+                table->set(key, {{"NULL", "NULL"}});
+                EXPECT_TRUE(intfmgr.isLagIntfConfigRequired(key));
+                table->del(key);
+                EXPECT_FALSE(intfmgr.isLagIntfConfigRequired(key));
+            }
+        }
+    }
+
     TEST_F(IntfMgrTest, testLagReadinessUsesRowPresence)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
