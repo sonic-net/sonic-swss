@@ -23,7 +23,6 @@ dist_swss_DATA = \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_marvell-prestera.lua \
 		 pfc_detect_barefoot.lua \
-		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
@@ -199,4 +198,3 @@ orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
-
