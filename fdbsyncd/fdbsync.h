@@ -4,10 +4,12 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
@@ -78,11 +80,17 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
+    SubscriberStateTable *getStateVlanMemberTable()
+    {
+        return &m_stateVlanMemberEvents;
+    }
+
     void processStateFdb();
 
     void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
+    void processStateVlanMember();
 
     bool m_reconcileDone = false;
 
@@ -108,6 +116,8 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    Table m_stateVlanMemberTable;
+    SubscriberStateTable m_stateVlanMemberEvents;
 
     struct m_local_fdb_info
     {
@@ -126,6 +136,12 @@ private:
     bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
+
+    bool portLeftVlan(const std::string &port, const std::string &vlan);
+    void flushLeftVlan(const std::string &port, const std::string &vlan, bool statik);
+    void updateVlanMember(const std::string &key, bool member);
+    /* "port|vlan|static" or "port|vlan|extern_learn" flushed after the port left the VLAN, until it rejoins */
+    std::unordered_set<std::string> m_leftVlanFlushed;
 
     void updateAllLocalMac();
 
@@ -154,6 +170,8 @@ private:
         // - nhtype == NEXTHOPGROUP: contains nexthop group ID
         // - nhtype == IFNAME: contains interface name
         std::string nexthop_value;
+        /* IFNAME from an ES peer: zebra's kernel entry is static, not extern_learn */
+        bool es_peer_sync_static = false;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
 
@@ -177,6 +195,10 @@ private:
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
+    void updateEsPeerSyncMac(int nlmsg_type, int ifindex, int vlan, const std::string &mac,
+                             const struct ndmsg *ndm, struct rtattr *tb[]);
+    unsigned int vlanVni(int vlan);
+    virtual std::string ifIndexToName(int ifindex);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
     void onMsgNhg(struct nlmsghdr *msg);
     void clearL2Nhg();

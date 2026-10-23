@@ -3,6 +3,8 @@
 
 #include <string>
 #include <algorithm>
+/* before libnl's <linux/if.h>, which then defers to it */
+#include <net/if.h>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
@@ -107,7 +109,9 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
+    m_stateVlanMemberEvents(stateDb, STATE_VLAN_MEMBER_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -421,6 +425,127 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
     else
     {
         SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+    }
+}
+
+void FdbSync::processStateVlanMember()
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    m_stateVlanMemberEvents.pops(entries);
+    for (const auto &entry : entries)
+    {
+        updateVlanMember(kfvKey(entry), kfvOp(entry) == SET_COMMAND);
+    }
+}
+
+/*
+ * Whether a port has left a VLAN: it has no STATE_DB member row, and the kernel has not added
+ * it back either (vlanmgrd adds the kernel member before it writes STATE_DB).
+ */
+bool FdbSync::portLeftVlan(const std::string &port, const std::string &vlan)
+{
+    std::vector<FieldValueTuple> member;
+    if (m_stateVlanMemberTable.get("Vlan" + vlan + "|" + port, member))
+    {
+        return false;
+    }
+    std::string res;
+    const std::string show = "bridge vlan show dev " + port + " vid " + vlan;
+    return swss::exec(show, res) == 0 && res.find(port) == std::string::npos;
+}
+
+/*
+ * Flushes a port's static or extern_learn entries in a VLAN it has left (the kernel refuses a
+ * per-MAC delete there), once until the port rejoins.
+ */
+void FdbSync::flushLeftVlan(const std::string &port, const std::string &vlan, bool statik)
+{
+    const std::string kind = statik ? "static" : "extern_learn";
+    const std::string key = port + "|" + vlan + "|" + kind;
+    std::string res;
+    if (m_leftVlanFlushed.count(key) || swss::exec("test -d /sys/class/net/" + port + "/brport", res) != 0)
+    {
+        /* Flushed already, or the port left the bridge and the kernel removed its entries */
+        return;
+    }
+    const std::string cmds = "bridge fdb flush dev " + port + " master vlan " + vlan + " " + kind;
+    if (swss::exec(cmds, res) != 0)
+    {
+        SWSS_LOG_ERROR("Failed cmd:%s, res=%s", cmds.c_str(), res.c_str());
+        return;
+    }
+    SWSS_LOG_NOTICE("%s has left VLAN %s, flushed its %s entries there", port.c_str(), vlan.c_str(), kind.c_str());
+    m_leftVlanFlushed.insert(key);
+}
+
+/*
+ * A port that leaves a VLAN keeps zebra's entries there for the MACs an ES peer syncs: the
+ * kernel keeps static and extern_learn entries, and zebra's delete of one in a VLAN the port
+ * has left fails. So the leave removes the port's ifname rows in the VLAN and flushes those
+ * entries. zebra ignores kernel events for its own entries, so it does not see the flush; the
+ * kernel takes no new entry there while the port is out, and zebra installs them again when
+ * the port rejoins. A static flush also takes fdbsyncd's own static MACs there, which the
+ * rejoin installs again.
+ */
+void FdbSync::updateVlanMember(const std::string &key, bool member)
+{
+    /* Vlan<id>|<port> */
+    const size_t sep = key.find('|');
+    if (key.compare(0, 4, "Vlan") != 0 || sep == std::string::npos || sep <= 4)
+    {
+        return;
+    }
+    const std::string vlan = key.substr(4, sep - 4);
+    const std::string port = key.substr(sep + 1);
+    const std::string prefix = "Vlan" + vlan + ":";
+
+    if (member)
+    {
+        /* A later leave flushes again */
+        m_leftVlanFlushed.erase(port + "|" + vlan + "|extern_learn");
+        if (m_leftVlanFlushed.erase(port + "|" + vlan + "|static") && m_isEvpnNvoExist)
+        {
+            for (const auto &local : m_fdb_mac)
+            {
+                if (local.second.port_name == port && local.second.type == FDB_TYPE_STATIC &&
+                    local.first.compare(0, prefix.size(), prefix) == 0)
+                {
+                    addLocalMac(local.first, "replace");
+                }
+            }
+        }
+        return;
+    }
+
+    std::vector<std::string> rows;
+    for (const auto &entry : m_mac)
+    {
+        if (entry.second.nhtype == FdbDest::IFNAME && entry.second.nexthop_value == port &&
+            entry.first.compare(0, prefix.size(), prefix) == 0)
+        {
+            rows.push_back(entry.first);
+        }
+    }
+    if (rows.empty() || !portLeftVlan(port, vlan))
+    {
+        return;
+    }
+
+    bool extLearn = false;
+    bool statik = false;
+    for (const auto &row : rows)
+    {
+        (m_mac[row].es_peer_sync_static ? statik : extLearn) = true;
+        SWSS_LOG_NOTICE("ES peer MAC %s on %s removed (left the VLAN)", row.c_str(), port.c_str());
+        macDelVxlan(row);
+    }
+    if (extLearn)
+    {
+        flushLeftVlan(port, vlan, false);
+    }
+    if (statik)
+    {
+        flushLeftVlan(port, vlan, true);
     }
 }
 
@@ -1023,8 +1148,10 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     struct rtattr *rta = (struct rtattr *)(void *)((char *)nm + NLMSG_ALIGN(sizeof(*nm)));
     for (; RTA_OK(rta, attr_len); rta = RTA_NEXT(rta, attr_len))
     {
-        if (rta->rta_type <= NDA_MAX)
-            tb[rta->rta_type] = rta;
+        /* the kernel flags NDA_FDB_EXT_ATTRS as nested */
+        unsigned short type = rta->rta_type & NLA_TYPE_MASK;
+        if (type <= NDA_MAX)
+            tb[type] = rta;
     }
 
     int state = rtnl_neigh_get_state(neigh);
@@ -1078,6 +1205,8 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
                 updateMclagRemoteMacPort(ifindex, vid, macStr, RTPROT_UNSPEC);
             }
         }
+
+        updateEsPeerSyncMac(nlmsg_type, ifindex, rtnl_neigh_get_vlan(neigh), macStr, nm, tb);
 
         if (nlmsg_type != RTM_DELNEIGH)
         {
@@ -1185,11 +1314,151 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     {
         macAddVxlan(key, vtep_addr, type, vni, ifname, nexthop_group, dest_type, RTPROT_UNSPEC);
     }
+    else if (m_mac.find(key) != m_mac.end() && m_mac[key].nhtype == FdbDest::IFNAME)
+    {
+        /* The MAC now belongs to a local ES port; this is the old VXLAN entry going away */
+        SWSS_LOG_INFO("DEL_KEY %s on %s ignored: the MAC is on %s", key.c_str(), ifname.c_str(),
+                      m_mac[key].nexthop_value.c_str());
+    }
     else
     {
         macDelVxlan(key);
     }
     return;
+}
+
+/*
+ * A MAC that an ES peer advertises with a local ESI is installed by zebra on the local ES
+ * port (bridge entry, protocol zebra): extern_learn with --kernel-mac-ext-learn, static with
+ * activity notify without it. Nothing learns it in hardware here, so it is programmed
+ * through VXLAN_FDB_TABLE with "ifname", which fdborch installs on that port as a static
+ * entry that a local learn may move. The row lasts as long as that kernel entry: a delete,
+ * or a replace by any other entry (a data plane learn, or zebra's plain entry for a MAC that
+ * is no longer synced), removes it.
+ */
+static bool isEsPeerSyncEntry(const struct ndmsg *ndm, struct rtattr *tb[])
+{
+    if (!tb[NDA_PROTOCOL] || *(uint8_t *)RTA_DATA(tb[NDA_PROTOCOL]) != RTPROT_ZEBRA)
+    {
+        return false;
+    }
+    if (ndm->ndm_flags & NTF_EXT_LEARNED)
+    {
+        return true;
+    }
+    if (!tb[NDA_FDB_EXT_ATTRS])
+    {
+        return false;
+    }
+    struct rtattr *nfea = (struct rtattr *)RTA_DATA(tb[NDA_FDB_EXT_ATTRS]);
+    int len = (int)RTA_PAYLOAD(tb[NDA_FDB_EXT_ATTRS]);
+    for (; RTA_OK(nfea, len); nfea = RTA_NEXT(nfea, len))
+    {
+        if (nfea->rta_type == NFEA_ACTIVITY_NOTIFY && RTA_PAYLOAD(nfea) >= sizeof(uint8_t))
+        {
+            return (*(uint8_t *)RTA_DATA(nfea) & FDB_NOTIFY_BIT) != 0;
+        }
+    }
+    return false;
+}
+
+void FdbSync::updateEsPeerSyncMac(int nlmsg_type, int ifindex, int vlan, const string &mac,
+                                  const struct ndmsg *ndm, struct rtattr *tb[])
+{
+    /* Without "proto hw" on its own installs, a data plane learn could not replace zebra's entry */
+    if (vlan <= 0 || !tb[NDA_MASTER] || !m_isFdbProtoSupported)
+    {
+        return;
+    }
+
+    const string key = "Vlan" + to_string(vlan) + ":" + mac;
+    auto it = m_mac.find(key);
+    const bool tracked = it != m_mac.end() && it->second.nhtype == FdbDest::IFNAME;
+    const bool sync = nlmsg_type == RTM_NEWNEIGH && isEsPeerSyncEntry(ndm, tb);
+    if (!sync && !tracked)
+    {
+        return;
+    }
+    const string port = ifIndexToName(ifindex);
+
+    if (sync)
+    {
+        if (port.empty())
+        {
+            SWSS_LOG_WARN("ES peer MAC %s: no interface with ifindex %d", key.c_str(), ifindex);
+            return;
+        }
+
+        auto local = m_fdb_mac.find(key);
+        if (local != m_fdb_mac.end() && local->second.port_name != port)
+        {
+            /* an event from before the MAC was learned on another port */
+            SWSS_LOG_INFO("ES peer MAC %s on %s ignored: learned on %s", key.c_str(), port.c_str(),
+                          local->second.port_name.c_str());
+            return;
+        }
+
+        const string type = (ndm->ndm_flags & NTF_STICKY) ? "static" : "dynamic";
+        const bool kernelStatic = !(ndm->ndm_flags & NTF_EXT_LEARNED);
+        if (portLeftVlan(port, to_string(vlan)))
+        {
+            /* A stale entry (a replay after a leave, or an event from before it) */
+            SWSS_LOG_INFO("ES peer MAC %s on %s ignored: the port has left the VLAN", key.c_str(), port.c_str());
+            if (tracked && it->second.nexthop_value == port)
+            {
+                macDelVxlan(key);
+            }
+            flushLeftVlan(port, to_string(vlan), kernelStatic);
+            return;
+        }
+
+        const unsigned int vni = vlanVni(vlan);
+        if (tracked && it->second.nexthop_value == port && it->second.type == type && it->second.vni == vni)
+        {
+            /* zebra rewrites the entry on every sync state change; the destination is unchanged */
+            it->second.es_peer_sync_static = kernelStatic;
+            return;
+        }
+
+        SWSS_LOG_NOTICE("ES peer MAC %s on %s, type %s", key.c_str(), port.c_str(), type.c_str());
+        macAddVxlan(key, nullptr, type, vni, port, "0", FdbDest::IFNAME, RTPROT_UNSPEC);
+        m_mac[key].es_peer_sync_static = kernelStatic;
+        return;
+    }
+
+    /* A delete names the port it removes the MAC from; any other entry replaces this one */
+    if (nlmsg_type == RTM_NEWNEIGH || port.empty() || it->second.nexthop_value == port)
+    {
+        SWSS_LOG_NOTICE("ES peer MAC %s on %s removed (%s)", key.c_str(), it->second.nexthop_value.c_str(),
+                        nlmsg_type == RTM_NEWNEIGH ? "replaced" : "deleted");
+        macDelVxlan(key);
+    }
+}
+
+unsigned int FdbSync::vlanVni(int vlan)
+{
+    /* VXLAN netdevices are named <name>-<vlan-id> */
+    const string suffix = "-" + to_string(vlan);
+    for (const auto &intf : m_intf_info)
+    {
+        const string &name = intf.second.ifname;
+        if (name.find(VXLAN_BR_IF_NAME_PREFIX) == string::npos && name.size() > suffix.size() &&
+            name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+        {
+            return intf.second.vni;
+        }
+    }
+    return 0;
+}
+
+string FdbSync::ifIndexToName(int ifindex)
+{
+    char name[IF_NAMESIZE] = {0};
+    if (if_indextoname(ifindex, name) == NULL)
+    {
+        return "";
+    }
+    return name;
 }
 
 void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
