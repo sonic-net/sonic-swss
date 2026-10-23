@@ -1740,7 +1740,6 @@ void MclagLink::mclagsyncdSetPeerSystemId(
 }
 
 MclagLink::MclagLink(Select *select, int port) :
-    MSG_BATCH_SIZE(256),
     m_bufSize(MCLAG_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
     m_pos(0),
