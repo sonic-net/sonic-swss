@@ -177,6 +177,10 @@ private:
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
+    void updateEsPeerSyncMac(int nlmsg_type, int ifindex, int vlan, const std::string &mac,
+                             const struct ndmsg *ndm, struct rtattr *tb[]);
+    unsigned int vlanVni(int vlan);
+    virtual std::string ifIndexToName(int ifindex);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
     void onMsgNhg(struct nlmsghdr *msg);
     void clearL2Nhg();

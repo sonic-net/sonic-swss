@@ -3,6 +3,8 @@
 
 #include <string>
 #include <algorithm>
+/* before libnl's <linux/if.h>, which then defers to it */
+#include <net/if.h>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
@@ -1023,8 +1025,10 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     struct rtattr *rta = (struct rtattr *)(void *)((char *)nm + NLMSG_ALIGN(sizeof(*nm)));
     for (; RTA_OK(rta, attr_len); rta = RTA_NEXT(rta, attr_len))
     {
-        if (rta->rta_type <= NDA_MAX)
-            tb[rta->rta_type] = rta;
+        /* the kernel flags NDA_FDB_EXT_ATTRS as nested */
+        unsigned short type = rta->rta_type & NLA_TYPE_MASK;
+        if (type <= NDA_MAX)
+            tb[type] = rta;
     }
 
     int state = rtnl_neigh_get_state(neigh);
@@ -1078,6 +1082,8 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
                 updateMclagRemoteMacPort(ifindex, vid, macStr, RTPROT_UNSPEC);
             }
         }
+
+        updateEsPeerSyncMac(nlmsg_type, ifindex, rtnl_neigh_get_vlan(neigh), macStr, nm, tb);
 
         if (nlmsg_type != RTM_DELNEIGH)
         {
@@ -1185,11 +1191,136 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     {
         macAddVxlan(key, vtep_addr, type, vni, ifname, nexthop_group, dest_type, RTPROT_UNSPEC);
     }
+    else if (m_mac.find(key) != m_mac.end() && m_mac[key].nhtype == FdbDest::IFNAME)
+    {
+        /* The MAC now belongs to a local ES port; this is the old VXLAN entry going away */
+        SWSS_LOG_INFO("DEL_KEY %s on %s ignored: the MAC is on %s", key.c_str(), ifname.c_str(),
+                      m_mac[key].nexthop_value.c_str());
+    }
     else
     {
         macDelVxlan(key);
     }
     return;
+}
+
+/*
+ * A MAC that an ES peer advertises with a local ESI is installed by zebra on the local ES
+ * port (bridge entry, protocol zebra): extern_learn with --kernel-mac-ext-learn, static with
+ * activity notify without it. Nothing learns it in hardware here, so it is programmed
+ * through VXLAN_FDB_TABLE with "ifname", which fdborch installs on that port as a static
+ * entry that a local learn may move. The row lasts as long as that kernel entry: a delete,
+ * or a replace by any other entry (a data plane learn, or zebra's plain entry for a MAC that
+ * is no longer synced), removes it.
+ */
+static bool isEsPeerSyncEntry(const struct ndmsg *ndm, struct rtattr *tb[])
+{
+    if (!tb[NDA_PROTOCOL] || *(uint8_t *)RTA_DATA(tb[NDA_PROTOCOL]) != RTPROT_ZEBRA)
+    {
+        return false;
+    }
+    if (ndm->ndm_flags & NTF_EXT_LEARNED)
+    {
+        return true;
+    }
+    if (!tb[NDA_FDB_EXT_ATTRS])
+    {
+        return false;
+    }
+    struct rtattr *nfea = (struct rtattr *)RTA_DATA(tb[NDA_FDB_EXT_ATTRS]);
+    int len = (int)RTA_PAYLOAD(tb[NDA_FDB_EXT_ATTRS]);
+    for (; RTA_OK(nfea, len); nfea = RTA_NEXT(nfea, len))
+    {
+        if (nfea->rta_type == NFEA_ACTIVITY_NOTIFY && RTA_PAYLOAD(nfea) >= sizeof(uint8_t))
+        {
+            return (*(uint8_t *)RTA_DATA(nfea) & FDB_NOTIFY_BIT) != 0;
+        }
+    }
+    return false;
+}
+
+void FdbSync::updateEsPeerSyncMac(int nlmsg_type, int ifindex, int vlan, const string &mac,
+                                  const struct ndmsg *ndm, struct rtattr *tb[])
+{
+    /* Without "proto hw" on its own installs, a data plane learn could not replace zebra's entry */
+    if (vlan <= 0 || !tb[NDA_MASTER] || !m_isFdbProtoSupported)
+    {
+        return;
+    }
+
+    const string key = "Vlan" + to_string(vlan) + ":" + mac;
+    auto it = m_mac.find(key);
+    const bool tracked = it != m_mac.end() && it->second.nhtype == FdbDest::IFNAME;
+    const bool sync = nlmsg_type == RTM_NEWNEIGH && isEsPeerSyncEntry(ndm, tb);
+    if (!sync && !tracked)
+    {
+        return;
+    }
+    const string port = ifIndexToName(ifindex);
+
+    if (sync)
+    {
+        if (port.empty())
+        {
+            SWSS_LOG_WARN("ES peer MAC %s: no interface with ifindex %d", key.c_str(), ifindex);
+            return;
+        }
+
+        auto local = m_fdb_mac.find(key);
+        if (local != m_fdb_mac.end() && local->second.port_name != port)
+        {
+            /* an event from before the MAC was learned on another port */
+            SWSS_LOG_INFO("ES peer MAC %s on %s ignored: learned on %s", key.c_str(), port.c_str(),
+                          local->second.port_name.c_str());
+            return;
+        }
+
+        const string type = (ndm->ndm_flags & NTF_STICKY) ? "static" : "dynamic";
+        const unsigned int vni = vlanVni(vlan);
+        if (tracked && it->second.nexthop_value == port && it->second.type == type && it->second.vni == vni)
+        {
+            /* zebra rewrites the entry on every sync state change; the destination is unchanged */
+            return;
+        }
+
+        SWSS_LOG_NOTICE("ES peer MAC %s on %s, type %s", key.c_str(), port.c_str(), type.c_str());
+        macAddVxlan(key, nullptr, type, vni, port, "0", FdbDest::IFNAME, RTPROT_UNSPEC);
+        return;
+    }
+
+    /* A delete names the port it removes the MAC from; any other entry replaces this one */
+    if (nlmsg_type == RTM_NEWNEIGH || port.empty() || it->second.nexthop_value == port)
+    {
+        SWSS_LOG_NOTICE("ES peer MAC %s on %s removed (%s)", key.c_str(), it->second.nexthop_value.c_str(),
+                        nlmsg_type == RTM_NEWNEIGH ? "replaced" : "deleted");
+        macDelVxlan(key);
+    }
+}
+
+unsigned int FdbSync::vlanVni(int vlan)
+{
+    /* VXLAN netdevices are named <name>-<vlan-id> */
+    const string suffix = "-" + to_string(vlan);
+    for (const auto &intf : m_intf_info)
+    {
+        const string &name = intf.second.ifname;
+        if (name.find(VXLAN_BR_IF_NAME_PREFIX) == string::npos && name.size() > suffix.size() &&
+            name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+        {
+            return intf.second.vni;
+        }
+    }
+    return 0;
+}
+
+string FdbSync::ifIndexToName(int ifindex)
+{
+    char name[IF_NAMESIZE] = {0};
+    if (if_indextoname(ifindex, name) == NULL)
+    {
+        return "";
+    }
+    return name;
 }
 
 void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
