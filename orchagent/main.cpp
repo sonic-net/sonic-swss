@@ -33,6 +33,7 @@ extern "C" {
 #include "warm_restart.h"
 #include "gearboxutils.h"
 #include "macsecpost.h"
+#include "poecfg.h"
 
 using namespace std;
 using namespace swss;
@@ -48,6 +49,7 @@ extern sai_router_interface_api_t *sai_router_intfs_api;
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
+sai_object_id_t gPoeSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 extern volatile sig_atomic_t gOrchShutdownRequested;
@@ -238,6 +240,34 @@ void init_gearbox_phys(DBConnector *applDb)
         }
     }
     delete tmpGearboxTable;
+}
+
+void init_poe(DBConnector *applDb)
+{
+    Table tmpPoeTable(applDb, "_POE_TABLE");
+    PoeConfig poe(tmpPoeTable);
+
+    if (!poe.platformHasPoe())
+    {
+        // platform doesn't support PoE, no need to do anything
+        return;
+    }
+
+    SWSS_LOG_NOTICE("POE: Initialize");
+    if (!poe.isPoeEnabled())
+    {
+        SWSS_LOG_WARN("POE: not enabled");
+        return;
+    }
+
+    if (initSaiPoeApi(gPoeSwitchId) == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("POE: Created Switch %s", sai_serialize_object_id(gPoeSwitchId).c_str());
+    }
+    else
+    {
+        SWSS_LOG_ERROR("POE: Failed to initialize switch");
+    }
 }
 
 void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_sub_type)
@@ -988,6 +1018,7 @@ int main(int argc, char **argv)
         /* Initialize orchestration components */
 
         init_gearbox_phys(&appl_db);
+        init_poe(&appl_db);
     }
 
     shared_ptr<OrchDaemon> orchDaemon;

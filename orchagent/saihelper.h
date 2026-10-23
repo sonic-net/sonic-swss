@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gearboxutils.h"
+#include "poecfg.h"
 
 #include <iosfwd>
 #include <string>
@@ -20,6 +21,7 @@ void initFlexCounterTables();
 void initSaiApi();
 void initSaiRedis();
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy);
+sai_status_t initSaiPoeApi(sai_object_id_t &switchOid);
 
 sai_redis_communication_mode_t resolveCommunicationModeFromContextConfig(
         std::istream& jsonStream,
