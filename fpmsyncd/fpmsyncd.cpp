@@ -12,6 +12,7 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 
 #include <netlink/route/route.h>
 
@@ -88,6 +89,9 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    MacSync macsync(&pipeline, &stateDb, &cfgDb);
+    sync.setMacSync(&macsync);
+
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
@@ -141,8 +145,13 @@ int main(int argc, char **argv)
             fpm.accept();
             cout << "Connected!" << endl;
 
+            macsync.onFpmConnected(fpm);
+
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            s.addSelectable(macsync.getStateFdbTable());
+            s.addSelectable(macsync.getCfgFdbSyncTable());
+
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -192,8 +201,24 @@ int main(int argc, char **argv)
             {
                 Selectable *temps;
 
-                /* Reading FPM messages forever (and calling "readMe" to read them) */
+                /*
+                 * Wait on every selectable: the FPM connection (whose "readMe" reads the
+                 * FPM messages), netlink, and MacSync's two tables, STATE_DB FDB_TABLE for
+                 * the local MACs to send to zebra and CONFIG_DB FDB_SYNC for the mode.
+                 */
                 s.select(&temps, gSelectTimeout);
+
+                if (temps == (Selectable *)macsync.getStateFdbTable())
+                {
+                    macsync.processStateFdb();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getCfgFdbSyncTable())
+                {
+                    macsync.processCfgFdbSync();
+                    continue;
+                }
 
                 /*
                  * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
@@ -273,6 +298,7 @@ int main(int argc, char **argv)
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
+            macsync.onFpmDisconnected();
             cout << "Connection lost, reconnecting..." << endl;
         }
     }
