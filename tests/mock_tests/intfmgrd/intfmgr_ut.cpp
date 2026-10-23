@@ -598,7 +598,7 @@ namespace intfmgr_ut
         }
     }
 
-    TEST_F(IntfMgrTest, testLagReadinessRequiresOk)
+    TEST_F(IntfMgrTest, testLagReadinessUsesRowPresence)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         swss::Table appIntfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
@@ -611,29 +611,31 @@ namespace intfmgr_ut
 
         EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
         notifyLag(intfmgr, alias, SET_COMMAND, {{"system_mac", "02:03:04:05:06:07"}});
-        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
-        consumer->addToSync(swss::KeyOpFieldsValuesTuple(alias, SET_COMMAND, {}));
-        consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
-        mockCallArgs.clear();
-        intfmgr.doTask(*consumer);
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_TRUE(mockCallArgs.empty());
-        std::vector<swss::FieldValueTuple> values;
-        EXPECT_FALSE(appIntfTable.get(alias, values));
-        EXPECT_FALSE(appIntfTable.get(alias + ":10.0.0.1/31", values));
-        EXPECT_FALSE(intfmgr.m_stateIntfTable.get(alias, values));
-
-        notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "pending"}});
-        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "ok"}});
         EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
         ASSERT_EQ(consumer->m_toSync.size(), 2u);
         EXPECT_EQ(consumer->m_toSync.begin()->first, alias);
         intfmgr.doTask(*consumer);
         EXPECT_TRUE(consumer->m_toSync.empty());
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_TRUE(appIntfTable.get(alias, values));
+        EXPECT_TRUE(appIntfTable.get(alias + ":10.0.0.1/31", values));
         EXPECT_TRUE(intfmgr.m_stateIntfTable.get(alias, values));
         EXPECT_TRUE(intfmgr.m_stateIntfTable.get(key, values));
+
+        notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "pending"}});
+        EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        notifyLag(intfmgr, alias, DEL_COMMAND);
+        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
+
+        for (const std::string childAlias : {"PortChannel1.20", "Po1.20"})
+        {
+            EXPECT_FALSE(intfmgr.isIntfStateOk(childAlias));
+            intfmgr.m_stateLagTable.set(childAlias, {{"metadata", "present"}});
+            EXPECT_TRUE(intfmgr.isIntfStateOk(childAlias));
+            intfmgr.m_stateLagTable.del(childAlias);
+            EXPECT_FALSE(intfmgr.isIntfStateOk(childAlias));
+        }
     }
 
     TEST_F(IntfMgrTest, testLagDeleteCancelsSetsAndWithdrawsReadiness)
@@ -687,8 +689,7 @@ namespace intfmgr_ut
         ASSERT_TRUE(intfmgr.m_stateIntfTable.hget("PortChannel1", "vrf", value));
         EXPECT_EQ(value, "VrfRed");
         EXPECT_FALSE(intfmgr.m_stateIntfTable.hget("PortChannel1|10.0.0.1/31", "state", value));
-        ASSERT_TRUE(intfmgr.m_stateIntfTable.hget("PortChannel1|10.0.0.1/31", "owner", value));
-        EXPECT_EQ(value, "retained");
+        EXPECT_FALSE(intfmgr.m_stateIntfTable.get("PortChannel1|10.0.0.1/31", values));
         EXPECT_FALSE(intfmgr.m_stateIntfTable.get("PortChannel1|2001:db8::2/64", values));
         for (const std::string key : {"PortChannel10", "PortChannel10|10.0.0.3/31"})
         {
@@ -977,7 +978,7 @@ namespace intfmgr_ut
         consumer->addToSync(swss::KeyOpFieldsValuesTuple(alias, SET_COMMAND, {{"mpls", "enable"}}));
         consumer->addToSync(swss::KeyOpFieldsValuesTuple(oldKey, SET_COMMAND, {}));
         notifyLag(intfmgr, alias, SET_COMMAND, {{"system_mac", "02:03:04:05:06:07"}});
-        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
+        EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
         notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "ok"}});
         ASSERT_EQ(consumer->m_toSync.size(), 3u);
         EXPECT_EQ(consumer->m_toSync.begin()->first, alias);
@@ -1416,7 +1417,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
     }
 
-    TEST_F(IntfMgrTest, testHybridWithdrawalOnlyRemovesOwnedReadinessFields)
+    TEST_F(IntfMgrTest, testReadinessWithdrawalRemovesOwnedRowsAndPreservesBaseMetadata)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         auto *child = applyChild(intfmgr);
@@ -1439,20 +1440,22 @@ namespace intfmgr_ut
         EXPECT_EQ(state[alias], base);
         EXPECT_EQ(lagState["PortChannel1"], upstream);
         std::string value;
-        EXPECT_FALSE(intfmgr.m_stateIntfTable.hget(key, "state", value));
-        ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(key, "metadata", value));
-        EXPECT_EQ(value, "keep-address");
-        EXPECT_FALSE(intfmgr.m_stateLagTable.hget(alias, "state", value));
-        ASSERT_TRUE(intfmgr.m_stateLagTable.hget(alias, "metadata", value));
-        EXPECT_EQ(value, "keep-child");
+        EXPECT_EQ(state.count(key), 0u);
+        EXPECT_EQ(lagState.count(alias), 0u);
+        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
         EXPECT_EQ(tableSnapshot(app), application);
         EXPECT_EQ(KernelSubIntfs, kernel);
         EXPECT_TRUE(mockCallArgs.empty());
         EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 1u);
 
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}});
+        MissingSubInterfaces.insert(alias);
+        KernelSubIntfs.erase(alias);
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        EXPECT_TRUE(mockCallArgs.empty());
         FailSubIntfMtu = true;
         intfmgr.doTask(*child);
+        EXPECT_TRUE(commandWasIssued("link add link \"PortChannel1\" name \"PortChannel1.20\""));
         EXPECT_FALSE(intfmgr.m_stateIntfTable.hget(key, "state", value));
         EXPECT_FALSE(intfmgr.m_stateLagTable.hget(alias, "state", value));
         FailSubIntfMtu = false;
@@ -1462,8 +1465,10 @@ namespace intfmgr_ut
         EXPECT_EQ(value, "ok");
         ASSERT_TRUE(intfmgr.m_stateLagTable.hget(alias, "state", value));
         EXPECT_EQ(value, "ok");
-        EXPECT_TRUE(intfmgr.m_stateIntfTable.hget(key, "metadata", value));
-        EXPECT_TRUE(intfmgr.m_stateLagTable.hget(alias, "metadata", value));
+        EXPECT_FALSE(intfmgr.m_stateIntfTable.hget(key, "metadata", value));
+        EXPECT_FALSE(intfmgr.m_stateLagTable.hget(alias, "metadata", value));
+        ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(alias, "metadata", value));
+        EXPECT_EQ(value, "keep-base");
     }
 
     TEST_F(IntfMgrTest, testHybridRetainedBaseGatesAddressAndChildReplay)

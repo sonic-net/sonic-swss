@@ -832,8 +832,7 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     }
     else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
     {
-        string state;
-        if (m_stateLagTable.hget(alias, "state", state) && state == "ok")
+        if (m_stateLagTable.get(alias, temp))
         {
             SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
             return true;
@@ -872,8 +871,7 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     }
     else if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
     {
-        string state;
-        if (m_stateLagTable.hget(alias, "state", state) && state == "ok")
+        if (m_stateLagTable.get(alias, temp))
         {
             SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
             return true;
@@ -1726,7 +1724,7 @@ void IntfMgr::withdrawLagIntf(const string &alias)
         if (key.find(state_db_key_delimiter) != string::npos &&
             isLagIntfKey(key, alias, state_db_key_delimiter))
         {
-            m_stateIntfTable.hdel(key, "state");
+            m_stateIntfTable.del(key);
         }
     }
 
@@ -1735,7 +1733,7 @@ void IntfMgr::withdrawLagIntf(const string &alias)
     {
         subIntf subIf(key);
         if (subIf.isValid() && subIf.parentIntf() == alias)
-            m_stateLagTable.hdel(key, "state");
+            m_stateLagTable.del(key);
     }
 }
 
