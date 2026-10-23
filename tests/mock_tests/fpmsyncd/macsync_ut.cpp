@@ -123,6 +123,12 @@ public:
         addAttr(req, NDA_DST, &addr, sizeof(addr));
     }
 
+    /* Where the next attribute goes, so a test can corrupt it once added. */
+    struct rtattr *nextAttr(MacMsg& req)
+    {
+        return (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+    }
+
     void feed(MacMsg& req)
     {
         int len = (int)(req.n.nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
@@ -765,4 +771,98 @@ TEST_F(MacSyncTest, L3EvpnMhRunsFpmModeWhateverFdbSyncSays)
     EXPECT_TRUE(l3EvpnMh.isFpmMode());
     l3EvpnMh.setMacSyncMode("");
     EXPECT_TRUE(l3EvpnMh.isFpmMode());
+}
+
+/*
+ * set() merges fields, so a MAC that moves from a VTEP to a nexthop group must
+ * not keep its remote_vtep: fdbOrch would pick one of the two destinations.
+ */
+TEST_F(MacSyncTest, RemoteMacDestinationChangeReplacesTheRow)
+{
+    MacMsg vtep;
+    buildMacMsg(vtep, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(vtep, TEST_VLAN);
+    addVtep(vtep, "10.1.1.1");
+    addSrcVni(vtep, TEST_VNI);
+    feed(vtep);
+
+    MacMsg nhg;
+    buildMacMsg(nhg, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(nhg, TEST_VLAN);
+    addSrcVni(nhg, TEST_VNI);
+    addNhgId(nhg, 4242);
+    feed(nhg);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+}
+
+/*
+ * A stream that ends in an incomplete attribute stops the parse there. The
+ * attributes before it are well formed, so the message must be dropped rather
+ * than programmed without the VNI that follows.
+ */
+TEST_F(MacSyncTest, RemoteMacWithMalformedTailIsDropped)
+{
+    MacMsg overrun;
+    buildMacMsg(overrun, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(overrun, TEST_VLAN);
+    addVtep(overrun, "10.1.1.1");
+    struct rtattr *vni = nextAttr(overrun);
+    addSrcVni(overrun, TEST_VNI);
+    vni->rta_len = (unsigned short)RTA_LENGTH(2 * sizeof(uint32_t));
+    feed(overrun);
+
+    MacMsg partialHeader;
+    buildMacMsg(partialHeader, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(partialHeader, TEST_VLAN);
+    addVtep(partialHeader, "10.1.1.1");
+    addSrcVni(partialHeader, TEST_VNI);
+    partialHeader.n.nlmsg_len += 2;
+    feed(partialHeader);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/* The last attribute may come without its alignment padding, as the kernel allows. */
+TEST_F(MacSyncTest, RemoteMacWithUnpaddedLastAttributeIsAccepted)
+{
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVtep(req, "10.1.1.1");
+    addSrcVni(req, TEST_VNI);
+    addVlan(req, TEST_VLAN);
+    req.n.nlmsg_len -= (uint32_t)(RTA_ALIGN(RTA_LENGTH(sizeof(uint16_t))) - RTA_LENGTH(sizeof(uint16_t)));
+    feed(req);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+}
+
+/*
+ * Rows already in APP_VXLAN_FDB_TABLE when fpm mode starts, from an earlier
+ * fpmsyncd or from fdbsyncd in kernel mode, stay withdrawable: zebra's delete
+ * used to be ignored for a MAC this instance had not written.
+ */
+TEST_F(MacSyncTest, FpmModeTakesOverRemoteMacsInAppDb)
+{
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
+                                                      {"type", "dynamic"},
+                                                      {"vni", std::to_string(TEST_VNI)}});
+
+    m_macSync->setMacSyncMode("kernel");
+    m_macSync->setMacSyncMode("fpm");
+
+    MacMsg del;
+    buildMacMsg(del, RTM_DELNEIGH, NUD_REACHABLE);
+    addVlan(del, TEST_VLAN);
+    addVtep(del, "10.1.1.1");
+    feed(del);
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_FALSE(getEntry(TEST_KEY, values));
 }

@@ -59,7 +59,10 @@ static bool addAttr(struct nlmsghdr *n, size_t maxLen, int type,
     return true;
 }
 
-static void parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int len)
+/* False when the stream ends in an incomplete attribute header or payload. A
+ * last attribute without its alignment padding leaves len negative, which the
+ * kernel accepts as well. */
+static bool parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int len)
 {
     memset(tb, 0, sizeof(struct rtattr *) * (unsigned int)(max + 1));
     while (RTA_OK(rta, len))
@@ -70,6 +73,8 @@ static void parseRtAttrs(struct rtattr **tb, int max, struct rtattr *rta, int le
         }
         rta = RTA_NEXT(rta, len);
     }
+
+    return len <= 0;
 }
 
 /* Reads a fixed-size attribute; false when the payload is too short to hold one. */
@@ -86,6 +91,7 @@ static bool getAttr(const struct rtattr *rta, T& value)
 
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
+    m_vxlanFdbTableRead(pipeline, APP_VXLAN_FDB_TABLE_NAME, false),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
@@ -134,7 +140,17 @@ void MacSync::setMacSyncMode(const string& mode)
         /* processStateFdb() discards updates while fdbsyncd owns the kernel
          * path, so the local cache would only go stale. */
         m_localMacs.clear();
+        /* fdbsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
+        m_remoteMacs.clear();
+        return;
     }
+
+    /* Take over the remote MACs already in APPL_DB, written by an earlier
+     * fpmsyncd or by fdbsyncd in kernel mode, so zebra can still withdraw them. */
+    std::vector<string> keys;
+    m_vxlanFdbTableRead.getKeys(keys);
+    m_remoteMacs.insert(keys.begin(), keys.end());
+    SWSS_LOG_NOTICE("MacSync: took over %zu remote MACs from APPL_DB", keys.size());
 }
 
 void MacSync::processCfgFdbSync()
@@ -363,7 +379,11 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
 
     struct rtattr *tb[NDA_MAX + 1];
-    parseRtAttrs(tb, NDA_MAX, (struct rtattr *)(void *)((char *)ndm + sizeof(struct ndmsg)), len);
+    if (!parseRtAttrs(tb, NDA_MAX, (struct rtattr *)(void *)((char *)ndm + sizeof(struct ndmsg)), len))
+    {
+        SWSS_LOG_ERROR("MacSync: dropping inbound MAC message with a malformed attribute");
+        return;
+    }
 
     if (!tb[NDA_LLADDR] || RTA_PAYLOAD(tb[NDA_LLADDR]) != ETHER_ADDR_LEN)
     {
@@ -506,6 +526,11 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
+    /* set() merges fields, so a MAC whose destination changes would keep the old one. */
+    if (m_remoteMacs.count(key))
+    {
+        m_vxlanFdbTable.del(key);
+    }
     m_vxlanFdbTable.set(key, fvVector);
     m_remoteMacs.insert(key);
 

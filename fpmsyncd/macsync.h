@@ -71,6 +71,7 @@ private:
                       LocalMac& local, bool add);
 
     ProducerStateTable m_vxlanFdbTable;
+    Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
     SubscriberStateTable m_cfgFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
@@ -87,7 +88,9 @@ private:
 
     std::map<std::string, LocalMac> m_localMacs;
 
-    /* Remote MACs written to APPL_DB, so a withdrawal only removes what we added. */
+    /* Remote MACs in APPL_DB that this daemon owns: the ones it wrote, and in
+     * fpm mode the ones already there when it took over. A withdrawal removes
+     * only these. */
     std::set<std::string> m_remoteMacs;
 };
 
