@@ -406,6 +406,7 @@ tests_response_publisher_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhired
 ## nbrmgrd unit tests
 
 tests_nbrmgrd_SOURCES = nbrmgrd/nbrmgr_ut.cpp \
+                         nbrmgrd/nbrmgr_reinstall_ut.cpp \
                          $(top_srcdir)/cfgmgr/nbrmgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
