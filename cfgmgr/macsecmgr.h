@@ -87,9 +87,14 @@ private:
     };
     std::vector<AppMACsecTable> m_appMACsecTables;
     unsigned int m_clearStaleTimeoutMs;
+    // Directory of wpa_supplicant's global control sockets, one per port.
+    std::string m_sockDir;
+    unsigned int m_stopStaleTimeoutMs;
 
     bool isPortStateOk(const std::string & port_name);
     bool clearStaleMACsecState(const std::string & port_name);
+    void stopStaleWPASupplicant(const std::string & port_name);
+    virtual bool terminateWPASupplicant(const std::string & sock) const;
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
     bool configureMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;

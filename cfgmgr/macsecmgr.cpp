@@ -33,6 +33,7 @@ using namespace swss;
 // MACSEC_PORT_TABLE entry before giving up and retrying the task later.
 #define CLEAR_STALE_TIMEOUT_MS  10000
 #define CLEAR_STALE_POLL_MS     100
+#define STOP_STALE_TIMEOUT_MS   2000
 
 constexpr std::uint64_t RETRY_TIME = 30;
 
@@ -278,7 +279,9 @@ MACsecMgr::MACsecMgr(
     const vector<std::string> &tables) :
         Orch(cfgDb, tables),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
-        m_clearStaleTimeoutMs(CLEAR_STALE_TIMEOUT_MS)
+        m_clearStaleTimeoutMs(CLEAR_STALE_TIMEOUT_MS),
+        m_sockDir(SOCK_DIR),
+        m_stopStaleTimeoutMs(STOP_STALE_TIMEOUT_MS)
 {
     // SA and SC entries first, the PORT entry last: the PORT DEL is the one
     // orchagent acts on (it cascades to every SC and SA under the port), so it
@@ -557,7 +560,9 @@ task_process_status MACsecMgr::enableMACsec(
     // A previous wpa_supplicant that was killed without running its deinit
     // leaves its APPL_DB entries, and with them orchagent's SAI objects,
     // behind. They have to go before the new session writes, or orchagent
-    // sees SETs on objects it already holds and keeps the old key.
+    // sees SETs on objects it already holds and keeps the old key. One that
+    // is still running has to go first, or it writes them right back.
+    stopStaleWPASupplicant(port_name);
     if (!clearStaleMACsecState(port_name))
     {
         return task_need_retry;
@@ -570,9 +575,7 @@ task_process_status MACsecMgr::enableMACsec(
         std::make_tuple());
     auto & session = port.first->second;
     session.profile_name = profile_name;
-    ostringstream ostream;
-    ostream << SOCK_DIR << port_name;
-    session.sock = ostream.str();
+    session.sock = m_sockDir + port_name;
     session.wpa_supplicant_pid = startWPASupplicant(session.sock);
     if (session.wpa_supplicant_pid < 0)
     {
@@ -616,6 +619,14 @@ task_process_status MACsecMgr::disableMACsec(
     {
         SWSS_LOG_NOTICE("The MACsec was not enabled on the port '%s'",
             port_name.c_str());
+        // Not a session this macsecmgrd started, but a previous one may have
+        // left a supplicant and its APPL_DB entries here, and once the port's
+        // MACsec config is gone nothing else ever reclaims them. Every PORT
+        // SET without a profile comes through here, so this also reconciles
+        // such leftovers at start-up. No new session follows, so there is no
+        // need to retry if orchagent is slow to pop the DEL.
+        stopStaleWPASupplicant(port_name);
+        clearStaleMACsecState(port_name);
         return task_success;
     }
     auto & session = itr->second;
@@ -712,6 +723,55 @@ bool MACsecMgr::clearStaleMACsecState(const std::string & port_name)
     SWSS_LOG_WARN("orchagent did not clear the stale MACsec state on the port '%s' within %u ms",
         port_name.c_str(), m_clearStaleTimeoutMs);
     return false;
+}
+
+// Ask the wpa_supplicant listening on sock to exit. True if one answered.
+bool MACsecMgr::terminateWPASupplicant(const std::string & sock) const
+{
+    try
+    {
+        wpa_cli_exec(sock, "", "", "terminate");
+    }
+    catch (const std::runtime_error &)
+    {
+        return false;
+    }
+    return true;
+}
+
+// macsecmgrd knows a supplicant by the pid it forked. One left behind by a
+// previous macsecmgrd that died without its destructor is not in
+// m_macsec_ports, but it still owns the port's global control socket, keeps
+// MKA up with the peer and keeps writing APPL_DB. Ask it to exit through that
+// socket so it runs its own deinit, and wait for the socket to go away. A
+// socket nobody answers on is a leftover file.
+void MACsecMgr::stopStaleWPASupplicant(const std::string & port_name)
+{
+    SWSS_LOG_ENTER();
+
+    const std::string sock = m_sockDir + port_name;
+    if (access(sock.c_str(), F_OK) != 0)
+    {
+        return;
+    }
+    if (!terminateWPASupplicant(sock))
+    {
+        SWSS_LOG_INFO("No wpa_supplicant answers on '%s'", sock.c_str());
+        return;
+    }
+    SWSS_LOG_NOTICE("Terminated the wpa_supplicant a previous macsecmgrd left on the port '%s'",
+        port_name.c_str());
+    for (unsigned int waited = 0;
+         waited < m_stopStaleTimeoutMs && access(sock.c_str(), F_OK) == 0;
+         waited += CLEAR_STALE_POLL_MS)
+    {
+        usleep(CLEAR_STALE_POLL_MS * 1000);
+    }
+    if (access(sock.c_str(), F_OK) == 0)
+    {
+        SWSS_LOG_WARN("The wpa_supplicant on the port '%s' did not exit within %u ms",
+            port_name.c_str(), m_stopStaleTimeoutMs);
+    }
 }
 
 bool MACsecMgr::isPortStateOk(const std::string & port_name)

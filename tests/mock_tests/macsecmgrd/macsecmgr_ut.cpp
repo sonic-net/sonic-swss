@@ -8,6 +8,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <fstream>
+#include <unistd.h>
 
 namespace macsecmgr_ut
 {
@@ -72,6 +75,65 @@ namespace macsecmgr_ut
     };
 
     static const std::string kSci = "922bd3147c1d0001";
+
+    // macsecmgrd finds a leftover wpa_supplicant by its global control socket
+    // and asks it to exit over that socket. Stand in for the supplicant: record
+    // the request and, when "alive", unlink the socket the way a real exit does.
+    class MACsecMgrWithFakeSupplicant : public MACsecMgr
+    {
+    public:
+        using MACsecMgr::MACsecMgr;
+        bool alive = false;
+        std::vector<std::string> terminated;
+
+        bool terminateWPASupplicant(const std::string &sock) const override
+        {
+            const_cast<MACsecMgrWithFakeSupplicant *>(this)->terminated.push_back(sock);
+            if (!alive)
+            {
+                return false;
+            }
+            unlink(sock.c_str());
+            return true;
+        }
+    };
+
+    class MACsecMgrStaleSupplicantTest : public MACsecMgrTest
+    {
+    protected:
+        std::unique_ptr<MACsecMgrWithFakeSupplicant> m_fake;
+        std::string m_dir;
+
+        void SetUp() override
+        {
+            MACsecMgrTest::SetUp();
+            char tmpl[] = "/tmp/macsecmgr_ut_XXXXXX";
+            m_dir = std::string(mkdtemp(tmpl)) + "/";
+            std::vector<std::string> tables = { CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME };
+            m_fake.reset(new MACsecMgrWithFakeSupplicant(m_config_db.get(), m_app_db.get(), m_state_db.get(), tables));
+            m_fake->m_clearStaleTimeoutMs = 300;
+            m_fake->m_stopStaleTimeoutMs = 300;
+            m_fake->m_sockDir = m_dir;
+        }
+
+        void TearDown() override
+        {
+            m_fake.reset();
+            unlink((m_dir + "Ethernet1").c_str());
+            rmdir(m_dir.c_str());
+            MACsecMgrTest::TearDown();
+        }
+
+        void touch_socket(const std::string &port)
+        {
+            std::ofstream(m_dir + port).put('\n');
+        }
+
+        bool socket_exists(const std::string &port)
+        {
+            return access((m_dir + port).c_str(), F_OK) == 0;
+        }
+    };
 
     TEST_F(MACsecMgrTest, clearStale_nothingToClear)
     {
@@ -144,5 +206,71 @@ namespace macsecmgr_ut
 
         EXPECT_FALSE(staged(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
         EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
+    }
+
+    TEST_F(MACsecMgrTest, disableUnknownPort_clearsLeftoversOfThatPortOnly)
+    {
+        // Config for Ethernet1 was removed while a previous macsecmgrd's
+        // supplicant had its entries in APPL_DB; this macsecmgrd never started
+        // a session there, so the PORT SET without a profile is all it sees.
+        seed(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1");
+        seed(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci);
+        seed(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0");
+        seed_staged(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0");
+        seed(APP_MACSEC_PORT_TABLE_NAME, "Ethernet10");
+        seed(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet10:" + kSci + ":0");
+
+        EXPECT_EQ(m_mgr->disableMACsec("Ethernet1", MACsecMgr::TaskArgs()), task_success);
+
+        EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
+        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci));
+        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0"));
+        EXPECT_FALSE(staged(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0"));
+        EXPECT_TRUE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet10"));
+        EXPECT_TRUE(exists(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet10:" + kSci + ":0"));
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, stopStale_noSocketNothingAsked)
+    {
+        m_fake->stopStaleWPASupplicant("Ethernet1");
+        EXPECT_TRUE(m_fake->terminated.empty());
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, stopStale_liveSupplicantIsTerminatedAndWaitedFor)
+    {
+        touch_socket("Ethernet1");
+        m_fake->alive = true;
+
+        m_fake->stopStaleWPASupplicant("Ethernet1");
+
+        ASSERT_EQ(m_fake->terminated.size(), 1u);
+        EXPECT_EQ(m_fake->terminated[0], m_dir + "Ethernet1");
+        EXPECT_FALSE(socket_exists("Ethernet1"));
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, stopStale_leftoverSocketWithoutListenerIsLeftAlone)
+    {
+        touch_socket("Ethernet1");
+        m_fake->alive = false;
+
+        m_fake->stopStaleWPASupplicant("Ethernet1");
+
+        ASSERT_EQ(m_fake->terminated.size(), 1u);
+        EXPECT_TRUE(socket_exists("Ethernet1"));
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, disableUnknownPort_terminatesSupplicantBeforeClearing)
+    {
+        touch_socket("Ethernet1");
+        m_fake->alive = true;
+        seed(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1");
+        seed(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0");
+
+        EXPECT_EQ(m_fake->disableMACsec("Ethernet1", MACsecMgr::TaskArgs()), task_success);
+
+        ASSERT_EQ(m_fake->terminated.size(), 1u);
+        EXPECT_FALSE(socket_exists("Ethernet1"));
+        EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
+        EXPECT_FALSE(exists(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0"));
     }
 }
