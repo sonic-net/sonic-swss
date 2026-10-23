@@ -2043,11 +2043,62 @@ namespace intfmgr_ut
         ASSERT_EQ(ip_cmd_called, 1);
     }
 
-    //This test except no runtime error when the set admin status command failed
-    //and the subinterface has not ok status (for example not existing subinterface)
+    TEST_F(IntfMgrTest, testHostSubIntfAdminStatusReturnsOnlyUpOrDown)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "Ethernet0.10";
+        mockCallArgs.clear();
+        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "up", "up"), "up");
+        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "down", "up"), "down");
+        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "down", "down"), "down");
+        ASSERT_EQ(mockCallArgs.size(), 3u);
+        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "up", "down"), "down");
+        EXPECT_EQ(mockCallArgs.size(), 3u);
+        for (const std::string status : {"", "invalid"})
+            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+        EXPECT_EQ(mockCallArgs.size(), 3u);
+    }
+
+    TEST_F(IntfMgrTest, testAdminUpdateExceptionRetainsNotificationForRetry)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string parent = "Ethernet0";
+        const std::string alias = "Ethernet0.10";
+        intfmgr.m_subIntfList[alias] = {"10", "1500", "up", "down"};
+        KernelSubIntfs[alias] = {parent, "10"};
+        intfmgr.m_statePortTable.set(parent, {{"state", "ok"}, {"admin_status", "up"}});
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+        app.set(alias, {{"admin_status", "down"}});
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(STATE_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(parent, SET_COMMAND, {{"admin_status", "up"}}));
+        testing_db::resetOperationCounters();
+        FailSubIntfAdmin = true;
+
+        EXPECT_THROW(intfmgr.doTask(*consumer), std::runtime_error);
+        EXPECT_EQ(consumer->m_toSync.count(parent), 1u);
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "down");
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 0u);
+        std::vector<swss::FieldValueTuple> values;
+        ASSERT_TRUE(app.get(alias, values));
+        std::string value;
+        ASSERT_TRUE(getFieldValue(values, "admin_status", value));
+        EXPECT_EQ(value, "down");
+
+        FailSubIntfAdmin = false;
+        EXPECT_NO_THROW(intfmgr.doTask(*consumer));
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
+        ASSERT_TRUE(app.get(alias, values));
+        ASSERT_TRUE(getFieldValue(values, "admin_status", value));
+        EXPECT_EQ(value, "up");
+    }
+
+    // A programming failure throws even when the subinterface is not ready.
     TEST_F(IntfMgrTest, testSetAdminStatusFailToNotOkSubInt){
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up");
+        EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
     }
 
     //This test except runtime error when the set admin status command failed
