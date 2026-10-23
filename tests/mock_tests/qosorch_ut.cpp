@@ -1470,6 +1470,88 @@ namespace qosorch_test
         testing_wred_thresholds = false;
     }
 
+    TEST_F(QosOrchTest, QosOrchTestWredUnparsableValue)
+    {
+        testing_wred_thresholds = true;
+
+        vector<FieldValueTuple> validVector = {
+            {"ecn", "ecn_all"},
+            {"green_max_threshold", "2097152"},
+            {"green_min_threshold", "1048576"},
+            {"wred_green_enable", "true"},
+            {"yellow_max_threshold", "2097153"},
+            {"yellow_min_threshold", "1048577"},
+            {"wred_yellow_enable", "true"},
+            {"red_max_threshold", "2097154"},
+            {"red_min_threshold", "1048578"},
+            {"wred_red_enable", "true"}
+        };
+        WredMapHandler::qos_wred_thresholds_t validThresholds = {
+            2097152, //green_max_threshold
+            1048576, //green_min_threshold
+            2097153, //yellow_max_threshold
+            1048577, //yellow_min_threshold
+            2097154, //red_max_threshold
+            1048578  //red_min_threshold
+        };
+        vector<FieldValueTuple> updatedVector = {
+            {"green_max_threshold", "4194304"},
+            {"green_min_threshold", "3145728"}
+        };
+        WredMapHandler::qos_wred_thresholds_t updatedThresholds = validThresholds;
+        updatedThresholds.green_max_threshold = 4194304;
+        updatedThresholds.green_min_threshold = 3145728;
+
+        // Values that std::stoi cannot parse must drop the entry instead of throwing out of doTask()
+        vector<vector<FieldValueTuple>> unparsableVectors = {
+            {{"green_max_threshold", "4294967295"}},
+            {{"yellow_min_threshold", "2147483648"}},
+            {{"red_max_threshold", "abc"}},
+            {{"green_drop_probability", "4294967296"}},
+            {{"ecn", "ecn_invalid"}}
+        };
+
+        updateWredProfileAndCheck(validVector, validThresholds);
+
+        for (auto &unparsableVector : unparsableVectors)
+        {
+            updateWrongWredProfileAndCheck(unparsableVector);
+        }
+
+        // Neither orchagent nor SAI picked up anything from the dropped entries
+        checkWredProfileEqual("AZURE", saiThresholds);
+        checkWredProfileEqual("AZURE", validThresholds);
+
+        // A valid update after the dropped entries is still applied
+        updateWredProfileAndCheck(updatedVector, updatedThresholds);
+
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestDscpToTcMapUnparsableValue)
+    {
+        // The map attribute is only added after every field is parsed, so a throw
+        // leaves the attribute list empty when the entry is dropped
+        vector<vector<FieldValueTuple>> unparsableVectors = {
+            {{"abc", "1"}},
+            {{"1", "4294967296"}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+
+        for (auto &unparsableVector : unparsableVectors)
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            vector<string> ts;
+            entries.push_back({"UNPARSABLE", "SET", unparsableVector});
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gQosOrch)->doTask();
+            static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty());
+            auto &dscpToTcMaps = *QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME];
+            ASSERT_EQ(dscpToTcMaps.find("UNPARSABLE"), dscpToTcMaps.end());
+        }
+    }
+
     TEST_F(QosOrchTest, QosOrchTestWredDropProbability)
     {
         testing_wred_thresholds = true;

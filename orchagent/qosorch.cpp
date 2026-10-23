@@ -142,8 +142,23 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
     if (op == SET_COMMAND)
     {
         vector<sai_attribute_t> attributes;
-        if (!convertFieldValuesToAttributes(tuple, attributes))
+        try
         {
+            if (!convertFieldValuesToAttributes(tuple, attributes))
+            {
+                return task_process_status::task_invalid_entry;
+            }
+        }
+        catch (const std::invalid_argument &e)
+        {
+            SWSS_LOG_ERROR("Invalid argument in [%s:%s]: %s", qos_map_type_name.c_str(), qos_object_name.c_str(), e.what());
+            freeAttribResources(attributes);
+            return task_process_status::task_invalid_entry;
+        }
+        catch (const std::out_of_range &e)
+        {
+            SWSS_LOG_ERROR("Out of range value in [%s:%s]: %s", qos_map_type_name.c_str(), qos_object_name.c_str(), e.what());
+            freeAttribResources(attributes);
             return task_process_status::task_invalid_entry;
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
@@ -229,6 +244,11 @@ bool QosMapHandler::removeQosItem(sai_object_id_t sai_object)
 void QosMapHandler::freeAttribResources(vector<sai_attribute_t> &attributes)
 {
     SWSS_LOG_ENTER();
+    // Empty when convertFieldValuesToAttributes() threw before adding the map attribute
+    if (attributes.empty())
+    {
+        return;
+    }
     delete[] attributes[0].value.qosmap.list;
 }
 
