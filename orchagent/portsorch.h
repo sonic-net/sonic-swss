@@ -167,6 +167,7 @@ public:
     bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    bool setVlanProxyArpFloodType(Port &vlan, bool enabled);
     void increasePortRefCount(const string &alias);
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
@@ -460,6 +461,8 @@ private:
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
+    bool setVlanMacLearn(Port &vlan, const string &mac_learning);
+    bool setVlanFloodControl(Port &vlan, const std::string &uuc_flood, const std::string &umc_flood, const std::string &bc_flood);
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
