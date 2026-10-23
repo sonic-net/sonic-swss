@@ -717,7 +717,7 @@ TEST_F(BfdSyncdTest, StateUpdateIpv4KeyDirectAssignment)
     memcpy(m_bfd.m_messageBuffer, buf, BFD_WIRE_MSG_LEN);
     m_bfd.handleBfdDpMessage(0);
 
-    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1);
+    EXPECT_CALL(m_bfd, sendmsg(STATE_UPDATE_MSG_LEN)).Times(1).WillOnce(Return(true));
 
     std::vector<FieldValueTuple> fieldValues = {{"state", "Up"}};
     auto key = string("default|default|10.0.0.2");
