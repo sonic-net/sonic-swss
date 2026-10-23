@@ -85,6 +85,7 @@
 #define ACTION_DSCP                         "DSCP_ACTION"
 #define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
 #define ACTION_POLICER_ACTION               "POLICER_ACTION"
+#define ACTION_PACKET_COLOR_ACTION          "PACKET_COLOR_ACTION"
 
 #define PACKET_ACTION_FORWARD      "FORWARD"
 #define PACKET_ACTION_DROP         "DROP"
@@ -92,6 +93,10 @@
 #define PACKET_ACTION_REDIRECT     "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT   "DO_NOT_NAT"
 #define PACKET_ACTION_DISABLE_TRIM "DISABLE_TRIM"
+
+#define PACKET_COLOR_GREEN  "GREEN"
+#define PACKET_COLOR_YELLOW "YELLOW"
+#define PACKET_COLOR_RED    "RED"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -155,6 +160,7 @@ typedef map<string, sai_acl_bind_point_type_t> acl_bind_point_type_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
 typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
+typedef map<string, sai_packet_color_t> acl_packet_color_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
