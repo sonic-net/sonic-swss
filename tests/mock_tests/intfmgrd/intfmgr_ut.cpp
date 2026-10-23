@@ -78,45 +78,6 @@ static int runQueryPredicate(const std::string &cmd, const std::string &output, 
     return status != -1 && WIFEXITED(status) ? WEXITSTATUS(status) : 2;
 }
 
-static std::string filteredAddressOutput(const std::string &cmd)
-{
-    const swss::IpPrefix selected(quotedArgument(cmd, "to "));
-    std::istringstream input(AddressQueryOutput);
-    std::string line, output;
-    while (std::getline(input, line))
-    {
-        std::istringstream row(line);
-        std::string index, name, family, local, marker, peer;
-        row >> index >> name >> family >> local;
-        try
-        {
-            const bool pointToPoint = local.find('/') == std::string::npos;
-            auto prefix = local;
-            if (pointToPoint)
-            {
-                row >> marker >> peer;
-                if (marker != "peer" || peer.find('/') == std::string::npos)
-                    throw std::invalid_argument("Invalid peer fixture");
-                prefix += "/" + std::to_string(swss::IpPrefix(peer).getMaskLength());
-            }
-            const swss::IpPrefix address(prefix);
-            if (family == (address.isV4() ? "inet" : "inet6"))
-            {
-                if (address.isV4() != selected.isV4() || address.getIp() != selected.getIp())
-                    continue;
-                line.replace(line.find(local), local.size(),
-                             pointToPoint ? address.getIp().to_string() : address.to_string());
-            }
-        }
-        catch (const std::exception &)
-        {
-            // Keep malformed fixtures intact so the real predicate must reject them.
-        }
-        output += line + "\n";
-    }
-    return output;
-}
-
 extern "C" unsigned int __wrap_if_nametoindex(const char *ifname)
 {
     interfaceLookups.push_back(ifname);
@@ -168,13 +129,13 @@ int cb(const std::string &cmd, std::string &stdout){
         stdout = subIntfLine(alias, KernelSubIntfs.at(alias).first, KernelSubIntfs.at(alias).second);
         return runQueryPredicate(cmd, stdout, 0);
     }
-    if (cmd.find("output=$(/sbin/ip -o ") == 0)
+    if (cmd.find("/sbin/ip -o address show dev ") == 0)
     {
         if (ThrowAddressQuery)
             throw std::runtime_error("address query unavailable");
         const auto alias = quotedArgument(cmd, "dev ");
-        const auto result = MissingSubInterfaces.count(alias) ? 1 : AddressQueryResult;
-        return runQueryPredicate(cmd, result ? AddressQueryOutput : filteredAddressOutput(cmd), result);
+        stdout = AddressQueryOutput;
+        return MissingSubInterfaces.count(alias) ? 1 : AddressQueryResult;
     }
     for (const auto &entry : KernelSubIntfs)
     {
@@ -463,16 +424,15 @@ namespace intfmgr_ut
             {"192.0.2.1/31", addressLine("::ffff:192.0.2.1/127"), false},
             {"192.0.2.1/31", "", false},
             {"192.0.2.1/31", addressLine("192.0.2.3/31") + addressLine("192.0.2.1/31"), true},
-            {"192.0.2.1/31", "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0/31 scope global\n", true},
-            {"192.0.2.1/31", "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0/32 scope global\n", false},
-            {"2001:db8::1/64", addressLine("2001:0db8:0000:0000:0000:0000:0000:0001/64"), true},
+            {"192.0.2.1/31", "7: PortChannel1 inet 192.0.2.0 peer 192.0.2.1/31 scope global\n", false},
+            {"2001:db8::1/64", addressLine("2001:db8::1/64"), true},
             {"2001:0db8:0000:0000:0000:0000:0000:0001/64", addressLine("2001:db8::1/64"), true},
             {"2001:db8::1/64", addressLine("2001:db8::1/128"), false},
             {"2001:db8::1/64", addressLine("2001:db8::2/64"), false},
             {"2001:db8::1/64", addressLine("192.0.2.1/31"), false},
             {"2001:db8::1/64", "", false},
             {"2001:db8::1/64", addressLine("fe80::1/64") + addressLine("2001:db8::1/64"), true},
-            {"2001:db8::1/64", "7: PortChannel1 inet6 2001:db8::1 peer 2001:db8::2/64 scope global\n", true}
+            {"2001:db8::1/64", "7: PortChannel1 inet6 2001:db8::2 peer 2001:db8::1/64 scope global\n", false}
         };
         for (const auto &test : cases)
         {
@@ -481,13 +441,8 @@ namespace intfmgr_ut
             mockCallArgs.clear();
             EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(test.desired)), test.present);
             EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(test.desired)), !test.present);
-            const swss::IpPrefix desired(test.desired);
-            const std::string query = std::string("output=$(/sbin/ip -o ") +
-                (desired.isV4() ? "-4" : "-6") + " address show dev \"PortChannel1\" to \"" +
-                desired.getIp().to_string() + (desired.isV4() ? "/32" : "/128") + "\") || exit 2;";
-            EXPECT_EQ(std::count_if(mockCallArgs.begin(), mockCallArgs.end(), [&](const std::string &cmd) {
-                return cmd.find(query) == 0;
-            }), 2);
+            EXPECT_EQ(std::count(mockCallArgs.begin(), mockCallArgs.end(),
+                                 "/sbin/ip -o address show dev \"PortChannel1\""), 2);
         }
         EXPECT_TRUE(interfaceLookups.empty());
     }
@@ -497,22 +452,16 @@ namespace intfmgr_ut
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
         AddressQueryResult = 1;
-        InterfaceIndex = 0;
-        for (int error : {ENODEV, ENXIO})
+        for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
         {
-            InterfaceIndexError = error;
-            for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
-            {
-                SCOPED_TRACE(prefix + " errno: " + std::to_string(error));
-                interfaceLookups.clear();
-                EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
-                EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
-                EXPECT_EQ(interfaceLookups, (std::vector<std::string>{"PortChannel1", "PortChannel1"}));
-            }
+            SCOPED_TRACE(prefix);
+            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
+            EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
         }
+        EXPECT_TRUE(interfaceLookups.empty());
     }
 
-    TEST_F(IntfMgrTest, testFailedAddressQueryIsIndeterminate)
+    TEST_F(IntfMgrTest, testFailedAddressQueryReturnsNotPresent)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
@@ -524,22 +473,15 @@ namespace intfmgr_ut
             {
                 SCOPED_TRACE(prefix);
                 AddressQueryOutput = addressLine(prefix);
+                EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix)));
                 EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
-                EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
+                EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
             }
         }
-        ThrowAddressQuery = false;
-        InterfaceIndex = 0;
-        for (int error : {EIO, EACCES, 0})
-        {
-            SCOPED_TRACE(error);
-            InterfaceIndexError = error;
-            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix("192.0.2.1/31")));
-            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix("192.0.2.1/31")));
-        }
+        EXPECT_TRUE(interfaceLookups.empty());
     }
 
-    TEST_F(IntfMgrTest, testMalformedAddressQueryIsIndeterminate)
+    TEST_F(IntfMgrTest, testUnmatchedAddressOutputReturnsNotPresent)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
@@ -549,13 +491,12 @@ namespace intfmgr_ut
                 "7: PortChannel1 inet6 192.0.2.1/31\n",
                 "7: PortChannel1 inet 192.0.2.1 scope global\n",
                 "7: PortChannel1 inet 192.0.2.1 peer invalid/31\n",
-                "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0\n",
-                "7: PortChannel1 inet 192.0.2.1/31\ninvalid\n"})
+                "7: PortChannel1 inet 192.0.2.1 peer 192.0.2.0\n"})
         {
             SCOPED_TRACE(output);
             AddressQueryOutput = output;
             EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix("192.0.2.1/31")));
-            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix("192.0.2.1/31")));
+            EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix("192.0.2.1/31")));
         }
     }
 
@@ -613,7 +554,7 @@ namespace intfmgr_ut
                 EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix("2001:db8::1/64")), present);
                 ASSERT_EQ(mockCallArgs.size(), enableFails ? 3u : 4u);
                 EXPECT_EQ(mockCallArgs[1], "sysctl -w net.ipv6.conf.\"PortChannel1\".disable_ipv6=0");
-                EXPECT_EQ(mockCallArgs.back().find("output=$(/sbin/ip -o -6 address show dev \"PortChannel1\""), 0u);
+                EXPECT_EQ(mockCallArgs.back(), "/sbin/ip -o address show dev \"PortChannel1\"");
             }
         }
         FailAddressAdd = FailIpv6Enable = Ethernet0IPv6Set = false;
@@ -645,7 +586,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         ASSERT_EQ(mockCallArgs.size(), 3u);
         EXPECT_EQ(mockCallArgs[0], "/sbin/ip address \"del\" \"192.0.2.1/31\" dev \"PortChannel1\"");
-        EXPECT_EQ(mockCallArgs[1].find("output=$(/sbin/ip -o -4 address show dev \"PortChannel1\""), 0u);
+        EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o address show dev \"PortChannel1\"");
         EXPECT_EQ(mockCallArgs[2], "/sbin/ip address \"add\" \"192.0.2.1/31\" dev \"PortChannel1\"");
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 1u);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);

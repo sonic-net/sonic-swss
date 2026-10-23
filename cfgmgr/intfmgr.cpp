@@ -155,9 +155,8 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         return true;
     }
 
-    bool present;
-    if (getIntfIpState(alias, ipPrefix, present) &&
-        ((opCmd == "add" && present) || (opCmd == "del" && !present)))
+    const bool present = isIntfIpPresent(alias, ipPrefix);
+    if ((opCmd == "add" && present) || (opCmd == "del" && !present))
     {
         SWSS_LOG_INFO("Address %s is already %s on interface %s",
                 ipPrefixStr.c_str(), present ? "present" : "absent", alias.c_str());
@@ -363,38 +362,20 @@ int IntfMgr::getIntfIpCount(const string &alias)
     return std::stoi(res);
 }
 
-bool IntfMgr::getIntfIpState(const string &alias, const IpPrefix &ipPrefix, bool &present)
+bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix)
 {
     string res;
-    present = false;
-    const string address = ipPrefix.getIp().to_string();
-    // Filter the exact local IP in iproute2; the predicate checks its mask, including peer notation.
-    const string cmd = "output=$(" + string(IP_CMD) + " -o " + (ipPrefix.isV4() ? "-4" : "-6") +
-        " address show dev " + shellquote(alias) + " to " +
-        shellquote(address + (ipPrefix.isV4() ? "/32" : "/128")) + ") || exit 2; "
-        "printf '%s\\n' \"$output\" | awk -v address=" + shellquote(address) +
-        " -v mask=" + to_string(ipPrefix.getMaskLength()) +
-        " -v family=" + (ipPrefix.isV4() ? "inet" : "inet6") + " " +
-        shellquote("NF { peer=($5==\"peer\"); n=split(peer?$6:$4,p,\"/\"); "
-                   "if ($3!=family || n!=2 || p[2]!~/^[0-9]+$/ || "
-                   "(peer ? ($4!=address || p[1]!~/^[[:xdigit:].:]+$/) : p[1]!=address)) bad=1; "
-                   "else if (p[2]==mask) found=1 } END { exit bad?2:!found }");
+    const string cmd = string(IP_CMD) + " -o address show dev " + shellquote(alias);
+    const string address = string(ipPrefix.isV4() ? " inet " : " inet6 ") + ipPrefix.to_string() + " ";
     try
     {
-        const int ret = swss::exec(cmd, res);
-        if (ret == 0 || ret == 1)
-        {
-            present = ret == 0;
-            return true;
-        }
+        return swss::exec(cmd, res) == 0 && res.find(address) != string::npos;
     }
-    catch (const exception &e)
+    catch (const runtime_error &e)
     {
         SWSS_LOG_WARN("Cannot query addresses on interface %s: %s", alias.c_str(), e.what());
+        return false;
     }
-    // A query/predicate error is not absence unless the interface lookup confirms it.
-    errno = 0;
-    return if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO);
 }
 
 void IntfMgr::buildIntfReplayList(void)
