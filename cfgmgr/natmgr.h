@@ -251,6 +251,7 @@ public:
     void removeStaticNatIptables(const std::string port = NONE_STRING);
     void removeStaticNaptIptables(const std::string port = NONE_STRING);
     void removeDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
+    void disableNatFeature(void);
 
 private:
     /* Declare APPL_DB, CFG_DB and STATE_DB tables */
@@ -291,7 +292,6 @@ private:
 
     /* Declare all NAT functionality member functions*/
     void enableNatFeature(void);
-    void disableNatFeature(void);
     bool warmBootingInProgress(void);
     void flushAllNatEntries(void);
     void addAllStaticConntrackEntries(void);
