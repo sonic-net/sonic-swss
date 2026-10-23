@@ -473,7 +473,7 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (queryLoopbackActionCapability() && !m_loopbackActionCapability.set_implemented)
     {
-        SWSS_LOG_WARN("Loopback action [%s] not applied, interface [%s]: SET unsupported; existing action unchanged",
+        SWSS_LOG_WARN("Loopback action SET [%s] skipped, interface [%s]: SET unsupported; existing action unchanged",
                       actionStr.c_str(), port.m_alias.c_str());
         return true;
     }
