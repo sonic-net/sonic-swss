@@ -368,6 +368,12 @@ namespace macsecorch_test
         PortsOrch  *saved_ports_orch    = nullptr;
     };
 
+    // Replay-protection tests share the stale-SAK fixture setup but are not
+    // about stale SAK handling.
+    class MacsecOrchReplayProtectTest : public MacsecOrchStaleSakTest
+    {
+    };
+
     constexpr const char    *MacsecOrchStaleSakTest::kPortName;
     constexpr const char    *MacsecOrchStaleSakTest::kIngressSciHex;
     constexpr const char    *MacsecOrchStaleSakTest::kEgressSciHex;
@@ -790,7 +796,7 @@ namespace macsecorch_test
     // ------------------------------------------------------------------
     // Replay protection (MACsec profile -> ingress SC SAI attrs)
     // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
+    TEST_F(MacsecOrchReplayProtectTest,
            ingress_replay_protect_on_sc_create)
     {
         const sai_uint64_t sci = parseSciHex(kIngressSciHex);
@@ -825,8 +831,8 @@ namespace macsecorch_test
         EXPECT_EQ(window_attr->value.u32, replay_window);
     }
 
-    TEST_F(MacsecOrchStaleSakTest,
-           ingress_replay_protect_updates_existing_ingress_sc)
+    TEST_F(MacsecOrchReplayProtectTest,
+           ingress_replay_protect_disable_on_update)
     {
         const uint32_t initial_replay_window = 128;
         const uint32_t updated_replay_window = 256;
@@ -854,5 +860,119 @@ namespace macsecorch_test
                 kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
         ASSERT_NE(window_set, nullptr);
         EXPECT_EQ(window_set->attr.value.u32, updated_replay_window);
+    }
+
+    TEST_F(MacsecOrchReplayProtectTest,
+           ingress_replay_protect_enable_on_update)
+    {
+        const uint32_t replay_window = 128;
+
+        auto port = seedIngressPortForReplay(false, replay_window);
+        g_sc_set_attrs.clear();
+
+        MACsecOrch::TaskArgs port_attrs = {
+            { "enable_replay_protect", "true" },
+            { "replay_window", std::to_string(replay_window) },
+        };
+
+        EXPECT_TRUE(orch->updateMACsecPort(*port, port_attrs));
+        EXPECT_TRUE(port->m_enable_replay_protect);
+        EXPECT_EQ(port->m_replay_window, replay_window);
+
+        ASSERT_EQ(g_sc_set_attrs.size(), 2u);
+
+        const auto *enable_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE);
+        ASSERT_NE(enable_set, nullptr);
+        EXPECT_TRUE(enable_set->attr.value.booldata);
+
+        const auto *window_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
+        ASSERT_NE(window_set, nullptr);
+        EXPECT_EQ(window_set->attr.value.u32, replay_window);
+    }
+
+    TEST_F(MacsecOrchReplayProtectTest,
+           ingress_replay_window_update_nonzero)
+    {
+        const uint32_t initial_replay_window = 128;
+        const uint32_t updated_replay_window = 256;
+
+        auto port = seedIngressPortForReplay(true, initial_replay_window);
+        g_sc_set_attrs.clear();
+
+        MACsecOrch::TaskArgs port_attrs = {
+            { "replay_window", std::to_string(updated_replay_window) },
+        };
+
+        EXPECT_TRUE(orch->updateMACsecPort(*port, port_attrs));
+        EXPECT_TRUE(port->m_enable_replay_protect);
+        EXPECT_EQ(port->m_replay_window, updated_replay_window);
+
+        ASSERT_EQ(g_sc_set_attrs.size(), 2u);
+
+        const auto *enable_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE);
+        ASSERT_NE(enable_set, nullptr);
+        EXPECT_TRUE(enable_set->attr.value.booldata);
+
+        const auto *window_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
+        ASSERT_NE(window_set, nullptr);
+        EXPECT_EQ(window_set->attr.value.u32, updated_replay_window);
+    }
+
+    TEST_F(MacsecOrchReplayProtectTest,
+           ingress_replay_window_update_to_zero)
+    {
+        const uint32_t initial_replay_window = 128;
+
+        auto port = seedIngressPortForReplay(true, initial_replay_window);
+        g_sc_set_attrs.clear();
+
+        MACsecOrch::TaskArgs port_attrs = {
+            { "replay_window", "0" },
+        };
+
+        EXPECT_TRUE(orch->updateMACsecPort(*port, port_attrs));
+        EXPECT_TRUE(port->m_enable_replay_protect);
+        EXPECT_EQ(port->m_replay_window, 0u);
+
+        ASSERT_EQ(g_sc_set_attrs.size(), 2u);
+
+        const auto *window_set = find_sc_set_attr(
+                kIngressScOid, SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW);
+        ASSERT_NE(window_set, nullptr);
+        EXPECT_EQ(window_set->attr.value.u32, 0u);
+    }
+
+    TEST_F(MacsecOrchReplayProtectTest,
+           egress_sc_create_omits_replay_protection_attrs)
+    {
+        const sai_uint64_t sci = parseSciHex(kEgressSciHex);
+
+        sai_object_id_t sc_id = SAI_NULL_OBJECT_ID;
+        EXPECT_TRUE(orch->createMACsecSC(
+                sc_id,
+                gSwitchId,
+                SAI_MACSEC_DIRECTION_EGRESS,
+                kFlowOid,
+                sci,
+                true,
+                true,
+                SAI_MACSEC_CIPHER_SUITE_GCM_AES_128,
+                true,
+                128));
+
+        ASSERT_EQ(g_created_scs.size(), 1u);
+        EXPECT_NE(sc_id, SAI_NULL_OBJECT_ID);
+
+        const auto &attrs = g_created_scs[0].attrs;
+        EXPECT_EQ(find_sc_attr(attrs,
+                               SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE),
+                  nullptr);
+        EXPECT_EQ(find_sc_attr(attrs,
+                               SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW),
+                  nullptr);
     }
 }
