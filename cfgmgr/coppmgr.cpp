@@ -712,9 +712,6 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                                            m_coppTrapConfMap[key].trap_ids);
             }
 
-            m_coppTrapConfMap[key].trap_group = trap_group;
-            m_coppTrapConfMap[key].trap_ids = trap_ids;
-            m_coppTrapConfMap[key].is_always_enabled = is_always_enabled;
             addTrap(trap_ids, trap_group);
 
             /* When the trap table's trap group is changed, the old trap group
