@@ -459,14 +459,10 @@ bool IntfMgr::isSubIntfPresent(const string &parent, const string &alias, const 
         const auto vid = stoul(vlan, &length);
         if (length != vlan.size())
             return false;
-        const string cmd = "output=$(" + string(IP_CMD) + " -d -o link show dev " + shellquote(alias) +
-            ") || exit 2; printf '%s\\n' \"$output\" | awk -v name=" + shellquote(alias + "@" + parent + ":") +
-            " -v vlan=" + to_string(vid) + " " +
-            shellquote("NF { rows++; if ($2==name) for(i=3;i+4<=NF;i++) "
-                       "if ($i==\"vlan\" && $(i+1)==\"protocol\" && $(i+2)==\"802.1Q\" && "
-                       "$(i+3)==\"id\" && $(i+4)~/^[0-9]+$/ && $(i+4)+0==vlan) found=1 } "
-                       "END { exit !(rows==1 && found) }");
-        return swss::exec(cmd, res) == 0;
+        const string cmd = string(IP_CMD) + " -d -o link show dev " + shellquote(alias);
+        return swss::exec(cmd, res) == 0 &&
+            res.find(" " + alias + "@" + parent + ": ") != string::npos &&
+            res.find(" vlan protocol 802.1Q id " + to_string(vid) + " ") != string::npos;
     }
     catch (const exception &e)
     {

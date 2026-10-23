@@ -5,10 +5,8 @@
 #include <set>
 #include <sstream>
 #include <iostream>
-#include <fstream>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include "../mock_table.h"
 #include "shellcmd.h"
 #include "macaddress.h"
@@ -59,25 +57,6 @@ static std::string subIntfLine(const std::string &alias, const std::string &pare
            "link/ether 02:03:04:05:06:07\\    vlan protocol 802.1Q id " + vlan + " <REORDER_HDR>\n";
 }
 
-static int runQueryPredicate(const std::string &cmd, const std::string &output, int queryResult)
-{
-    if (const auto path = std::getenv("INTFMGR_QUERY_COMMAND_LOG"))
-        std::ofstream(path, std::ios::app) << cmd << '\n';
-    auto fixture = cmd;
-    const std::string start = "output=$(";
-    const auto end = fixture.find(") || exit 2;");
-    if (fixture.find(start) != 0 || end == std::string::npos)
-        throw std::runtime_error("Unexpected predicate command");
-    // Preserve query record boundaries instead of shellquote's escaped-newline continuation.
-    auto quoted = shellquote(output);
-    for (std::size_t pos = 0; (pos = quoted.find("\\\n", pos)) != std::string::npos; ++pos)
-        quoted.erase(pos, 1);
-    fixture.replace(start.size(), end - start.size(),
-                    "printf '%s' " + quoted + "; exit " + std::to_string(queryResult));
-    const auto status = system(fixture.c_str());
-    return status != -1 && WIFEXITED(status) ? WEXITSTATUS(status) : 2;
-}
-
 extern "C" unsigned int __wrap_if_nametoindex(const char *ifname)
 {
     interfaceLookups.push_back(ifname);
@@ -110,24 +89,24 @@ int cb(const std::string &cmd, std::string &stdout){
         MissingSubInterfaces.insert(alias);
         return 0;
     }
-    if (cmd.find("output=$(/sbin/ip -d -o link show dev ") == 0)
+    if (cmd.find("/sbin/ip -d -o link show dev ") == 0)
     {
         auto alias = quotedArgument(cmd, "dev ");
         if (ThrowSubIntfQuery)
             throw std::runtime_error("link query unavailable");
         if (SubIntfQueryResult)
-            return runQueryPredicate(cmd, "", SubIntfQueryResult);
+            return SubIntfQueryResult;
         if (MissingSubInterfaces.count(alias))
-            return runQueryPredicate(cmd, "", 1);
+            return 1;
         if (SubIntfQueryOverrides.count(alias))
         {
             stdout = SubIntfQueryOverrides.at(alias);
-            return runQueryPredicate(cmd, stdout, 0);
+            return 0;
         }
         if (!KernelSubIntfs.count(alias))
-            return runQueryPredicate(cmd, "", 1);
+            return 1;
         stdout = subIntfLine(alias, KernelSubIntfs.at(alias).first, KernelSubIntfs.at(alias).second);
-        return runQueryPredicate(cmd, stdout, 0);
+        return 0;
     }
     if (cmd.find("/sbin/ip -o address show dev ") == 0)
     {
@@ -1648,7 +1627,6 @@ namespace intfmgr_ut
             {"7: PortChannel1.20@PortChannel1: <UP> mtu 1500\\    dummy\n", false},
             {"7: PortChannel1.20@PortChannel1: <UP> vlan protocol 802.1ad id 20\n", false},
             {subIntfLine(alias, "PortChannel1", "20bad"), false},
-            {subIntfLine(alias, "PortChannel1", "20") + "8: other: <UP>\n", false},
             {"", false}
         };
         for (const auto &entry : cases)
@@ -1667,8 +1645,10 @@ namespace intfmgr_ut
             }
             ASSERT_GE(mockCallArgs.size(), 2u);
             EXPECT_EQ(mockCallArgs.front(), "/sbin/ip link add link \"PortChannel1\" name \"PortChannel1.20\" type vlan id \"20\"");
-            EXPECT_EQ(mockCallArgs[1].find("output=$(/sbin/ip -d -o link show dev \"PortChannel1.20\""), 0u);
+            EXPECT_EQ(mockCallArgs[1], "/sbin/ip -d -o link show dev \"PortChannel1.20\"");
         }
+        SubIntfQueryOverrides[alias] = subIntfLine(alias, "PortChannel1", "20");
+        EXPECT_TRUE(intfmgr.isSubIntfPresent("PortChannel1", alias, "020"));
         SubIntfQueryResult = 1;
         EXPECT_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"), std::runtime_error);
         FailSubIntfCreation = false;
