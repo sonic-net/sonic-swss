@@ -258,10 +258,72 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
+            if (bfd_session_lookup.find(id) == bfd_session_lookup.end())
+            {
+                // LCOV_EXCL_START: requires a stale SAI notification for an already-removed
+                // session id, which the VS test environment cannot induce deterministically.
+                SWSS_LOG_NOTICE("BFD session missing at state change id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
+                continue;
+                // LCOV_EXCL_STOP
+            }
+
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
-                m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
+                vector<FieldValueTuple> fvVector;
+                fvVector.emplace_back("state", session_state_lookup.at(state));
+
+                // Update remote parameter after each state change
+                sai_attribute_t attr;
+                vector<sai_attribute_t> attrs;
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_DISCRIMINATOR;
+                attr.value.u32 = 0;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MULTIPLIER;
+                attr.value.u32 = 0;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MIN_RX;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MIN_TX;
+                attrs.emplace_back(attr);
+
+                sai_status_t status = sai_bfd_api->get_bfd_session_attribute(id, (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    // Non-critical information, skip the debug info if the attributes are not available
+                    SWSS_LOG_WARN("BFD session id:%" PRIx64 " get attributes failed", id);
+                }
+                else
+                {
+                    // LCOV_EXCL_START: the VS SAI mock does not implement GET for the BFD
+                    // session remote attributes, so get_bfd_session_attribute() above always
+                    // returns a failure status in the vstest environment and this success path
+                    // is unreachable there.
+                    for (uint32_t i = 0; i < attrs.size(); ++i) {
+                        sai_attribute_t attr = attrs[i];
+                        auto attr_id = attr.id;
+                        switch (attr_id) {
+                            case SAI_BFD_SESSION_ATTR_REMOTE_DISCRIMINATOR:
+                                fvVector.emplace_back("remote_discriminator", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MULTIPLIER:
+                                fvVector.emplace_back("remote_multiplier", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MIN_RX:
+                                fvVector.emplace_back("remote_min_rx", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MIN_TX:
+                                fvVector.emplace_back("remote_min_tx", to_string((uint32_t)attr.value.u32));
+                                break;
+                        }
+                    }
+                    // LCOV_EXCL_STOP
+                }
+                m_stateBfdSessionTable.set(key, fvVector);
 
                 SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
                             session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());

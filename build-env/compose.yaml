@@ -5,6 +5,7 @@ services:
         tty: true
         volumes:
             - ${HOME}:${HOME}
+            - /nobackup/stalarir:/nobackup/stalarir
         build:
             args:
                 USER: ${USER}
