@@ -1,4 +1,6 @@
 #include <string.h>
+#include <algorithm>
+#include <fstream>
 #include "logger.h"
 #include "producerstatetable.h"
 #include "macaddress.h"
@@ -195,11 +197,56 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     return false;
 }
 
+// Read the current MAC address of a network interface from sysfs.
+// Returns false if the interface doesn't exist yet or the address can't be read.
+static bool getCurrentVlanMac(const std::string &if_name, std::string &mac)
+{
+    SWSS_LOG_ENTER();
+
+    std::string path = "/sys/class/net/" + if_name + "/address";
+    std::ifstream mac_file(path);
+
+    if (!mac_file.is_open())
+    {
+        // This can happen if the interface doesn't exist yet.
+        SWSS_LOG_INFO("Could not open %s to read MAC address.", path.c_str());
+        return false;
+    }
+
+    // sysfs returns the MAC in lowercase with a trailing newline; getline drops the newline.
+    if (std::getline(mac_file, mac))
+    {
+        SWSS_LOG_DEBUG("Current MAC for %s is %s", if_name.c_str(), mac.c_str());
+        return true;
+    }
+
+    return false;
+}
+
 bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
 {
     SWSS_LOG_ENTER();
 
     std::string res;
+
+    /*
+     * Skip the update when the interface already has the requested MAC. Applying it
+     * unconditionally flaps the interface and cycles the shared Bridge on every config
+     * apply, which is disruptive and needless when the MAC has not changed.
+     */
+    const std::string vlan_if_name = VLAN_PREFIX + std::to_string(vlan_id);
+    std::string current_mac;
+    if (getCurrentVlanMac(vlan_if_name, current_mac))
+    {
+        std::string lower_mac_in = mac;
+        std::transform(lower_mac_in.begin(), lower_mac_in.end(), lower_mac_in.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        if (current_mac == lower_mac_in)
+        {
+            SWSS_LOG_INFO("MAC on %s is already %s; no update needed.", vlan_if_name.c_str(), mac.c_str());
+            return true;
+        }
+    }
 
     /*
      * Bring down the bridge before changing MAC addresses of the bridge and the VLAN interface.
