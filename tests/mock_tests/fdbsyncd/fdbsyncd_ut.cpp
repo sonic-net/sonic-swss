@@ -2499,6 +2499,12 @@ public:
     {
         FdbSyncdTest::SetUp();
         m_mockFdbSync.m_isFdbProtoSupported = true;
+        /* The ports are members of the VLANs they are used in */
+        Table stateVlanMember(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME);
+        for (const char *member : { "Vlan10|PortChannel1", "Vlan10|Ethernet8", "Vlan20|PortChannel1", "Vlan20|Ethernet8" })
+        {
+            stateVlanMember.set(member, { FieldValueTuple("state", "ok") });
+        }
     }
 
     bool row(const std::string &key)
@@ -2684,4 +2690,266 @@ TEST_F(FdbSyncdEsPeerSyncTest, EntriesThatAreNotPeerSyncedAreIgnored)
     m_vxlanFdbTable.getKeys(keys);
     EXPECT_TRUE(keys.empty());
     EXPECT_TRUE(m_mockFdbSync.m_mac.empty());
+}
+
+/* The kernel for a port that left a VLAN: a bridge port while s_esBridgePort is set */
+static bool s_esBridgePort = true;
+
+static int esLeftVlanKernel(const std::string &cmd, std::string &out)
+{
+    mockCallArgs.push_back(cmd);
+    out = "";
+    if (cmd.find("test -d /sys/class/net/") == 0)
+    {
+        return s_esBridgePort ? 0 : 1;
+    }
+    return 0;
+}
+
+/* esLeftVlanKernel, except that the port has the VID in s_kernelVid ("<port> <vid>") again */
+static std::string s_kernelVid;
+
+static int rejoinedKernel(const std::string &cmd, std::string &out)
+{
+    int ret = esLeftVlanKernel(cmd, out);
+    if (!s_kernelVid.empty() && cmd == "bridge vlan show dev " + s_kernelVid.substr(0, s_kernelVid.find(' ')) +
+                                       " vid " + s_kernelVid.substr(s_kernelVid.find(' ') + 1))
+    {
+        out += s_kernelVid + "\n";
+    }
+    return ret;
+}
+
+/*
+ * The ES port leaves the VLAN (vlanmgrd removes the kernel member, then its STATE_DB VLAN_MEMBER_TABLE row).
+ * The kernel keeps zebra's entry and zebra cannot delete it there, so no delete event comes.
+ */
+class FdbSyncdEsPortLeftVlanTest : public FdbSyncdEsPeerSyncTest
+{
+public:
+    void SetUp() override
+    {
+        FdbSyncdEsPeerSyncTest::SetUp();
+        s_esBridgePort = true;
+        s_kernelVid.clear();
+    }
+
+    void TearDown() override
+    {
+        FdbSyncdEsPeerSyncTest::TearDown();
+        callback = nullptr;
+        s_esBridgePort = true;
+        s_kernelVid.clear();
+    }
+
+    void setMember(const std::string &key, bool member)
+    {
+        Table stateVlanMember(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME);
+        if (member)
+        {
+            stateVlanMember.set(key, { FieldValueTuple("state", "ok") });
+        }
+        else
+        {
+            stateVlanMember.del(key);
+        }
+    }
+
+    /* STATE_DB's event for key, with mockCallArgs holding the commands it ran */
+    void memberEvent(const std::string &key, bool member)
+    {
+        setMember(key, member);
+        mockCallArgs.clear();
+        callback = rejoinedKernel;
+        m_mockFdbSync.updateVlanMember(key, member);
+        callback = nullptr;
+    }
+
+    /* A kernel event, with mockCallArgs holding the commands it ran */
+    void kernelEvent(struct nlmsghdr *msg)
+    {
+        mockCallArgs.clear();
+        callback = rejoinedKernel;
+        sendMsg(m_mockFdbSync, msg);
+        callback = nullptr;
+    }
+
+    std::vector<std::string> flushes()
+    {
+        std::vector<std::string> cmds;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("bridge fdb flush") == 0)
+            {
+                cmds.push_back(cmd);
+            }
+        }
+        return cmds;
+    }
+
+    void addLocalStatic(const std::string &mac, const std::string &vid, const std::string &port)
+    {
+        struct m_fdb_info info;
+        info.mac = mac;
+        info.vid = vid;
+        info.port_name = port;
+        info.type = FDB_TYPE_STATIC;
+        m_mockFdbSync.macUpdateCache(&info);
+    }
+};
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, ExtLearnRowRemovedWhenEsPortLeavesVlan)
+{
+    const std::string key = "Vlan20:00:02:03:04:05:20";
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:20"));
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:21"));
+    /* the same VLAN on another port, and another VLAN on the same port */
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 201, 20, "00:02:03:04:05:22"));
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 10, "00:02:03:04:05:23"));
+    ASSERT_TRUE(row(key));
+
+    memberEvent("Vlan20|PortChannel1", false);
+    EXPECT_FALSE(row(key));
+    EXPECT_FALSE(row("Vlan20:00:02:03:04:05:21"));
+    EXPECT_EQ(m_mockFdbSync.m_mac.count(key), 0u);
+    ASSERT_TRUE(row("Vlan20:00:02:03:04:05:22"));
+    EXPECT_EQ(field(m_fvs, "ifname"), "Ethernet8");
+    ASSERT_TRUE(row("Vlan10:00:02:03:04:05:23"));
+    EXPECT_EQ(field(m_fvs, "ifname"), "PortChannel1");
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[0], "bridge vlan show dev PortChannel1 vid 20");
+    EXPECT_EQ(mockCallArgs[1], "test -d /sys/class/net/PortChannel1/brport");
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev PortChannel1 master vlan 20 extern_learn");
+
+    /* The flush's delete events find nothing left to remove */
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(false, 200, 20, "00:02:03:04:05:20"));
+    EXPECT_FALSE(row(key));
+    EXPECT_TRUE(row("Vlan20:00:02:03:04:05:22"));
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, StaticRowRemovedWhenEsPortLeavesVlan)
+{
+    const std::string key = "Vlan10:00:02:03:04:05:24";
+    sendMsg(m_mockFdbSync, zebra_static_sync_msg(201, 10, "00:02:03:04:05:24"));
+    ASSERT_TRUE(row(key));
+
+    memberEvent("Vlan10|Ethernet8", false);
+    EXPECT_FALSE(row(key));
+    EXPECT_EQ(flushes(), std::vector<std::string>{ "bridge fdb flush dev Ethernet8 master vlan 10 static" });
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, BothKindsFlushedAndKindFollowsTheLatestEntry)
+{
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 201, 10, "00:02:03:04:05:2a"));
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 201, 10, "00:02:03:04:05:2b"));
+    /* zebra rewrites the second entry as static, to the same destination */
+    sendMsg(m_mockFdbSync, zebra_static_sync_msg(201, 10, "00:02:03:04:05:2b"));
+    ASSERT_TRUE(row("Vlan10:00:02:03:04:05:2b"));
+
+    memberEvent("Vlan10|Ethernet8", false);
+    EXPECT_FALSE(row("Vlan10:00:02:03:04:05:2a"));
+    EXPECT_FALSE(row("Vlan10:00:02:03:04:05:2b"));
+    EXPECT_EQ(flushes(), (std::vector<std::string>{ "bridge fdb flush dev Ethernet8 master vlan 10 extern_learn",
+                                                    "bridge fdb flush dev Ethernet8 master vlan 10 static" }));
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, LocalStaticMacsInstalledAgainOnRejoin)
+{
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+    sendMsg(m_mockFdbSync, zebra_static_sync_msg(201, 10, "00:02:03:04:05:25"));
+    addLocalStatic("00:02:03:04:05:26", "Vlan10", "Ethernet8");
+    addLocalStatic("00:02:03:04:05:2c", "Vlan20", "Ethernet8");
+    addLocalStatic("00:02:03:04:05:2d", "Vlan10", "PortChannel1");
+
+    /* The static flush takes the configured static MAC's kernel entry too */
+    memberEvent("Vlan10|Ethernet8", false);
+    EXPECT_FALSE(row("Vlan10:00:02:03:04:05:25"));
+    EXPECT_EQ(flushes(), std::vector<std::string>{ "bridge fdb flush dev Ethernet8 master vlan 10 static" });
+
+    memberEvent("Vlan10|Ethernet8", true);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(mockCallArgs[0], " bridge fdb replace 00:02:03:04:05:26 dev Ethernet8 master static vlan 10");
+
+    /* A second rejoin event has nothing to install again */
+    memberEvent("Vlan10|Ethernet8", true);
+    EXPECT_TRUE(mockCallArgs.empty());
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, RowStaysWhileEsPortIsMember)
+{
+    const std::string key = "Vlan20:00:02:03:04:05:27";
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:27"));
+    ASSERT_TRUE(row(key));
+
+    /* A member, another port or VLAN leaving, a delete processed after the port rejoined, a bad key */
+    memberEvent("Vlan20|PortChannel1", true);
+    memberEvent("Vlan20|Ethernet8", false);
+    memberEvent("Vlan10|PortChannel1", false);
+    mockCallArgs.clear();
+    m_mockFdbSync.updateVlanMember("Vlan20|PortChannel1", false);
+    m_mockFdbSync.updateVlanMember("PortChannel1", false);
+    m_mockFdbSync.updateVlanMember("Vlan|PortChannel1", false);
+    ASSERT_TRUE(row(key));
+    EXPECT_TRUE(mockCallArgs.empty());
+
+    /* The kernel member is back before its STATE_DB row (vlanmgrd's order), or was never removed */
+    s_kernelVid = "PortChannel1 20";
+    memberEvent("Vlan20|PortChannel1", false);
+    ASSERT_TRUE(row(key));
+    EXPECT_EQ(field(m_fvs, "ifname"), "PortChannel1");
+    EXPECT_TRUE(flushes().empty());
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, EachLeaveFlushes)
+{
+    const std::string key = "Vlan20:00:02:03:04:05:28";
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:28"));
+    memberEvent("Vlan20|PortChannel1", false);
+    EXPECT_FALSE(row(key));
+    EXPECT_EQ(flushes().size(), 1u);
+
+    /* The port rejoins and zebra installs the MAC again */
+    memberEvent("Vlan20|PortChannel1", true);
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:28"));
+    ASSERT_TRUE(row(key));
+
+    memberEvent("Vlan20|PortChannel1", false);
+    EXPECT_FALSE(row(key));
+    EXPECT_EQ(flushes(), std::vector<std::string>{ "bridge fdb flush dev PortChannel1 master vlan 20 extern_learn" });
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, PortThatLeftTheBridgeIsNotFlushed)
+{
+    const std::string key = "Vlan20:00:02:03:04:05:29";
+    sendMsg(m_mockFdbSync, zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:29"));
+    s_esBridgePort = false;
+    memberEvent("Vlan20|PortChannel1", false);
+    EXPECT_FALSE(row(key));
+    EXPECT_TRUE(flushes().empty());
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back(), "test -d /sys/class/net/PortChannel1/brport");
+}
+
+TEST_F(FdbSyncdEsPortLeftVlanTest, StaleEntryOfAPortThatLeftIsNotProgrammed)
+{
+    /* fdbsyncd restarts after the leave: its dump replays zebra's kept entry */
+    setMember("Vlan20|PortChannel1", false);
+    kernelEvent(zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:2e"));
+    EXPECT_FALSE(row("Vlan20:00:02:03:04:05:2e"));
+    EXPECT_TRUE(m_mockFdbSync.m_mac.empty());
+    EXPECT_EQ(flushes(), std::vector<std::string>{ "bridge fdb flush dev PortChannel1 master vlan 20 extern_learn" });
+
+    /* An event queued from before the leave removes the row it finds */
+    m_mockFdbSync.m_mac["Vlan20:00:02:03:04:05:2f"] = {};
+    m_mockFdbSync.m_mac["Vlan20:00:02:03:04:05:2f"].nhtype = FdbDest::IFNAME;
+    m_mockFdbSync.m_mac["Vlan20:00:02:03:04:05:2f"].nexthop_value = "PortChannel1";
+    kernelEvent(zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:2f"));
+    EXPECT_TRUE(m_mockFdbSync.m_mac.empty());
+
+    /* The port rejoins: the kernel has it before STATE_DB does */
+    s_kernelVid = "PortChannel1 20";
+    kernelEvent(zebra_ext_learn_msg(true, 200, 20, "00:02:03:04:05:2e"));
+    ASSERT_TRUE(row("Vlan20:00:02:03:04:05:2e"));
+    EXPECT_EQ(field(m_fvs, "ifname"), "PortChannel1");
+    EXPECT_TRUE(flushes().empty());
 }
