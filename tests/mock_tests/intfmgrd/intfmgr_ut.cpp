@@ -1655,6 +1655,7 @@ namespace intfmgr_ut
         {
             SCOPED_TRACE(entry.first);
             SubIntfQueryOverrides[alias] = entry.first;
+            EXPECT_EQ(intfmgr.isSubIntfPresent("PortChannel1", alias, "20"), entry.second);
             mockCallArgs.clear();
             if (entry.second)
             {
@@ -1676,12 +1677,13 @@ namespace intfmgr_ut
         EXPECT_EQ(mockCallArgs.size(), 1u);
     }
 
-    TEST_F(IntfMgrTest, testHybridCachedChildMismatchAndQueryFailureStayUnready)
+    TEST_F(IntfMgrTest, testHybridCachedChildNonReadyAttemptsCreation)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         auto *consumer = applyChild(intfmgr);
         ASSERT_TRUE(consumer->m_toSync.empty());
         const std::string alias = "PortChannel1.20";
+        const auto applied = intfmgr.m_subIntfList.at(alias);
         swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
         const auto application = tableSnapshot(app);
         const std::vector<std::string> outputs = {
@@ -1695,6 +1697,7 @@ namespace intfmgr_ut
         for (std::size_t i = 0; i < outputs.size(); ++i)
         {
             SCOPED_TRACE(i);
+            intfmgr.m_subIntfList[alias] = applied;
             notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
             SubIntfQueryOverrides[alias] = outputs[i];
             SubIntfQueryResult = i == 4 ? 1 : 0;
@@ -1705,11 +1708,12 @@ namespace intfmgr_ut
             mockCallArgs.clear();
             intfmgr.doTask(*consumer);
             EXPECT_EQ(consumer->m_toSync.size(), 2u);
-            EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 1u);
+            EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 0u);
             EXPECT_EQ(tableSnapshot(app), application);
             EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
             EXPECT_TRUE(intfmgr.isIntfCreated(alias));
-            EXPECT_FALSE(commandWasIssued("link add"));
+            EXPECT_TRUE(commandWasIssued("link add"));
+            EXPECT_FALSE(commandWasIssued("link del"));
             EXPECT_FALSE(commandWasIssued("address \"add\""));
             EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 0u);
             EXPECT_EQ(testing_db::getTableSetCount(STATE_LAG_TABLE_NAME, alias), 0u);
@@ -1722,6 +1726,35 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
         EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 1u);
+    }
+
+    TEST_F(IntfMgrTest, testHybridCachedChildQueryFailureRecreatesMissingChild)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = applyChild(intfmgr);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        const std::string alias = "PortChannel1.20";
+        for (bool throws : {false, true})
+        {
+            SCOPED_TRACE(throws);
+            notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+            KernelSubIntfs.erase(alias);
+            SubIntfQueryResult = 1;
+            ThrowSubIntfQuery = throws;
+            notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                      {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+            mockCallArgs.clear();
+            interfaceLookups.clear();
+            intfmgr.doTask(*consumer);
+            EXPECT_TRUE(consumer->m_toSync.empty());
+            EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 1u);
+            ASSERT_EQ(KernelSubIntfs.count(alias), 1u);
+            EXPECT_EQ(KernelSubIntfs.at(alias), std::make_pair(std::string("PortChannel1"), std::string("20")));
+            EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
+            EXPECT_TRUE(commandWasIssued("link add"));
+            EXPECT_FALSE(commandWasIssued("link del"));
+            EXPECT_TRUE(interfaceLookups.empty());
+        }
     }
 
     TEST_F(IntfMgrTest, testHybridStateWaitsForChildMtuAndAdmin)

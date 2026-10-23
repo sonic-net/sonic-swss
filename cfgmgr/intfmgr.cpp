@@ -450,7 +450,7 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
     return false;
 }
 
-IntfMgr::SubIntfState IntfMgr::getSubIntfState(const string &parent, const string &alias, const string &vlan)
+bool IntfMgr::isSubIntfPresent(const string &parent, const string &alias, const string &vlan)
 {
     string res;
     try
@@ -458,7 +458,7 @@ IntfMgr::SubIntfState IntfMgr::getSubIntfState(const string &parent, const strin
         size_t length;
         const auto vid = stoul(vlan, &length);
         if (length != vlan.size())
-            return SubIntfState::Unknown;
+            return false;
         const string cmd = "output=$(" + string(IP_CMD) + " -d -o link show dev " + shellquote(alias) +
             ") || exit 2; printf '%s\\n' \"$output\" | awk -v name=" + shellquote(alias + "@" + parent + ":") +
             " -v vlan=" + to_string(vid) + " " +
@@ -466,21 +466,13 @@ IntfMgr::SubIntfState IntfMgr::getSubIntfState(const string &parent, const strin
                        "if ($i==\"vlan\" && $(i+1)==\"protocol\" && $(i+2)==\"802.1Q\" && "
                        "$(i+3)==\"id\" && $(i+4)~/^[0-9]+$/ && $(i+4)+0==vlan) found=1 } "
                        "END { exit !(rows==1 && found) }");
-        const int ret = swss::exec(cmd, res);
-        if (ret == 0)
-            return SubIntfState::Ready;
-        if (ret == 1)
-            return SubIntfState::Unknown;
+        return swss::exec(cmd, res) == 0;
     }
     catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query subinterface %s: %s", alias.c_str(), e.what());
-        return SubIntfState::Unknown;
+        return false;
     }
-    errno = 0;
-    if (if_nametoindex(alias.c_str()) == 0 && (errno == ENODEV || errno == ENXIO))
-        return SubIntfState::Missing;
-    return SubIntfState::Unknown;
 }
 
 void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
@@ -495,7 +487,7 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
     }
     catch (const runtime_error &)
     {
-        if (getSubIntfState(intf, subIntf, vlan) != SubIntfState::Ready)
+        if (!isSubIntfPresent(intf, subIntf, vlan))
             throw;
     }
 }
@@ -1116,10 +1108,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (applied != m_subIntfList.end() &&
                 (!isIntfStateOk(alias) || !isIntfCreated(alias) || applied->second.vlanId != vlanId))
             {
-                auto state = getSubIntfState(parentAlias, alias, vlanId);
-                if (state == SubIntfState::Unknown)
-                    return false;
-                if (state == SubIntfState::Missing)
+                if (!isSubIntfPresent(parentAlias, alias, vlanId))
                     m_subIntfList.erase(applied);
                 else
                     applied->second.vlanId = vlanId;
