@@ -1610,8 +1610,12 @@ void IntfMgr::doTask(Consumer &consumer)
                 }
                 else
                 {
-                    // A completed DEL does not complete a following warm-replay SET.
-                    if (op == SET_COMMAND || consumer.m_toSync.count(kfvKey(t)) == 1)
+                    // A replacement SET may have been cancelled while CONFIG still requires replay.
+                    vector<FieldValueTuple> desired;
+                    if (op == SET_COMMAND ||
+                        (consumer.m_toSync.count(kfvKey(t)) == 1 &&
+                         (lag.empty() || (!m_cfgLagIntfTable.get(kfvKey(t), desired) &&
+                                          !m_cfgSubIntfTable.get(kfvKey(t), desired)))))
                         m_pendingReplayIntfList.erase(keys[0]);
                 }
             }
@@ -1630,7 +1634,11 @@ void IntfMgr::doTask(Consumer &consumer)
                 }
                 else
                 {
-                    if (op == SET_COMMAND || consumer.m_toSync.count(kfvKey(t)) == 1)
+                    vector<FieldValueTuple> desired;
+                    if (op == SET_COMMAND ||
+                        (consumer.m_toSync.count(kfvKey(t)) == 1 &&
+                         (lag.empty() || (!m_cfgLagIntfTable.get(kfvKey(t), desired) &&
+                                          !m_cfgSubIntfTable.get(kfvKey(t), desired)))))
                         m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
                 }
             }

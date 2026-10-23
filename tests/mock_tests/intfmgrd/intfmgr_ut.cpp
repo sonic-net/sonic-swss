@@ -966,6 +966,64 @@ namespace intfmgr_ut
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 2u);
     }
 
+    struct IntfMgrWarmDeleteTest : IntfMgrTest, ::testing::WithParamInterface<bool>
+    {
+    };
+
+    TEST_P(IntfMgrWarmDeleteTest, RetainedDeleteWaitsForReplacementSet)
+    {
+        const std::string table = GetParam() ? CFG_VLAN_SUB_INTF_TABLE_NAME : CFG_LAG_INTF_TABLE_NAME;
+        const std::string alias = GetParam() ? "PortChannel1.20" : "PortChannel1";
+        const std::string address = alias + "|192.0.2.1/31";
+        const std::vector<swss::FieldValueTuple> data = {{"mtu", "1500"}, {"admin_status", "up"}};
+        swss::Table config(m_config_db.get(), table);
+        config.set(alias, data);
+        config.set(address, {{"NULL", "NULL"}});
+        enableWarmStart();
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(table));
+        ASSERT_NE(consumer, nullptr);
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        for (const auto &key : {alias, address})
+        {
+            consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
+            consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {}));
+            ASSERT_EQ(consumer->m_toSync.count(key), 2u);
+        }
+
+        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+        if (GetParam())
+            MissingSubInterfaces.insert(alias);
+        for (const auto &key : {alias, address})
+        {
+            ASSERT_EQ(consumer->m_toSync.count(key), 1u);
+            EXPECT_EQ(kfvOp(consumer->m_toSync.find(key)->second), DEL_COMMAND);
+        }
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList, (std::set<std::string>{alias, address}));
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::INITIALIZED);
+
+        FailAddressAdd = true;
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        intfmgr.doTask(*consumer);
+        EXPECT_EQ(intfmgr.m_pendingReplayIntfList, (std::set<std::string>{address}));
+        EXPECT_FALSE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::INITIALIZED);
+
+        FailAddressAdd = false;
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(intfmgr.m_pendingReplayIntfList.empty());
+        EXPECT_TRUE(intfmgr.m_replayDone);
+        EXPECT_EQ(warmState(), swss::WarmStart::RECONCILED);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(ParentAndChild, IntfMgrWarmDeleteTest, ::testing::Bool());
+
     TEST_F(IntfMgrTest, testLagReopenReadsCurrentConfigOnce)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
