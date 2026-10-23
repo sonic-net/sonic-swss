@@ -67,8 +67,9 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         }
 
         /*
-         * Bridge FDB entries share RTM_NEWNEIGH/RTM_DELNEIGH with IP neighbours,
-         * so the address family is what selects the MAC path.
+         * RTM_NEWNEIGH/RTM_DELNEIGH carry both MACs and IP neighbours: a bridge
+         * FDB entry (AF_BRIDGE) or an ARP/ND entry (AF_INET/AF_INET6). Only the
+         * MACs come over FPM, so the address family selects them.
          */
         if (h->nlmsg_type == RTM_NEWNEIGH || h->nlmsg_type == RTM_DELNEIGH)
         {
@@ -356,7 +357,8 @@ bool FpmLink::send(nlmsghdr* nl_hdr)
     size_t sent = 0;
     while (sent != len)
     {
-        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, len - sent, 0);
+        /* MSG_NOSIGNAL: a zebra that has gone away gives EPIPE here, not a SIGPIPE that stops fpmsyncd. */
+        auto rc = ::send(m_connection_socket, m_sendBuffer + sent, len - sent, MSG_NOSIGNAL);
         if (rc == -1)
         {
             SWSS_LOG_ERROR("Failed to send FPM message: %s", strerror(errno));

@@ -3,6 +3,7 @@
 
 #include <string>
 #include <algorithm>
+#include <cstdlib>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
@@ -100,6 +101,7 @@ bool FdbSync::parseFdbStateKey(const string &key, string &vlanName, string &macA
 
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
+    m_fdbTableRead(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME, false),
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
@@ -153,8 +155,101 @@ void FdbSync::setMacSyncMode(const string& mode)
 
     if (!m_fpmMacSync)
     {
+        adoptRemoteMacs();
         updateAllLocalMac();
     }
+    else
+    {
+        /* fpmsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
+        m_mac.clear();
+    }
+}
+
+/*
+ * Take over the remote MACs fpmsyncd wrote to APP_VXLAN_FDB_TABLE in fpm mode,
+ * so a kernel withdrawal still removes them. The VxLAN device of a MAC with a
+ * VTEP or a nexthop group is the one named <tunnel>-<VLAN id>, when known.
+ */
+void FdbSync::adoptRemoteMacs()
+{
+    std::vector<std::string> keys;
+    size_t adopted = 0;
+
+    m_mac.clear();
+    m_fdbTableRead.getKeys(keys);
+
+    for (const auto &key : keys)
+    {
+        std::vector<FieldValueTuple> values;
+        if (!m_fdbTableRead.get(key, values))
+        {
+            continue;
+        }
+
+        m_mac_info info{};
+        info.nhtype = FdbDest::UNKNOWN;
+        for (const auto &fv : values)
+        {
+            const std::string &field = fvField(fv);
+            const std::string &value = fvValue(fv);
+
+            if (field == "remote_vtep")
+            {
+                info.nhtype = FdbDest::VTEP;
+                info.nexthop_value = value;
+            }
+            else if (field == "nexthop_group")
+            {
+                info.nhtype = FdbDest::NEXTHOPGROUP;
+                info.nexthop_value = value;
+            }
+            else if (field == "ifname")
+            {
+                info.ifname = value;
+            }
+            else if (field == "type")
+            {
+                info.type = value;
+            }
+            else if (field == "vni")
+            {
+                info.vni = static_cast<unsigned int>(strtoul(value.c_str(), NULL, 10));
+            }
+        }
+
+        if (info.nhtype == FdbDest::UNKNOWN && !info.ifname.empty())
+        {
+            info.nhtype = FdbDest::IFNAME;
+            info.nexthop_value = info.ifname;
+        }
+        if (info.nhtype == FdbDest::UNKNOWN)
+        {
+            SWSS_LOG_WARN("FdbSync: VXLAN_FDB_TABLE entry %s has no destination, not taken over", key.c_str());
+            continue;
+        }
+
+        auto colon = key.find(':');
+        if (info.nhtype != FdbDest::IFNAME && key.compare(0, 4, "Vlan") == 0 &&
+            colon != std::string::npos && colon > 4)
+        {
+            std::string suffix = "-" + key.substr(4, colon - 4);
+            for (const auto &intf : m_intf_info)
+            {
+                const std::string &name = intf.second.ifname;
+                if (name.size() > suffix.size() &&
+                    name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                {
+                    info.ifname = name;
+                    break;
+                }
+            }
+        }
+
+        m_mac[key] = info;
+        adopted++;
+    }
+
+    SWSS_LOG_NOTICE("FdbSync: took over %zu remote MACs from APPL_DB", adopted);
 }
 
 void FdbSync::processCfgFdbSync()

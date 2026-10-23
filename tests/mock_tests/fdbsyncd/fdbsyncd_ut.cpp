@@ -2486,6 +2486,34 @@ TEST_F(FdbSyncdEvpnMhTest, RemoteMacNotWrittenToAppDbInFpmMode)
     free(nlmsg);
 }
 
+/*
+ * Rows fpmsyncd wrote to APP_VXLAN_FDB_TABLE in fpm mode stay withdrawable once the
+ * mode is back to kernel: fdbsyncd takes them over on the switch. A kernel delete for
+ * a MAC it had not cached used to be ignored, leaving the row in place.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeTakesOverRemoteMacsInAppDb)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:55");
+    const std::string key = "Vlan100:dd:ee:ff:00:11:55";
+    std::vector<FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* As fpmsyncd writes it. */
+    getFdbTable().set(key, std::vector<FieldValueTuple>{{"remote_vtep", "192.168.1.77"},
+                                                        {"type", "dynamic"},
+                                                        {"vni", "10100"}});
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    ASSERT_EQ(m_mockFdbSync.m_mac.count(key), 1u);
+    EXPECT_EQ(m_mockFdbSync.m_mac[key].nhtype, FdbDest::VTEP);
+    EXPECT_EQ(m_mockFdbSync.m_mac[key].ifname, "Vxlan-100");
+
+    struct nlmsghdr *nlmsg = mac_route_msg(false, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_FALSE(getFdbTable().get(key, values));
+}
+
 /* addLocalMac() is a separate entry point with its own guard, reached from the
  * STATE_DB path rather than from netlink. */
 TEST_F(FdbSyncdEvpnMhTest, AddLocalMacNotProgrammedIntoKernelInFpmMode)

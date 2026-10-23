@@ -201,7 +201,11 @@ int main(int argc, char **argv)
             {
                 Selectable *temps;
 
-                /* Reading FPM messages forever (and calling "readMe" to read them) */
+                /*
+                 * Wait on every selectable: the FPM connection (whose "readMe" reads the
+                 * FPM messages), netlink, and MacSync's two tables, STATE_DB FDB_TABLE for
+                 * the local MACs to send to zebra and CONFIG_DB FDB_SYNC for the mode.
+                 */
                 s.select(&temps, gSelectTimeout);
 
                 if (temps == (Selectable *)macsync.getStateFdbTable())

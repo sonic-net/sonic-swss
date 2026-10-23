@@ -119,12 +119,14 @@ private:
     );
     void readCfgFdbSyncMode();
     void setMacSyncMode(const std::string& mode);
+    void adoptRemoteMacs();
 
     bool m_fpmMacSync = false;
     /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
     bool m_l3EvpnMh = false;
 
     ProducerStateTable m_fdbTable;
+    Table m_fdbTableRead;
     ProducerStateTable m_imetTable;
     ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
