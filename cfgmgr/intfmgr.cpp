@@ -1647,7 +1647,7 @@ void IntfMgr::enqueueLagIntfConfig(const string &alias)
             continue;
         vector<string> keys;
         table->getKeys(keys);
-        map<string, vector<FieldValueTuple>> desired;
+        map<string, vector<FieldValueTuple>> intfConfig;
         for (const auto &key : keys)
         {
             vector<FieldValueTuple> data;
@@ -1659,7 +1659,7 @@ void IntfMgr::enqueueLagIntfConfig(const string &alias)
                         return fvField(field) == "ipv6_use_link_local_only";
                     }))
                     data.emplace_back("ipv6_use_link_local_only", "disable");
-                desired.emplace(key, data);
+                intfConfig.emplace(key, data);
             }
         }
         // Retained projection/cache entries absent from current CONFIG need normal DEL cleanup.
@@ -1672,17 +1672,17 @@ void IntfMgr::enqueueLagIntfConfig(const string &alias)
                 continue;
             if (separator != string::npos)
                 key[separator] = config_db_key_delimiter;
-            if (desired.count(key) == 0)
+            if (intfConfig.count(key) == 0)
                 consumer->addToSync(KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
         }
         if (table == &m_cfgSubIntfTable)
         {
             for (const auto &entry : m_subIntfList)
-                if (isLagIntfKey(entry.first, alias, config_db_key_delimiter) && desired.count(entry.first) == 0)
+                if (isLagIntfKey(entry.first, alias, config_db_key_delimiter) && intfConfig.count(entry.first) == 0)
                     consumer->addToSync(KeyOpFieldsValuesTuple(entry.first, DEL_COMMAND, {}));
         }
         // Queue parent work before child work, and each general key before its addresses.
-        for (const auto &entry : desired)
+        for (const auto &entry : intfConfig)
         {
             consumer->addToSync(KeyOpFieldsValuesTuple(entry.first, SET_COMMAND, entry.second));
             if (!m_replayDone && WarmStart::isWarmStart())
