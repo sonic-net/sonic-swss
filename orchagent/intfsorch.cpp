@@ -251,29 +251,49 @@ bool IntfsOrch::setRouterIntfsMtu(const Port &port)
     return true;
 }
 
+// Applies a port MAC change (VLAN_TABLE mac) to the port's router interface. The interface's own mac_addr (INTF_TABLE)
+// wins over the port MAC, and an unchanged MAC is not set again (vlanmgrd re-sends every VLAN on a warm reboot).
 bool IntfsOrch::setRouterIntfsMac(const Port &port)
 {
     SWSS_LOG_ENTER();
 
+    MacAddress mac = port.m_mac;
+    auto it_intfs = m_syncdIntfses.find(port.m_alias);
+    if (it_intfs != m_syncdIntfses.end())
+    {
+        if (it_intfs->second.mac_addr)
+        {
+            mac = it_intfs->second.mac_addr;
+        }
+        if (it_intfs->second.mac == mac)
+        {
+            return true;
+        }
+    }
+
     sai_attribute_t attr;
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+    memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
 
     sai_status_t status = sai_router_intfs_api->
             set_router_interface_attribute(port.m_rif_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s MAC to %s, rv:%d",
-                port.m_alias.c_str(), port.m_mac.to_string().c_str(), status);
+                port.m_alias.c_str(), mac.to_string().c_str(), status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    else if (it_intfs != m_syncdIntfses.end())
+    {
+        it_intfs->second.mac = mac;
+    }
     SWSS_LOG_NOTICE("Set router interface %s MAC to %s",
-            port.m_alias.c_str(), port.m_mac.to_string().c_str());
+            port.m_alias.c_str(), mac.to_string().c_str());
     return true;
 }
 
@@ -1080,6 +1100,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                     }
                 }
+            }
+
+            if (!ip_prefix_in_key && m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            {
+                m_syncdIntfses[alias].mac_addr = mac;
             }
 
             if (!mac)
