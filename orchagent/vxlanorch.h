@@ -207,6 +207,9 @@ public:
     bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
+    // Finishes a held SIP tunnel hw delete once nothing references the tunnel; false while the
+    // P2MP source tunnel port's bridge port cannot be removed.
+    bool finishPendingSIPDelete();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
     void updateRemoteEndPointRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
@@ -368,6 +371,12 @@ public:
     void generateTunnelCounterMap();
     void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
     void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
+    // True while a VXLAN_TUNNEL DEL of this tunnel is held back (see delOperation)
+    bool isDeleteHeld(const std::string& tunnelName) const
+    {
+        return m_heldDeletes.count(tunnelName) != 0;
+    }
+
     bool isDipTunnelsSupported(void)
     {
         return is_dip_tunnel_supported;
@@ -384,6 +393,7 @@ private:
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
+    Table m_appTunnelTable;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     FlexCounterManager vxlan_tunnel_stat_manager;
     bool m_isTunnelCounterMapGenerated = false;
@@ -395,6 +405,8 @@ private:
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
     bool is_dip_tunnel_supported;
+    // Held tunnel DELs and the reason last logged, so each retry logs only a new reason.
+    std::map<std::string, std::string> m_heldDeletes;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
@@ -553,7 +565,7 @@ public:
 class EvpnNvoOrch : public Orch2
 {
 public:
-    EvpnNvoOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
+    EvpnNvoOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_), m_nvoTable(db, tableName) { }
 
     VxlanTunnel* getEVPNVtep() 
     { 
@@ -564,6 +576,11 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
+    bool holdDelete(const std::string& nvo_name, const std::string& reason, bool error = false);
+
     EvpnNvoRequest request_;
+    Table m_nvoTable;
     VxlanTunnel* source_vtep_ptr=NULL;
+    // Held NVO DELs and the reason last logged, so each retry logs only a new reason.
+    std::map<std::string, std::string> m_heldDeletes;
 };
