@@ -206,6 +206,7 @@ public:
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
+    bool cleanupPendingFailedCreate();
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
@@ -226,8 +227,12 @@ public:
     bool del_tnl_hw_pending = false;
 
 private:
+    bool cleanupFailedCreate(uint8_t mapper_list, tunnel_map_use_t map_src);
     string tunnel_name_;
     bool active_ = false;
+    bool failed_create_cleanup_pending_ = false;
+    uint8_t failed_create_mapper_list_ = 0;
+    tunnel_map_use_t failed_create_map_src_ = TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP;
 
     tunnel_ids_t ids_ = {{0}, {0}, 0, 0};
     std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
