@@ -151,6 +151,28 @@ void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
     return;
 }
 
+/*
+ * Called when the kernel reports the neighbor again (SET with a MAC) or it is
+ * removed: either way the refresh requested by processFDBResolve() is done.
+ */
+void NeighOrch::clearNeighborRefresh(const NeighborEntry &entry)
+{
+    if (m_neighborToRefresh.erase(entry) == 0)
+    {
+        return;
+    }
+
+    // A next hop resolve shares the key; addNextHop() clears it.
+    if (m_neighborToResolve.find(entry) != m_neighborToResolve.end())
+    {
+        return;
+    }
+
+    clearResolvedNeighborEntry(entry);
+    SWSS_LOG_INFO("Refreshed neighbor %s on %s",
+                  entry.ip_address.to_string().c_str(), entry.alias.c_str());
+}
+
 /**
  * @brief Process FDB add notification to re-enable neighbor entries
  *
@@ -257,6 +279,7 @@ void NeighOrch::processFDBResolve(const FdbEntry &entry)
             neighborEntry.second.mac == entry.mac)
         {
             resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
+            m_neighborToRefresh.insert(neighborEntry.first);
         }
     }
     return;
@@ -1126,6 +1149,7 @@ void NeighOrch::doTask(Consumer &consumer)
                 }
                 else if (addNeighbor(ctx))
                 {
+                    clearNeighborRefresh(neighbor_entry);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -1137,6 +1161,7 @@ void NeighOrch::doTask(Consumer &consumer)
             else
             {
                 /* Duplicate entry */
+                clearNeighborRefresh(neighbor_entry);
                 it = consumer.m_toSync.erase(it);
             }
 
@@ -1301,9 +1326,15 @@ bool NeighOrch::removePrefixRouteForNeighbor(const IpAddress& ip_address, sai_ob
     subnet(route_entry.destination, route_entry.destination);
 
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+    if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_NOTICE("Mux neigh route for %s already removed.", ip_address.to_string().c_str());
+        return true;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to delete mux neigh route for %s.", ip_address.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to delete mux neigh route for %s, rv:%d",
+                       ip_address.to_string().c_str(), status);
         return false;
     }
 
@@ -1443,6 +1474,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     bool hw_config = isHwConfigured(neighborEntry);
+    bool was_prefix_route = isPrefixNeighbor(neighborEntry);
     /*
      * Prefix-route mode programs neighbors with NO_HOST_ROUTE and controls
      * active/standby forwarding through the explicit host prefix route.  Keep
@@ -1592,6 +1624,72 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
+
+        /*
+         * NO_HOST_ROUTE and the explicit prefix route are a single state: the
+         * suppressed host route must always be replaced by a real route object.
+         * An already programmed neighbor that becomes a prefix-route neighbor
+         * has to get its prefix route created here as well, otherwise the
+         * neighbor is recorded as a prefix neighbor while no route exists in
+         * hardware and every later mux state transition fails on it.
+         */
+        if (prefix_route && !was_prefix_route)
+        {
+            auto nhKey = NextHopKey(ip_address, alias);
+            auto nh_it = m_syncdNextHops.find(nhKey);
+
+            if (nh_it == m_syncdNextHops.end())
+            {
+                SWSS_LOG_ERROR("Next hop for neighbor %s on %s does not exist",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+            else if(!addPrefixRouteForNeighbor(ip_address, alias, nh_it->second.next_hop_id, is_nbr_active))
+            {
+                SWSS_LOG_ERROR("Failed to add prefix route for neighbor %s on %s",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+        }
+        else if (!prefix_route && was_prefix_route)
+        {
+            sai_object_id_t port_vrf_id = gVirtualRouterId;
+            Port port;
+
+            if (m_portsOrch->getPort(alias, port))
+            {
+                port_vrf_id = port.m_vr_id;
+            }
+
+            /* Remove the prefix route before unsuppressing the host route, so the
+             * prefix never owns both and a failed delete leaves hardware matching
+             * the prefix_route still recorded in the cache. */
+            if (!removePrefixRouteForNeighbor(ip_address, port_vrf_id))
+            {
+                SWSS_LOG_ERROR("Failed to remove prefix route for neighbor %s on %s",
+                               ip_address.to_string().c_str(), alias.c_str());
+                return false;
+            }
+
+            /* neighbor_attrs only ever carries NO_HOST_ROUTE=1, so the set loop above
+             * cannot undo the suppression and the address would be left unreachable. */
+            if (!no_host_route)
+            {
+                neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+                neighbor_attr.value.booldata = 0;
+                status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to clear NO_HOST_ROUTE for neighbor %s on %s, rv:%d",
+                                   ip_address.to_string().c_str(), alias.c_str(), status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+            }
+        }
     }
 
     m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
@@ -1774,6 +1872,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     }
 
     m_syncdNeighbors.erase(neighborEntry);
+    clearNeighborRefresh(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
