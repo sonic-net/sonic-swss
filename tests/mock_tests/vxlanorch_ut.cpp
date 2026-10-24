@@ -1327,4 +1327,436 @@ namespace vxlanorch_test
         EXPECT_EQ(imrRefCount(), 1);
     }
 
+
+
+    sai_remove_bridge_port_fn g_savedRemoveBridgePort = nullptr;
+    sai_status_t stubRemoveBridgePortInUse(sai_object_id_t)
+    {
+        return SAI_STATUS_OBJECT_IN_USE;
+    }
+
+    // The EVPN NVO must outlive the remote VTEP users of its source VTEP: their DELs release
+    // the VTEP through EvpnNvoOrch::getEVPNVtep(). Each step is the APPL_DB change vxlanmgrd
+    // or fdbsyncd makes, then the DEL as ConsumerStateTable delivers it.
+    class EvpnNvoDelTest : public EvpnRemoteVniTest
+    {
+    protected:
+        const string m_mapKey = "vtep1:map_1000_Vlan100";
+
+        void PreTearDown() override
+        {
+            if (g_savedRemoveBridgePort)
+            {
+                sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+                g_savedRemoveBridgePort = nullptr;
+            }
+            Table(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME).del("nvo1");
+            Table(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME).del(m_mapKey);
+            Table(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME).del("vtep1");
+            EvpnRemoteVniTest::PreTearDown();
+        }
+
+        static Consumer *consumerOf(Orch *orch, const string &table)
+        {
+            return dynamic_cast<Consumer *>(orch->getExecutor(table));
+        }
+
+        void apply(Orch *orch, const string &table, const KeyOpFieldsValuesTuple &kfv)
+        {
+            Table t(m_app_db.get(), table);
+            if (kfvOp(kfv) == DEL_COMMAND)
+            {
+                t.del(kfvKey(kfv));
+            }
+            else
+            {
+                t.set(kfvKey(kfv), kfvFieldsValues(kfv));
+            }
+            consumerOf(orch, table)->addToSync(deque<KeyOpFieldsValuesTuple>{kfv});
+            static_cast<Orch *>(orch)->doTask();
+        }
+
+        void nvoDel() { apply(m_nvoOrch, APP_VXLAN_EVPN_NVO_TABLE_NAME, {"nvo1", DEL_COMMAND, {}}); }
+        void nvoSet() { apply(m_nvoOrch, APP_VXLAN_EVPN_NVO_TABLE_NAME, {"nvo1", SET_COMMAND, {{"source_vtep", "vtep1"}}}); }
+        void mapDel() { apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, {m_mapKey, DEL_COMMAND, {}}); }
+        void mapSet()
+        {
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME,
+                  {m_mapKey, SET_COMMAND, {{"vni", "1000"}, {"vlan", "Vlan100"}}});
+        }
+        void tunnelDel() { apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME, {"vtep1", DEL_COMMAND, {}}); }
+        void retryNvo() { static_cast<Orch *>(m_nvoOrch)->doTask(); }
+
+        bool nvoHeld() { return !consumerOf(m_nvoOrch, APP_VXLAN_EVPN_NVO_TABLE_NAME)->m_toSync.empty(); }
+        bool mapHeld() { return !consumerOf(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME)->m_toSync.empty(); }
+        VxlanTunnel *vtep() { return m_VxlanTunnelOrch->getVxlanTunnel("vtep1"); }
+
+        bool remoteVtepIsFloodMember()
+        {
+            Port vlanPort, tunnelPort;
+            if (!gPortsOrch->getVlanByVlanId(100, vlanPort))
+            {
+                return false;
+            }
+            if (useDipTunnels())
+            {
+                return m_VxlanTunnelOrch->getTunnelPort(m_remoteVtep, tunnelPort) &&
+                       gPortsOrch->isVlanMember(vlanPort, tunnelPort);
+            }
+            return m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true) &&
+                   gPortsOrch->isVlanMember(vlanPort, tunnelPort, m_remoteVtep);
+        }
+
+        // The NVO and its map are configured again and a remote VTEP joins the VLAN.
+        void expectRecreateWorks()
+        {
+            nvoSet();
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            mapSet();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_TRUE(vtep()->isActive());
+            setRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_TRUE(remoteVtepIsFloodMember());
+        }
+
+        // The released VTEP: hw delete done, NVO gone, nothing held or logged as held.
+        void expectReleased()
+        {
+            EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+            EXPECT_FALSE(nvoHeld());
+            EXPECT_TRUE(m_nvoOrch->m_heldDeletes.empty());
+        }
+
+        // The NVO DEL reaches orchagent before the last map DEL, then the remote VNI DEL comes
+        // from fdbsyncd. vxlanmgrd writes the map DEL first, but orchagent serves the readiest
+        // least recently used consumer first, so the NVO DEL can win.
+        void nvoBeforeLastMap()
+        {
+            setRemoteVni();
+            ASSERT_TRUE(remoteVtepIsFloodMember());
+
+            nvoDel();
+            EXPECT_TRUE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            retryNvo();
+            retryNvo();
+            EXPECT_EQ(m_nvoOrch->m_heldDeletes.size(), 1u);
+
+            mapDel();
+            EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+            EXPECT_TRUE(nvoHeld());
+
+            delRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_FALSE(remoteVtepIsFloodMember());
+            EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+
+            retryNvo();
+            expectReleased();
+            expectRecreateWorks();
+        }
+
+        // The usual CLI order: the map DEL first marks the hw delete pending, the NVO DEL waits,
+        // the remote VNI DEL finishes the delete.
+        void lastMapBeforeNvo()
+        {
+            setRemoteVni();
+            mapDel();
+            EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+
+            nvoDel();
+            EXPECT_TRUE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+
+            delRemoteVni();
+            EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+            retryNvo();
+            expectReleased();
+            expectRecreateWorks();
+        }
+
+        // A VTEP with no remote user is deleted at once, whichever of map and NVO comes first.
+        void idleVtep(bool nvo_first)
+        {
+            if (nvo_first)
+            {
+                nvoDel();
+                EXPECT_FALSE(nvoHeld());
+                EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+                mapDel();
+            }
+            else
+            {
+                mapDel();
+                nvoDel();
+            }
+            expectReleased();
+        }
+
+        // VXLAN_TUNNEL DEL waits while the NVO points at the tunnel, so the pointer never dangles.
+        void tunnelWaitsForNvo()
+        {
+            mapDel();
+            tunnelDel();
+            EXPECT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+            EXPECT_EQ(m_VxlanTunnelOrch->m_heldDeletes.size(), 1u);
+
+            nvoDel();
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+            static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+
+        // A held DEL must not clear the pointer of an NVO configured again behind it.
+        void staleDelKeepsRecreatedNvo()
+        {
+            setRemoteVni();
+            nvoDel();
+            ASSERT_TRUE(nvoHeld());
+
+            // The DEL is still queued ahead of the SET.
+            nvoSet();
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+
+            delRemoteVni();
+            retryNvo();
+            EXPECT_FALSE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            EXPECT_TRUE(m_nvoOrch->m_heldDeletes.empty());
+        }
+
+        void tunnelSet(const string &src_ip)
+        {
+            apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME, {"vtep1", SET_COMMAND, {{"src_ip", src_ip}}});
+        }
+        void retryTunnel() { static_cast<Orch *>(m_VxlanTunnelOrch)->doTask(); }
+        bool tunnelHeld() { return !consumerOf(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME)->m_toSync.empty(); }
+
+        // A teardown leaves the NVO and tunnel DELs held, and the same config is created again. The tunnel DEL is
+        // dropped as stale, so a later NVO-only delete leaves the tunnel in place.
+        void staleDelKeepsRecreatedTunnel()
+        {
+            setRemoteVni();
+            nvoDel();
+            tunnelDel();
+            ASSERT_TRUE(nvoHeld());
+            ASSERT_TRUE(tunnelHeld());
+
+            tunnelSet("10.1.1.1");
+            nvoSet();
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+
+            delRemoteVni();
+            retryNvo();
+            EXPECT_FALSE(nvoHeld());
+            nvoDel();
+            EXPECT_FALSE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+            retryTunnel();
+            EXPECT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        }
+
+        // A tunnel row back with another source IP is not the tunnel the DEL is for: the DEL stays held, the SET
+        // waits behind it, and the tunnel is created with the new source IP once the old one is released.
+        void heldTunnelDelKeptForOtherSourceIp()
+        {
+            setRemoteVni();
+            nvoDel();
+            tunnelDel();
+            tunnelSet("10.1.1.9");
+            retryTunnel();
+            EXPECT_TRUE(tunnelHeld());
+            EXPECT_EQ(vtep()->getSrcIP(), IpAddress("10.1.1.1"));
+
+            delRemoteVni();
+            retryNvo();
+            EXPECT_FALSE(nvoHeld());
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_EQ(vtep()->getSrcIP(), IpAddress("10.1.1.9"));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+
+        // The full teardown (map, NVO, tunnel) is held on the remote VTEP, and the same config comes back while the
+        // hw delete is pending: the tunnel DEL is dropped, the remote VNI DEL finishes the pending delete, and the
+        // map that waited for it is created on the same tunnel.
+        void staleTunnelDelDuringPendingHwDelete()
+        {
+            setRemoteVni();
+            mapDel();
+            nvoDel();
+            tunnelDel();
+            ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+            ASSERT_TRUE(tunnelHeld());
+
+            tunnelSet("10.1.1.1");
+            nvoSet();
+            mapSet();
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+
+            delRemoteVni();
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+            EXPECT_TRUE(vtep()->isActive());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+        }
+
+        // An NVO configured again on another source VTEP behind its held DEL waits: the old VTEP's users still
+        // release through the NVO, and the NVO moves once they are gone.
+        void nvoRecreatedOnAnotherVtepWaits()
+        {
+            struct RowCleanup
+            {
+                Table t;
+                ~RowCleanup() { t.del("vtep2"); }
+            } cleanup{Table(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME)};
+            setRemoteVni();
+            nvoDel();
+            ASSERT_TRUE(nvoHeld());
+            apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME, {"vtep2", SET_COMMAND, {{"src_ip", "10.1.1.2"}}});
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep2"));
+
+            apply(m_nvoOrch, APP_VXLAN_EVPN_NVO_TABLE_NAME, {"nvo1", SET_COMMAND, {{"source_vtep", "vtep2"}}});
+            EXPECT_TRUE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+
+            delRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_FALSE(remoteVtepIsFloodMember());
+            retryNvo();
+            EXPECT_FALSE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), m_VxlanTunnelOrch->getVxlanTunnel("vtep2"));
+            EXPECT_TRUE(m_nvoOrch->m_heldDeletes.empty());
+        }
+
+        // The tunnel comes back with another source IP while its DEL and the NVO's are held on a pending hw delete,
+        // and the NVO is configured again on it: the NVO waits for the old tunnel to go and binds the new one.
+        void nvoRecreatedBehindHeldTunnelDelWithNewSourceIp()
+        {
+            setRemoteVni();
+            mapDel();
+            nvoDel();
+            tunnelDel();
+            ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+            tunnelSet("10.1.1.9");
+            retryTunnel();
+            ASSERT_TRUE(tunnelHeld());
+
+            nvoSet();
+            EXPECT_TRUE(nvoHeld());
+
+            delRemoteVni();
+            EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+            retryNvo();
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_EQ(vtep()->getSrcIP(), IpAddress("10.1.1.9"));
+            retryNvo();
+            EXPECT_FALSE(nvoHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            EXPECT_TRUE(m_nvoOrch->m_heldDeletes.empty());
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+    };
+
+    class EvpnNvoDelP2mpTest : public EvpnNvoDelTest
+    {
+    protected:
+        bool useDipTunnels() const override
+        {
+            return false;
+        }
+    };
+
+    TEST_F(EvpnNvoDelTest, NvoDelBeforeLastMapWaitsForRemoteVniDel) { nvoBeforeLastMap(); }
+    TEST_F(EvpnNvoDelP2mpTest, NvoDelBeforeLastMapWaitsForRemoteVniDel) { nvoBeforeLastMap(); }
+    TEST_F(EvpnNvoDelTest, LastMapDelBeforeNvoWaitsForRemoteVniDel) { lastMapBeforeNvo(); }
+    TEST_F(EvpnNvoDelP2mpTest, LastMapDelBeforeNvoWaitsForRemoteVniDel) { lastMapBeforeNvo(); }
+    TEST_F(EvpnNvoDelTest, IdleVtepNvoFirstIsDeletedAtOnce) { idleVtep(true); }
+    TEST_F(EvpnNvoDelP2mpTest, IdleVtepNvoFirstIsDeletedAtOnce) { idleVtep(true); }
+    TEST_F(EvpnNvoDelTest, IdleVtepMapFirstIsDeletedAtOnce) { idleVtep(false); }
+    TEST_F(EvpnNvoDelP2mpTest, IdleVtepMapFirstIsDeletedAtOnce) { idleVtep(false); }
+    TEST_F(EvpnNvoDelTest, TunnelDeleteWaitsForTheNvo) { tunnelWaitsForNvo(); }
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteWaitsForTheNvo) { tunnelWaitsForNvo(); }
+    TEST_F(EvpnNvoDelTest, StaleDeleteDoesNotDropARecreatedNvo) { staleDelKeepsRecreatedNvo(); }
+    TEST_F(EvpnNvoDelP2mpTest, StaleDeleteDoesNotDropARecreatedNvo) { staleDelKeepsRecreatedNvo(); }
+    TEST_F(EvpnNvoDelTest, StaleTunnelDeleteDoesNotDropARecreatedTunnel) { staleDelKeepsRecreatedTunnel(); }
+    TEST_F(EvpnNvoDelP2mpTest, StaleTunnelDeleteDoesNotDropARecreatedTunnel) { staleDelKeepsRecreatedTunnel(); }
+    TEST_F(EvpnNvoDelTest, HeldTunnelDeleteKeptForOtherSourceIp) { heldTunnelDelKeptForOtherSourceIp(); }
+    TEST_F(EvpnNvoDelP2mpTest, HeldTunnelDeleteKeptForOtherSourceIp) { heldTunnelDelKeptForOtherSourceIp(); }
+    TEST_F(EvpnNvoDelTest, StaleTunnelDeleteDuringPendingHwDelete) { staleTunnelDelDuringPendingHwDelete(); }
+    TEST_F(EvpnNvoDelP2mpTest, StaleTunnelDeleteDuringPendingHwDelete) { staleTunnelDelDuringPendingHwDelete(); }
+    TEST_F(EvpnNvoDelTest, NvoRecreatedOnAnotherVtepWaits) { nvoRecreatedOnAnotherVtepWaits(); }
+    TEST_F(EvpnNvoDelP2mpTest, NvoRecreatedOnAnotherVtepWaits) { nvoRecreatedOnAnotherVtepWaits(); }
+    TEST_F(EvpnNvoDelTest, NvoRecreatedBehindHeldTunnelDelWithNewSourceIp) { nvoRecreatedBehindHeldTunnelDelWithNewSourceIp(); }
+    TEST_F(EvpnNvoDelP2mpTest, NvoRecreatedBehindHeldTunnelDelWithNewSourceIp) { nvoRecreatedBehindHeldTunnelDelWithNewSourceIp(); }
+
+    // P2MP: the remote VNI DEL that releases the last user cannot remove the source tunnel's
+    // bridge port, so the hw delete stays pending with no user left. The NVO delete retries it
+    // until the bridge port goes, then finishes the delete.
+    TEST_F(EvpnNvoDelP2mpTest, PendingHwDeleteIsFinishedByTheNvoDelete)
+    {
+        setRemoteVni();
+        mapDel();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        delRemoteVni();
+        EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        EXPECT_FALSE(remoteVtepIsFloodMember());
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+
+        nvoDel();
+        retryNvo();
+        EXPECT_TRUE(nvoHeld());
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+        EXPECT_EQ(m_nvoOrch->m_heldDeletes.size(), 1u);
+
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+        retryNvo();
+        expectReleased();
+        Port tunnelPort;
+        EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+        expectRecreateWorks();
+    }
+
+    // P2MP, NVO DEL first: the remote VNI DEL cannot remove the bridge port, and FdbOrch's
+    // notification that the tunnel port has no MAC left finishes the delete through the NVO's VTEP.
+    TEST_F(EvpnNvoDelP2mpTest, NvoDelBeforeLastMapWaitsForTunnelPortRelease)
+    {
+        setRemoteVni();
+        nvoDel();
+        mapDel();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+
+        Port tunnelPort;
+        ASSERT_TRUE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        delRemoteVni();
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+
+        ASSERT_TRUE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+        ASSERT_EQ(tunnelPort.m_fdb_count, 0u);
+        gFdbOrch->notifyTunnelOrch(tunnelPort);
+        EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+        retryNvo();
+        expectReleased();
+    }
+
 } // namespace vxlanorch_test
