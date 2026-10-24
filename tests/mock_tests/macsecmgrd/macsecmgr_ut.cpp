@@ -12,6 +12,9 @@
 #include <fstream>
 #include <unistd.h>
 
+extern int mockCmdReturn;
+extern std::vector<std::string> mockCallArgs;
+
 namespace macsecmgr_ut
 {
     using namespace swss;
@@ -78,12 +81,14 @@ namespace macsecmgr_ut
 
     // macsecmgrd finds a leftover wpa_supplicant by its global control socket
     // and asks it to exit over that socket. Stand in for the supplicant: record
-    // the request and, when "alive", unlink the socket the way a real exit does.
+    // the request and, when "alive", answer it; when it also "exits", unlink
+    // the socket the way a real exit does.
     class MACsecMgrWithFakeSupplicant : public MACsecMgr
     {
     public:
         using MACsecMgr::MACsecMgr;
         bool alive = false;
+        bool exits = true;
         std::vector<std::string> terminated;
 
         bool terminateWPASupplicant(const std::string &sock) const override
@@ -93,7 +98,10 @@ namespace macsecmgr_ut
             {
                 return false;
             }
-            unlink(sock.c_str());
+            if (exits)
+            {
+                unlink(sock.c_str());
+            }
             return true;
         }
     };
@@ -272,5 +280,66 @@ namespace macsecmgr_ut
         EXPECT_FALSE(socket_exists("Ethernet1"));
         EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
         EXPECT_FALSE(exists(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0"));
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, stopStale_supplicantThatDoesNotExitIsLeftAfterTheWait)
+    {
+        touch_socket("Ethernet1");
+        m_fake->alive = true;
+        m_fake->exits = false;
+
+        m_fake->stopStaleWPASupplicant("Ethernet1");
+
+        ASSERT_EQ(m_fake->terminated.size(), 1u);
+        EXPECT_TRUE(socket_exists("Ethernet1"));
+    }
+
+    TEST_F(MACsecMgrStaleSupplicantTest, enableMACsec_retriesWithoutStartingSupplicantWhileStalePortIsHeld)
+    {
+        // The mock producer removes the DEL at once, so a zero timeout stands
+        // in for an orchagent that has not popped it yet. Starting the new
+        // supplicant then would let its PORT SET fold into the pending DEL.
+        touch_socket("Ethernet1");
+        m_fake->alive = true;
+        seed(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1");
+        m_fake->m_profiles["profile"];
+        Table(m_state_db.get(), STATE_PORT_TABLE_NAME).set("Ethernet1",
+            { { "state", "ok" }, { "netdev_oper_status", "up" } });
+        m_fake->m_clearStaleTimeoutMs = 0;
+
+        EXPECT_EQ(m_fake->enableMACsec("Ethernet1", { { "macsec", "profile" } }), task_need_retry);
+
+        ASSERT_EQ(m_fake->terminated.size(), 1u);
+        EXPECT_EQ(m_fake->m_macsec_ports.count("Ethernet1"), 0u);
+    }
+
+    class MACsecMgrWpaCliTest : public MACsecMgrTest
+    {
+    protected:
+        void TearDown() override
+        {
+            mockCmdReturn = 0;
+            mockCallArgs.clear();
+            MACsecMgrTest::TearDown();
+        }
+    };
+
+    TEST_F(MACsecMgrWpaCliTest, terminate_supplicantAnswers)
+    {
+        mockCallArgs.clear();
+        mockCmdReturn = 0;
+
+        EXPECT_TRUE(m_mgr->terminateWPASupplicant("/var/run/Ethernet1"));
+
+        ASSERT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_NE(mockCallArgs[0].find("/var/run/Ethernet1"), std::string::npos);
+        EXPECT_NE(mockCallArgs[0].find("terminate"), std::string::npos);
+    }
+
+    TEST_F(MACsecMgrWpaCliTest, terminate_nobodyAnswers)
+    {
+        mockCmdReturn = 1;
+
+        EXPECT_FALSE(m_mgr->terminateWPASupplicant("/var/run/Ethernet1"));
     }
 }
