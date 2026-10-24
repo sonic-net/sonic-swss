@@ -409,7 +409,8 @@ void RouteOrch::doLabelTask(ConsumerBase& consumer)
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
-            if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+            auto next_hop_group = m_syncdNextHopGroups.find(it_nhg.first);
+            if (next_hop_group != m_syncdNextHopGroups.end() && next_hop_group->second.ref_count == 0)
             {
                 removeNextHopGroup(it_nhg.first);
             }
