@@ -595,8 +595,13 @@ public:
         auto rc = removing_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple(object_status));
-        remove_order.push_back(rc.first->first);
         bool inserted = rc.second;
+        /* An entry already staged for removal keeps its single slot and the
+         * first request's status, so it reaches the SAI once per flush. */
+        if (inserted)
+        {
+            remove_order.push_back(rc.first->first);
+        }
         SWSS_LOG_INFO("EntityBulker.remove_entry %zu, %d\n", removing_entries.size(), inserted);
 
         *object_status = SAI_STATUS_NOT_EXECUTED;
@@ -668,9 +673,19 @@ public:
             std::vector<Te> rs;
             std::vector<sai_attribute_t const*> tss;
             std::vector<uint32_t> cs;
+            /* A create, a quick remove and a create again of one entry leave
+             * two slots in create_order for a single creating_entries item;
+             * the entry goes out at its first slot (non-OID entries carry no
+             * order dependency on each other within one bulker). */
+            std::unordered_set<Te> entries;
+            bool dedup = create_order.size() != creating_entries.size();
 
             for (auto const& entry : create_order)
             {
+                if (dedup && !entries.insert(entry).second)
+                {
+                    continue;
+                }
                 auto i = creating_entries.find(entry);
                 if (i == creating_entries.end())
                 {
