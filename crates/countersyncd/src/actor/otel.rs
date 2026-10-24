@@ -416,9 +416,9 @@ impl OtelActor {
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {
-        // Ensure the deadline is in the future to avoid immediate wakeups
+        // Avoid immediate timer events while idle; preserve deadlines for buffered data.
         let now = TokioInstant::now();
-        let deadline = if self.flush_deadline <= now {
+        let deadline = if self.buffer.is_empty() {
             now + self.config.flush_timeout
         } else {
             self.flush_deadline
@@ -450,6 +450,124 @@ mod tests {
     use crate::message::saistats::{SAIStat, SAIStatsBatch};
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use tokio::time::{advance, timeout};
+
+    async fn timer_test_actor() -> OtelActor {
+        let (_stats_sender, stats_receiver) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_receiver) = oneshot::channel();
+        OtelActor::new(
+            stats_receiver,
+            OtelActorConfig {
+                max_counters_per_export: usize::MAX,
+                ..OtelActorConfig::default()
+            },
+            shutdown_sender,
+        )
+        .await
+        .unwrap()
+    }
+
+    fn timer_test_batch() -> SAIStatsBatchMessage {
+        let mut batch = SAIStatsBatch::with_capacity(1, 1);
+        batch.push_record(10, [SAIStat::new("Ethernet0", 1, 2, 3)]);
+        Arc::new(batch)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn incoming_batch_before_deadline_preserves_flush_time() {
+        let mut actor = timer_test_actor().await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        let deadline = actor.flush_deadline;
+        let mut timer = Box::pin(sleep_until(deadline));
+
+        advance(Duration::from_millis(900)).await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        actor.reset_flush_timer(&mut timer);
+
+        assert_eq!(timer.deadline(), deadline);
+        assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn incoming_batch_at_deadline_keeps_flush_ready() {
+        let mut actor = timer_test_actor().await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        let mut timer = Box::pin(sleep_until(actor.flush_deadline));
+
+        advance(Duration::from_secs(1)).await;
+        // Exercise the valid select ordering where a batch wins over a ready timer.
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        actor.reset_flush_timer(&mut timer);
+
+        assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn incoming_batch_after_deadline_keeps_flush_ready() {
+        let mut actor = timer_test_actor().await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        let mut timer = Box::pin(sleep_until(actor.flush_deadline));
+
+        advance(Duration::from_millis(1001)).await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        actor.reset_flush_timer(&mut timer);
+
+        assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn continuous_batches_do_not_postpone_overdue_flush() {
+        let mut actor = timer_test_actor().await;
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        let deadline = actor.flush_deadline;
+        let mut timer = Box::pin(sleep_until(deadline));
+        advance(Duration::from_millis(1001)).await;
+
+        for _ in 0..20 {
+            actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+            actor.reset_flush_timer(&mut timer);
+            advance(Duration::from_millis(100)).await;
+        }
+
+        assert_eq!(timer.deadline(), deadline);
+        assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn empty_buffer_rearms_timer_without_immediate_wakeups() {
+        let mut actor = timer_test_actor().await;
+        let mut timer = Box::pin(sleep_until(actor.flush_deadline));
+
+        for _ in 0..3 {
+            timer.as_mut().await;
+            actor.flush_buffer().await.unwrap();
+            actor.reset_flush_timer(&mut timer);
+
+            assert_eq!(
+                timer.deadline(),
+                TokioInstant::now() + Duration::from_secs(1)
+            );
+            assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_err());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_batch_after_idle_starts_new_flush_timeout() {
+        let mut actor = timer_test_actor().await;
+        let mut timer = Box::pin(sleep_until(actor.flush_deadline));
+        advance(Duration::from_secs(10)).await;
+        actor.reset_flush_timer(&mut timer);
+        advance(Duration::from_millis(500)).await;
+
+        actor.handle_stats_batch(timer_test_batch()).await.unwrap();
+        actor.reset_flush_timer(&mut timer);
+
+        assert_eq!(
+            timer.deadline(),
+            TokioInstant::now() + Duration::from_secs(1)
+        );
+        assert!(timeout(Duration::ZERO, timer.as_mut()).await.is_err());
+    }
 
     #[tokio::test]
     async fn handles_batch_records_in_order_and_counts_records() {
