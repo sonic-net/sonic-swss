@@ -1480,6 +1480,8 @@ void IntfMgr::doTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     string table_name = consumer.getTableName();
+    if (table_name == STATE_LAG_TABLE_NAME)
+        consumer.refillToSync();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1487,7 +1489,28 @@ void IntfMgr::doTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
         if (table_name == STATE_LAG_TABLE_NAME)
         {
-            doLagTableTask(kfvKey(t), kfvFieldsValues(t), kfvOp(t));
+            const string &key = kfvKey(t);
+            const string &op = kfvOp(t);
+            subIntf stateSubIf(key);
+            const bool parentDel = op == DEL_COMMAND && !stateSubIf.isValid() &&
+                                   !key.compare(0, strlen(LAG_PREFIX), LAG_PREFIX);
+
+            doLagTableTask(key, kfvFieldsValues(t), op);
+            if (parentDel)
+            {
+                for (auto stateIt = consumer.m_toSync.begin(); stateIt != consumer.m_toSync.end();)
+                {
+                    if (kfvOp(stateIt->second) == SET_COMMAND &&
+                        isLagIntfKey(stateIt->first, key, config_db_key_delimiter))
+                        stateIt = consumer.m_toSync.erase(stateIt);
+                    else
+                        ++stateIt;
+                }
+
+                vector<FieldValueTuple> current;
+                if (m_stateLagTable.get(key, current))
+                    doLagTableTask(key, current, SET_COMMAND);
+            }
         }
         else if (table_name == STATE_PORT_TABLE_NAME)
         {
@@ -1757,7 +1780,7 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
     string parent = subIf.isValid() ? subIf.parentIntf() : key;
     if (!parent.compare(0, strlen(LAG_PREFIX), LAG_PREFIX) &&
         (m_readyLagIntfs.count(parent) == 0 || !isIntfStateOk(parent) ||
-         (subIf.isValid() && (!isIntfStateOk(key) || !isIntfCreated(key)))))
+         (subIf.isValid() && !isIntfStateOk(key))))
         return;
 
     if (op == SET_COMMAND)

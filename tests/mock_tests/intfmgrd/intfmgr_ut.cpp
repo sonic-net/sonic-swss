@@ -1489,6 +1489,33 @@ namespace intfmgr_ut
         EXPECT_TRUE(intfmgr.isIntfStateOk("Po1.30"));
     }
 
+    TEST_F(IntfMgrTest, testLagDeleteReconcilesCurrentStateRow)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.m_cfgLagIntfTable.set("PortChannel1", {{"NULL", "NULL"}});
+        auto *parent = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_LAG_INTF_TABLE_NAME));
+        auto *state = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(STATE_LAG_TABLE_NAME));
+        ASSERT_NE(parent, nullptr);
+        ASSERT_NE(state, nullptr);
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        intfmgr.doTask(*parent);
+        ASSERT_TRUE(parent->m_toSync.empty());
+        ASSERT_EQ(intfmgr.m_readyLagIntfs.count("PortChannel1"), 1u);
+
+        intfmgr.m_stateLagTable.set("PortChannel1.20", {{"state", "ok"}});
+        state->addToSync(swss::KeyOpFieldsValuesTuple("PortChannel1", DEL_COMMAND, {}));
+        state->addToSync(swss::KeyOpFieldsValuesTuple("PortChannel1.20", SET_COMMAND, {{"state", "ok"}}));
+        intfmgr.doTask(*state);
+
+        EXPECT_TRUE(state->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_readyLagIntfs.count("PortChannel1"), 1u);
+        EXPECT_EQ(parent->m_toSync.count("PortChannel1"), 1u);
+        std::vector<swss::FieldValueTuple> values;
+        EXPECT_FALSE(intfmgr.m_stateLagTable.get("PortChannel1.20", values));
+    }
+
     TEST_F(IntfMgrTest, testHybridDelPreservesConfigDeleteAndApplication)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
