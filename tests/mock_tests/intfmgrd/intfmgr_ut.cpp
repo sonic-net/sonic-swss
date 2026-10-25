@@ -39,8 +39,10 @@ int SubIntfQueryResult = 0;
 bool ThrowSubIntfQuery = false;
 bool FailSubIntfMtu = false;
 bool FailSubIntfAdmin = false;
+bool ThrowAdminOperation = false;
 int AdminQueryResult = 0;
 bool ThrowAdminQuery = false;
+bool ThrowAdminQueryInvalidArgument = false;
 std::string AdminQueryOutput;
 int IntfIpCount = 0;
 
@@ -113,6 +115,8 @@ int cb(const std::string &cmd, std::string &stdout){
     }
     if (cmd.find("/sbin/ip -o link show dev ") == 0)
     {
+        if (ThrowAdminQueryInvalidArgument)
+            throw std::invalid_argument("invalid admin query");
         if (ThrowAdminQuery)
             throw std::runtime_error("admin query unavailable");
         const auto alias = quotedArgument(cmd, "dev ");
@@ -127,6 +131,9 @@ int cb(const std::string &cmd, std::string &stdout){
         stdout = AddressQueryOutput;
         return MissingSubInterfaces.count(alias) ? 1 : AddressQueryResult;
     }
+    if (ThrowAdminOperation && cmd.find("/sbin/ip link set ") == 0 &&
+        (cmd.find("\"up\"") != std::string::npos || cmd.find("\"down\"") != std::string::npos))
+        throw std::runtime_error("admin operation unavailable");
     for (const auto &entry : KernelSubIntfs)
     {
         if (cmd.find("/sbin/ip link set \"" + entry.first + "\"") == 0 &&
@@ -226,8 +233,10 @@ namespace intfmgr_ut
             SubIntfQueryResult = 0;
             ThrowSubIntfQuery = false;
             FailSubIntfMtu = FailSubIntfAdmin = false;
+            ThrowAdminOperation = false;
             AdminQueryResult = 0;
             ThrowAdminQuery = false;
+            ThrowAdminQueryInvalidArgument = false;
             AdminQueryOutput.clear();
             IntfIpCount = 0;
         }
@@ -2110,10 +2119,13 @@ namespace intfmgr_ut
             ThrowAdminQuery = true;
             EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, status));
             ThrowAdminQuery = false;
+            ThrowAdminQueryInvalidArgument = true;
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, status));
+            ThrowAdminQueryInvalidArgument = false;
         }
     }
 
-    TEST_F(IntfMgrTest, testAdminFailureChecksKernelStateForBothFailurePaths)
+    TEST_F(IntfMgrTest, testAdminFailureChecksKernelStateRegardlessOfReadiness)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         const std::string alias = "Ethernet0.10";
@@ -2146,6 +2158,81 @@ namespace intfmgr_ut
                 EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
                 ThrowAdminQuery = false;
             }
+        }
+    }
+
+    TEST_F(IntfMgrTest, testAdminOperationReturnsBooleanForCommandAndLaunchFailures)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "Ethernet0.10";
+        KernelSubIntfs[alias] = {"Ethernet0", "10"};
+        for (bool ready : {false, true})
+        {
+            SCOPED_TRACE(ready);
+            if (ready)
+                intfmgr.m_statePortTable.set(alias, {{"state", "ok"}});
+            else
+                intfmgr.m_statePortTable.del(alias);
+            for (const std::string status : {"up", "down"})
+            {
+                SCOPED_TRACE(status);
+                EXPECT_TRUE(intfmgr.setIntfAdminStatus(alias, status));
+                FailSubIntfAdmin = true;
+                EXPECT_FALSE(intfmgr.setIntfAdminStatus(alias, status));
+                FailSubIntfAdmin = false;
+                ThrowAdminOperation = true;
+                EXPECT_FALSE(intfmgr.setIntfAdminStatus(alias, status));
+                ThrowAdminOperation = false;
+            }
+        }
+        EXPECT_FALSE(commandWasIssued("-o link show"));
+    }
+
+    TEST_F(IntfMgrTest, testAdminLaunchFailureUsesStateCheckBeforeThrowing)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "Ethernet0.10";
+        ThrowAdminOperation = true;
+        for (const std::string status : {"up", "down"})
+        {
+            SCOPED_TRACE(status);
+            AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
+                (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
+            mockCallArgs.clear();
+            EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), status);
+            ASSERT_EQ(mockCallArgs.size(), 2u);
+            EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
+            EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
+            AdminQueryOutput.clear();
+            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+            ThrowAdminQueryInvalidArgument = true;
+            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+            ThrowAdminQueryInvalidArgument = false;
+        }
+    }
+
+    TEST_F(IntfMgrTest, testLoopbackAdminFailureRemainsBestEffortWithoutStateCheck)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+        for (int failure : {0, 1, 2})
+        {
+            SCOPED_TRACE(failure);
+            const std::string alias = "Loopback" + std::to_string(failure);
+            intfmgr.m_loopbackIntfList.insert(alias);
+            if (failure == 1)
+                MissingSubInterfaces.insert(alias);
+            ThrowAdminOperation = failure == 2;
+            AdminQueryOutput = "7: " + alias + ": <UP> state UNKNOWN\n";
+            mockCallArgs.clear();
+            EXPECT_TRUE(intfmgr.doIntfGeneralTask({alias}, {}, SET_COMMAND));
+            EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
+            EXPECT_FALSE(commandWasIssued("-o link show"));
+            EXPECT_TRUE(intfmgr.isIntfCreated(alias));
+            std::string status;
+            EXPECT_EQ(app.hget(alias, "admin_status", status), failure == 0);
+            if (failure == 0)
+                EXPECT_EQ(status, "up");
         }
     }
 

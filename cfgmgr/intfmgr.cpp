@@ -651,30 +651,32 @@ bool IntfMgr::setIntfAdminStatus(const string &alias, const string &admin_status
     stringstream cmd;
     string res, cmd_str;
 
-    SWSS_LOG_INFO("intf %s admin_status: %s", alias.c_str(), admin_status.c_str());
-    cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
-    cmd_str = cmd.str();
-    int ret = swss::exec(cmd_str, res);
-    if (ret && !isIntfStateOk(alias))
+    try
     {
-        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
-        SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
-                      alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        SWSS_LOG_INFO("intf %s admin_status: %s", alias.c_str(), admin_status.c_str());
+        cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
+        cmd_str = cmd.str();
+        int ret = swss::exec(cmd_str, res);
+        if (ret)
+        {
+            SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
+                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        }
+        return ret == 0;
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("Setting admin status on interface %s failed: %s", alias.c_str(), e.what());
         return false;
     }
-    else if (ret)
-    {
-        throw runtime_error(cmd_str + " : " + res);
-    }
-    return true;
 }
 
 bool IntfMgr::isIntfAdminStatusSet(const string &alias, const string &admin_status)
 {
     string res;
-    const string cmd = string(IP_CMD) + " -o link show dev " + shellquote(alias);
     try
     {
+        const string cmd = string(IP_CMD) + " -o link show dev " + shellquote(alias);
         if (swss::exec(cmd, res) != 0)
             return false;
         const auto start = res.find('<');
@@ -685,7 +687,7 @@ bool IntfMgr::isIntfAdminStatusSet(const string &alias, const string &admin_stat
         const bool up = find(flags.begin(), flags.end(), "UP") != flags.end();
         return up == (admin_status == "up");
     }
-    catch (const runtime_error &e)
+    catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query admin status on interface %s: %s", alias.c_str(), e.what());
         return false;
@@ -699,19 +701,9 @@ std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string
 
     if (parent_admin_status == "up" || admin_status == "down")
     {
-        try
-        {
-            if (!setIntfAdminStatus(alias, admin_status))
-                throw runtime_error("Failed to set admin status \"" + admin_status + "\" for " + alias);
-        }
-        catch (const std::runtime_error &e)
-        {
-            if (!isIntfAdminStatusSet(alias, admin_status))
-            {
-                SWSS_LOG_NOTICE("Set Host subinterface %s admin_status set failure %s failure. Runtime error: %s", alias.c_str(), admin_status.c_str(), e.what());
-                throw;
-            }
-        }
+        if (!setIntfAdminStatus(alias, admin_status) &&
+            !isIntfAdminStatusSet(alias, admin_status))
+            throw runtime_error("Failed to set admin status \"" + admin_status + "\" for " + alias);
         return admin_status;
     }
     else
