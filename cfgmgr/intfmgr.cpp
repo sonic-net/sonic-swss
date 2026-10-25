@@ -1118,6 +1118,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("mpls", mpls);
                 data.push_back(fvTuple);
             }
+
+            if (!ipv6_link_local_mode.empty())
+            {
+                if (ipv6_link_local_mode == "enable" && m_ipv6LinkLocalModeList.count(alias) == 0)
+                {
+                    m_ipv6LinkLocalModeList.insert(alias);
+                    SWSS_LOG_INFO("Inserted ipv6 link local mode list for %s", alias.c_str());
+                }
+                else if (ipv6_link_local_mode == "disable" && m_ipv6LinkLocalModeList.erase(alias))
+                {
+                    delIpv6LinkLocalNeigh(alias);
+                    SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
+                }
+                data.emplace_back("ipv6_use_link_local_only", ipv6_link_local_mode);
+            }
         }
 
         if (!parentAlias.empty())
@@ -1274,21 +1289,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("grat_arp", grat_arp);
                 data.push_back(fvTuple);
             }
-        }
-
-        if (!is_lo && !ipv6_link_local_mode.empty())
-        {
-            if (ipv6_link_local_mode == "enable" && m_ipv6LinkLocalModeList.count(alias) == 0)
-            {
-                m_ipv6LinkLocalModeList.insert(alias);
-                SWSS_LOG_INFO("Inserted ipv6 link local mode list for %s", alias.c_str());
-            }
-            else if (ipv6_link_local_mode == "disable" && m_ipv6LinkLocalModeList.erase(alias))
-            {
-                delIpv6LinkLocalNeigh(alias);
-                SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
-            }
-            data.emplace_back("ipv6_use_link_local_only", ipv6_link_local_mode);
         }
         m_appIntfTableProducer.set(alias, data);
         m_stateIntfTable.hset(alias, "vrf", vrf_name);
