@@ -25,14 +25,20 @@ bool FailBridgeFdbCommand = false;
 bool FailAddressAdd = false;
 bool FailIpv6Enable = false;
 bool FailAddressDelete = false;
+bool ThrowAddressAdd = false;
+bool ThrowAddressDelete = false;
+bool ThrowIpv6Enable = false;
+bool ThrowIpv6Retry = false;
 int AddressQueryResult = 0;
 bool ThrowAddressQuery = false;
+bool ThrowAddressQueryInvalidArgument = false;
 std::string AddressQueryOutput;
 unsigned int InterfaceIndex = 1;
 int InterfaceIndexError = 0;
 std::vector<std::string> interfaceLookups;
 std::set<std::string> MissingSubInterfaces;
 bool FailSubIntfCreation = false;
+bool ThrowSubIntfCreation = false;
 std::map<std::string, std::pair<std::string, std::string>> KernelSubIntfs;
 std::map<std::string, std::string> SubIntfQueryOverrides;
 int SubIntfQueryResult = 0;
@@ -78,6 +84,8 @@ int cb(const std::string &cmd, std::string &stdout){
     mockCallArgs.push_back(cmd);
     if (cmd.find("/sbin/ip link add link ") == 0)
     {
+        if (ThrowSubIntfCreation)
+            throw std::runtime_error("child creation unavailable");
         auto alias = quotedArgument(cmd, "name ");
         if (FailSubIntfCreation || (KernelSubIntfs.count(alias) && !MissingSubInterfaces.count(alias)))
             return 1;
@@ -125,6 +133,8 @@ int cb(const std::string &cmd, std::string &stdout){
     }
     if (cmd.find("/sbin/ip -o address show dev ") == 0)
     {
+        if (ThrowAddressQueryInvalidArgument)
+            throw std::invalid_argument("invalid address query");
         if (ThrowAddressQuery)
             throw std::runtime_error("address query unavailable");
         const auto alias = quotedArgument(cmd, "dev ");
@@ -151,6 +161,8 @@ int cb(const std::string &cmd, std::string &stdout){
     if (cmd == "sysctl -w net.ipv6.conf.\"Ethernet0\".disable_ipv6=0" ||
         cmd == "sysctl -w net.ipv6.conf.\"PortChannel1\".disable_ipv6=0")
     {
+        if (ThrowIpv6Enable)
+            throw std::runtime_error("IPv6 enable unavailable");
         if (FailIpv6Enable)
         {
             return 1;
@@ -159,13 +171,19 @@ int cb(const std::string &cmd, std::string &stdout){
         return 0;
     }
     else if (cmd.find("/sbin/ip -6 address \"add\"") == 0) {
+        if (ThrowAddressAdd || (ThrowIpv6Retry && Ethernet0IPv6Set))
+            throw std::runtime_error("IPv6 ADD unavailable");
         return Ethernet0IPv6Set && !FailAddressAdd ? 0 : 2;
     }
     else if (cmd.find("/sbin/ip address \"add\"") == 0) {
+        if (ThrowAddressAdd)
+            throw std::runtime_error("IPv4 ADD unavailable");
         return FailAddressAdd ? 2 : 0;
     }
     else if (cmd.find("/sbin/ip address \"del\"") == 0 ||
              cmd.find("/sbin/ip -6 address \"del\"") == 0) {
+        if (ThrowAddressDelete)
+            throw std::runtime_error("address DEL unavailable");
         return FailAddressDelete ? 2 : 0;
     }
     else if (cmd == "/sbin/ip link set \"Ethernet64.10\" \"up\""){
@@ -220,14 +238,18 @@ namespace intfmgr_ut
             FailAddressAdd = false;
             FailIpv6Enable = false;
             FailAddressDelete = false;
+            ThrowAddressAdd = ThrowAddressDelete = false;
+            ThrowIpv6Enable = ThrowIpv6Retry = false;
             AddressQueryResult = 0;
             ThrowAddressQuery = false;
+            ThrowAddressQueryInvalidArgument = false;
             AddressQueryOutput.clear();
             InterfaceIndex = 1;
             InterfaceIndexError = 0;
             interfaceLookups.clear();
             MissingSubInterfaces.clear();
             FailSubIntfCreation = false;
+            ThrowSubIntfCreation = false;
             KernelSubIntfs.clear();
             SubIntfQueryOverrides.clear();
             SubIntfQueryResult = 0;
@@ -468,9 +490,10 @@ namespace intfmgr_ut
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
         AddressQueryResult = 1;
-        for (bool throws : {false, true})
+        for (int failure : {0, 1, 2})
         {
-            ThrowAddressQuery = throws;
+            ThrowAddressQuery = failure == 1;
+            ThrowAddressQueryInvalidArgument = failure == 2;
             for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
             {
                 SCOPED_TRACE(prefix);
@@ -481,6 +504,51 @@ namespace intfmgr_ut
             }
         }
         EXPECT_TRUE(interfaceLookups.empty());
+    }
+
+    TEST_F(IntfMgrTest, testAddressLaunchFailuresUseFinalState)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        ThrowAddressAdd = ThrowAddressDelete = true;
+        for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
+        {
+            for (const std::string op : {"add", "del"})
+            {
+                for (bool present : {false, true})
+                {
+                    SCOPED_TRACE(prefix + " " + op + " present=" + std::to_string(present));
+                    Ethernet0IPv6Set = false;
+                    AddressQueryOutput = present ? addressLine(prefix) : "";
+                    mockCallArgs.clear();
+                    EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", op, swss::IpPrefix(prefix)),
+                              op == "add" ? present : !present);
+                    ASSERT_EQ(mockCallArgs.size(), 2u);
+                    EXPECT_EQ(mockCallArgs.back(), "/sbin/ip -o address show dev \"PortChannel1\"");
+                }
+            }
+        }
+    }
+
+    TEST_F(IntfMgrTest, testIpv6EnableAndRetryLaunchFailuresUseFinalState)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        for (bool enableThrows : {false, true})
+        {
+            ThrowIpv6Enable = enableThrows;
+            ThrowIpv6Retry = !enableThrows;
+            for (bool present : {false, true})
+            {
+                SCOPED_TRACE("enable throws=" + std::to_string(enableThrows) +
+                             " present=" + std::to_string(present));
+                Ethernet0IPv6Set = false;
+                AddressQueryOutput = present ? addressLine("2001:db8::1/64") : "";
+                mockCallArgs.clear();
+                EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix("2001:db8::1/64")),
+                          present);
+                ASSERT_EQ(mockCallArgs.size(), enableThrows ? 3u : 4u);
+                EXPECT_EQ(mockCallArgs.back(), "/sbin/ip -o address show dev \"PortChannel1\"");
+            }
+        }
     }
 
     TEST_F(IntfMgrTest, testUnmatchedAddressOutputReturnsNotPresent)
@@ -592,6 +660,15 @@ namespace intfmgr_ut
         EXPECT_EQ(mockCallArgs[2], "/sbin/ip address \"add\" \"192.0.2.1/31\" dev \"PortChannel1\"");
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 1u);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
+
+        ThrowAddressDelete = true;
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple("PortChannel1|192.0.2.1/31", DEL_COMMAND, {}));
+        testing_db::resetOperationCounters();
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 1u);
     }
 
     TEST_F(IntfMgrTest, testLagReopenAlreadyPresentAddressIsConsumedOnce)
@@ -1694,14 +1771,7 @@ namespace intfmgr_ut
             SubIntfQueryOverrides[alias] = entry.first;
             EXPECT_EQ(intfmgr.isSubIntfPresent("PortChannel1", alias, "20"), entry.second);
             mockCallArgs.clear();
-            if (entry.second)
-            {
-                EXPECT_NO_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
-            }
-            else
-            {
-                EXPECT_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"), std::runtime_error);
-            }
+            EXPECT_EQ(intfmgr.addHostSubIntf("PortChannel1", alias, "20"), entry.second);
             ASSERT_GE(mockCallArgs.size(), 2u);
             EXPECT_EQ(mockCallArgs.front(), "/sbin/ip link add link \"PortChannel1\" name \"PortChannel1.20\" type vlan id \"20\"");
             EXPECT_EQ(mockCallArgs[1], "/sbin/ip -d -o link show dev \"PortChannel1.20\"");
@@ -1709,11 +1779,26 @@ namespace intfmgr_ut
         SubIntfQueryOverrides[alias] = subIntfLine(alias, "PortChannel1", "20");
         EXPECT_TRUE(intfmgr.isSubIntfPresent("PortChannel1", alias, "020"));
         SubIntfQueryResult = 1;
-        EXPECT_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"), std::runtime_error);
+        EXPECT_FALSE(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
         FailSubIntfCreation = false;
         mockCallArgs.clear();
-        EXPECT_NO_THROW(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
+        EXPECT_TRUE(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
         EXPECT_EQ(mockCallArgs.size(), 1u);
+    }
+
+    TEST_F(IntfMgrTest, testChildCreateLaunchFailureUsesBooleanStateResult)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1.20";
+        ThrowSubIntfCreation = true;
+        SubIntfQueryOverrides[alias] = subIntfLine(alias, "PortChannel1", "20");
+        mockCallArgs.clear();
+        EXPECT_TRUE(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        SubIntfQueryResult = 1;
+        mockCallArgs.clear();
+        EXPECT_FALSE(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
+        EXPECT_EQ(mockCallArgs.size(), 2u);
     }
 
     TEST_F(IntfMgrTest, testHybridCachedChildNonReadyAttemptsCreation)

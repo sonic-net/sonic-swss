@@ -133,10 +133,10 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
     }
 
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
+    try
     {
-        if (!ipPrefix.isV4() && opCmd == "add")
+        int ret = swss::exec(cmd.str(), res);
+        if (ret && !ipPrefix.isV4() && opCmd == "add")
         {
             SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
             if (!enableIpv6Flag(alias))
@@ -148,11 +148,13 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
                 ret = swss::exec(cmd.str(), res);
             }
         }
+        if (ret == 0)
+            return true;
+        res = "rc=" + to_string(ret) + ": " + res;
     }
-
-    if (ret == 0)
+    catch (const runtime_error &e)
     {
-        return true;
+        res = e.what();
     }
 
     const bool present = isIntfIpPresent(alias, ipPrefix);
@@ -163,7 +165,7 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         return true;
     }
 
-    SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    SWSS_LOG_ERROR("Command '%s' failed: %s", cmd.str().c_str(), res.c_str());
     return false;
 }
 
@@ -365,13 +367,13 @@ int IntfMgr::getIntfIpCount(const string &alias)
 bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix)
 {
     string res;
-    const string cmd = string(IP_CMD) + " -o address show dev " + shellquote(alias);
-    const string address = string(ipPrefix.isV4() ? " inet " : " inet6 ") + ipPrefix.to_string() + " ";
     try
     {
+        const string cmd = string(IP_CMD) + " -o address show dev " + shellquote(alias);
+        const string address = string(ipPrefix.isV4() ? " inet " : " inet6 ") + ipPrefix.to_string() + " ";
         return swss::exec(cmd, res) == 0 && res.find(address) != string::npos;
     }
-    catch (const runtime_error &e)
+    catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query addresses on interface %s: %s", alias.c_str(), e.what());
         return false;
@@ -471,7 +473,7 @@ bool IntfMgr::isSubIntfPresent(const string &parent, const string &alias, const 
     }
 }
 
-void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
+bool IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
 {
     stringstream cmd;
     string res;
@@ -479,13 +481,22 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
     cmd << IP_CMD " link add link " << shellquote(intf) << " name " << shellquote(subIntf) << " type vlan id " << shellquote(vlan);
     try
     {
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        int ret = swss::exec(cmd.str(), res);
+        if (ret == 0)
+            return true;
+        res = "rc=" + to_string(ret) + ": " + res;
     }
-    catch (const runtime_error &)
+    catch (const runtime_error &e)
     {
-        if (!isSubIntfPresent(intf, subIntf, vlan))
-            throw;
+        res = e.what();
     }
+    if (isSubIntfPresent(intf, subIntf, vlan))
+    {
+        SWSS_LOG_INFO("Subinterface %s is already present", subIntf.c_str());
+        return true;
+    }
+    SWSS_LOG_ERROR("Command '%s' failed: %s", cmd.str().c_str(), res.c_str());
+    return false;
 }
 
 
@@ -1125,13 +1136,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 SWSS_LOG_INFO("Vlan ID not configured for sub interface %s", alias.c_str());
                 return false;
             }
-            try
+            if (!addHostSubIntf(parentAlias, alias, vlanId))
             {
-                addHostSubIntf(parentAlias, alias, vlanId);
-            }
-            catch (const std::runtime_error &e)
-            {
-                SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
                 return false;
             }
 

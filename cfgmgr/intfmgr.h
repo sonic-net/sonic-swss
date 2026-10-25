@@ -77,7 +77,7 @@ private:
     std::string getIntfAdminStatus(const std::string &alias);
     std::string getIntfMtu(const std::string &alias);
     bool isSubIntfPresent(const std::string &parent, const std::string &alias, const std::string &vlan);
-    void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
+    bool addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
     bool setIntfAdminStatus(const std::string &alias, const std::string &admin_status);
     bool isIntfAdminStatusSet(const std::string &alias, const std::string &admin_status);
