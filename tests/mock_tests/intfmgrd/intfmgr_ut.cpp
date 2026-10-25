@@ -2232,7 +2232,9 @@ namespace intfmgr_ut
             std::string status;
             EXPECT_EQ(app.hget(alias, "admin_status", status), failure == 0);
             if (failure == 0)
+            {
                 EXPECT_EQ(status, "up");
+            }
         }
     }
 
