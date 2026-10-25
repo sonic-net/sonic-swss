@@ -43,7 +43,6 @@ std::map<std::string, std::pair<std::string, std::string>> KernelSubIntfs;
 std::map<std::string, std::string> SubIntfQueryOverrides;
 int SubIntfQueryResult = 0;
 bool ThrowSubIntfQuery = false;
-bool FailSubIntfMtu = false;
 bool FailSubIntfAdmin = false;
 bool ThrowAdminOperation = false;
 int AdminQueryResult = 0;
@@ -147,9 +146,8 @@ int cb(const std::string &cmd, std::string &stdout){
     for (const auto &entry : KernelSubIntfs)
     {
         if (cmd.find("/sbin/ip link set \"" + entry.first + "\"") == 0 &&
-            ((FailSubIntfMtu && cmd.find(" mtu ") != std::string::npos) ||
-             (FailSubIntfAdmin && (cmd.find("\"up\"") != std::string::npos ||
-                                  cmd.find("\"down\"") != std::string::npos))))
+            FailSubIntfAdmin && (cmd.find("\"up\"") != std::string::npos ||
+                                cmd.find("\"down\"") != std::string::npos))
             return 1;
     }
     for (const auto &alias : MissingSubInterfaces)
@@ -254,7 +252,7 @@ namespace intfmgr_ut
             SubIntfQueryOverrides.clear();
             SubIntfQueryResult = 0;
             ThrowSubIntfQuery = false;
-            FailSubIntfMtu = FailSubIntfAdmin = false;
+            FailSubIntfAdmin = false;
             ThrowAdminOperation = false;
             AdminQueryResult = 0;
             ThrowAdminQuery = false;
@@ -355,7 +353,7 @@ namespace intfmgr_ut
                              const std::string &prefix = "192.0.2.1/31")
         {
             swss::Table config(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
-            config.set(alias, {{"mtu", "1500"}, {"admin_status", "up"}});
+            config.set(alias, {{"admin_status", "up"}});
             if (!prefix.empty())
                 config.set(alias + "|" + prefix, {{"NULL", "NULL"}});
             notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
@@ -867,7 +865,7 @@ namespace intfmgr_ut
         swss::Table subConfig(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
         config.set("PortChannel1", {{"NULL", "NULL"}});
         config.set("PortChannel1|192.0.2.1/31", {{"NULL", "NULL"}});
-        subConfig.set("PortChannel1.20", {{"mtu", "1500"}});
+        subConfig.set("PortChannel1.20", {{"NULL", "NULL"}});
         subConfig.set("PortChannel1.20|198.51.100.1/31", {{"NULL", "NULL"}});
         enableWarmStart();
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
@@ -920,7 +918,7 @@ namespace intfmgr_ut
     TEST_F(IntfMgrTest, testWarmConfiguredChildWithL2ParentWaitsForReady)
     {
         swss::Table config(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
-        config.set("PortChannel1.20", {{"mtu", "1500"}});
+        config.set("PortChannel1.20", {{"NULL", "NULL"}});
         config.set("PortChannel1.20|192.0.2.1/31", {{"NULL", "NULL"}});
         enableWarmStart();
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
@@ -1016,7 +1014,9 @@ namespace intfmgr_ut
         const std::string table = GetParam() ? CFG_VLAN_SUB_INTF_TABLE_NAME : CFG_LAG_INTF_TABLE_NAME;
         const std::string alias = GetParam() ? "PortChannel1.20" : "PortChannel1";
         const std::string address = alias + "|192.0.2.1/31";
-        const std::vector<swss::FieldValueTuple> data = {{"mtu", "1500"}, {"admin_status", "up"}};
+        const std::vector<swss::FieldValueTuple> data =
+            GetParam() ? std::vector<swss::FieldValueTuple>{{"admin_status", "up"}}
+                       : std::vector<swss::FieldValueTuple>{{"mtu", "1500"}, {"admin_status", "up"}};
         swss::Table config(m_config_db.get(), table);
         config.set(alias, data);
         config.set(address, {{"NULL", "NULL"}});
@@ -1147,7 +1147,7 @@ namespace intfmgr_ut
         auto *subConsumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
         ASSERT_NE(subConsumer, nullptr);
         swss::Table subConfig(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
-        subConfig.set("PortChannel1.10", {{"mtu", "9100"}, {"admin_status", "up"}});
+        subConfig.set("PortChannel1.10", {{"admin_status", "up"}});
         intfmgr.m_cfgLagIntfTable.set("PortChannel1", {{"NULL", "NULL"}});
         intfmgr.m_cfgLagIntfTable.set("PortChannel1|fe80::1/64", {{"NULL", "NULL"}});
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
@@ -1171,7 +1171,7 @@ namespace intfmgr_ut
         intfmgr.doTask(*subConsumer);
         EXPECT_TRUE(commandWasIssued("link add link \"PortChannel1\" name \"PortChannel1.10\""));
         EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.10\" \"up\""));
-        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.10\" mtu \"1500\""));
+        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.10\" mtu"));
         mockCallArgs.clear();
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"admin_status", "up"}});
         EXPECT_EQ(std::count_if(mockCallArgs.begin(), mockCallArgs.end(), [](const std::string &cmd) {
@@ -1227,7 +1227,7 @@ namespace intfmgr_ut
             const auto subAlias = alias + (alias == "PortChannel1" ? ".20" : ".2");
             intfmgr.m_cfgLagIntfTable.set(alias, {{"NULL", "NULL"}});
             intfmgr.m_cfgLagIntfTable.set(alias + "|10.0.0.1/31", {{"NULL", "NULL"}});
-            subConfig.set(subAlias, {{"mtu", "9100"}, {"ipv6_use_link_local_only", "enable"}});
+            subConfig.set(subAlias, {{"ipv6_use_link_local_only", "enable"}});
             for (const std::string prefix : {"192.0.2.1/31", "2001:db8:20::1/64", "fe80::20/64"})
                 subConfig.set(subAlias + "|" + prefix, {{"NULL", "NULL"}});
             notifyLag(intfmgr, alias, SET_COMMAND, {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
@@ -1309,7 +1309,7 @@ namespace intfmgr_ut
         const std::string alias = "PortChannel1.20";
         intfmgr.m_cfgLagIntfTable.set("PortChannel1", {{"NULL", "NULL"}});
         intfmgr.m_cfgLagIntfTable.set("PortChannel1|10.0.0.1/31", {{"NULL", "NULL"}});
-        subConfig.set(alias, {{"mtu", "9100"}, {"ipv6_use_link_local_only", "enable"}});
+        subConfig.set(alias, {{"ipv6_use_link_local_only", "enable"}});
         for (const std::string prefix : {"192.0.2.1/31", "2001:db8:20::1/64", "fe80::20/64"})
             subConfig.set(alias + "|" + prefix, {{"NULL", "NULL"}});
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
@@ -1321,13 +1321,13 @@ namespace intfmgr_ut
         notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
         MissingSubInterfaces.insert(alias);
         subConfig.del(alias);
-        subConfig.set(alias, {{"mtu", "1500"}, {"admin_status", "down"}});
+        subConfig.set(alias, {{"admin_status", "down"}});
         subConfig.del(alias + "|192.0.2.1/31");
         subConfig.del(alias + "|fe80::20/64");
         subConfig.set(alias + "|192.0.2.9/31", {{"NULL", "NULL"}});
         subConfig.set(alias + "|fe80::21/64", {{"NULL", "NULL"}});
         child->addToSync(swss::KeyOpFieldsValuesTuple(alias, DEL_COMMAND, {}));
-        child->addToSync(swss::KeyOpFieldsValuesTuple(alias, SET_COMMAND, {{"mtu", "1500"}}));
+        child->addToSync(swss::KeyOpFieldsValuesTuple(alias, SET_COMMAND, {{"admin_status", "down"}}));
         child->addToSync(swss::KeyOpFieldsValuesTuple(alias + "|192.0.2.1/31", DEL_COMMAND, {}));
         child->addToSync(swss::KeyOpFieldsValuesTuple(alias + "|fe80::21/64", SET_COMMAND, {}));
         mockCallArgs.clear();
@@ -1367,19 +1367,17 @@ namespace intfmgr_ut
         };
         const auto parentAddress = position("address \"add\" \"10.0.0.1/31\"");
         const auto childCreate = position("link add link \"PortChannel1\" name \"PortChannel1.20\"");
-        const auto childMtu = position("link set \"PortChannel1.20\" mtu \"1500\"");
         const auto childAdmin = position("link set \"PortChannel1.20\" \"down\"");
         const auto childAddress = position("address \"add\" \"192.0.2.9/31\"");
         EXPECT_LT(parentAddress, childCreate);
-        EXPECT_LT(childCreate, childMtu);
-        EXPECT_LT(childMtu, childAddress);
+        EXPECT_LT(childCreate, childAdmin);
         EXPECT_LT(childAdmin, childAddress);
         EXPECT_TRUE(commandWasIssued("address \"add\" \"192.0.2.9/31\""));
         EXPECT_TRUE(commandWasIssued("address \"add\" \"2001:db8:20::1/64\""));
         EXPECT_TRUE(commandWasIssued("address \"add\" \"fe80::21/64\""));
         EXPECT_FALSE(commandWasIssued("192.0.2.1/31"));
         EXPECT_FALSE(commandWasIssued("fe80::20/64"));
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "1500");
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
         EXPECT_EQ(intfmgr.m_subIntfList.at(alias).adminStatus, "down");
         EXPECT_EQ(intfmgr.m_intfLLAddresses.at(alias), (std::set<std::string>{"fe80::21/64"}));
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 0u);
@@ -1413,7 +1411,7 @@ namespace intfmgr_ut
         auto *child = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
         ASSERT_NE(child, nullptr);
         const std::string alias = "PortChannel1.20";
-        subConfig.set(alias, {{"mtu", "1500"}, {"admin_status", "up"}});
+        subConfig.set(alias, {{"admin_status", "up"}});
         subConfig.set(alias + "|192.0.2.1/31", {{"NULL", "NULL"}});
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
                   {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
@@ -1573,12 +1571,12 @@ namespace intfmgr_ut
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
                   {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
         EXPECT_TRUE(mockCallArgs.empty());
-        FailSubIntfMtu = true;
+        FailSubIntfAdmin = true;
         intfmgr.doTask(*child);
         EXPECT_TRUE(commandWasIssued("link add link \"PortChannel1\" name \"PortChannel1.20\""));
         EXPECT_FALSE(intfmgr.m_stateIntfTable.hget(key, "state", value));
         EXPECT_FALSE(intfmgr.m_stateLagTable.hget(alias, "state", value));
-        FailSubIntfMtu = false;
+        FailSubIntfAdmin = false;
         intfmgr.doTask(*child);
         EXPECT_TRUE(child->m_toSync.empty());
         ASSERT_TRUE(intfmgr.m_stateIntfTable.hget(key, "state", value));
@@ -1644,7 +1642,7 @@ namespace intfmgr_ut
         intfmgr.m_stateVrfTable.set("VrfRed", {{"state", "ok"}});
         intfmgr.m_stateVrfTable.set("VrfBlue", {{"state", "ok"}});
         intfmgr.m_cfgLagIntfTable.set("PortChannel1", {{"vrf_name", "VrfRed"}});
-        intfmgr.m_cfgSubIntfTable.set("PortChannel1.20", {{"vrf_name", "VrfRed"}, {"mtu", "1500"}});
+        intfmgr.m_cfgSubIntfTable.set("PortChannel1.20", {{"vrf_name", "VrfRed"}});
         for (int interval = 0; interval < 3; ++interval)
         {
             if (interval)
@@ -1741,7 +1739,7 @@ namespace intfmgr_ut
 
         const auto kernel = KernelSubIntfs;
         consumer->addToSync(swss::KeyOpFieldsValuesTuple(
-            alias, SET_COMMAND, {{"mtu", "1500"}, {"admin_status", "up"}}));
+            alias, SET_COMMAND, {{"admin_status", "up"}}));
         mockCallArgs.clear();
         intfmgr.doTask(*consumer);
         EXPECT_TRUE(consumer->m_toSync.empty());
@@ -1880,7 +1878,7 @@ namespace intfmgr_ut
         }
     }
 
-    TEST_F(IntfMgrTest, testHybridStateWaitsForChildMtuAndAdmin)
+    TEST_F(IntfMgrTest, testHybridStateWaitsForChildAdmin)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         auto *consumer = applyChild(intfmgr);
@@ -1892,33 +1890,22 @@ namespace intfmgr_ut
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
                   {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
         testing_db::resetOperationCounters();
-        for (bool failMtu : {true, false})
-        {
-            FailSubIntfMtu = failMtu;
-            FailSubIntfAdmin = !failMtu;
-            mockCallArgs.clear();
-            intfmgr.doTask(*consumer);
-            EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"1500\""));
-            if (failMtu)
-            {
-                EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" \"up\""));
-            }
-            else
-            {
-                EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" \"up\""));
-            }
-            EXPECT_EQ(consumer->m_toSync.size(), 2u);
-            EXPECT_EQ(tableSnapshot(app), application);
-            EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
-            EXPECT_TRUE(intfmgr.isIntfCreated(alias));
-            EXPECT_EQ(testing_db::getTableSetCount(STATE_LAG_TABLE_NAME, alias), 0u);
-            EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 0u);
-            EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias + "|192.0.2.1/31"), 0u);
-        }
-        FailSubIntfMtu = FailSubIntfAdmin = false;
+        FailSubIntfAdmin = true;
         mockCallArgs.clear();
         intfmgr.doTask(*consumer);
-        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"1500\""));
+        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" \"up\""));
+        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" mtu"));
+        EXPECT_EQ(consumer->m_toSync.size(), 2u);
+        EXPECT_EQ(tableSnapshot(app), application);
+        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
+        EXPECT_TRUE(intfmgr.isIntfCreated(alias));
+        EXPECT_EQ(testing_db::getTableSetCount(STATE_LAG_TABLE_NAME, alias), 0u);
+        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 0u);
+        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias + "|192.0.2.1/31"), 0u);
+        FailSubIntfAdmin = false;
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" mtu"));
         EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" \"up\""));
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_EQ(testing_db::getTableSetCount(STATE_LAG_TABLE_NAME, alias), 1u);
@@ -2029,13 +2016,13 @@ namespace intfmgr_ut
         EXPECT_EQ(value, "2");
     }
 
-    TEST_F(IntfMgrTest, testHybridReopenResetsRemovedMtuAndLinkLocalMode)
+    TEST_F(IntfMgrTest, testHybridReopenResetsRemovedLinkLocalMode)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         const std::string alias = "PortChannel1.20";
         swss::Table config(m_config_db.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
         swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
-        config.set(alias, {{"mtu", "1500"}, {"admin_status", "up"}, {"ipv6_use_link_local_only", "enable"}});
+        config.set(alias, {{"admin_status", "up"}, {"ipv6_use_link_local_only", "enable"}});
         auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
         ASSERT_NE(consumer, nullptr);
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
@@ -2044,74 +2031,25 @@ namespace intfmgr_ut
         ASSERT_TRUE(consumer->m_toSync.empty());
         ASSERT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 1u);
         notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
-        // Constructed CONFIG changes; readiness withdrawal does not remove these fields.
-        config.hdel(alias, "mtu");
+        // Constructed CONFIG changes; readiness withdrawal does not remove this field.
         config.hdel(alias, "ipv6_use_link_local_only");
         testing_db::resetOperationCounters();
         mockCallArgs.clear();
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
-        FailSubIntfMtu = true;
-        intfmgr.doTask(*consumer);
-        EXPECT_EQ(consumer->m_toSync.size(), 1u);
-        EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 1u);
-        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 0u);
-        FailSubIntfMtu = false;
         intfmgr.doTask(*consumer);
         EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"9100\""));
+        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" mtu"));
         EXPECT_TRUE(commandWasIssued("link add"));
         EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 0u);
         std::vector<swss::FieldValueTuple> values;
         ASSERT_TRUE(app.get(alias, values));
         std::string value;
-        ASSERT_TRUE(getFieldValue(values, "mtu", value));
-        EXPECT_EQ(value, "9100");
         ASSERT_TRUE(getFieldValue(values, "ipv6_use_link_local_only", value));
         EXPECT_EQ(value, "disable");
-        EXPECT_FALSE(config.hget(alias, "mtu", value));
         EXPECT_FALSE(config.hget(alias, "ipv6_use_link_local_only", value));
         EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 1u);
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
-
-        mockCallArgs.clear();
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"mtu", "8500"}});
-        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"8500\""));
-        ASSERT_TRUE(app.get(alias, values));
-        ASSERT_TRUE(getFieldValue(values, "mtu", value));
-        EXPECT_EQ(value, "8500");
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
-        EXPECT_EQ(testing_db::getProducerSetCount(APP_LAG_TABLE_NAME), 0u);
-    }
-
-    TEST_F(IntfMgrTest, testHybridExplicitMtuWaitsForParentMetadata)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        auto *consumer = applyChild(intfmgr);
-        ASSERT_TRUE(consumer->m_toSync.empty());
-        const std::string alias = "PortChannel1.20";
-        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
-        const auto application = tableSnapshot(app);
-        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}});
-        EXPECT_TRUE(intfmgr.isIntfStateOk("PortChannel1"));
-        EXPECT_EQ(intfmgr.getIntfMtu("PortChannel1"), "0");
-        testing_db::resetOperationCounters();
-        mockCallArgs.clear();
-        intfmgr.doTask(*consumer);
-        EXPECT_EQ(consumer->m_toSync.size(), 2u);
-        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" mtu"));
-        EXPECT_EQ(tableSnapshot(app), application);
-        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
-        EXPECT_TRUE(intfmgr.isIntfCreated(alias));
-        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 0u);
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"admin_status", "up"}, {"mtu", "9100"}});
-        intfmgr.doTask(*consumer);
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"1500\""));
-        EXPECT_FALSE(commandWasIssued("link set \"PortChannel1.20\" mtu \"0\""));
-        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), 1u);
-        EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias + "|192.0.2.1/31"), 1u);
     }
 
     TEST_F(IntfMgrTest, testSettingIpv6Flag){

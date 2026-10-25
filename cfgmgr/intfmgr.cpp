@@ -1004,10 +1004,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             adminStatus = value;
         }
-        else if (field == "mtu")
-        {
-            mtu = value;
-        }
         else if (field == "proxy_arp")
         {
             proxy_arp = value;
@@ -1139,29 +1135,31 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
             m_subIntfList[alias].vlanId = vlanId;
 
-            string subintfMtu;
-            try
-            {
-                auto parentMtu = getIntfMtu(parentAlias);
-                if (parentMtu == MTU_INHERITANCE || parentMtu.empty())
-                    return false;
-                subintfMtu = setHostSubIntfMtu(alias,
-                    mtu.empty() ? to_string(DEFAULT_MTU_STR) : mtu, parentMtu);
-                if (subintfMtu.empty())
-                    return false;
-            }
-            catch (const runtime_error &e)
-            {
-                SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                return false;
-            }
             if (!mtu.empty())
             {
-                FieldValueTuple fvTuple("mtu", mtu);
-                std::remove(data.begin(), data.end(), fvTuple);
+                string subintf_mtu;
+                try
+                {
+                    string parentMtu = getIntfMtu(subIf.parentIntf());
+                    subintf_mtu = setHostSubIntfMtu(alias, mtu, parentMtu);
+                    FieldValueTuple fvTuple("mtu", mtu);
+                    std::remove(data.begin(), data.end(), fvTuple);
+                    FieldValueTuple newMtuFvTuple("mtu", subintf_mtu);
+                    data.push_back(newMtuFvTuple);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
+                    return false;
+                }
+                m_subIntfList[alias].mtu = mtu;
             }
-            data.emplace_back("mtu", subintfMtu);
-            m_subIntfList[alias].mtu = mtu.empty() ? MTU_INHERITANCE : mtu;
+            else
+            {
+                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
+                data.push_back(fvTuple);
+                m_subIntfList[alias].mtu = MTU_INHERITANCE;
+            }
 
             if (adminStatus.empty())
             {
