@@ -669,6 +669,29 @@ bool IntfMgr::setIntfAdminStatus(const string &alias, const string &admin_status
     return true;
 }
 
+bool IntfMgr::isIntfAdminStatusSet(const string &alias, const string &admin_status)
+{
+    string res;
+    const string cmd = string(IP_CMD) + " -o link show dev " + shellquote(alias);
+    try
+    {
+        if (swss::exec(cmd, res) != 0)
+            return false;
+        const auto start = res.find('<');
+        const auto end = res.find('>', start);
+        if (start == string::npos || end == string::npos)
+            return false;
+        const auto flags = tokenize(res.substr(start + 1, end - start - 1), ',');
+        const bool up = find(flags.begin(), flags.end(), "UP") != flags.end();
+        return up == (admin_status == "up");
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("Cannot query admin status on interface %s: %s", alias.c_str(), e.what());
+        return false;
+    }
+}
+
 std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     if (admin_status != "up" && admin_status != "down")
@@ -680,13 +703,16 @@ std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string
         {
             if (!setIntfAdminStatus(alias, admin_status))
                 throw runtime_error("Failed to set admin status \"" + admin_status + "\" for " + alias);
-            return admin_status;
         }
         catch (const std::runtime_error &e)
         {
-            SWSS_LOG_NOTICE("Set Host subinterface %s admin_status set failure %s failure. Runtime error: %s", alias.c_str(), admin_status.c_str(), e.what());
-            throw;
+            if (!isIntfAdminStatusSet(alias, admin_status))
+            {
+                SWSS_LOG_NOTICE("Set Host subinterface %s admin_status set failure %s failure. Runtime error: %s", alias.c_str(), admin_status.c_str(), e.what());
+                throw;
+            }
         }
+        return admin_status;
     }
     else
     {

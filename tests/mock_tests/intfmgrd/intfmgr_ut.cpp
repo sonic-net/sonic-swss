@@ -39,6 +39,9 @@ int SubIntfQueryResult = 0;
 bool ThrowSubIntfQuery = false;
 bool FailSubIntfMtu = false;
 bool FailSubIntfAdmin = false;
+int AdminQueryResult = 0;
+bool ThrowAdminQuery = false;
+std::string AdminQueryOutput;
 int IntfIpCount = 0;
 
 static std::string quotedArgument(const std::string &cmd, const std::string &marker)
@@ -107,6 +110,14 @@ int cb(const std::string &cmd, std::string &stdout){
             return 1;
         stdout = subIntfLine(alias, KernelSubIntfs.at(alias).first, KernelSubIntfs.at(alias).second);
         return 0;
+    }
+    if (cmd.find("/sbin/ip -o link show dev ") == 0)
+    {
+        if (ThrowAdminQuery)
+            throw std::runtime_error("admin query unavailable");
+        const auto alias = quotedArgument(cmd, "dev ");
+        stdout = AdminQueryOutput;
+        return MissingSubInterfaces.count(alias) ? 1 : AdminQueryResult;
     }
     if (cmd.find("/sbin/ip -o address show dev ") == 0)
     {
@@ -215,6 +226,9 @@ namespace intfmgr_ut
             SubIntfQueryResult = 0;
             ThrowSubIntfQuery = false;
             FailSubIntfMtu = FailSubIntfAdmin = false;
+            AdminQueryResult = 0;
+            ThrowAdminQuery = false;
+            AdminQueryOutput.clear();
             IntfIpCount = 0;
         }
 
@@ -2057,6 +2071,130 @@ namespace intfmgr_ut
         for (const std::string status : {"", "invalid"})
             EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
         EXPECT_EQ(mockCallArgs.size(), 3u);
+    }
+
+    TEST_F(IntfMgrTest, testAdminStatusCheckUsesExactAdminFlag)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "Ethernet0.10";
+        const std::vector<std::pair<std::string, bool>> cases = {
+            {"<UP,BROADCAST,LOWER_UP> state DOWN", true},
+            {"<BROADCAST,UP,LOWER_UP> state UNKNOWN", true},
+            {"<BROADCAST,UP> state DOWN", true},
+            {"<UP> state UNKNOWN", true},
+            {"<BROADCAST,LOWER_UP> state UP", false},
+            {"<> state DOWN", false},
+        };
+        for (const auto &entry : cases)
+        {
+            SCOPED_TRACE(entry.first);
+            AdminQueryOutput = "7: " + alias + "@Ethernet0: " + entry.first + "\n";
+            EXPECT_EQ(intfmgr.isIntfAdminStatusSet(alias, "up"), entry.second);
+            EXPECT_EQ(intfmgr.isIntfAdminStatusSet(alias, "down"), !entry.second);
+        }
+        for (const std::string output : {"", "7: Ethernet0.10: <BROADCAST", "7: Ethernet0.10: state DOWN"})
+        {
+            AdminQueryOutput = output;
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, "up"));
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, "down"));
+        }
+        AdminQueryOutput = "7: " + alias + ": <UP> state DOWN\n";
+        for (const std::string status : {"up", "down"})
+        {
+            MissingSubInterfaces.insert(alias);
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, status));
+            MissingSubInterfaces.clear();
+            AdminQueryResult = 1;
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, status));
+            AdminQueryResult = 0;
+            ThrowAdminQuery = true;
+            EXPECT_FALSE(intfmgr.isIntfAdminStatusSet(alias, status));
+            ThrowAdminQuery = false;
+        }
+    }
+
+    TEST_F(IntfMgrTest, testAdminFailureChecksKernelStateForBothFailurePaths)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "Ethernet0.10";
+        KernelSubIntfs[alias] = {"Ethernet0", "10"};
+        FailSubIntfAdmin = true;
+        for (bool ready : {false, true})
+        {
+            SCOPED_TRACE(ready);
+            if (ready)
+                intfmgr.m_statePortTable.set(alias, {{"state", "ok"}});
+            else
+                intfmgr.m_statePortTable.del(alias);
+            for (const std::string status : {"up", "down"})
+            {
+                SCOPED_TRACE(status);
+                AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
+                    (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
+                mockCallArgs.clear();
+                EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), status);
+                ASSERT_EQ(mockCallArgs.size(), 2u);
+                EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
+                EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
+
+                AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
+                    (status == "down" ? ",UP" : "") + "> state UNKNOWN\n";
+                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                AdminQueryOutput.clear();
+                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                ThrowAdminQuery = true;
+                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                ThrowAdminQuery = false;
+            }
+        }
+    }
+
+    TEST_F(IntfMgrTest, testConfigAdminFailureAcceptsConfirmedKernelState)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = applyChild(intfmgr);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        const std::string alias = "PortChannel1.20";
+        notifyLag(intfmgr, "PortChannel1", DEL_COMMAND);
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        FailSubIntfAdmin = true;
+        AdminQueryOutput = "7: " + alias + "@PortChannel1: <BROADCAST,UP> state DOWN\n";
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
+        EXPECT_TRUE(commandWasIssued("-o link show dev \"" + alias + "\""));
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
+        EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+        std::string status;
+        ASSERT_TRUE(app.hget(alias, "admin_status", status));
+        EXPECT_EQ(status, "up");
+    }
+
+    TEST_F(IntfMgrTest, testParentAdminFailurePublishesConfirmedKernelState)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string parent = "Ethernet0";
+        const std::string alias = "Ethernet0.10";
+        intfmgr.m_subIntfList[alias] = {"10", "1500", "up", "down"};
+        KernelSubIntfs[alias] = {parent, "10"};
+        intfmgr.m_statePortTable.set(parent, {{"state", "ok"}, {"admin_status", "up"}});
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(STATE_PORT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(parent, SET_COMMAND, {{"admin_status", "up"}}));
+        FailSubIntfAdmin = true;
+        AdminQueryOutput = "7: " + alias + "@Ethernet0: <BROADCAST,UP> state DOWN\n";
+        testing_db::resetOperationCounters();
+        EXPECT_NO_THROW(intfmgr.doTask(*consumer));
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+        std::string status;
+        ASSERT_TRUE(app.hget(alias, "admin_status", status));
+        EXPECT_EQ(status, "up");
     }
 
     TEST_F(IntfMgrTest, testAdminUpdateExceptionRetainsNotificationForRetry)
