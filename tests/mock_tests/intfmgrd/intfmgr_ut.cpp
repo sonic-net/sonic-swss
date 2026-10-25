@@ -1357,7 +1357,7 @@ namespace intfmgr_ut
         FailSubIntfCreation = true;
         EXPECT_NO_THROW(intfmgr.doTask(*child));
         EXPECT_EQ(child->m_toSync.size(), 2u);
-        EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 0u);
+        EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 1u);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 0u);
         std::vector<swss::FieldValueTuple> values;
         EXPECT_TRUE(app.get(alias, values));
@@ -1648,7 +1648,7 @@ namespace intfmgr_ut
             intfmgr.doTask(*consumer);
             EXPECT_TRUE(consumer->m_toSync.empty());
             EXPECT_TRUE(commandWasIssued("-d -o link show dev \"PortChannel1.20\""));
-            EXPECT_FALSE(commandWasIssued("link add"));
+            EXPECT_TRUE(commandWasIssued("link add"));
             EXPECT_FALSE(commandWasIssued("link del"));
             EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
             EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), interval * 2);
@@ -1661,6 +1661,17 @@ namespace intfmgr_ut
             EXPECT_TRUE(mockCallArgs.empty());
             EXPECT_EQ(testing_db::getTableSetCount(STATE_INTERFACE_TABLE_NAME, alias), interval);
         }
+
+        const auto kernel = KernelSubIntfs;
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            alias, SET_COMMAND, {{"mtu", "1500"}, {"admin_status", "up"}}));
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(commandWasIssued("link add"));
+        EXPECT_TRUE(commandWasIssued("-d -o link show dev \"PortChannel1.20\""));
+        EXPECT_FALSE(commandWasIssued("link del"));
+        EXPECT_EQ(KernelSubIntfs, kernel);
     }
 
     TEST_F(IntfMgrTest, testFailedSubinterfaceAddRequiresExactObject)
@@ -1736,7 +1747,7 @@ namespace intfmgr_ut
             mockCallArgs.clear();
             intfmgr.doTask(*consumer);
             EXPECT_EQ(consumer->m_toSync.size(), 2u);
-            EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 0u);
+            EXPECT_EQ(intfmgr.m_subIntfList.count(alias), 1u);
             EXPECT_EQ(tableSnapshot(app), application);
             EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
             EXPECT_TRUE(intfmgr.isIntfCreated(alias));
@@ -1854,7 +1865,8 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_TRUE(commandWasIssued("link del \"PortChannel1.20\""));
         EXPECT_FALSE(commandWasIssued("link del \"PortChannel1.30\""));
-        EXPECT_FALSE(commandWasIssued("link add"));
+        EXPECT_FALSE(commandWasIssued("name \"PortChannel1.20\""));
+        EXPECT_TRUE(commandWasIssued("link add link \"PortChannel1\" name \"PortChannel1.30\""));
         EXPECT_EQ(intfmgr.m_subIntfList.count("PortChannel1.20"), 0u);
         EXPECT_EQ(intfmgr.m_subIntfList.count("PortChannel1.30"), 1u);
         std::vector<swss::FieldValueTuple> values;
@@ -1963,7 +1975,7 @@ namespace intfmgr_ut
         intfmgr.doTask(*consumer);
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_TRUE(commandWasIssued("link set \"PortChannel1.20\" mtu \"9100\""));
-        EXPECT_FALSE(commandWasIssued("link add"));
+        EXPECT_TRUE(commandWasIssued("link add"));
         EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 0u);
         std::vector<swss::FieldValueTuple> values;

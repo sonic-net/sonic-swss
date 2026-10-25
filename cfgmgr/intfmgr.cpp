@@ -1120,34 +1120,22 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (!parentAlias.empty())
         {
             subIntf subIf(alias);
-            auto applied = m_subIntfList.find(alias);
-            if (applied != m_subIntfList.end() &&
-                (!isIntfStateOk(alias) || !isIntfCreated(alias) || applied->second.vlanId != vlanId))
+            if (vlanId == "0" || vlanId.empty())
             {
-                if (!isSubIntfPresent(parentAlias, alias, vlanId))
-                    m_subIntfList.erase(applied);
-                else
-                    applied->second.vlanId = vlanId;
+                SWSS_LOG_INFO("Vlan ID not configured for sub interface %s", alias.c_str());
+                return false;
             }
-            if (m_subIntfList.find(alias) == m_subIntfList.end())
+            try
             {
-                if (vlanId == "0" || vlanId.empty())
-                {
-                    SWSS_LOG_INFO("Vlan ID not configured for sub interface %s", alias.c_str());
-                    return false;
-                }
-                try
-                {
-                    addHostSubIntf(parentAlias, alias, vlanId);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
-                    return false;
-                }
+                addHostSubIntf(parentAlias, alias, vlanId);
+            }
+            catch (const std::runtime_error &e)
+            {
+                SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
+                return false;
+            }
 
-                m_subIntfList[alias].vlanId = vlanId;
-            }
+            m_subIntfList[alias].vlanId = vlanId;
 
             string subintfMtu;
             try
