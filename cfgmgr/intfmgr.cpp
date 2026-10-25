@@ -457,14 +457,10 @@ bool IntfMgr::isSubIntfPresent(const string &parent, const string &alias, const 
     string res;
     try
     {
-        size_t length;
-        const auto vid = stoul(vlan, &length);
-        if (length != vlan.size())
-            return false;
         const string cmd = string(IP_CMD) + " -d -o link show dev " + shellquote(alias);
         return swss::exec(cmd, res) == 0 &&
             res.find(" " + alias + "@" + parent + ": ") != string::npos &&
-            res.find(" vlan protocol 802.1Q id " + to_string(vid) + " ") != string::npos;
+            res.find(" vlan protocol 802.1Q id " + vlan + " ") != string::npos;
     }
     catch (const exception &e)
     {

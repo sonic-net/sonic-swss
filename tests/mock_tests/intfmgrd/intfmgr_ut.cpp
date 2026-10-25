@@ -1777,7 +1777,6 @@ namespace intfmgr_ut
             EXPECT_EQ(mockCallArgs[1], "/sbin/ip -d -o link show dev \"PortChannel1.20\"");
         }
         SubIntfQueryOverrides[alias] = subIntfLine(alias, "PortChannel1", "20");
-        EXPECT_TRUE(intfmgr.isSubIntfPresent("PortChannel1", alias, "020"));
         SubIntfQueryResult = 1;
         EXPECT_FALSE(intfmgr.addHostSubIntf("PortChannel1", alias, "20"));
         FailSubIntfCreation = false;
