@@ -59,6 +59,7 @@ private:
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
+    void clearPluginState(const Port& port, uint8_t tc);
     void setSwWdState(const string& portAlias, uint8_t queueIdx, const char* status);
     bool startWdActionOnQueueImpl(const string &event,
             typename map<sai_object_id_t, PfcWdQueueEntry>::iterator entry, const string &info);

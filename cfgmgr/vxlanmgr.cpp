@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "producerstatetable.h"
 #include "macaddress.h"
+#include "ipaddress.h"
 #include "vxlanmgr.h"
 #include "exec.h"
 #include "tokenize.h"
@@ -48,9 +49,28 @@ static std::string getVxlanIfName(const swss::VxlanMgr::VxlanInfo & info)
     return std::string("") + VXLAN_IF_NAME_PREFIX + info.m_vni;
 }
 
+static bool isValidIpLiteral(const std::string &address)
+{
+    try
+    {
+        (void)swss::IpAddress(address);
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+static bool areValidVxlanTunnelAddresses(const std::string &srcIp, const std::string &dstIp)
+{
+    return isValidIpLiteral(srcIp) && (dstIp.empty() || isValidIpLiteral(dstIp));
+}
+
 // Commands
 
 #define RET_SUCCESS 0
+#define RET_FAILURE 1
 
 static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
@@ -600,6 +620,13 @@ bool VxlanMgr::doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t)
         dst_ip = "";
     }
 
+    if (!areValidVxlanTunnelAddresses(src_ip, dst_ip))
+    {
+        SWSS_LOG_ERROR("Rejecting VXLAN tunnel map %s because its source or destination IP is invalid",
+                       vxlanTunnelMapName.c_str());
+        return true;
+    }
+
     createAppDBTunnelMapTable(t);
     ret = createVxlanNetdevice(vxlanTunnelName, vni_id, src_ip, dst_ip, vlan_id);
     if (ret != RET_SUCCESS)
@@ -971,6 +998,13 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                                    std::string src_ip, std::string dst_ip,
                                    std::string vlan_id)
 {
+    if (!areValidVxlanTunnelAddresses(src_ip, dst_ip))
+    {
+        SWSS_LOG_ERROR("Rejecting VXLAN netdevice for tunnel %s because its source or destination IP is invalid",
+                       vxlanTunnelName.c_str());
+        return RET_FAILURE;
+    }
+
     std::string res, cmds;
     std::string link_add_cmd, link_set_master_cmd, link_up_cmd;
     std::string bridge_add_cmd, bridge_untagged_add_cmd, bridge_del_vid_cmd, bridge_learn_off_cmd;
