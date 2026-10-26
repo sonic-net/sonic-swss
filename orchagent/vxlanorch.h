@@ -516,6 +516,8 @@ private:
     std::set<std::pair<sai_vlan_id_t, std::string>> m_pendingVlanMembers;
     // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
     std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
+    // (vid, remote VTEP) entries waiting for the EVPN NVO whose wait has been logged.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_noSourceVtepLogged;
 };
 
 class EvpnRemoteVnip2mpOrch : public Orch2
@@ -532,6 +534,8 @@ private:
 
     // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
     std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
+    // (vid, remote VTEP) entries waiting for the EVPN NVO whose wait has been logged.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_noSourceVtepLogged;
 };
 
 //------------- EVPN_NVO Table -------------------------
