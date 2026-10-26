@@ -1378,7 +1378,6 @@ namespace intfmgr_ut
         EXPECT_FALSE(commandWasIssued("192.0.2.1/31"));
         EXPECT_FALSE(commandWasIssued("fe80::20/64"));
         EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).adminStatus, "down");
         EXPECT_EQ(intfmgr.m_intfLLAddresses.at(alias), (std::set<std::string>{"fe80::21/64"}));
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 0u);
         std::vector<swss::FieldValueTuple> values;
@@ -2265,7 +2264,6 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
         EXPECT_TRUE(commandWasIssued("-o link show dev \"" + alias + "\""));
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
         EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
         swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
         std::string status;
@@ -2282,92 +2280,6 @@ namespace intfmgr_ut
         EXPECT_TRUE(consumer->m_toSync.empty());
         EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
         EXPECT_TRUE(commandWasIssued("-o link show dev \"" + alias + "\""));
-    }
-
-    TEST_F(IntfMgrTest, testParentDownPublishesEffectiveDownWithoutChildCommand)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        auto *consumer = applyChild(intfmgr);
-        ASSERT_TRUE(consumer->m_toSync.empty());
-        const std::string alias = "PortChannel1.20";
-        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
-
-        mockCallArgs.clear();
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
-                  {{"state", "ok"}, {"admin_status", "down"}, {"mtu", "9100"}});
-        EXPECT_FALSE(commandWasIssued("link set \"" + alias + "\""));
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "down");
-        std::string status;
-        ASSERT_TRUE(app.hget(alias, "admin_status", status));
-        EXPECT_EQ(status, "down");
-
-        mockCallArgs.clear();
-        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
-                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
-        EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
-        ASSERT_TRUE(app.hget(alias, "admin_status", status));
-        EXPECT_EQ(status, "up");
-    }
-
-    TEST_F(IntfMgrTest, testParentAdminFailurePublishesConfirmedKernelState)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string parent = "Ethernet0";
-        const std::string alias = "Ethernet0.10";
-        intfmgr.m_subIntfList[alias] = {"10", "1500", "up", "down"};
-        KernelSubIntfs[alias] = {parent, "10"};
-        intfmgr.m_statePortTable.set(parent, {{"state", "ok"}, {"admin_status", "up"}});
-        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(STATE_PORT_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-        consumer->addToSync(swss::KeyOpFieldsValuesTuple(parent, SET_COMMAND, {{"admin_status", "up"}}));
-        FailSubIntfAdmin = true;
-        AdminQueryOutput = "7: " + alias + "@Ethernet0: <BROADCAST,UP> state DOWN\n";
-        testing_db::resetOperationCounters();
-        EXPECT_NO_THROW(intfmgr.doTask(*consumer));
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
-        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
-        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
-        std::string status;
-        ASSERT_TRUE(app.hget(alias, "admin_status", status));
-        EXPECT_EQ(status, "up");
-    }
-
-    TEST_F(IntfMgrTest, testAdminUpdateExceptionRetainsNotificationForRetry)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        const std::string parent = "Ethernet0";
-        const std::string alias = "Ethernet0.10";
-        intfmgr.m_subIntfList[alias] = {"10", "1500", "up", "down"};
-        KernelSubIntfs[alias] = {parent, "10"};
-        intfmgr.m_statePortTable.set(parent, {{"state", "ok"}, {"admin_status", "up"}});
-        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
-        app.set(alias, {{"admin_status", "down"}});
-        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(STATE_PORT_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-        consumer->addToSync(swss::KeyOpFieldsValuesTuple(parent, SET_COMMAND, {{"admin_status", "up"}}));
-        testing_db::resetOperationCounters();
-        FailSubIntfAdmin = true;
-
-        EXPECT_THROW(intfmgr.doTask(*consumer), std::runtime_error);
-        EXPECT_EQ(consumer->m_toSync.count(parent), 1u);
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "down");
-        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 0u);
-        std::vector<swss::FieldValueTuple> values;
-        ASSERT_TRUE(app.get(alias, values));
-        std::string value;
-        ASSERT_TRUE(getFieldValue(values, "admin_status", value));
-        EXPECT_EQ(value, "down");
-
-        FailSubIntfAdmin = false;
-        EXPECT_NO_THROW(intfmgr.doTask(*consumer));
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
-        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
-        ASSERT_TRUE(app.get(alias, values));
-        ASSERT_TRUE(getFieldValue(values, "admin_status", value));
-        EXPECT_EQ(value, "up");
     }
 
     TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){

@@ -13,8 +13,6 @@ struct SubIntfInfo
 {
     std::string vlanId;
     std::string mtu;
-    std::string adminStatus;
-    std::string currAdminStatus;
 };
 
 typedef std::map<std::string, SubIntfInfo>             SubIntfMap;
@@ -89,7 +87,6 @@ private:
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
 
-    void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
     void updateSagMac(const std::string &macAddr);
     bool enableIpv6Flag(const std::string&);

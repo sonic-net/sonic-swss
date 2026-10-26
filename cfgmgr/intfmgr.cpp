@@ -625,44 +625,6 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, c
     return subifMtu;
 }
 
-void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
-{
-    string intf;
-    for (auto entry : m_subIntfList)
-    {
-        intf = entry.first;
-        subIntf subIf(intf);
-        if (subIf.parentIntf() == alias)
-        {
-            if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX) &&
-                (!isIntfStateOk(intf) || !isIntfCreated(intf)))
-                continue;
-            /*  Avoid duplicate interface admin UP event. */
-            string curr_admin = m_subIntfList[intf].currAdminStatus;
-            if (curr_admin == "up" && curr_admin == admin)
-            {
-                continue;
-            }
-            std::vector<FieldValueTuple> fvVector;
-            const string &adminStatus = m_subIntfList[intf].adminStatus;
-            string effectiveAdmin = adminStatus;
-            if (admin != "up" && adminStatus == "up")
-            {
-                effectiveAdmin = "down";
-            }
-            else if (!setIntfAdminStatus(intf, adminStatus) &&
-                     !isIntfAdminStatusSet(intf, adminStatus))
-            {
-                throw runtime_error("Failed to set admin status \"" + adminStatus + "\" for " + intf);
-            }
-            m_subIntfList[intf].currAdminStatus = effectiveAdmin;
-            FieldValueTuple fvTuple("admin_status", effectiveAdmin);
-            fvVector.push_back(fvTuple);
-            m_appIntfTableProducer.set(intf, fvVector);
-        }
-    }
-}
-
 bool IntfMgr::setIntfAdminStatus(const string &alias, const string &admin_status)
 {
     stringstream cmd;
@@ -1184,7 +1146,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 if (!setIntfAdminStatus(alias, adminStatus) &&
                     !isIntfAdminStatusSet(alias, adminStatus))
                     return false;
-                m_subIntfList[alias].currAdminStatus = adminStatus;
                 FieldValueTuple fvTuple("admin_status", adminStatus);
                 std::remove(data.begin(), data.end(), fvTuple);
                 FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
@@ -1195,8 +1156,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
                 return false;
             }
-            m_subIntfList[alias].adminStatus = adminStatus;
-
         }
 
         if (!vrf_name.empty())
@@ -1791,7 +1750,6 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             if (field == "admin_status")
             {
                 SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
-                updateSubIntfAdminStatus(key, value);
 
                 if (replayLinkLocal && value == "up" && m_intfLLAddresses.count(key) > 0)
                 {
