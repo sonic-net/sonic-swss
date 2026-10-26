@@ -326,6 +326,11 @@ public:
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
 
+    // TODO: override in every Orch that attaches as an Observer in its
+    //       constructor so OrchDaemon can detach all observers while every
+    //       subject is still alive, eliminating shutdown-order UAFs.
+    virtual void detachObservers() {}
+
     static std::shared_ptr<RingBuffer> gRingBuffer;
 
     std::vector<swss::Selectable*> getSelectables();

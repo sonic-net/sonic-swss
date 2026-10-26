@@ -15,6 +15,7 @@
 #include "flowcounterrouteorch.h"
 #include "directory.h"
 #include "routeorch.h"
+#include "srv6orch.h"
 
 using namespace std;
 using namespace swss;
@@ -27,6 +28,7 @@ extern Directory<Orch*>      gDirectory;
 extern PortsOrch*            gPortsOrch;
 extern RouteOrch*            gRouteOrch;
 extern FlowCounterRouteOrch* gFlowCounterRouteOrch;
+extern Srv6Orch*             gSrv6Orch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -130,6 +132,10 @@ bool VRFOrch::addOperation(const Request& request)
             }
         }
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
+        if (gSrv6Orch)
+        {
+            gSrv6Orch->notifyVrfAvailable(vrf_name);
+        }
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
     }
     else

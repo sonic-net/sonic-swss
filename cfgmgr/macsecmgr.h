@@ -4,10 +4,12 @@
 #include <orch.h>
 #include <swss/schema.h>
 #include <swss/boolean.h>
+#include <swss/producerstatetable.h>
 
 #include <cinttypes>
 #include <map>
 #include <set>
+#include <memory>
 #include <vector>
 #include <sstream>
 
@@ -29,7 +31,7 @@ class MACsecMgr : public Orch
 {
 public:
     using Orch::doTask;
-    MACsecMgr(DBConnector *cfgDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     ~MACsecMgr();
     void doTask();
 private:
@@ -74,6 +76,11 @@ public:
         MACsecProfile applied_profile;
         std::string pending_old_ckn;
         bool pending_primary = false;
+        // An ambiguous add must remain recognizable even if desired state changes.
+        std::string pending_new_ckn;
+        std::string pending_new_cak;
+        bool participants_verified = false;
+        bool status_published = false;
         std::string config_error;
     };
 
@@ -88,13 +95,26 @@ private:
 
 
     Table m_statePortTable;
-    Table m_cfgPortTable;
     Table m_stateMkaSessionTable;
     Table m_stateMkaParticipantTable;
     SelectableTimer *m_mkaStatusTimer = nullptr;
-    bool m_startupStateReconciled = false;
+
+    // APPL_DB MACsec tables, written by wpa_supplicant's macsec_sonic driver
+    // and consumed by orchagent. macsecmgrd only touches them to remove what
+    // a supplicant that died without running its deinit left behind. For
+    // each table: the visible entries, the entries a producer has staged but
+    // the consumer has not popped yet, and the producer the deletes go through.
+    struct AppMACsecTable
+    {
+        std::unique_ptr<Table>              visible;
+        std::unique_ptr<Table>              staged;
+        std::unique_ptr<ProducerStateTable> producer;
+    };
+    std::vector<AppMACsecTable> m_appMACsecTables;
+    unsigned int m_clearStaleTimeoutMs;
 
     bool isPortStateOk(const std::string & port_name);
+    bool clearStaleMACsecState(const std::string & port_name);
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
     bool configureMACsec(const std::string & port_name, MKASession & session, const MACsecProfile & profile) const;
@@ -103,8 +123,7 @@ private:
     bool collectMKAStatus(
         const std::string &port_name,
         MKASession &session,
-        MKASessionStatus *status = nullptr,
-        bool allowDesiredReplacement = false);
+        MKASessionStatus *status = nullptr);
     bool queryMKAStatus(
         const std::string &port_name,
         const MKASession &session,
@@ -113,14 +132,12 @@ private:
     bool validateExpectedParticipants(
         const MKASession &session,
         const MKASessionStatus &status,
-        const MACsecProfile *desired,
-        bool allowDesiredReplacement,
         std::string &error) const;
     void publishMKAStatus(
         const std::string &port_name,
         MKASession &session,
         const MKASessionStatus &status);
-    void markMKAQueryError(
+    void handleMKAQueryFailure(
         const std::string &port_name,
         MKASession &session,
         const std::string &reason);
@@ -129,22 +146,24 @@ private:
         MKASession &session,
         const std::string &error);
     void deleteOperationalState(const std::string &port_name);
-    void reconcileStartupState();
+    void clearMKAState();
     void doTask(SelectableTimer &timer) override;
     void sweepMKAStatus();
-    bool preflightRollover(
-        const std::string &port_name,
-        MKASession &session,
-        const MACsecProfile &desired);
-    bool validateRolloverStatus(
+    bool selectParticipantToUpdate(
         const std::string &port_name,
         MKASession &session,
         const MACsecProfile &desired,
-        const MKASessionStatus &status,
-        bool primaryChanged,
-        bool fallbackChanged,
-        bool primary);
+        bool &primary);
     bool reconcilePort(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired);
+    bool reconcileObservedParticipants(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired,
+        const MKASessionStatus &status);
+    bool reconcileParticipant(
         const std::string &port_name,
         MKASession &session,
         const MACsecProfile &desired);

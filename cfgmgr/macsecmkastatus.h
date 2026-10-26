@@ -9,6 +9,8 @@
 namespace swss
 {
 
+bool normalizeCkn(const std::string &value, std::string &normalized);
+
 struct MKAParticipantStatus
 {
     std::uint32_t participantIndex;

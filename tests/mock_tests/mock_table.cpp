@@ -4,6 +4,7 @@
 #include "mock_table.h"
 #include <set>
 #include <memory>
+#include <tuple>
 
 using TableDataT = std::map<std::string, std::vector<swss::FieldValueTuple>>;
 using TablesT = std::map<std::string, TableDataT>;
@@ -14,10 +15,36 @@ namespace testing_db
     TableDataT gTableData;
     TablesT gTables;
     std::map<int, TablesT> gDB;
+    std::map<std::string, std::size_t> gProducerSetCounts;
+    std::map<std::string, std::size_t> gProducerDelCounts;
+    std::map<std::tuple<int, std::string, std::string>, std::size_t> gWriteCounts;
 
     void reset()
     {
         gDB.clear();
+        resetOperationCounters();
+        gWriteCounts.clear();
+    }
+
+    std::size_t writeCount(int dbId, const std::string &table, const std::string &key)
+    {
+        return gWriteCounts[std::make_tuple(dbId, table, key)];
+    }
+
+    void resetOperationCounters()
+    {
+        gProducerSetCounts.clear();
+        gProducerDelCounts.clear();
+    }
+
+    std::size_t getProducerSetCount(const std::string &tableName)
+    {
+        return gProducerSetCounts[tableName];
+    }
+
+    std::size_t getProducerDelCount(const std::string &tableName)
+    {
+        return gProducerDelCounts[tableName];
     }
 }
 
@@ -88,6 +115,7 @@ namespace swss
                     const std::string &op,
                     const std::string &prefix)
     {
+        ++gWriteCounts[std::make_tuple(m_pipe->getDbId(), getTableName(), key)];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         auto iter = table.find(key);
         if (iter == table.end())
@@ -121,6 +149,7 @@ namespace swss
 
     void Table::del(const std::string &key, const std::string& /* op */, const std::string& /*prefix*/)
     {
+        ++gWriteCounts[std::make_tuple(m_pipe->getDbId(), getTableName(), key)];
         auto table = gDB[m_pipe->getDbId()].find(getTableName());
         if (table != gDB[m_pipe->getDbId()].end()){
             table->second.erase(key);
@@ -129,6 +158,7 @@ namespace swss
 
     void Table::hdel(const std::string &key, const std::string &field, const std::string &op, const std::string &prefix)
     {
+        ++gWriteCounts[std::make_tuple(m_pipe->getDbId(), getTableName(), key)];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         auto key_iter = table.find(key);
         if (key_iter == table.end())
@@ -161,6 +191,7 @@ namespace swss
                                  const std::string &op,
                                  const std::string &prefix)
     {
+        ++gProducerSetCounts[getTableName()];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         auto iter = table.find(key);
         if (iter == table.end())
@@ -177,26 +208,17 @@ namespace swss
                                  const std::string &op,
                                  const std::string &prefix)
     {
+        ++gProducerDelCounts[getTableName()];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);
+        gDB[m_pipe->getDbId()]["_" + getTableName()].erase(key);
     }
 
     void ProducerStateTable::set(const std::vector<KeyOpFieldsValuesTuple>& values)
     {
         for (const auto& kfv : values)
         {
-            const std::string& key = kfvKey(kfv);
-            const std::string& op = kfvOp(kfv);
-            const std::vector<FieldValueTuple>& fvs = kfvFieldsValues(kfv);
-
-            if (op == SET_COMMAND)
-            {
-                set(key, fvs);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                del(key);
-            }
+            set(kfvKey(kfv), kfvFieldsValues(kfv));
         }
     }
 

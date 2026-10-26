@@ -36,28 +36,45 @@ namespace macsecorch_test
     static sai_object_id_t              g_next_sa_oid;
     static bool                         g_remove_should_fail;
 
+    // Recorder for the egress ACL entry toggles MACsecOrch performs via
+    // setMACsecFlowActive(). Either ACTION_MACSEC_FLOW enable=false or
+    // ACTION_PACKET_ACTION (DROP) enable=true means frames on the port
+    // stopped being steered into the MACsec flow.
+    struct SaiAclCall
+    {
+        sai_object_id_t entry_id;
+        sai_attribute_t attr;
+    };
+    static std::vector<SaiAclCall>      g_acl_calls;
+
+    static sai_status_t fake_set_acl_entry_attribute(sai_object_id_t        entry_id,
+                                                     const sai_attribute_t *attr)
+    {
+        g_acl_calls.push_back({ entry_id, *attr });
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static bool macsec_flow_was_disabled()
+    {
+        for (const auto &c : g_acl_calls)
+        {
+            if (c.attr.id == SAI_ACL_ENTRY_ATTR_ACTION_MACSEC_FLOW &&
+                !c.attr.value.aclaction.enable)
+                return true;
+            if (c.attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION &&
+                c.attr.value.aclaction.enable)
+                return true;
+        }
+        return false;
+    }
+
     static void reset_sai_recorder()
     {
         g_created_sas.clear();
         g_removed_sas.clear();
         g_next_sa_oid        = 0x5c00000000010000ULL;   // mimic real OID prefix range
         g_remove_should_fail = false;
-    }
-
-    // Helper: pull the SAK bytes out of a recorded SAI attribute list.
-    // Returns true if found, fills `out`.
-    static bool extract_sai_sak(const std::vector<sai_attribute_t> &attrs,
-                                sai_macsec_sak_t                   &out)
-    {
-        for (const auto &a : attrs)
-        {
-            if (a.id == SAI_MACSEC_SA_ATTR_SAK)
-            {
-                memcpy(out, a.value.macsecsak, sizeof(sai_macsec_sak_t));
-                return true;
-            }
-        }
-        return false;
+        g_acl_calls.clear();
     }
 
     static sai_status_t fake_create_macsec_sa(sai_object_id_t        *sa_id,
@@ -70,6 +87,16 @@ namespace macsecorch_test
         call.attrs.assign(attr_list, attr_list + attr_count);
         *sa_id = call.oid;
         g_created_sas.push_back(std::move(call));
+        return SAI_STATUS_SUCCESS;
+    }
+
+    // Attribute sets on an existing SA (next_pn / lowest_acceptable_pn)
+    // are recorded and succeed; the vs SAI would reject the fake OIDs.
+    static std::vector<sai_attribute_t> g_set_sa_attrs;
+    static sai_status_t fake_set_macsec_sa_attribute(sai_object_id_t        sa_id,
+                                                     const sai_attribute_t *attr)
+    {
+        g_set_sa_attrs.push_back(*attr);
         return SAI_STATUS_SUCCESS;
     }
 
@@ -129,6 +156,13 @@ namespace macsecorch_test
             saved_remove_macsec_sa = sai_macsec_api->remove_macsec_sa;
             sai_macsec_api->create_macsec_sa = fake_create_macsec_sa;
             sai_macsec_api->remove_macsec_sa = fake_remove_macsec_sa;
+            saved_set_macsec_sa_attribute = sai_macsec_api->set_macsec_sa_attribute;
+            sai_macsec_api->set_macsec_sa_attribute = fake_set_macsec_sa_attribute;
+            g_set_sa_attrs.clear();
+
+            ASSERT_NE(sai_acl_api, nullptr);
+            saved_set_acl_entry_attribute = sai_acl_api->set_acl_entry_attribute;
+            sai_acl_api->set_acl_entry_attribute = fake_set_acl_entry_attribute;
             reset_sai_recorder();
 
             app_db   = std::make_shared<DBConnector>("APPL_DB",  0);
@@ -169,6 +203,8 @@ namespace macsecorch_test
 
             sai_macsec_api->create_macsec_sa = saved_create_macsec_sa;
             sai_macsec_api->remove_macsec_sa = saved_remove_macsec_sa;
+            sai_macsec_api->set_macsec_sa_attribute = saved_set_macsec_sa_attribute;
+            sai_acl_api->set_acl_entry_attribute = saved_set_acl_entry_attribute;
 
             if (fake_ports_orch_buf != nullptr)
             {
@@ -257,6 +293,10 @@ namespace macsecorch_test
                                                uint32_t,
                                                const sai_attribute_t*) = nullptr;
         sai_status_t (*saved_remove_macsec_sa)(sai_object_id_t)        = nullptr;
+        sai_status_t (*saved_set_macsec_sa_attribute)(sai_object_id_t,
+                                                      const sai_attribute_t*) = nullptr;
+        sai_status_t (*saved_set_acl_entry_attribute)(sai_object_id_t,
+                                                      const sai_attribute_t*) = nullptr;
 
         // Raw buffer holding a placement-new'd m_portList (see SetUp).
         void       *fake_ports_orch_buf = nullptr;
@@ -269,135 +309,16 @@ namespace macsecorch_test
     constexpr macsec_an_t    MacsecOrchStaleSakTest::kAN;
     constexpr sai_object_id_t MacsecOrchStaleSakTest::kStaleSaOid;
 
-    // Convenience: the macsec_sonic driver writes SAKs as upper-case
-    // hex strings; pick two distinguishable values for "old" vs "new".
-    static const std::string kOldSakHex =
-        "B9A68A8F3B02F02BC0DFEFD738BBECB1";   // pre-restart
+    // A SAK as the macsec_sonic driver writes it: upper-case hex.
     static const std::string kNewSakHex =
-        "C7AF571AC1A17C79DCD8C2F6E5DB1C18";   // post-restart MKA re-key
+        "C7AF571AC1A17C79DCD8C2F6E5DB1C18";
 
     // ------------------------------------------------------------------
-    // Test 1: taskUpdateIngressSA(active=false + SAK)
+    // Test 1: SET on an existing ingress SA without key material
     //
-    // A surviving ingress SA exists in orchagent state.
-    // The post-restart wpa_supplicant fires its stage-1 SET
-    // (active=false + full key material). The fix must delete the
-    // surviving SA AND recreate from THIS sa_attr, not wait for stage-2.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           taskUpdateIngressSA_active_false_with_sak_deletes_stale_and_recreates)
-    {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_INGRESS, parseSciHex(kIngressSciHex));
-
-        auto fvs = buildSaFvs(kNewSakHex,
-                              /*include_active*/ true,
-                              /*active*/         false,
-                              /*egress*/         false);
-
-        const std::string key = std::string(kPortName) + ":" +
-                                kIngressSciHex + ":" + std::to_string(kAN);
-        auto status = orch->taskUpdateIngressSA(key, fvs);
-        EXPECT_EQ(status, task_success);
-
-        // Old SA must have been removed.
-        ASSERT_EQ(g_removed_sas.size(), 1u);
-        EXPECT_EQ(g_removed_sas[0], kStaleSaOid);
-
-        // New SA must have been created and carry the NEW SAK.
-        ASSERT_EQ(g_created_sas.size(), 1u);
-        sai_macsec_sak_t saw{};
-        ASSERT_TRUE(extract_sai_sak(g_created_sas[0].attrs, saw));
-        // AES-128 SAK occupies the lower 16 bytes; upper 16 should be 0.
-        // Re-stringify to compare against kNewSakHex.
-        char buf[33];
-        for (int i = 0; i < 16; ++i)
-            snprintf(buf + 2 * i, 3, "%02X", saw[16 + i]);
-        buf[32] = '\0';
-        EXPECT_STREQ(buf, kNewSakHex.c_str());
-    }
-
-    // ------------------------------------------------------------------
-    // Test 2: createMACsecSA early-exit re-key
-    //
-    // A SET arrives with active=true and a fresh SAK on an SA that
-    // already exists. The legacy code returned task_success without 
-    // touching SAI; the fix delete+recreates.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           createMACsecSA_existing_with_sak_deletes_stale_and_recreates)
-    {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_INGRESS, parseSciHex(kIngressSciHex));
-
-        auto fvs = buildSaFvs(kNewSakHex,
-                              /*include_active*/ true,
-                              /*active*/         true,
-                              /*egress*/         false);
-
-        const std::string key = std::string(kPortName) + ":" +
-                                kIngressSciHex + ":" + std::to_string(kAN);
-        // taskUpdateIngressSA's active=true branch funnels through
-        // createMACsecSA; this exercises the createMACsecSA early-exit
-        // fix.
-        auto status = orch->taskUpdateIngressSA(key, fvs);
-        EXPECT_EQ(status, task_success);
-
-        ASSERT_EQ(g_removed_sas.size(), 1u);
-        EXPECT_EQ(g_removed_sas[0], kStaleSaOid);
-
-        ASSERT_EQ(g_created_sas.size(), 1u);
-        sai_macsec_sak_t saw{};
-        ASSERT_TRUE(extract_sai_sak(g_created_sas[0].attrs, saw));
-        char buf[33];
-        for (int i = 0; i < 16; ++i)
-            snprintf(buf + 2 * i, 3, "%02X", saw[16 + i]);
-        buf[32] = '\0';
-        EXPECT_STREQ(buf, kNewSakHex.c_str());
-    }
-
-    // ------------------------------------------------------------------
-    // Test 3: taskUpdateEgressSA SA exists + SAK in fvs
-    //
-    // Egress flow: wpa_supplicant calls create_transmit_sa which
-    // writes MACSEC_EGRESS_SA_TABLE with sak/salt/ssci/auth_key/next_pn
-    // (no `active` field). On a surviving SA the legacy code only
-    // updated next_pn and silently dropped the new SAK; the fix
-    // delete+recreates.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           taskUpdateEgressSA_existing_with_sak_deletes_stale_and_recreates)
-    {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, parseSciHex(kEgressSciHex));
-
-        auto fvs = buildSaFvs(kNewSakHex,
-                              /*include_active*/ false,
-                              /*active*/         false,
-                              /*egress*/         true);
-
-        const std::string key = std::string(kPortName) + ":" +
-                                kEgressSciHex + ":" + std::to_string(kAN);
-        auto status = orch->taskUpdateEgressSA(key, fvs);
-        EXPECT_EQ(status, task_success);
-
-        ASSERT_EQ(g_removed_sas.size(), 1u);
-        EXPECT_EQ(g_removed_sas[0], kStaleSaOid);
-
-        ASSERT_EQ(g_created_sas.size(), 1u);
-        sai_macsec_sak_t saw{};
-        ASSERT_TRUE(extract_sai_sak(g_created_sas[0].attrs, saw));
-        char buf[33];
-        for (int i = 0; i < 16; ++i)
-            snprintf(buf + 2 * i, 3, "%02X", saw[16 + i]);
-        buf[32] = '\0';
-        EXPECT_STREQ(buf, kNewSakHex.c_str());
-    }
-
-    // ------------------------------------------------------------------
-    // Test 4: legacy fast-path -- SET on existing SA without SAK
-    //
-    // Counterpart to the three re-key tests: when wpa_supplicant
-    // sends stage-2 (active=true with no SAK) on an SA that already
-    // exists, the SA must be LEFT IN PLACE -- no remove, no create.
-    // This guards against the fix over-firing on the no-SAK path.
+    // wpa_supplicant's enable_receive_sa() writes active=true only. On an
+    // SA that already exists this is the second stage of a normal install
+    // and must leave the SA in place: no SAI remove, no SAI create.
     // ------------------------------------------------------------------
     TEST_F(MacsecOrchStaleSakTest,
            taskUpdateIngressSA_existing_active_true_no_sak_leaves_sa_in_place)
@@ -427,48 +348,46 @@ namespace macsecorch_test
     }
 
     // ------------------------------------------------------------------
-    // Test 5: taskUpdateIngressSA delete-failure propagation
+    // Test 2: SET with key material on an existing ingress SA
     //
-    // When SAI remove_macsec_sa fails during the ingress re-key path,
-    // the error must be returned to the caller (not silently swallowed)
-    // and no create must follow.  Covers the `del_status != task_success`
-    // branch added in taskUpdateIngressSA.
+    // A SET carrying a SAK for an SA orchagent already holds is not a
+    // re-key: a live SA is never destroyed on the strength of a payload
+    // shape. SAI_MACSEC_SA_ATTR_SAK is create-only, so the SET is a no-op
+    // in SAI. A supplicant that died leaves such entries behind, and
+    // macsecmgrd clears them before the next session can write.
     // ------------------------------------------------------------------
     TEST_F(MacsecOrchStaleSakTest,
-           taskUpdateIngressSA_delete_failure_propagates_error)
+           createMACsecSA_existing_sa_with_sak_leaves_sa_in_place)
     {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_INGRESS, parseSciHex(kIngressSciHex));
-
-        g_remove_should_fail = true;
+        const sai_uint64_t sci_num = parseSciHex(kIngressSciHex);
+        seedSurvivingSa(SAI_MACSEC_DIRECTION_INGRESS, sci_num);
 
         auto fvs = buildSaFvs(kNewSakHex,
                               /*include_active*/ true,
-                              /*active*/         false,
+                              /*active*/         true,
                               /*egress*/         false);
 
         const std::string key = std::string(kPortName) + ":" +
                                 kIngressSciHex + ":" + std::to_string(kAN);
-        auto status = orch->taskUpdateIngressSA(key, fvs);
-        EXPECT_NE(status, task_success);
+        EXPECT_EQ(orch->taskUpdateIngressSA(key, fvs), task_success);
 
-        // No SA must have been created (the re-key aborted after the
-        // failed delete).
+        EXPECT_EQ(g_removed_sas.size(), 0u);
         EXPECT_EQ(g_created_sas.size(), 0u);
+        auto &port = orch->m_macsec_ports[kPortName];
+        EXPECT_EQ(port->m_ingress_scs.at(sci_num).m_sa_ids.at(kAN), kStaleSaOid);
     }
 
     // ------------------------------------------------------------------
-    // Test 6: taskUpdateEgressSA delete-failure propagation
+    // Test 3: SET with key material on an existing egress SA
     //
-    // Same invariant as Test 5 but for the egress re-key path.
-    // Covers the `del_status != task_success` branch in
-    // taskUpdateEgressSA.
+    // Same rule on the egress side: only next_pn is applied, the SA and
+    // its key stay as they are.
     // ------------------------------------------------------------------
     TEST_F(MacsecOrchStaleSakTest,
-           taskUpdateEgressSA_delete_failure_propagates_error)
+           taskUpdateEgressSA_existing_sa_with_sak_leaves_sa_in_place)
     {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, parseSciHex(kEgressSciHex));
-
-        g_remove_should_fail = true;
+        const sai_uint64_t sci_num = parseSciHex(kEgressSciHex);
+        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, sci_num);
 
         auto fvs = buildSaFvs(kNewSakHex,
                               /*include_active*/ false,
@@ -477,117 +396,19 @@ namespace macsecorch_test
 
         const std::string key = std::string(kPortName) + ":" +
                                 kEgressSciHex + ":" + std::to_string(kAN);
-        auto status = orch->taskUpdateEgressSA(key, fvs);
-        EXPECT_NE(status, task_success);
+        EXPECT_EQ(orch->taskUpdateEgressSA(key, fvs), task_success);
 
+        EXPECT_EQ(g_removed_sas.size(), 0u);
         EXPECT_EQ(g_created_sas.size(), 0u);
+        auto &port = orch->m_macsec_ports[kPortName];
+        EXPECT_EQ(port->m_egress_scs.at(sci_num).m_sa_ids.at(kAN), kStaleSaOid);
+        ASSERT_EQ(g_set_sa_attrs.size(), 1u);
+        EXPECT_EQ(g_set_sa_attrs[0].id, SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN);
+        EXPECT_EQ(g_set_sa_attrs[0].value.u64, 1u);
     }
 
     // ------------------------------------------------------------------
-    // Test 7: createMACsecSA delete-failure propagation
-    //
-    // When the defense-in-depth path in createMACsecSA detects an
-    // existing SA with a new SAK but the preceding delete fails, the
-    // error must be returned and no recursive create must follow.
-    // Covers the `del_status != task_success` branch in createMACsecSA.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           createMACsecSA_delete_failure_propagates_error)
-    {
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_INGRESS, parseSciHex(kIngressSciHex));
-
-        g_remove_should_fail = true;
-
-        // active=true funnels through createMACsecSA, exercising the
-        // early-exit re-key block (ctx.get_macsec_sa() != nullptr &&
-        // SAK present).
-        auto fvs = buildSaFvs(kNewSakHex,
-                              /*include_active*/ true,
-                              /*active*/         true,
-                              /*egress*/         false);
-
-        const std::string key = std::string(kPortName) + ":" +
-                                kIngressSciHex + ":" + std::to_string(kAN);
-        auto status = orch->taskUpdateIngressSA(key, fvs);
-        EXPECT_NE(status, task_success);
-
-        EXPECT_EQ(g_created_sas.size(), 0u);
-    }
-
-    // ------------------------------------------------------------------
-    // Test 8: setEncodingAN sweeps stale SA when encoding_an changes
-    //
-    // Covers the dirty-restart AN-boundary case (NOS-7806, SC side):
-    // an egress SC has two SAs installed (AN=0 from the prior MKA
-    // cycle that survived the SIGKILL, AN=1 just negotiated by the
-    // fresh wpa).  When taskUpdateEgressSC writes encoding_an=1,
-    // setEncodingAN must remove the AN=0 SA from SAI and leave AN=1
-    // intact.
-    //
-    // The SC is seeded into m_macsec_ports so that the full cleanup
-    // path (deleteMACsecSA(port_sci_an, direction)) can look it up.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           setEncodingAN_sweeps_stale_sa_on_encoding_an_change)
-    {
-        static constexpr sai_object_id_t kCurrentOidAN1 = 0x5c00000000001001ULL;
-
-        // Seed the SC with AN=0 (kStaleSaOid) into m_macsec_ports.
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, parseSciHex(kEgressSciHex));
-
-        // Add AN=1 directly to the seeded SC.
-        auto &sc = orch->m_macsec_ports[kPortName]
-                       ->m_egress_scs[parseSciHex(kEgressSciHex)];
-        sc.m_sa_ids[1] = kCurrentOidAN1;
-
-        const std::string port_sci =
-            std::string(kPortName) + ":" + kEgressSciHex;
-
-        // port_sci_an for AN=0 — used to pre-seed and verify cleanup of
-        // COUNTERS_DB (uses ':' separator) and STATE_DB (uses '|' separator).
-        const std::string port_sci_an_0 =
-            std::string(kPortName) + ":" + kEgressSciHex + ":" + std::to_string(kAN);
-        const std::string state_key_0 =
-            std::string(kPortName) + "|" + kEgressSciHex + "|" + std::to_string(kAN);
-
-        // Plant fake COUNTERS_DB and STATE_DB entries for AN=0, simulating
-        // what installCounter / createMACsecSA would have written.
-        orch->m_macsec_counters_map.hset("", port_sci_an_0,
-                                         sai_serialize_object_id(kStaleSaOid));
-        orch->m_state_macsec_egress_sa.hset(state_key_0, "state", "ok");
-
-        MACsecOrch::TaskArgs attrs = { { "encoding_an", "1" } };
-
-        bool result = orch->setEncodingAN(sc, attrs,
-                                          SAI_MACSEC_DIRECTION_EGRESS,
-                                          port_sci);
-        EXPECT_TRUE(result);
-
-        // AN=0 stale SA must have been removed from SAI.
-        ASSERT_EQ(g_removed_sas.size(), 1u);
-        EXPECT_EQ(g_removed_sas[0], kStaleSaOid);
-
-        // AN=1 SA must remain in sc.m_sa_ids; no new SA created.
-        ASSERT_EQ(sc.m_sa_ids.size(), 1u);
-        EXPECT_EQ(sc.m_sa_ids.at(1), kCurrentOidAN1);
-        EXPECT_EQ(g_created_sas.size(), 0u);
-
-        // encoding_an updated to reflect the new session.
-        EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(1));
-
-        // COUNTERS_DB name->OID mapping for AN=0 must be gone.
-        std::string counters_val;
-        EXPECT_FALSE(orch->m_macsec_counters_map.hget("", port_sci_an_0,
-                                                       counters_val));
-
-        // STATE_DB entry for AN=0 must be gone.
-        std::string state_val;
-        EXPECT_FALSE(orch->m_state_macsec_egress_sa.hget(state_key_0, "state",
-                                                          state_val));
-    }
-
-    // ------------------------------------------------------------------
-    // Test 9: setEncodingAN is a no-op when encoding_an is unchanged
+    // Test 4: setEncodingAN is a no-op when encoding_an is unchanged
     //
     // A SET on MACSEC_EGRESS_SC_TABLE with the same encoding_an value
     // must not touch SAI at all (clean rekey fast-path guard).
@@ -603,9 +424,7 @@ namespace macsecorch_test
 
         MACsecOrch::TaskArgs attrs = { { "encoding_an", "0" } };
 
-        // port_sci is not consulted because encoding_an is unchanged.
-        bool result = orch->setEncodingAN(sc, attrs, SAI_MACSEC_DIRECTION_EGRESS,
-                                          std::string(kPortName) + ":" + kEgressSciHex);
+        bool result = orch->setEncodingAN(sc, attrs, SAI_MACSEC_DIRECTION_EGRESS);
         EXPECT_TRUE(result);
 
         // No SAI remove or create.
@@ -615,52 +434,11 @@ namespace macsecorch_test
     }
 
     // ------------------------------------------------------------------
-    // Test 10: setEncodingAN delete failure is best-effort
+    // Test 5: setEncodingAN ingress direction is a no-op
     //
-    // If SAI remove_macsec_sa fails while sweeping a stale AN, the
-    // function must still return true and erase the entry from
-    // sc.m_sa_ids.  The failure is logged but not fatal: the SC-level
-    // encoding_an update is more important than a leaked OID.
-    // ------------------------------------------------------------------
-    TEST_F(MacsecOrchStaleSakTest,
-           setEncodingAN_delete_failure_is_best_effort)
-    {
-        static constexpr sai_object_id_t kCurrentOidAN1 = 0x5c00000000003001ULL;
-
-        // Seed the SC with AN=0 (kStaleSaOid) into m_macsec_ports.
-        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, parseSciHex(kEgressSciHex));
-
-        auto &sc = orch->m_macsec_ports[kPortName]
-                       ->m_egress_scs[parseSciHex(kEgressSciHex)];
-        sc.m_sa_ids[1] = kCurrentOidAN1;
-
-        g_remove_should_fail = true;
-
-        const std::string port_sci =
-            std::string(kPortName) + ":" + kEgressSciHex;
-        MACsecOrch::TaskArgs attrs = { { "encoding_an", "1" } };
-
-        bool result = orch->setEncodingAN(sc, attrs,
-                                          SAI_MACSEC_DIRECTION_EGRESS,
-                                          port_sci);
-
-        // Function must succeed despite the SAI failure.
-        EXPECT_TRUE(result);
-
-        // The stale AN=0 entry must be evicted from sc.m_sa_ids even
-        // though the SAI remove failed (best-effort sweep).
-        ASSERT_EQ(sc.m_sa_ids.size(), 1u);
-        EXPECT_EQ(sc.m_sa_ids.at(1), kCurrentOidAN1);
-
-        // encoding_an updated.
-        EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(1));
-    }
-
-    // ------------------------------------------------------------------
-    // Test 11: setEncodingAN ingress direction is a no-op
-    //
-    // Ingress SCs don't carry encoding_an. The function must return
-    // true immediately without touching SAI or sc.m_encoding_an.
+    // Ingress SCs don't carry encoding_an. The function refuses the call
+    // (returns false) without touching SAI or sc.m_encoding_an; the caller
+    // only invokes it for egress SCs.
     // ------------------------------------------------------------------
     TEST_F(MacsecOrchStaleSakTest,
            setEncodingAN_ingress_is_noop)
@@ -670,13 +448,109 @@ namespace macsecorch_test
 
         MACsecOrch::TaskArgs attrs = { { "encoding_an", "1" } };
 
-        // port_sci is not consulted for ingress (returns false immediately).
-        bool result = orch->setEncodingAN(sc, attrs, SAI_MACSEC_DIRECTION_INGRESS,
-                                          std::string(kPortName) + ":" + kIngressSciHex);
+        bool result = orch->setEncodingAN(sc, attrs, SAI_MACSEC_DIRECTION_INGRESS);
         EXPECT_FALSE(result);
 
         EXPECT_EQ(g_removed_sas.size(), 0u);
         EXPECT_EQ(g_created_sas.size(), 0u);
         EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(0));
+    }
+
+    // ------------------------------------------------------------------
+    // Test 6: a normal MKA rekey must never leave the egress SC without
+    // an SA (sonic-net/sonic-swss#4934).
+    //
+    // Real ordering, as driven by wpa_supplicant's macsec_sonic driver:
+    //   1. create_transmit_sa(AN=1) at SAK distribution. Orchagent holds
+    //      the SET in retry because encoding_an is still 0.
+    //   2. enable_transmit_sa(AN=1) writes encoding_an=1 on the SC. At
+    //      this instant AN=0 is the ONLY SA on the SC and is what the
+    //      hardware encodes with.
+    //   3. The deferred AN=1 SET is retried and the SA is created.
+    //   4. ~3 s later wpa's CP RETIRE state deletes AN=0.
+    //
+    // Deleting the last SA of an SC flips the egress ACL entry from the
+    // MACsec flow to PACKET_ACTION DROP (deleteMACsecSA ->
+    // setMACsecFlowActive(false)), so the SC must not be emptied at
+    // step 2. Nothing but wpa's own DEL at step 4 may remove AN=0.
+    // ------------------------------------------------------------------
+    TEST_F(MacsecOrchStaleSakTest,
+           normal_rekey_never_empties_egress_sc_or_disables_flow)
+    {
+        static constexpr sai_object_id_t kAclEntryOid = 0x5900000000000001ULL;
+
+        const sai_uint64_t sci = parseSciHex(kEgressSciHex);
+        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, sci);   // AN=0, encoding_an=0
+        auto port = orch->m_macsec_ports[kPortName];
+        port->m_enable = true;
+        auto &sc = port->m_egress_scs[sci];
+        sc.m_entry_id = kAclEntryOid;
+
+        const std::string port_sci   = std::string(kPortName) + ":" + kEgressSciHex;
+        const std::string port_sci_0 = port_sci + ":0";
+        const std::string port_sci_1 = port_sci + ":1";
+        const auto sa1_fvs = buildSaFvs(kNewSakHex, false, false, true);
+
+        // Step 1: the new SA is deferred until the encoding AN moves.
+        EXPECT_EQ(orch->taskUpdateEgressSA(port_sci_1, sa1_fvs), task_need_retry);
+        EXPECT_EQ(g_created_sas.size(), 0u);
+
+        // Step 2: encoding AN switches while AN=0 is the only SA.
+        MACsecOrch::TaskArgs sc_attrs = { { "encoding_an", "1" } };
+        EXPECT_TRUE(orch->setEncodingAN(sc, sc_attrs,
+                                        SAI_MACSEC_DIRECTION_EGRESS));
+        EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(1));
+        EXPECT_EQ(g_removed_sas.size(), 0u)
+            << "encoding SA removed before its replacement exists";
+        EXPECT_EQ(sc.m_sa_ids.count(0), 1u) << "egress SC left with no SA";
+        EXPECT_FALSE(macsec_flow_was_disabled())
+            << "egress ACL entry flipped to DROP during rekey";
+
+        // Step 3: the deferred SET lands; both SAs coexist.
+        EXPECT_EQ(orch->taskUpdateEgressSA(port_sci_1, sa1_fvs), task_success);
+        ASSERT_EQ(g_created_sas.size(), 1u);
+        EXPECT_EQ(sc.m_sa_ids.size(), 2u);
+        EXPECT_FALSE(macsec_flow_was_disabled());
+
+        // Step 4: wpa retires the old key.
+        EXPECT_EQ(orch->taskDeleteEgressSA(port_sci_0, {}), task_success);
+        ASSERT_EQ(g_removed_sas.size(), 1u);
+        EXPECT_EQ(g_removed_sas[0], kStaleSaOid);
+        EXPECT_EQ(sc.m_sa_ids.size(), 1u);
+        EXPECT_EQ(sc.m_sa_ids.count(1), 1u);
+        EXPECT_FALSE(macsec_flow_was_disabled());
+    }
+
+    // ------------------------------------------------------------------
+    // Test 7: setEncodingAN never removes an SA
+    //
+    // Whatever is installed on the SC when the encoding AN moves stays
+    // installed. The previous AN is wpa_supplicant's to retire (CP RETIRE,
+    // 3 s after the switch), and an SA leaked by a supplicant that died is
+    // macsecmgrd's to clear before the next session starts. orchagent only
+    // applies what APPL_DB tells it.
+    // ------------------------------------------------------------------
+    TEST_F(MacsecOrchStaleSakTest, setEncodingAN_never_removes_sas)
+    {
+        static constexpr sai_object_id_t kCurrentOidAN1 = 0x5c00000000001001ULL;
+
+        const sai_uint64_t sci = parseSciHex(kEgressSciHex);
+        seedSurvivingSa(SAI_MACSEC_DIRECTION_EGRESS, sci);   // AN=0 = kStaleSaOid
+        auto port = orch->m_macsec_ports[kPortName];
+        port->m_enable = true;
+        auto &sc = port->m_egress_scs[sci];
+        sc.m_sa_ids[1]   = kCurrentOidAN1;
+        sc.m_encoding_an = 1;
+
+        MACsecOrch::TaskArgs attrs = { { "encoding_an", "2" } };
+        EXPECT_TRUE(orch->setEncodingAN(sc, attrs, SAI_MACSEC_DIRECTION_EGRESS));
+
+        EXPECT_EQ(sc.m_encoding_an, static_cast<macsec_an_t>(2));
+        EXPECT_EQ(g_removed_sas.size(), 0u);
+        EXPECT_EQ(g_created_sas.size(), 0u);
+        ASSERT_EQ(sc.m_sa_ids.size(), 2u);
+        EXPECT_EQ(sc.m_sa_ids.at(0), kStaleSaOid);
+        EXPECT_EQ(sc.m_sa_ids.at(1), kCurrentOidAN1);
+        EXPECT_FALSE(macsec_flow_was_disabled());
     }
 }

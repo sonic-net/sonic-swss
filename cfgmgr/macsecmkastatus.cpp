@@ -98,11 +98,6 @@ bool normalizeHex(const string &value, string &normalized, size_t exactLength = 
     return true;
 }
 
-bool normalizeCkn(const string &value, string &normalized)
-{
-    return value.size() <= 128 && normalizeHex(value, normalized);
-}
-
 bool normalizeSci(const string &value, string &normalized)
 {
     if (normalizeHex(value, normalized, 16))
@@ -188,6 +183,11 @@ bool parseParticipant(
     return true;
 }
 
+}
+
+bool swss::normalizeCkn(const string &value, string &normalized)
+{
+    return value.size() <= 128 && normalizeHex(value, normalized);
 }
 
 vector<FieldValueTuple> MKAParticipantStatus::toFieldValues() const
